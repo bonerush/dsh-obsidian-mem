@@ -12,6 +12,7 @@
 // must agree on filtering and that the first hits must be explainable.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { getEventListeners } from 'node:events'
 import { existsSync } from 'node:fs'
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -105,6 +106,50 @@ async function ready(index, timeoutMs = 10_000) {
   const status = await index.waitReady(undefined, timeoutMs)
   assert.equal(status.ready, true, `index did not become ready: ${JSON.stringify(status)}`)
   return status
+}
+
+/** A second project used by the bound/paging regressions; its vault is built in-test. */
+const PAGED_ID = '2b3c4d5e-6f70-4182-9a3b-4c5d6e7f8091'
+const PAGED_DIR = `项目/paged--${PAGED_ID.slice(0, 8)}`
+/**
+ * The path-order prefix of the paging vault. `文档/sub/*` sorts before
+ * `文档/zzz-shallow.md`, while the *scan* inserts the shallow file first — so a
+ * rowid/unordered read and a path-ordered read return different first rows.
+ */
+const PAGED_DEEP_FIRST = `${PAGED_DIR}/文档/sub/aaa-deep.md`
+const PAGED_DEEP_LAST = `${PAGED_DIR}/文档/sub/ddd-deep.md`
+const PAGED_SHALLOW = `${PAGED_DIR}/文档/zzz-shallow.md`
+
+/**
+ * Build the paging vault: five active notes, `器` in the path-first and
+ * path-fourth notes only, and an insertion order that differs from path order.
+ */
+async function pagedHarness(t, indexOptions = {}) {
+  const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t9-paged-'))
+  const vault = join(root, 'vault')
+  const dataRoot = join(root, 'data')
+  await mkdir(join(vault, PAGED_DIR, '文档', 'sub'), { recursive: true })
+  const note = (title, body) => `---
+type: "doc"
+title: "${title}"
+status: "active"
+project: "${PAGED_ID}"
+---
+# ${title}
+
+${body}
+`
+  await writeFile(at(vault, PAGED_SHALLOW), note('浅层', '浅层的普通说明。'))
+  await writeFile(at(vault, PAGED_DEEP_FIRST), note('首个', '第一个深层的说明，含 器 字。'))
+  await writeFile(at(vault, `${PAGED_DIR}/文档/sub/bbb-deep.md`), note('第二', '第二个深层的说明。'))
+  await writeFile(at(vault, `${PAGED_DIR}/文档/sub/ccc-deep.md`), note('第三', '第三个深层的说明。'))
+  await writeFile(at(vault, PAGED_DEEP_LAST), note('第四', '第四个深层的说明，亦含 器 字。'))
+  const index = await openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: PAGED_ID, ...indexOptions })
+  t.after(async () => {
+    await index.close().catch(() => {})
+    await rm(root, { recursive: true, force: true })
+  })
+  return { root, vault, dataRoot, index, open: (options) => openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: PAGED_ID, ...options }) }
 }
 
 /** The human-readable reasons a hit sorted where it did (spec §7 "可解释的排序信号"). */
@@ -754,4 +799,135 @@ test('the scan backend keeps working after the vault changes, without ever touch
   const hits = await searchNotes(index, { query: '新的调度', scope: 'project', projectId: ALPHA, limit: 20 })
   assert.ok(paths(hits).includes(relative))
   assert.equal(index.status().dbPath, null)
+})
+
+// ---------------------------------------------------------------------------
+// Review fixes: an honest substring bound and a full-window composite score
+// ---------------------------------------------------------------------------
+
+test('the substring branch pages in path order and reports its bound instead of a silent empty result', async (t) => {
+  const h = await pagedHarness(t, { scanBranchMaxRows: 1, scanBranchPageSize: 1 })
+  await ready(h.index)
+
+  // Only the path-smallest row may be examined; it is the deep file, not the
+  // shallow one the scan inserted first (whose rowid is lower).
+  const hits = await searchNotes(h.index, { query: Q.singleCharCjk, scope: 'project', projectId: PAGED_ID, limit: 50 })
+  assert.deepEqual(paths(hits), [PAGED_DEEP_FIRST])
+  assert.equal(hits.truncated, true, 'a bound that cut the scan must be visible on the result')
+  assert.match(String(hits.truncationReason), /substring-scan-bound/)
+  assert.equal(hits.rowsExamined, 1)
+  assert.equal(h.index.status().lastSearch.truncated, true)
+  assert.equal(h.index.status().lastSearch.truncationReason, hits.truncationReason)
+
+  // A bound that hides every match is still distinguishable from "found nothing":
+  // the match sits beyond the bound, so the list is empty *and* flagged.
+  const blind = await searchNotes(h.index, { query: '亦', scope: 'project', projectId: PAGED_ID, limit: 50 })
+  assert.deepEqual(blind, [])
+  assert.equal(blind.truncated, true, 'an empty list is never silently empty while the bound is the reason')
+  assert.match(String(blind.truncationReason), /substring-scan-bound/)
+})
+
+test('paging crosses pages in path order and a bound past the vault is not flagged', async (t) => {
+  const bounded = await pagedHarness(t, { scanBranchMaxRows: 4, scanBranchPageSize: 2 })
+  await ready(bounded.index)
+  // Two pages of two rows cover the path prefix; the path-fifth shallow note is
+  // outside it, so `ddd` is the last match and the flag must be set.
+  const page1 = await searchNotes(bounded.index, { query: Q.singleCharCjk, scope: 'project', projectId: PAGED_ID, limit: 50 })
+  assert.deepEqual(paths(page1), [PAGED_DEEP_FIRST, PAGED_DEEP_LAST].sort())
+  assert.equal(page1.truncated, true)
+  assert.equal(page1.rowsExamined, 4)
+
+  // A bound beyond the vault exhausts the source, and that must not be reported as truncation.
+  const whole = await pagedHarness(t, { scanBranchMaxRows: 10, scanBranchPageSize: 2 })
+  await ready(whole.index)
+  const all = await searchNotes(whole.index, { query: Q.singleCharCjk, scope: 'project', projectId: PAGED_ID, limit: 50 })
+  assert.deepEqual(paths(all), [PAGED_DEEP_FIRST, PAGED_DEEP_LAST].sort())
+  assert.equal(all.truncated, false, 'an exhausted scan is complete, not truncated')
+  assert.equal(all.truncationReason, null)
+  assert.equal(all.rowsExamined, 5)
+
+  // Both backends apply the same bound in the same order and report the same facts.
+  const sqlite = await pagedHarness(t, { scanBranchMaxRows: 4, scanBranchPageSize: 2 })
+  await ready(sqlite.index)
+  const scan = await sqlite.open({ backend: 'scan', scanBranchMaxRows: 4, scanBranchPageSize: 2 })
+  await ready(scan)
+  for (const options of [
+    { query: Q.singleCharCjk, scope: 'project', projectId: PAGED_ID },
+    { query: Q.singleCharCjk, scope: 'all' },
+    { query: '第二', scope: 'project', projectId: PAGED_ID },
+  ]) {
+    const a = await searchNotes(sqlite.index, { limit: 50, ...options })
+    const b = await searchNotes(scan, { limit: 50, ...options })
+    assert.deepEqual(sorted(a), sorted(b), `backends disagree for ${JSON.stringify(options)}`)
+    assert.equal(a.truncated, b.truncated, `truncation differs for ${JSON.stringify(options)}`)
+    assert.equal(a.rowsExamined, b.rowsExamined, `examined rows differ for ${JSON.stringify(options)}`)
+  }
+})
+
+test('a wide bound on the real corpus is not flagged as truncated', async (t) => {
+  const h = await harness(t)
+  const index = await h.open()
+  await ready(index)
+  const hits = await searchNotes(index, { query: Q.singleCharCjk, scope: 'all', limit: 50 })
+  assert.ok(hits.length > 0)
+  assert.equal(hits.truncated, false)
+  assert.equal(hits.truncationReason, null)
+})
+
+test('the composite score promotes a title match that bm25 ranks below the limit', async (t) => {
+  const h = await harness(t)
+  const exact = `${ALPHA_DIR}/文档/zebra-exact.md`
+  for (let i = 0; i < 12; i += 1) {
+    const name = `zebra-filler-${String(i).padStart(2, '0')}.md`
+    await writeFile(
+      at(h.vault, `${ALPHA_DIR}/文档/${name}`),
+      `---\ntype: "doc"\ntitle: "filler ${i}"\nstatus: "active"\nproject: "${ALPHA}"\n---\n# filler ${i}\n\n${'zebra '.repeat(60)}\n`,
+    )
+  }
+  await writeFile(at(h.vault, exact), `---\ntype: "doc"\ntitle: "zebra"\nstatus: "active"\nproject: "${ALPHA}"\n---\n# zebra\n\nzebra\n`)
+  const index = await h.open()
+  await ready(index)
+
+  // Precondition: bm25 alone puts the exact title below the requested limit.
+  assert.equal(HAS_SQLITE, true)
+  const { DatabaseSync } = await import('node:sqlite')
+  const db = new DatabaseSync(index.status().dbPath)
+  const match = buildMatchQuery(planQuery('zebra').tokens)
+  const ranked = db.prepare(`
+    SELECT n.path FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid
+    WHERE notes_fts MATCH ? ORDER BY bm25(notes_fts, 10.0, 1.0, 4.0) ASC LIMIT 3
+  `).all(match).map((row) => row.path)
+  db.close()
+  assert.equal(ranked.includes(exact), false, 'the corpus must really rank the title match below the limit')
+
+  const hits = await searchNotes(index, { query: 'zebra', scope: 'project', projectId: ALPHA, limit: 3 })
+  assert.equal(hits.length, 3)
+  assert.equal(hits[0].path, exact, 'the composite score must promote the title match over raw bm25')
+  assert.equal(hits[0].signals.titleExact, true)
+  assert.ok(hits.every((hit) => hit.path !== exact || hit === hits[0]))
+})
+
+test('an aborted signal cancels the search instead of being accepted and ignored', async (t) => {
+  const h = await harness(t)
+  const index = await h.open()
+  await ready(index)
+  await assert.rejects(
+    () => searchNotes(index, { query: Q.threeCharCjk, scope: 'project', projectId: ALPHA, signal: AbortSignal.abort() }),
+    (error) => error instanceof IndexError && error.code === 'aborted',
+  )
+})
+
+test('a ready barrier removes its abort listener when the timeout wins', async (t) => {
+  const h = await harness(t)
+  const slow = await h.open({ batchSize: 1, yieldToEventLoop: async () => { await delay(5) } })
+  const controller = new AbortController()
+  const outcome = await slow.waitReady(controller.signal, 1)
+  assert.equal(outcome.ready, false)
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 0, 'the timeout path must not leak its abort listener')
+  await ready(slow)
+  controller.abort()
+  await assert.rejects(
+    () => searchNotes(slow, { query: Q.threeCharCjk, scope: 'project', projectId: ALPHA, signal: controller.signal }),
+    (error) => error instanceof IndexError && error.code === 'aborted',
+  )
 })
