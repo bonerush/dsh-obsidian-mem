@@ -601,7 +601,7 @@ test('bootstrap refuses when an existing note declares tags as text', async (t) 
   const before = await snapshotTree(vault)
 
   await assert.rejects(
-    bootstrapVault(binding(vault), { initGitOnCreate: false, home: root }),
+    bootstrapVault(binding(vault), { initGitOnCreate: false, home: root, dataRoot: join(root, '.data') }),
     (error) => error instanceof BootstrapError
       && error.code === 'property-type-conflict'
       && error.conflicts.some((conflict) => conflict.reason === 'type-conflict' && conflict.key === 'tags'),
@@ -617,7 +617,7 @@ test('bootstrap refuses when a quoted confidence value conflicts with the vocabu
   const before = await snapshotTree(vault)
 
   await assert.rejects(
-    bootstrapVault(binding(vault), { initGitOnCreate: false, home: root }),
+    bootstrapVault(binding(vault), { initGitOnCreate: false, home: root, dataRoot: join(root, '.data') }),
     (error) => error instanceof BootstrapError
       && error.code === 'property-type-conflict'
       && error.conflicts.some((conflict) => conflict.key === 'confidence'
@@ -639,7 +639,7 @@ test('bootstrap refuses a vault note whose frontmatter cannot be trusted', async
     const path = at(vault, `${PROJECT_DIR}/坏.md`)
     await writeFile(path, text)
     await assert.rejects(
-      bootstrapVault(binding(vault), { initGitOnCreate: false, home: root }),
+      bootstrapVault(binding(vault), { initGitOnCreate: false, home: root, dataRoot: join(root, '.data') }),
       (error) => error instanceof BootstrapError
         && error.code === 'property-preflight-conflict'
         && error.conflicts.some((conflict) => conflict.reason === 'invalid-frontmatter' && conflict.code === code),
@@ -706,7 +706,7 @@ test('the preflight reports a note it cannot read instead of guessing', async (t
 test('a bootstrapped vault stays preflight-clean on every later run', async (t) => {
   const root = await tempRoot(t)
   const vault = join(root, 'vault')
-  const result = await bootstrapVault(binding(vault), { initGitOnCreate: false, home: root })
+  const result = await bootstrapVault(binding(vault), { initGitOnCreate: false, home: root, dataRoot: join(root, '.data') })
   assert.equal(result.registryUpdated, true)
 
   const first = await validateKnownPropertyTypes(vault, { home: root })
@@ -714,7 +714,7 @@ test('a bootstrapped vault stays preflight-clean on every later run', async (t) 
   assert.ok(first.scanned >= 8, 'every MOC and hot.md was inspected')
 
   // a second bootstrap must not be stopped by the plugin's own output
-  const again = await bootstrapVault(binding(vault), { initGitOnCreate: false, home: root })
+  const again = await bootstrapVault(binding(vault), { initGitOnCreate: false, home: root, dataRoot: join(root, '.data') })
   assert.deepEqual(again.createdPaths, [])
   assert.deepEqual((await validateKnownPropertyTypes(vault, { home: root })).conflicts, [])
 })

@@ -71,11 +71,18 @@ async function initRepo(dir) {
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t5-'))
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 4 }))
+  // Task 7: the registry write is now a vault transaction, which needs an
+  // explicit data root for its lock, manifest and receipt store. It is a second
+  // throwaway directory on purpose — this file asserts that neither the
+  // temporary home nor the fixture root gains a single entry.
+  const dataRoot = await mkdtemp(join(tmpdir(), 'obsidian-mem-t5-data-'))
+  t.after(() => rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }))
   const home = join(root, 'home')
   await mkdir(home, { recursive: true })
   return {
     root,
     home,
+    dataRoot,
     vault: join(root, 'vault'),
     freshVault: join(root, 'fresh-vault'),
     repo: join(root, 'repo'),
@@ -220,10 +227,10 @@ function tableRow(projectId, hub, displayName, remote = '') {
 // ---------------------------------------------------------------------------
 
 test('the first run creates every §5.1 directory and MOC and registers the project', async (t) => {
-  const { root, vault, repo, home } = await fixture(t)
+  const { root, vault, repo, home, dataRoot } = await fixture(t)
   const binding = await bind({ vault, repo, home })
 
-  const result = await bootstrapVault(binding, { initGitOnCreate: false, home })
+  const result = await bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot })
   const expected = vaultTargets(binding.relativeDir)
 
   assert.equal(binding.relativeDir, `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}`)
@@ -290,13 +297,13 @@ test('the first run creates every §5.1 directory and MOC and registers the proj
 })
 
 test('a second run leaves every byte and mtime unchanged', async (t) => {
-  const { vault, repo, home } = await fixture(t)
+  const { vault, repo, home, dataRoot } = await fixture(t)
   const binding = await bind({ vault, repo, home })
 
-  const first = await bootstrapVault(binding, { initGitOnCreate: false, home })
+  const first = await bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot })
   const before = await snapshot(vault)
 
-  const second = await bootstrapVault(binding, { initGitOnCreate: false, home })
+  const second = await bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot })
   assert.deepEqual(await snapshot(vault), before, 'a second run must not touch a single file')
 
   assert.deepEqual(second.createdPaths, [])
@@ -305,7 +312,7 @@ test('a second run leaves every byte and mtime unchanged', async (t) => {
 })
 
 test('a hand-written index.md is preserved and only missing items are added', async (t) => {
-  const { vault, repo, home } = await fixture(t)
+  const { vault, repo, home, dataRoot } = await fixture(t)
   const binding = await bind({ vault, repo, home })
 
   const handwritten = '# 我自己写的 hub\n\n这里是我的内容，插件不得改动。\n'
@@ -313,7 +320,7 @@ test('a hand-written index.md is preserved and only missing items are added', as
   await writeFile(join(binding.projectDir, 'index.md'), handwritten)
   const before = await lstat(join(binding.projectDir, 'index.md'))
 
-  const result = await bootstrapVault(binding, { initGitOnCreate: false, home })
+  const result = await bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot })
 
   assert.equal(await readFile(join(binding.projectDir, 'index.md'), 'utf8'), handwritten)
   assert.equal((await lstat(join(binding.projectDir, 'index.md'))).mtimeMs, before.mtimeMs)
@@ -336,11 +343,11 @@ test('a hand-written index.md is preserved and only missing items are added', as
 // ---------------------------------------------------------------------------
 
 test('a vault that already exists is never git-initialised', async (t) => {
-  const { vault, repo, home } = await fixture(t)
+  const { vault, repo, home, dataRoot } = await fixture(t)
   await mkdir(vault, { recursive: true })
   const binding = await bind({ vault, repo, home })
 
-  const result = await bootstrapVault(binding, { initGitOnCreate: true, home })
+  const result = await bootstrapVault(binding, { initGitOnCreate: true, home, dataRoot })
 
   assert.equal(result.vaultCreated, false)
   assert.equal(result.gitInitialized, false)
@@ -349,26 +356,26 @@ test('a vault that already exists is never git-initialised', async (t) => {
 })
 
 test('a vault this call created is git-initialised only when asked', async (t) => {
-  const { freshVault, repo, home } = await fixture(t)
+  const { freshVault, repo, home, dataRoot } = await fixture(t)
   const binding = await bind({ vault: freshVault, repo, home })
 
-  const initialised = await bootstrapVault(binding, { initGitOnCreate: true, home })
+  const initialised = await bootstrapVault(binding, { initGitOnCreate: true, home, dataRoot })
   assert.equal(initialised.vaultCreated, true)
   assert.equal(initialised.gitInitialized, true)
   assert.equal((await lstat(join(freshVault, '.git'))).isDirectory(), true)
 
   const plain = await fixture(t)
   const other = await bind({ vault: plain.vault, repo: plain.repo, home: plain.home })
-  const withoutGit = await bootstrapVault(other, { initGitOnCreate: false, home: plain.home })
+  const withoutGit = await bootstrapVault(other, { initGitOnCreate: false, home: plain.home, dataRoot: plain.dataRoot })
   assert.equal(withoutGit.vaultCreated, true)
   assert.equal(withoutGit.gitInitialized, false)
   await assert.rejects(lstat(join(plain.vault, '.git')), { code: 'ENOENT' })
 })
 
 test('initGitOnCreate must be a boolean', async (t) => {
-  const { vault, repo, home } = await fixture(t)
+  const { vault, repo, home, dataRoot } = await fixture(t)
   const binding = await bind({ vault, repo, home })
-  await assert.rejects(bootstrapVault(binding, { initGitOnCreate: 'yes', home }), RangeError)
+  await assert.rejects(bootstrapVault(binding, { initGitOnCreate: 'yes', home, dataRoot }), RangeError)
 })
 
 // ---------------------------------------------------------------------------
@@ -376,11 +383,11 @@ test('initGitOnCreate must be a boolean', async (t) => {
 // ---------------------------------------------------------------------------
 
 test('_meta/user.md is never created and never overwritten', async (t) => {
-  const { vault, repo, home } = await fixture(t)
+  const { vault, repo, home, dataRoot } = await fixture(t)
   const binding = await bind({ vault, repo, home })
 
   // the plugin is read-only for user.md (spec §5.1/§6.2), so it does not create it
-  const plain = await bootstrapVault(binding, { initGitOnCreate: false, home })
+  const plain = await bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot })
   await assert.rejects(lstat(join(vault, '_meta', 'user.md')), { code: 'ENOENT' })
   assert.equal(plain.createdPaths.includes('_meta/user.md'), false)
 
@@ -388,8 +395,8 @@ test('_meta/user.md is never created and never overwritten', async (t) => {
   const content = '---\ntags: [preferences]\n---\n\n我偏好中文回答。\n'
   await writeFile(join(vault, '_meta', 'user.md'), content)
   const before = await lstat(join(vault, '_meta', 'user.md'))
-  await bootstrapVault(binding, { initGitOnCreate: false, home })
-  const second = await bootstrapVault(binding, { initGitOnCreate: false, home })
+  await bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot })
+  const second = await bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot })
   assert.equal(await readFile(join(vault, '_meta', 'user.md'), 'utf8'), content)
   assert.equal((await lstat(join(vault, '_meta', 'user.md'))).mtimeMs, before.mtimeMs)
   assert.equal(second.createdPaths.includes('_meta/user.md'), false)
@@ -401,10 +408,10 @@ test('_meta/user.md is never created and never overwritten', async (t) => {
 // ---------------------------------------------------------------------------
 
 test('the generated region carries the fixed four columns and escapes a `|` in a cell', async (t) => {
-  const { vault, repo, home } = await fixture(t)
+  const { vault, repo, home, dataRoot } = await fixture(t)
   const binding = await bind({ vault, repo, home, slug: 'acme', displayName: 'Acme | 记忆' })
 
-  await bootstrapVault(binding, { initGitOnCreate: false, home })
+  await bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot })
   const text = await registryText(vault)
   const { declaredHash, body } = registryRegion(text)
 
@@ -433,9 +440,9 @@ test('escapeRegistryCell escapes separators, backslashes and refuses control cha
 // ---------------------------------------------------------------------------
 
 test('a tampered table with a matching hash stops the write', async (t) => {
-  const { vault, repo, home } = await fixture(t)
+  const { vault, repo, home, dataRoot } = await fixture(t)
   const alpha = await bind({ vault, repo, home })
-  await bootstrapVault(alpha, { initGitOnCreate: false, home })
+  await bootstrapVault(alpha, { initGitOnCreate: false, home, dataRoot })
 
   const hub = alpha.relativeDir
   const registryPath = join(vault, REGISTRY_RELATIVE_PATH)
@@ -443,14 +450,14 @@ test('a tampered table with a matching hash stops the write', async (t) => {
   const before = await snapshot(vault)
 
   const beta = handBinding(vault, { projectId: ID2, slug: 'beta', displayName: 'Beta' })
-  await assert.rejects(bootstrapVault(beta, { initGitOnCreate: false, home }), { code: 'registry-duplicate-id' })
+  await assert.rejects(bootstrapVault(beta, { initGitOnCreate: false, home, dataRoot }), { code: 'registry-duplicate-id' })
   assert.deepEqual(await snapshot(vault), before, 'a refused bootstrap must not write anything')
 })
 
 test('a generated-region hash mismatch stops the write', async (t) => {
-  const { vault, repo, home } = await fixture(t)
+  const { vault, repo, home, dataRoot } = await fixture(t)
   const alpha = await bind({ vault, repo, home })
-  await bootstrapVault(alpha, { initGitOnCreate: false, home })
+  await bootstrapVault(alpha, { initGitOnCreate: false, home, dataRoot })
 
   const registryPath = join(vault, REGISTRY_RELATIVE_PATH)
   const valid = await readFile(registryPath, 'utf8')
@@ -459,25 +466,25 @@ test('a generated-region hash mismatch stops the write', async (t) => {
   // 1. the declared hash no longer matches the bytes it covers
   await writeFile(registryPath, valid.replace(/sha256:[0-9a-f]{64}/, `sha256:${'0'.repeat(64)}`))
   const tamperedHash = await snapshot(vault)
-  await assert.rejects(bootstrapVault(beta, { initGitOnCreate: false, home }), { code: 'registry-hash-mismatch' })
+  await assert.rejects(bootstrapVault(beta, { initGitOnCreate: false, home, dataRoot }), { code: 'registry-hash-mismatch' })
   assert.deepEqual(await snapshot(vault), tamperedHash, 'a refused bootstrap must not write anything')
 
   // 2. the region carries no hash at all
   await writeFile(registryPath, valid.replace(/ begin sha256:[0-9a-f]{64}/, ' begin'))
   const noHash = await snapshot(vault)
-  await assert.rejects(bootstrapVault(beta, { initGitOnCreate: false, home }), { code: 'registry-hash-missing' })
+  await assert.rejects(bootstrapVault(beta, { initGitOnCreate: false, home, dataRoot }), { code: 'registry-hash-missing' })
   assert.deepEqual(await snapshot(vault), noHash, 'a refused bootstrap must not write anything')
 })
 
 test('a symlinked _meta directory is refused instead of written through', async (t) => {
-  const { root, vault, repo, home } = await fixture(t)
+  const { root, vault, repo, home, dataRoot } = await fixture(t)
   const binding = await bind({ vault, repo, home })
   await mkdir(vault, { recursive: true })
   const outside = join(root, 'outside-meta')
   await mkdir(outside, { recursive: true })
   await symlink(outside, join(vault, '_meta'))
 
-  await assert.rejects(bootstrapVault(binding, { initGitOnCreate: false, home }), /symlink/i)
+  await assert.rejects(bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot }), /symlink/i)
   assert.deepEqual(await readdir(outside), [])
 })
 
@@ -486,12 +493,12 @@ test('a symlinked _meta directory is refused instead of written through', async 
 // ---------------------------------------------------------------------------
 
 test('a second project gains its own row without disturbing the first', async (t) => {
-  const { vault, repo, otherRepo, home } = await fixture(t)
+  const { vault, repo, otherRepo, home, dataRoot } = await fixture(t)
   const alpha = await bind({ vault, repo, home })
-  await bootstrapVault(alpha, { initGitOnCreate: false, home })
+  await bootstrapVault(alpha, { initGitOnCreate: false, home, dataRoot })
 
   const beta = await bind({ vault, repo: otherRepo, home, projectId: ID2, slug: 'beta', displayName: 'Beta' })
-  const second = await bootstrapVault(beta, { initGitOnCreate: false, home })
+  const second = await bootstrapVault(beta, { initGitOnCreate: false, home, dataRoot })
   assert.equal(second.registryUpdated, true)
 
   const text = await registryText(vault)
@@ -502,17 +509,17 @@ test('a second project gains its own row without disturbing the first', async (t
 
   // re-running either project is a no-op, byte for byte
   const before = await snapshot(vault)
-  const againAlpha = await bootstrapVault(alpha, { initGitOnCreate: false, home })
-  const againBeta = await bootstrapVault(beta, { initGitOnCreate: false, home })
+  const againAlpha = await bootstrapVault(alpha, { initGitOnCreate: false, home, dataRoot })
+  const againBeta = await bootstrapVault(beta, { initGitOnCreate: false, home, dataRoot })
   assert.equal(againAlpha.registryUpdated, false)
   assert.equal(againBeta.registryUpdated, false)
   assert.deepEqual(await snapshot(vault), before)
 })
 
 test('an existing row is verified, never rewritten, and a conflicting directory stops the write', async (t) => {
-  const { vault, repo, home } = await fixture(t)
+  const { vault, repo, home, dataRoot } = await fixture(t)
   const alpha = await bind({ vault, repo, home })
-  await bootstrapVault(alpha, { initGitOnCreate: false, home })
+  await bootstrapVault(alpha, { initGitOnCreate: false, home, dataRoot })
   const before = await snapshot(vault)
 
   // the same id pointing at a different directory is a conflict, not an update
@@ -522,7 +529,7 @@ test('an existing row is verified, never rewritten, and a conflicting directory 
     displayName: 'Alpha',
     relativeDir: `${PROJECTS_DIR}/alpha-renamed--${ID1.slice(0, 8)}`,
   })
-  await assert.rejects(bootstrapVault(moved, { initGitOnCreate: false, home }), { code: 'registry-id-conflict' })
+  await assert.rejects(bootstrapVault(moved, { initGitOnCreate: false, home, dataRoot }), { code: 'registry-id-conflict' })
 
   // a directory already owned by another id is a conflict even when the id8 matches
   const twin = handBinding(vault, {
@@ -531,19 +538,19 @@ test('an existing row is verified, never rewritten, and a conflicting directory 
     displayName: 'Twin',
     relativeDir: `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}`,
   })
-  await assert.rejects(bootstrapVault(twin, { initGitOnCreate: false, home }), { code: 'registry-directory-taken' })
+  await assert.rejects(bootstrapVault(twin, { initGitOnCreate: false, home, dataRoot }), { code: 'registry-directory-taken' })
 
   assert.deepEqual(await snapshot(vault), before)
 })
 
 test('a registry file without a generated region gains one and keeps every existing byte', async (t) => {
-  const { vault, repo, home } = await fixture(t)
+  const { vault, repo, home, dataRoot } = await fixture(t)
   const binding = await bind({ vault, repo, home })
   const original = '# 我的注册表\n\n这是我自己写下的说明，插件必须原样保留。\n'
   await mkdir(join(vault, '_meta'), { recursive: true })
   await writeFile(join(vault, REGISTRY_RELATIVE_PATH), original)
 
-  const result = await bootstrapVault(binding, { initGitOnCreate: false, home })
+  const result = await bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot })
   const text = await registryText(vault)
 
   assert.equal(result.registryUpdated, true)
@@ -555,7 +562,7 @@ test('a registry file without a generated region gains one and keeps every exist
 })
 
 test('an invalid binding is refused before anything is written', async (t) => {
-  const { vault, home } = await fixture(t)
+  const { vault, home, dataRoot } = await fixture(t)
   const cases = [
     [null, 'binding-invalid'],
     [{ kind: 'conflict', reason: 'nope' }, 'binding-invalid'],
@@ -568,7 +575,7 @@ test('an invalid binding is refused before anything is written', async (t) => {
   ]
   for (const [binding, code] of cases) {
     await assert.rejects(
-      bootstrapVault(binding, { initGitOnCreate: false, home }),
+      bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot }),
       (error) => error instanceof BootstrapError && error.code === code,
       `expected ${JSON.stringify(binding)} to be refused with ${code}`,
     )
