@@ -15,7 +15,7 @@
 | 项目 | 当前证据 | 对计划的约束 |
 |---|---|---|
 | DSH 会话与模型 API | 本机 DSH 0.1.5-rc.2 类型声明：`Session.snapshotEvents()`、`ctx.sessions.flush(session)`、`LlmRuntime.stream(GenerateOptions)`；见 `research/dsh-agent-session-events.md` | P0 记录真实事件顺序；提炼使用完整请求对象并检查 `finish.reason.kind` |
-| Node/FTS5 与文件原语 | 本机 macOS 的 Node 22.22.2 和 25.9.0 均通过 FTS5、`link` 第二次 `EEXIST`、同目录 `rename` 与目录句柄 `fsync` 探针；[Node 22.13.1 文档](https://nodejs.org/download/release/v22.13.1/docs/api/sqlite.html)记载 22.13.0 起无需实验标志 | 最低声明版本仍须 P0 在该版本及目标平台实测，不能由当前两版外推 |
+| Node/FTS5 与文件原语 | **P0 实测（Task 2）**：`engines.node` 下界为 **`>=22.22.2`**。Node 22.13.0 可无标志导入 `node:sqlite`，但其内置 SQLite 3.47.2 **未编译 FTS5**（`no such module: fts5`，加 `--experimental-sqlite` 也一样）；22.22.2（SQLite 3.51.2）与 25.9.0（3.51.3）均通过 FTS5，且通过 `link` 第二次 `EEXIST`、同目录 `rename`、文件与目录 `fsync`。22.14.0–22.21.x 未测 | 「无需实验标志」与「FTS5 可用」是两件事。声明下界取实测值 `>=22.22.2`；22.14–22.21 视为未验证，不得据此放宽 |
 | FTS 排序 | [SQLite FTS5 官方说明](https://www.sqlite.org/fts5.html)规定 `bm25()` 数值越小越相关，`unicode61` 将连续字母/数字作为 token | 使用 CJK 双字预分词、`bm25 ASC`，单字走受限子串分支 |
 | YAML 原字节更新 | 本机 `yaml` 2.9.1 的解析节点 `range` 为 JavaScript 字符偏移；有 `keepSourceTokens` 和 `uniqueKeys` 选项 | 中文/emoji 前缀测试必须检查字符偏移到 UTF-8 字节偏移的转换 |
 | 隔离测试 | 已用临时 `DSH_HOME` 验证 `--from-default-profile headless --dump-config` 在新 home 创建 profile | P0/P4 使用独立 profile；事务、索引、pending 从同一个测试数据根派生 |
@@ -104,7 +104,7 @@
 
 **Interfaces:** 输出 `ctx.get('llm')` 是否存在、实测 `stream` 请求/响应形状、AbortSignal/超时行为、最低受支持 Node 版本的 SQLite/FTS5 结果。
 
-- [ ] **Step 1: 写最低环境失败断言。** 在候选最低 Node 版本（先测 22.13，再依结果调整）上执行，除 FTS5 外还要在临时目录验证同目录 `link` 独占发布、`rename` 原子替换、文件/目录 `fsync`；任何不支持的文件 API 都阻断当前事务设计：
+- [ ] **Step 1: 写最低环境失败断言。** 在最低 Node 版本（P0 已定为 **22.22.2**；22.13.0 保留为反例，须断言它 FTS5 不可用）上执行，除 FTS5 外还要在临时目录验证同目录 `link` 独占发布、`rename` 原子替换、文件/目录 `fsync`；任何不支持的文件 API 都阻断当前事务设计：
 
   ```js
   import { DatabaseSync } from 'node:sqlite'
@@ -140,7 +140,7 @@
   ```
 
 - [ ] **Step 2: `node --test test/config.test.js` 应因模块不存在失败。**
-- [ ] **Step 3: 按设计 §12 写 schemastery `Config` 和范围校验；包仅声明实需的 `@deepseek-ai/schemastery`、`yaml` 2.x 与 DSH peer dependencies。** Cordis 已在 `apply` 前运行 `Config['~standard'].validate`；单元测试用同一 Standard Schema 入口构造默认值，再做实现层的数值范围检查，避免测试与宿主使用两套不同解析逻辑。`engines.node` 采用 Task 2 实测下界；`cordis.patch.yml` 插入 `obsidian-mem` row；`package.json` 的 `dsh.bundle.patch` 指向它。`dsh.plugin.json` 版本与 `package.json` 相同。
+- [ ] **Step 3: 按设计 §12 写 schemastery `Config` 和范围校验；包仅声明实需的 `@deepseek-ai/schemastery`、`yaml` 2.x 与 DSH peer dependencies。** Cordis 已在 `apply` 前运行 `Config['~standard'].validate`；单元测试用同一 Standard Schema 入口构造默认值，再做实现层的数值范围检查，避免测试与宿主使用两套不同解析逻辑。`engines.node` 固定为实测下界 **`">=22.22.2"`**（P0 反例：22.13.0 的 SQLite 3.47.2 无 FTS5）；`cordis.patch.yml` 插入 `obsidian-mem` row；`package.json` 的 `dsh.bundle.patch` 指向它。`dsh.plugin.json` 版本与 `package.json` 相同。
 
   ```js
   // lib/config.js
@@ -524,7 +524,7 @@
   ```
 
 - [ ] **Step 2: `node --test test/distill.test.js` 应失败。**
-- [ ] **Step 3: 按 P0 实测签名直接调用 `ctx.get('llm').stream`，显式 provider/model 和 AbortSignal；不附带工具 schema；限制输入字符、输出 token、60 秒超时。** 当前类型契约是单个 `GenerateOptions` 对象：`{provider,model,messages,system,maxTokens,signal}`，不是 `stream(prompt, options)`；`maxOutputTokens` 是插件配置名，映射到请求的 `maxTokens`。从流中只收集文本块，拒绝工具调用、`max-tokens`、`error`、`aborted` 和缺失终止块；`usage` 仅作审计。只从 `decision|gotcha|convention` 中提取，模型输出严格 JSON；先把完整原始结果和校验后的结果持久写入 pending，再允许写 vault。低置信改投收件箱；`accepted`/`observed` 的证据不充分时降级，不凭模型自述提权。
+- [ ] **Step 3: 按 P0 实测签名直接调用 `ctx.get('llm').stream`，显式 provider/model 和 AbortSignal；不附带工具 schema；限制输入字符、输出 token、60 秒超时。** **P0 实测约束**：`stream()` 同步返回 `AsyncIterable<StreamChunk>`（但若别的插件拦截了 `llm/stream` 瀑布，可能返回 thenable，需防御）；取消与超时是**终止块**（`finish.reason.kind='aborted'`，`failure.code='ABORTED'`）而**不是抛错**，且中止流**没有 `usage` 与 `block-end`**，token 审计必须容忍缺失；`failure.message` **无法**区分超时与用户取消，只有 `signal.reason.name`（`TimeoutError` vs `AbortError`）可以，禁止按 message 文本分支；**空路由会立刻返回 `NO_ADAPTER` 终止块**，不是「走默认路由」，因此必须先在配置或 job 里解析出非空 route，否则记 `deferred` 且不发请求。当前类型契约是单个 `GenerateOptions` 对象：`{provider,model,messages,system,maxTokens,signal}`，不是 `stream(prompt, options)`；`maxOutputTokens` 是插件配置名，映射到请求的 `maxTokens`。从流中只收集文本块，拒绝工具调用、`max-tokens`、`error`、`aborted` 和缺失终止块；`usage` 仅作审计。只从 `decision|gotcha|convention` 中提取，模型输出严格 JSON；先把完整原始结果和校验后的结果持久写入 pending，再允许写 vault。低置信改投收件箱；`accepted`/`observed` 的证据不充分时降级，不凭模型自述提权。
 
   ```js
   import { randomUUID } from 'node:crypto'
