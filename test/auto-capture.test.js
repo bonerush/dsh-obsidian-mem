@@ -27,6 +27,7 @@
 // a real throwaway data root and an explicit queue root: nothing here may read or
 // write the user's `~/.dsh` or a real vault.
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
@@ -43,6 +44,7 @@ import {
   loadPending,
   readResultReceipts,
   writeJobAtomic,
+  writeResultReceipt,
 } from '../lib/pending.js'
 import { bootstrapVault, parseNote } from '../lib/vault.js'
 
@@ -477,6 +479,39 @@ test('a project that cannot be resolved defers without consuming an attempt', as
   assert.equal(job.state, 'deferred')
   assert.equal(job.deferredReason, 'no-binding')
   assert.equal(job.attempts, 0)
+})
+
+test('a deferred job is retried by the worker timer alone, with no new capture or restart', async (t) => {
+  const f = await fixture(t)
+  await writeJobAtomic(f.queueRoot, jobFixture())
+  // The first pass runs with no llm at all: the job defers, and the timer the pass
+  // armed must be what brings it back (no capture, no restart, no external kick).
+  let llm
+  const worker = createQueueWorker({
+    queueRoot: f.queueRoot,
+    dataRoot: f.dataRoot,
+    home: f.home,
+    config: baseConfig({ captureIdleMs: 1000 }),
+    resolveBinding: () => f.binding,
+    retryBackoffMs: 0,
+    warn: () => {},
+    getLlm: () => llm,
+  })
+  t.after(() => worker.stop())
+
+  const first = await worker.pass()
+  assert.equal(first.deferred, 1)
+  assert.equal((await jobOnDisk(f)).state, 'deferred')
+  assert.ok(Number.isFinite(first.nextDueAt), 'a deferral schedules a re-check')
+  assert.ok(first.nextDueAt > Date.now(), 'and it is in the future, not a spin')
+
+  llm = stubLlm(JSON.stringify({ items: [itemFixture()] }))
+  // Wait for the JOB to finish (not just for the note to appear): the note commits
+  // before the receipt and the deletion, so polling the note alone would race.
+  const finished = await waitFor(() => jobOnDisk(f), (job) => job === null, { timeoutMs: 8000 })
+  assert.equal(finished, null, 'the armed timer retried the deferred job on its own')
+  assert.equal(llm.calls.length, 1)
+  assert.equal((await memoryNotes(f)).length, 1)
 })
 
 // ---------------------------------------------------------------------------
@@ -934,6 +969,135 @@ test('the receipt keeps the real refusal count while the listed reasons stay bou
   assert.equal(receipt.refusedCount, 40, 'the count is never truncated')
   assert.equal(receipt.refused.length, 16, 'the listed reasons are bounded')
   assert.equal(receipt.items.length, 1)
+})
+
+test('a process killed between the validated barrier and the audit still reports the drop', async (t) => {
+  const f = await fixture(t)
+  const raw = JSON.stringify({
+    items: [
+      itemFixture({ title: '保留的结论' }),
+      itemFixture({ title: '被拒的结论', supersedesId: `项目/other--deadbeef/决策/ADR-1.md` }),
+    ],
+  })
+  await writeJobAtomic(f.queueRoot, jobFixture())
+
+  const script = join(f.root, 't16-crash-child.mjs')
+  await writeFile(script, T16_CRASH_CHILD, 'utf8')
+  const killed = spawnSync(process.execPath, [
+    script, f.queueRoot, f.dataRoot, f.home, JSON.stringify(f.binding), raw,
+  ], {
+    encoding: 'utf8',
+    env: { ...process.env, T16_CAPTURE_URL: new URL('../lib/capture.js', import.meta.url).href },
+  })
+  assert.equal(killed.signal, 'SIGKILL', `the child must die at the audit boundary, stderr: ${killed.stderr}`)
+
+  // The durable state after the kill: items are on disk, the audit is missing.
+  const orphan = await jobOnDisk(f)
+  assert.equal(orphan.state, 'validated')
+  assert.equal(orphan.output.refused, null, 'the crash landed before the audit was written')
+  assert.equal(orphan.output.items.length, 1)
+
+  // Resume with no llm: the drop set must be re-derived from the persisted raw.
+  const resumed = await processQueue(queueOptions(f, { llm: undefined }))
+  assert.equal(resumed.completed, 1)
+  const receipt = (await readReceipts(f)).at(-1)
+  assert.equal(receipt.result, 'applied')
+  assert.equal(receipt.refusedCount, 1, 'the drop set is re-derived from the persisted raw')
+  assert.equal(receipt.refused[0].reason, 'foreign-target')
+  assert.equal((await memoryNotes(f)).length, 1)
+})
+
+const T16_CRASH_CHILD = `
+const { processQueue } = await import(process.env.T16_CAPTURE_URL)
+const [queueRoot, dataRoot, home, bindingJson, raw] = process.argv.slice(2)
+const binding = JSON.parse(bindingJson)
+const llm = {
+  stream() {
+    return (async function* () {
+      yield { type: 'text-delta', index: 0, text: raw }
+      yield { type: 'block-end', index: 0, block: { type: 'text', text: raw } }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    })()
+  },
+}
+await processQueue({
+  queueRoot, dataRoot, home, llm,
+  config: {
+    autoCapture: true,
+    captureIdleMs: 90000,
+    distill: {
+      provider: 'deepseek-official', model: 'deepseek-flash', maxItems: 12,
+      minConfidence: 0.75, maxInputChars: 24000, maxOutputTokens: 4000,
+      timeoutMs: 60000, maxRetries: 3, dryRun: false,
+    },
+  },
+  resolveBinding: () => binding,
+  debounceMs: 0,
+  retryBackoffMs: 0,
+  warn: () => {},
+  // The exact boundary: the validated output is durable, the audit write has not
+  // started. A real SIGKILL, so nothing can clean up after it.
+  afterPersist: (jobId, output) => {
+    if (output.state === 'validated') process.kill(process.pid, 'SIGKILL')
+  },
+})
+`
+
+test('a result receipt distinguishes an unaudited turn from an audited empty one', async (t) => {
+  const f = await fixture(t)
+  const base = {
+    jobId: JOB_ID,
+    projectId: PROJECT_ID,
+    sessionId: SESSION_ID,
+    toSeq: TO_SEQ,
+    result: 'applied',
+    items: [],
+    at: '2026-01-01T00:00:00.000Z',
+  }
+  await writeResultReceipt(f.queueRoot, { ...base, refused: null })
+  await writeResultReceipt(f.queueRoot, {
+    ...base,
+    jobId: 'job-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    at: '2026-01-01T00:00:01.000Z',
+    refused: [],
+  })
+
+  const receipts = await readReceipts(f)
+  assert.equal(receipts[0].refused, null, 'never audited is not the same as nothing refused')
+  assert.equal(receipts[0].refusedCount, null)
+  assert.deepEqual(receipts[1].refused, [])
+  assert.equal(receipts[1].refusedCount, 0)
+})
+
+test('an output whose audit cannot be re-derived fails the job instead of completing it', async (t) => {
+  const f = await fixture(t)
+  const raw = JSON.stringify({
+    items: [
+      itemFixture({ title: '保留的结论' }),
+      itemFixture({ title: '被拒的结论', supersedesId: `项目/other--deadbeef/决策/ADR-1.md` }),
+    ],
+  })
+  const items = withIdentity([itemFixture({ title: '保留的结论' })])
+  await writeJobAtomic(f.queueRoot, jobFixture({
+    state: 'validated',
+    output: { state: 'validated', raw, items, usage: null, refused: null },
+  }))
+
+  // `maxItems: 1` makes the persisted output no longer validate, so the drop set
+  // cannot be re-derived. Completing the job would delete the only copy of the
+  // audit, so it is failed (bounded and visible, R43b) and kept instead.
+  const summary = await processQueue(queueOptions(f, {
+    llm: undefined,
+    config: baseConfig({ distill: { maxItems: 1 } }),
+  }))
+  assert.equal(summary.completed, 0)
+  assert.equal(summary.deferred, 1)
+  const job = await jobOnDisk(f)
+  assert.equal(job.state, 'validated')
+  assert.equal(job.lastError.code, 'audit-unavailable')
+  assert.equal(job.attempts, 1)
+  assert.deepEqual(await readReceipts(f), [], 'no receipt claims a completion that did not happen')
+  assert.deepEqual(await memoryNotes(f), [], 'nothing is applied before the audit is durable')
 })
 
 // ---------------------------------------------------------------------------
