@@ -1,0 +1,11 @@
+{
+  "name": "dsh-obsidian-mem-probe",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "probe-plugin.js",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

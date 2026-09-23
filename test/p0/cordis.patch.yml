@@ -1,0 +1,4 @@
+# Discardable P0 probe row. Never shipped with the plugin.
+- insert:
+    - id: obsidian-mem-probe
+      name: dsh-obsidian-mem-probe
