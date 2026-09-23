@@ -21,7 +21,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import process from 'node:process'
@@ -114,9 +114,16 @@ function realHomeFingerprint() {
  * This probe used to assert that `~/Documents/dsh-memory` did not exist. Task 20
  * created that vault on purpose (it holds real notes now), so "absent" is no
  * longer a precondition a correct run can satisfy. What the guard is really for
- * is that this probe never writes there: recording every entry's relative path,
- * size and mtime proves that without reading a note body, and it holds whether
- * the vault exists or not.
+ * is that this probe never writes there: recording every entry's relative path
+ * and size proves that without reading a note body, and it holds whether the
+ * vault exists or not.
+ *
+ * It is `lstat`, and a symlink is recorded as a leaf (`-> target`) instead of
+ * being followed: a walk that follows links can cycle forever, and a fingerprint
+ * of someone else's tree is not evidence about this vault. `mtime` is left out
+ * deliberately — a sync or an editor touch is not a write by this probe, and it
+ * would make the assertion flaky. Sizes and the entry set still catch every
+ * create, delete, rename and rewrite.
  */
 function defaultVaultFingerprint() {
   const root = join(homedir(), 'Documents', 'dsh-memory')
@@ -133,13 +140,12 @@ function defaultVaultFingerprint() {
     for (const name of names) {
       const relative = prefix === '' ? name : `${prefix}/${name}`
       try {
-        const stat = statSync(join(directory, name))
-        if (stat.isDirectory()) {
+        const stat = lstatSync(join(directory, name))
+        if (stat.isSymbolicLink()) parts.push(`${relative} -> ${readlinkSync(join(directory, name))}`)
+        else if (stat.isDirectory()) {
           parts.push(`${relative}/`)
           walk(join(directory, name), relative)
-        } else {
-          parts.push(`${relative} ${stat.size} ${stat.mtimeMs}`)
-        }
+        } else parts.push(`${relative} ${stat.size}`)
       } catch (error) {
         parts.push(`${relative} <unreadable:${error.code}>`)
       }

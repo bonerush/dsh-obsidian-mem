@@ -36,7 +36,7 @@ import toolsPlugin from '@deepseek-ai/dsh-tools'
 
 import { validateConfig } from '../lib/config.js'
 import { createMemoryServices, registerTools } from '../lib/tools.js'
-import { POINTER_FILENAME, REGISTRY_RELATIVE_PATH } from '../lib/vault.js'
+import { POINTER_FILENAME, REGISTRY_RELATIVE_PATH, resolveBinding } from '../lib/vault.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -364,7 +364,13 @@ test('an unreadable registry still refuses and leaves no minted pointer', async 
   assert.match(message, /registry-invalid/)
   // The bind mints the pointer before it reads the registry; a refusal must not
   // leave that half-created identity behind, or the next attempt would read it
-  // instead of minting again.
+  // instead of minting again. The direct seam is the only place the annotated
+  // `unwound` value is visible, so it is asserted here.
+  await pointerIsAbsent(f.repo)
+  const direct = await resolveBinding({ cwd: f.repo, vaultRoot: f.vault, mode: 'local', dataRoot: f.dataRoot, home: f.home })
+  assert.equal(direct.kind, 'conflict')
+  assert.equal(direct.reason, 'registry-invalid')
+  assert.equal(direct.unwound, true, 'the pointer this resolution created must be handed back')
   await pointerIsAbsent(f.repo)
 })
 
@@ -400,6 +406,56 @@ test('a property preflight refusal hands the minted pointer back', async (t) => 
   const second = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'second preflight write')
   assert.match(second, /tags/)
   await pointerIsAbsent(f.repo)
+})
+
+test('a registry whose recorded hash does not match still refuses and leaves no minted pointer', async (t) => {
+  const f = await fixture(t)
+  // Structurally valid, so `resolveBinding` reads it and binds; the declared
+  // sha256 does not cover the body, which only the bootstrap's registry step
+  // verifies — a refusal that still happens before the first vault write.
+  await mkdir(join(f.vault, '_meta'), { recursive: true })
+  await writeFile(join(f.vault, REGISTRY_RELATIVE_PATH), [
+    '<!-- obsidian-mem:registry begin sha256:0000000000000000000000000000000000000000000000000000000000000000 -->',
+    '<!-- obsidian-mem:registry end -->',
+    '',
+  ].join('\n'))
+  const { ctx } = await memoryBed(t, f)
+
+  const first = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'hash-mismatch write')
+  assert.match(first, /recorded sha256/)
+  await pointerIsAbsent(f.repo)
+
+  const second = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'second hash-mismatch write')
+  assert.match(second, /recorded sha256/)
+  await pointerIsAbsent(f.repo)
+})
+
+test('a failure after the skeleton is written keeps the identity, and an explicit bind repairs it', async (t) => {
+  const f = await fixture(t)
+  // A deterministic failure *after* the first skeleton write: the registry
+  // transaction is the last step of a bootstrap, and a `transactions` path that
+  // is a regular file makes it fail there.
+  await writeFile(join(f.dataRoot, 'transactions'), 'not a directory')
+  const { ctx } = await memoryBed(t, f)
+
+  const first = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'post-skeleton write')
+  assert.match(first, /not a directory|ENOTDIR/)
+
+  // The identity stays, because the skeleton it names really exists; only the
+  // registry row is missing. An explicit bind is the documented repair.
+  const bytes = await readPointerBytes(f.repo)
+  const pointer = JSON.parse(bytes.toString('utf8'))
+  const projectDir = `项目/${pointer.slug}--${pointer.projectId.slice(0, 8)}`
+  await readFile(join(f.vault, ...projectDir.split('/'), '_meta', 'hot.md'), 'utf8')
+  await assert.rejects(readFile(join(f.vault, REGISTRY_RELATIVE_PATH)), { code: 'ENOENT' })
+
+  await rm(join(f.dataRoot, 'transactions'))
+  const healed = value(await call(ctx, 'mem_admin', { action: 'bind', mode: 'local' }, { cwd: f.repo }), 'repairing bind')
+  assert.equal(healed.result.status, 'bound')
+  assert.equal(healed.result.registryUpdated, true)
+  assert.deepEqual(await readPointerBytes(f.repo), bytes, 'the repair reuses the identity instead of minting a second one')
+  const registry = await readFile(join(f.vault, REGISTRY_RELATIVE_PATH), 'utf8')
+  assert.match(registry, new RegExp(pointer.projectId))
 })
 
 test('a cloud-managed vault still refuses and mints nothing', async (t) => {

@@ -74,11 +74,17 @@ development rather than a release artifact.
   or unknown-schema pointer, an unreadable registry, a taken directory, a
   cloud-managed vault and an unreadable sibling worktree. A resolution that
   already minted a pointer and then refuses now removes the pointer it created,
-  so a one-off refusal cannot become a sticky one. Reads still never bind. The
-  README "Project bound" row, the `deferred` row and the "memory is silently
-  absent" recovery row now describe this, replacing the Task 20 text that
-  documented the defect instead. Regression tests: `test/auto-bind.test.js` (11
-  cases through the shipped tool runtime; 10 fail against the previous `lib/`).
+  so a one-off refusal cannot become a sticky one; an automatic bind that meets a
+  bootstrap refusal releases the pointer only when the bootstrap created no
+  project content (`vaultWritten`), so the §6.4 property preflight, a registry
+  whose recorded sha256 does not cover its body and every other pre-write refusal
+  leave the repository exactly as the write found it. Reads still never bind. The
+  README "Project bound" row and the "A repository refuses to write", "A plain
+  directory stays read-only" and "Memory is silently absent" recovery rows now
+  describe this, replacing the Task 20 text that documented the defect instead.
+  Regression tests: `test/auto-bind.test.js` (15 cases through the shipped tool
+  runtime; 14 fail against the previous `lib/` — the one pass is the
+  cloud-managed guard, which refuses before any binding work).
   A `deferred` job can also be a validation refusal (`truncated`,
   `too-many-items`) backing off, which the recovery table previously attributed
   only to a missing route or binding.
