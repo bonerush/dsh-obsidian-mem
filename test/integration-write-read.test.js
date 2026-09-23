@@ -10,8 +10,9 @@
 // What is under test end to end is exactly the P1 claim: `mem_write` lands a
 // note in the vault, `mem_search` finds the same id through the index, and
 // `mem_read` returns that same note's body and hash. Around that chain the file
-// also pins the P1 honesty boundary — `mem_brief` and the unavailable
-// `mem_admin` actions answer `not-ready-in-p1` instead of inventing a result.
+// also pins the honesty boundary — Task 11 binds `mem_brief` to the real
+// `buildBrief`, and the unavailable `mem_admin` actions answer
+// `not-ready-in-p1` instead of inventing a result.
 //
 // Like `test/tools.test.js`, this file mounts the real `@deepseek-ai/dsh-tools`
 // runtime, which is an optional peer dependency DSH provides to an installed
@@ -357,12 +358,24 @@ test('mem_log section=hot writes the controlled 进行中 zone, not a day log', 
   assert.match(hot.slice(start, end), /正在实现六个工具。/)
 })
 
-test('mem_brief answers with the structured P1 boundary marker', async (t) => {
+test('mem_brief returns the real budgeted brief through the tool runtime', async (t) => {
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
+  value(await call(ctx, 'mem_log', { text: '简报必须出现这一条。', session: 'sess-brief', section: 'hot' }, { cwd: f.repo }), 'hot log')
   const brief = value(await call(ctx, 'mem_brief', {}, { cwd: f.repo }), 'mem_brief')
-  assert.equal(brief.status, 'not-ready-in-p1')
-  assert.equal(typeof brief.message, 'string')
+
+  // Task 11 binds `mem_brief` to the same `buildBrief` the pre-step injection
+  // uses, so the P1 `not-ready-in-p1` marker is gone: the tool answers the real
+  // brief, with the binding, the hot entry and its own budget report.
+  assert.equal(typeof brief.text, 'string')
+  assert.ok(brief.text.includes(f.binding.relativeDir))
+  assert.ok(brief.text.includes('简报必须出现这一条。'))
+  assert.equal(brief.charCount, [...brief.text].length)
+  assert.ok(brief.charCount <= 6000, 'the default brief budget is respected')
+  assert.equal(brief.indexState.status, 'ready')
+  assert.ok(Array.isArray(brief.hotItems) && brief.hotItems.length === 1)
+  assert.match(brief.hotHash, /^[0-9a-f]{64}$/)
+  assert.match(brief.text, /<!-- brief: \d+\/6000 chars/)
 })
 
 test('mem_admin exposes index status, the project list and bind(show)', async (t) => {
