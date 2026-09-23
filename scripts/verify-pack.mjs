@@ -68,6 +68,32 @@ const REQUIRED_ASSETS = [
 /** The six registered tools; the design deliberately caps the surface at six. */
 const TOOL_NAMES = ['mem_search', 'mem_read', 'mem_write', 'mem_log', 'mem_brief', 'mem_admin']
 
+/**
+ * A tool *registration site* in `lib/tools.js`, as that module writes it:
+ * `name: 'mem_search'` inside a `defineTool({...})` call.
+ *
+ * Matched in this shape and not as a bare string, because the module's own
+ * header comment and its exported `TOOL_NAMES` list both name all six tools — a
+ * substring search would keep passing with every registration deleted, which is
+ * a check that proves nothing. Measured: exactly six sites match and no other
+ * line in the file does.
+ */
+const REGISTRATION_SITE = /name:\s*'mem_[a-z]+'/g
+
+/**
+ * The tool names actually registered in one source text.
+ *
+ * @param {string} source - the contents of `lib/tools.js`.
+ * @returns {Set<string>} the names found at registration sites.
+ */
+function registeredToolNames(source) {
+  const names = new Set()
+  for (const match of source.matchAll(REGISTRATION_SITE)) {
+    names.add(match[0].replace(/^name:\s*'/, '').replace(/'$/, ''))
+  }
+  return names
+}
+
 /** Parse `--root <dir>` (also `--root=<dir>`). */
 function parseArgs(argv) {
   let root = DEFAULT_ROOT
@@ -204,12 +230,19 @@ export function verifyPack(root) {
   }
 
   // 5. The shipped tool surface is still the six tools the design promises.
+  //
+  // Both directions are checked: a dropped registration and a seventh tool. The
+  // surface is capped at six on purpose (`lib/tools.js` header, spec §9), so an
+  // extra registration is as much a packaging regression as a missing one.
   const toolsPath = join(root, 'lib/tools.js')
   if (existsSync(toolsPath)) {
-    const source = readFileSync(toolsPath, 'utf8')
+    const registered = registeredToolNames(readFileSync(toolsPath, 'utf8'))
     for (const name of TOOL_NAMES) {
-      if (!source.includes(`'${name}'`) && !source.includes(`"${name}"`) && !source.includes(`\`${name}\``)) {
-        problems.push(`lib/tools.js no longer registers ${name}`)
+      if (!registered.has(name)) problems.push(`lib/tools.js no longer registers ${name} (no name: '${name}' registration site)`)
+    }
+    for (const name of registered) {
+      if (!TOOL_NAMES.includes(name)) {
+        problems.push(`lib/tools.js registers ${name}, which is not one of the six tools (the surface is deliberately capped)`)
       }
     }
   } else {

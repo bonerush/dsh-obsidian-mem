@@ -182,3 +182,32 @@ test('an unstated Node floor fails', (t) => {
   assert.notEqual(run.status, 0)
   assert.match(run.stdout + run.stderr, /engines/)
 })
+
+// The regression that made this check worth tightening: a bare substring search
+// over `lib/tools.js` passes on the module's own header comment and on its
+// exported `TOOL_NAMES` list, so it kept passing with every registration deleted.
+// These two cases pin the shapes that must be distinguished.
+test('the tool check requires a registration site, not a mention', (t) => {
+  const run = verify(t)
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+
+  // Every one of the six names is still present as a *mention* — in a comment and
+  // in an exported list — while `mem_admin` has no `name: '…'` registration.
+  write(run.root, 'lib/tools.js', [
+    '// The six tools: mem_search, mem_read, mem_write, mem_log, mem_brief, mem_admin.',
+    `export const TOOL_NAMES = Object.freeze([${TOOL_NAMES.map((name) => `'${name}'`).join(', ')}])`,
+    ...TOOL_NAMES.filter((name) => name !== 'mem_admin').map((name) => `  name: '${name}',\n`),
+  ].join('\n'))
+  const dropped = spawnSync(process.execPath, [VERIFIER, '--root', run.root], { encoding: 'utf8' })
+  assert.notEqual(dropped.status, 0, 'a comment and an export list must not satisfy the check')
+  assert.match(dropped.stdout + dropped.stderr, /no longer registers mem_admin/)
+})
+
+test('a seventh registration fails, because the surface is capped at six', (t) => {
+  const run = verify(t)
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+  write(run.root, 'lib/tools.js', [...TOOL_NAMES, 'mem_extra'].map((name) => `  name: '${name}',\n`).join(''))
+  const extra = spawnSync(process.execPath, [VERIFIER, '--root', run.root], { encoding: 'utf8' })
+  assert.notEqual(extra.status, 0)
+  assert.match(extra.stdout + extra.stderr, /mem_extra/)
+})
