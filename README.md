@@ -109,7 +109,8 @@ session to attach to. An existing session keeps the old plugin instance.
 
 1. Obsidian → **Open folder as vault** → select the vault directory.
 2. That is all. Nothing needs to be pre-created; the plugin bootstraps the project
-   directory on first use.
+   directory on first use — for a Git repository, the first `mem_write` or
+   `mem_log` (see [Project bound](#verify-it-works)).
 3. The plugin never writes `.obsidian/types.json`, never edits your existing
    notes, and never runs a Git command in the vault except `git init` on a
    directory it just created.
@@ -129,7 +130,7 @@ Start a session in any Git repository and ask, or just check the tools are there
 | Check | How |
 |---|---|
 | Row mounted | `dsh --profile web --dump-config \| grep obsidian-mem` |
-| Project bound | `mem_admin(action="projects")` reports the resolution. A Git repository with **no** `.obsidian-mem` stays unbound — nothing binds it implicitly: the six tools resolve with `mode: "show"`, so `mem_write` refuses with `not-bound` instead of minting the pointer. Run `mem_admin(action="bind", mode="local")` to create the pointer and the project skeleton, then **start a new session**: the unbound resolution is cached per working directory for the life of the loaded plugin, so the tools keep refusing until the plugin reloads (measured, `docs/dogfood-results.md`). |
+| Project bound | `mem_admin(action="projects")` reports the resolution. A Git repository with **no** `.obsidian-mem` is bound by its **first write**: `mem_write` or `mem_log` generates the slug, creates the pointer exclusively, bootstraps the skeleton and registers the project, then proceeds — and the binding is visible to the next call in the same session. An existing pointer is never overwritten or repaired, and a refusal (a corrupt or unknown-schema pointer, an unreadable sibling worktree, an unreadable registry, a cloud-managed vault) is reported with its reason instead of minting. Reads never bind: `mem_search` and `mem_read` stay read-only on a pointerless repository, and a directory that is **not** in Git stays read-only until `mem_admin(action="bind", mode="local")`. |
 | Recall injected once | the first request of a session carries one `obsidian-mem` recall message (≤ `briefBudgetChars`) |
 | CJK search works | write a note, then `mem_search` a two-character Chinese word |
 | Vault files are real | `ls "$vault/项目/"` — plain Markdown, readable with the plugin uninstalled |
@@ -548,9 +549,9 @@ decide what to trust:
 | A distillation job is `failed` | The model call or validation failed `maxRetries` times. The job keeps its reason. | `mem_admin(action="jobs")` to inspect, then `mem_admin(action="jobs", jobId="…", retry=true)`. |
 | A job sits in `deferred` | No usable model route, the repository is not bound, or the model's output was refused by validation (`truncated`, `too-many-items`) and the job is backing off. It retries on each idle window. | Set `distill.provider` + `distill.model`, bind the project, or raise `distill.maxOutputTokens` / `distill.maxItems` for those two refusal codes. |
 | DSH crashed mid-write | An unfinished transaction is journalled under `$DSH_HOME/data/obsidian-mem/transactions/`. | Restart the session: recovery runs before new work. If a file was edited externally during the crash, both versions are kept and reported — nothing is overwritten. |
-| A repository refuses to write | A remote-URL mismatch, a different `projectId` for the same directory, a sibling worktree with conflicting metadata, or an unreadable sibling. | `mem_admin(action="bind", mode="show")` reports the situation; `mode="retain"` or `mode="fork"` is the explicit fix. A stale worktree needs `git worktree prune`. |
-| A plain directory stays read-only | It is not inside a Git repository, so the plugin will not add it to long-term memory on its own. | `mem_admin(action="bind", mode="local")` to bind it explicitly. |
-| Memory is silently absent for a session | Any non-`bound` resolution means "no memory for this session" — by design, it never throws and never guesses. A repository with no pointer is the common case, and it does not bind itself. | Check `mem_admin(action="projects")` and the pointer file; `mem_admin(action="bind", mode="local")` creates a missing pointer, then start a new session so the tools pick the binding up. |
+| A repository refuses to write | A remote-URL mismatch, a different `projectId` for the same directory, a sibling worktree with conflicting metadata, or an unreadable sibling. The refusal names the reason and leaves the pointer exactly as it was — it never repairs or replaces one. | `mem_admin(action="bind", mode="show")` reports the situation; `mode="retain"` or `mode="fork"` is the explicit fix. A stale worktree needs `git worktree prune`. |
+| A plain directory stays read-only | It is not inside a Git repository, so the plugin will not add it to long-term memory on its own — an implicit first write binds Git repositories only. | `mem_admin(action="bind", mode="local")` to bind it explicitly; the binding is live for the same session. |
+| Memory is silently absent for a session | Any non-`bound` resolution means "no memory for this session" — by design, it never throws and never guesses. Reads never bind a repository, and a Git repository with no pointer is bound by its first write; a repository whose pointer or registry the plugin refuses to trust stays unbound until that is resolved. | Check `mem_admin(action="projects")` and the pointer file, then write once (a Git repository) or run `mem_admin(action="bind", mode="local")` (any directory) — both take effect in the same session. |
 
 ---
 

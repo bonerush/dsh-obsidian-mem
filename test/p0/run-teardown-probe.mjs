@@ -21,7 +21,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import process from 'node:process'
@@ -108,6 +108,47 @@ function realHomeFingerprint() {
   return map
 }
 
+/**
+ * A metadata-only fingerprint of the default vault root.
+ *
+ * This probe used to assert that `~/Documents/dsh-memory` did not exist. Task 20
+ * created that vault on purpose (it holds real notes now), so "absent" is no
+ * longer a precondition a correct run can satisfy. What the guard is really for
+ * is that this probe never writes there: recording every entry's relative path,
+ * size and mtime proves that without reading a note body, and it holds whether
+ * the vault exists or not.
+ */
+function defaultVaultFingerprint() {
+  const root = join(homedir(), 'Documents', 'dsh-memory')
+  if (!existsSync(root)) return 'absent'
+  const parts = []
+  const walk = (directory, prefix) => {
+    let names
+    try {
+      names = readdirSync(directory).sort()
+    } catch (error) {
+      parts.push(`${prefix} <unreadable:${error.code}>`)
+      return
+    }
+    for (const name of names) {
+      const relative = prefix === '' ? name : `${prefix}/${name}`
+      try {
+        const stat = statSync(join(directory, name))
+        if (stat.isDirectory()) {
+          parts.push(`${relative}/`)
+          walk(join(directory, name), relative)
+        } else {
+          parts.push(`${relative} ${stat.size} ${stat.mtimeMs}`)
+        }
+      } catch (error) {
+        parts.push(`${relative} <unreadable:${error.code}>`)
+      }
+    }
+  }
+  walk(root, '')
+  return sha256(parts.join('\n'))
+}
+
 const checks = []
 /** Record one assertion and print it in the probe's own vocabulary. */
 function check(id, ok, detail) {
@@ -139,6 +180,7 @@ async function main() {
   await run('git', ['-c', 'user.name=probe', '-c', 'user.email=probe@example.invalid', 'commit', '-q', '-m', 'chore: seed'], { cwd: repo })
 
   const homeBefore = realHomeFingerprint()
+  const vaultBefore = defaultVaultFingerprint()
   const env = { ...process.env, DSH_HOME: dshHome, DEEPSEEK_API_KEY: credential.value }
 
   await run(DSH_BIN, ['--profile', PROFILE, '--from-default-profile', 'headless', '--dump-config'], { cwd: REPO_ROOT, env })
@@ -216,7 +258,7 @@ async function main() {
   check('real-dsh-home-unchanged', sha256(JSON.stringify(homeBefore)) === sha256(JSON.stringify(homeAfter)), 'the real ~/.dsh fingerprint is byte-identical')
   check('real-data-dir-absent', !existsSync(join(homedir(), '.dsh', 'data')), '~/.dsh/data does not exist')
   check('real-skills-only-ultramath', JSON.stringify(readdirSync(join(homedir(), '.dsh', 'skills'))) === JSON.stringify(['ultramath']), `~/.dsh/skills = ${JSON.stringify(readdirSync(join(homedir(), '.dsh', 'skills')))}`)
-  check('default-vault-absent', !existsSync(join(homedir(), 'Documents', 'dsh-memory')), '~/Documents/dsh-memory does not exist')
+  check('default-vault-unchanged', defaultVaultFingerprint() === vaultBefore, '~/Documents/dsh-memory metadata is identical (before/after)')
 
   process.stdout.write(`run-teardown-probe: credentialRoute=${credential.source} records=${records.length}\n`)
   process.stdout.write('--- records (metadata only) ---\n')

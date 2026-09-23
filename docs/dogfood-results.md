@@ -43,7 +43,7 @@
 | 门 | 要求（§1 / §15） | 判定依据 | 结果 |
 |---|---|---|---|
 | G1 | 插件写的项目文档以 vault 为权威副本、可浏览/双链/搜索；仓库里其他工具写的 Markdown 被发现并报告 | C2/C5/C8 + 文件级 Obsidian 事实 | **PASS**（GUI 那半 未验证，§9 U1） |
-| G2 | 长期记忆自动沉淀并在新会话首轮回到上下文 | C4 + C5 + 跨会话召回 | **PASS**（首次绑定需显式动作，见 F1） |
+| G2 | 长期记忆自动沉淀并在新会话首轮回到上下文 | C4 + C5 + 跨会话召回 | **PASS**（本行是对 `bc8ef69` 的判定：当时首次绑定需显式动作，见 F1；F1 的自动绑定已由 Task 20b 实现） |
 | G3 | 完成回合空闲后自动提炼；失败可重试；崩溃后不重复 | C6/C11 + 真实 receipt | **PASS**（同进程一次性 apply 未验证，§9 U3） |
 | G4 | 记忆可取代、可标争议、无删除 | C10 | **PASS**（取代在隔离 vault 复现；真实 vault 未发生） |
 | G5 | 方法论可复用、可脱离插件运转 | C12 + 独立 SDK 依赖 | **PASS** |
@@ -339,6 +339,10 @@ git status --short
 
 本任务的处理：**只改文档，不改 `lib/`**（本任务的改动面被限定为指针 + 报告 + 必要的文档修正；改 `lib/` 会重开一次行为变更与评审，而且会移动「已验证 commit」）。已按实测修正 `README.md` 三处（*Verify it works* 的 Project bound 行、`deferred` 恢复行、`memory is silently absent` 恢复行）与 `CHANGELOG.md` 一条。**建议**：把「首个有指针的写入自动铸指针」要么实现成 `mem_write` 在 `no-pointer` 且是 Git 仓库时降级为一次 `local` 绑定，要么明确把 `mem_admin(action="bind", mode="local")` 写成安装步骤第 6 步；无论哪种都要在 `bind` 成功后失效该 cwd 的负缓存。
 
+**处理结果（Task 20b，本文件写于修复之后）**：建议的前半段被采纳并实现——`mem_write` / `mem_log` 在 `mode: 'show'` 给出 `kind:'unbound' / reason:'no-pointer'` 时，改用 `mode: 'local'` 重新解析一次，走的正是本节引用的 `lib/vault.js` 创建分支（独占写指针、继承 sibling worktree 指针、注册表冲突检查），成功后再 `bootstrapVault`（`lib/tools.js` 的 `autoBindProject`），然后继续这次写入；`mode: 'show'` 的探测保证**读不铸指针**、**非 Git 目录不铸指针**、**任何拒绝原因（`pointer-corrupt` / `pointer-unsupported-schema` / `sibling-unreadable` / 注册表不可读 / cloud-managed）都不会被绕过**。`bind` 成功后用一个 `rememberBinding(key, bound)` 覆盖 `bindingByCwd` 里那条 miss，显式 `mem_admin(action="bind", …)` 也走同一个回调，所以**同一会话**内六个工具立刻生效，不再需要新会话。另：解析在铸指针之后才拒绝时（注册表不可读、目录被占）会把这次自己创建的指针收回，避免一次拒绝变成永久粘住的半绑定。README 三处恢复表与 *Verify it works* 的 Project bound 行已按上面的行为重写。
+
+证据（修复本身）：新增 `test/auto-bind.test.js`，11 个用例全部走真实 `@deepseek-ai/dsh-tools` 运行时 + 临时 git 仓库/临时 vault，`npm test` 554/554。其中 (a) 首次 `mem_write` 铸出四字段指针（无绝对路径）并落地笔记、(b) 同一会话下一次调用可见、(c) 第二次写入指针逐字节不变、(d) 六类拒绝仍拒绝且不铸指针，各有用例；`mem_log` 单列一条。**falsification**：把 `lib/` 回退到 HEAD（`bc8ef69` 之后的 `2e55641`）只保留新测试文件，10/11 失败（唯一通过的是 cloud-managed 那条，它在 `vaultRoot()` 处就拒绝，与本次改动无关）。
+
 ### F2（小，本任务造成）P0 teardown 探针现在 12/13
 
 `env -u DSH_HOME node test/p0/run-teardown-probe.mjs` 在创建 vault 之前是 13/13，现在稳定（连跑两次）报：
@@ -349,6 +353,8 @@ run-teardown-probe: 1 FAILED (13 assertion(s))     # exit 1
 ```
 
 唯一红项就是「默认 vault 不存在」这条**前置断言**，而本任务按批准创建了该 vault，所以它必然红。12 条行为断言（含 T18b 机制的 6 条）全部仍 PASS。`test/p0/` 不在 `npm test` 里，所以套件不受影响。**没有修**：这是 test-only 的改动，且会把探针的护栏从「不存在」改成「前后指纹不变」，属于需要自己 TDD 与评审的改动，不在 Task 20 的改动面内；建议在 `lib/` 那个缺陷一起处理时把前置断言改成 before/after 指纹。
+
+**处理结果（Task 20b）**：按上面的建议改了前置断言，未动其余 12 条行为断言：`default-vault-absent`（要求 `~/Documents/dsh-memory` 不存在）换成 `default-vault-unchanged`——探针开始前后各取一次该目录的**元数据指纹**（每个条目的相对路径 + 大小 + mtime，不读任何笔记正文；目录不存在时记为 `absent`），要求两次相同。护栏的含义没变（这个探针不写真实 vault），但不再要求 vault 不存在，因此现在也适用于 vault 已存在的这台机器。实测：`env -u DSH_HOME node test/p0/run-teardown-probe.mjs` → `run-teardown-probe: OK (13 assertion(s))`，exit 0。
 
 ### F3（观察）浅回合也会产出候选，落在收件箱
 

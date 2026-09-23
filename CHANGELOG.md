@@ -55,18 +55,33 @@ development rather than a release artifact.
 - **Honest limits corrected** (`README.md`, `docs/smoke-results.md`): the
   "no live model call has ever been made" item is replaced by what is still
   unmeasured (one host, one route; the one-shot timing window; the Obsidian GUI).
-- **The first-bind instruction now says what the code does** (`README.md`,
-  measured in `docs/dogfood-results.md`). A Git repository with no
-  `.obsidian-mem` does **not** get one on first write: every internal seam
-  resolves with `mode: "show"` (`lib/index.js:80`, `lib/tools.js:931`), which
-  reports an unbound repository, so `mem_write` refuses with `not-bound`. Only
-  `mem_admin(action="bind", mode="local")` mints the pointer and the skeleton,
-  and the unbound resolution is cached per working directory for the life of the
-  loaded plugin, so the six tools keep refusing until a new session. The
-  "Verify it works" row, the `deferred` row and the "memory is silently absent"
-  recovery row now say so. A `deferred` job can also be a validation refusal
-  (`truncated`, `too-many-items`) backing off, which the recovery table
-  previously attributed only to a missing route or binding.
+
+### Fixed
+
+- **A Git repository with no `.obsidian-mem` is bound by its first write, and a
+  bind is visible in the session that made it.** The dogfood run measured
+  (`docs/dogfood-results.md` §10 F1) that every internal seam resolved with
+  `mode: "show"`, so a pointerless repository had no reachable automatic bind
+  path at all — `mem_write` refused with `not-bound` — and that the unbound
+  resolution was memoized per working directory for the life of the loaded
+  plugin, so even an explicit `mem_admin(action="bind", mode="local")` left the
+  six tools refusing until a new session. `mem_write` and `mem_log` now resolve a
+  `no-pointer` Git repository exactly as spec §5.2.3 / §5.3 describe — slug from
+  the Git root, exclusive pointer create, skeleton, registry row — and then
+  proceed; a successful bind (automatic or explicit) replaces the per-cwd miss,
+  so the next call in the same session sees it. Every fail-closed guard is
+  unchanged and still refuses rather than minting: a non-Git directory, a corrupt
+  or unknown-schema pointer, an unreadable registry, a taken directory, a
+  cloud-managed vault and an unreadable sibling worktree. A resolution that
+  already minted a pointer and then refuses now removes the pointer it created,
+  so a one-off refusal cannot become a sticky one. Reads still never bind. The
+  README "Project bound" row, the `deferred` row and the "memory is silently
+  absent" recovery row now describe this, replacing the Task 20 text that
+  documented the defect instead. Regression tests: `test/auto-bind.test.js` (11
+  cases through the shipped tool runtime; 10 fail against the previous `lib/`).
+  A `deferred` job can also be a validation refusal (`truncated`,
+  `too-many-items`) backing off, which the recovery table previously attributed
+  only to a missing route or binding.
 
 ## 0.1.0 — 2026-09-23
 

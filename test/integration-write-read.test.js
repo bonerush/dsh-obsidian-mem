@@ -334,8 +334,12 @@ test('a cloud-managed vault root refuses every read path without touching the va
 
 test('an unbound working directory refuses project scope and writes but still reads globally', async (t) => {
   const f = await fixture(t)
+  // A directory that is not a Git repository: it stays unbound even for a write,
+  // which is the one shape an implicit first write must not bind (Task 20b). A
+  // pointerless *Git* repository is bound by its first write instead; that is
+  // covered by `test/auto-bind.test.js`.
   const other = join(f.root, 'unbound')
-  await initRepo(other)
+  await mkdir(other, { recursive: true })
   const { ctx } = await memoryBed(t, f)
 
   const search = await call(ctx, 'mem_search', { query: '调度器' }, { cwd: other })
