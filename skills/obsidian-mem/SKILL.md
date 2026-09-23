@@ -146,7 +146,7 @@ they are.
   `inferred` (the model concluded it), `observed` (there is re-checkable tool
   evidence). A model calling itself "verified" is not evidence.
 - Dates are `YYYY-MM-DD` (or `YYYY-MM-DD HH:mm:ss`); never `toISOString()`.
-  Use never file timestamps to invent a date, and never rewrite a file just to
+  Never use file timestamps to invent a date, and never rewrite a file just to
   refresh `updated`.
 
 ## 5. Evidence, supersede, contested

@@ -968,6 +968,15 @@ test('a timeout is the same terminal chunk with the same message, told apart onl
   const { queueRoot, persistOutput } = await queueIn(t)
   await writeJobAtomic(queueRoot, jobFixture())
   const sharedMessage = 'the request was aborted by caller'
+  // `AbortSignal.timeout()`'s timer is unref'd (measured on both v22.22.2 and
+  // v25.9.0), so while this stub waits for the abort event there is no ref'd
+  // handle left in the process. Node 22's test runner reads that as "the event
+  // loop has already resolved", cancels this subtest and then every subtest
+  // after it — a minimum-Node-only failure (Task 19). The timer below is ref'd
+  // on purpose: it holds the loop open long enough for the 20 ms timeout to
+  // fire. It is capped so a genuine hang still fails rather than stalling.
+  const keepAlive = setTimeout(() => {}, 5_000)
+  t.after(() => clearTimeout(keepAlive))
   const llm = recordingLlm((options) => (async function* () {
     if (!options.signal.aborted) {
       await new Promise((resolve) => options.signal.addEventListener('abort', resolve, { once: true }))

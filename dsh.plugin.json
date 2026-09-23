@@ -5,5 +5,18 @@
   "description": "DeepSeek Harness host plugin that keeps project documents and long-term memory as plain Markdown in a dedicated Obsidian vault.",
   "engines": {
     "dsh": ">=0.1.5-rc.2"
+  },
+  "contributes": {
+    "tools": [
+      "mem_search",
+      "mem_read",
+      "mem_write",
+      "mem_log",
+      "mem_brief",
+      "mem_admin"
+    ],
+    "skills": [
+      "obsidian-mem"
+    ]
   }
 }

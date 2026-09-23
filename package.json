@@ -29,16 +29,21 @@
       "optional": true
     }
   },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.2"
+  },
   "files": [
     "lib",
-    "skills",
     "skills/obsidian-mem/SKILL.md",
     "cordis.patch.yml",
     "dsh.plugin.json",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node scripts/run-tests.mjs",
+    "prepack": "npm test && node scripts/verify-pack.mjs"
   }
 }
