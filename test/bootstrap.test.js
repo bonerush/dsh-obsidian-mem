@@ -137,6 +137,8 @@ function vaultTargets(relativeDir) {
       `${relativeDir}/_meta/hot.md`,
       ...MOC_DIRS.map((dir) => `${relativeDir}/${dir}/index.md`),
       REGISTRY_RELATIVE_PATH,
+      // R21: bootstrap creates the user's preferences file once, from a template.
+      '_meta/user.md',
     ],
   }
 }
@@ -382,25 +384,34 @@ test('initGitOnCreate must be a boolean', async (t) => {
 // Step 1: user.md is read-only for the plugin
 // ---------------------------------------------------------------------------
 
-test('_meta/user.md is never created and never overwritten', async (t) => {
+test('_meta/user.md is created once from a template and never rewritten (R21)', async (t) => {
   const { vault, repo, home, dataRoot } = await fixture(t)
   const binding = await bind({ vault, repo, home })
 
-  // the plugin is read-only for user.md (spec §5.1/§6.2), so it does not create it
+  // R21: the plugin creates the user's preferences file when it is missing ...
   const plain = await bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot })
-  await assert.rejects(lstat(join(vault, '_meta', 'user.md')), { code: 'ENOENT' })
-  assert.equal(plain.createdPaths.includes('_meta/user.md'), false)
+  assert.equal(plain.createdPaths.includes('_meta/user.md'), true)
+  const template = await readFile(join(vault, '_meta', 'user.md'), 'utf8')
+  assert.match(template, /^---\ntags: \[/)
+  const created = await lstat(join(vault, '_meta', 'user.md'))
 
-  // a hand-written one survives two runs byte for byte
+  // ... and never rewrites it: the second run reports it as existing, byte for byte.
+  const second = await bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot })
+  assert.equal(second.createdPaths.includes('_meta/user.md'), false)
+  assert.equal(second.existingPaths.includes('_meta/user.md'), true)
+  assert.equal(await readFile(join(vault, '_meta', 'user.md'), 'utf8'), template)
+  assert.equal((await lstat(join(vault, '_meta', 'user.md'))).mtimeMs, created.mtimeMs)
+
+  // A hand-written one is the user's: two more runs leave it byte- and mtime-identical.
   const content = '---\ntags: [preferences]\n---\n\n我偏好中文回答。\n'
   await writeFile(join(vault, '_meta', 'user.md'), content)
   const before = await lstat(join(vault, '_meta', 'user.md'))
   await bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot })
-  const second = await bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot })
+  const third = await bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot })
   assert.equal(await readFile(join(vault, '_meta', 'user.md'), 'utf8'), content)
   assert.equal((await lstat(join(vault, '_meta', 'user.md'))).mtimeMs, before.mtimeMs)
-  assert.equal(second.createdPaths.includes('_meta/user.md'), false)
-  assert.equal(second.existingPaths.includes('_meta/user.md'), false)
+  assert.equal(third.createdPaths.includes('_meta/user.md'), false)
+  assert.equal(third.existingPaths.includes('_meta/user.md'), true)
 })
 
 // ---------------------------------------------------------------------------

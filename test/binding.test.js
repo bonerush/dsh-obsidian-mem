@@ -573,12 +573,16 @@ test('a non-git directory stays unbound and read-only', async (t) => {
   await assert.rejects(readFile(join(scratch, POINTER_FILENAME)), { code: 'ENOENT' })
   assert.deepEqual(await readdir(vault), [])
 
-  // A scratch directory is never silently adopted; the explicit local bind
-  // arrives with the governance task and must not be guessed here.
+  // A scratch directory is never silently adopted: only the explicit local bind
+  // creates a pointer, and it leaves the vault untouched (Task 17).
   const local = await resolveBinding({ cwd: scratch, vaultRoot: vault, mode: 'local' })
-  assert.equal(local.kind, 'conflict')
-  assert.equal(local.reason, 'bind-mode-unavailable')
-  await assert.rejects(readFile(join(scratch, POINTER_FILENAME)), { code: 'ENOENT' })
+  assert.equal(local.kind, 'bound')
+  assert.equal(local.pointerCreated, true)
+  const pointer = JSON.parse(await readFile(join(scratch, POINTER_FILENAME), 'utf8'))
+  assert.deepEqual(Object.keys(pointer).sort(), ['displayName', 'projectId', 'schema', 'slug'])
+  assert.equal(pointer.projectId, local.projectId)
+  assert.equal(local.registered, false)
+  assert.deepEqual(await readdir(vault), [])
 })
 
 test('a working directory inside the vault resolves to the vault context', async (t) => {
@@ -629,19 +633,25 @@ test('mode show resolves the current state without creating or repairing anythin
   assert.equal(shown.pointerCreated, false)
 })
 
-test('binding modes that mutate identity are refused, unknown modes are rejected', async (t) => {
+test('identity modes require an existing pointer, and unknown modes are rejected', async (t) => {
   const { vault, repo } = await fixture(t)
   await initRepo(repo)
 
-  for (const mode of ['local', 'fork', 'retain']) {
-    const refused = await resolveBinding({ cwd: repo, vaultRoot: vault, mode })
+  // There is nothing to fork away from and nothing to confirm yet.
+  for (const mode of ['fork', 'retain']) {
+    const refused = await resolveBinding({ cwd: repo, vaultRoot: vault, mode, dataRoot: join(vault, '..', 'data') })
     assert.equal(refused.kind, 'conflict')
-    assert.equal(refused.reason, 'bind-mode-unavailable')
+    assert.equal(refused.reason, 'no-pointer')
   }
+  // `local` is the explicit bind and is the one mode that creates the pointer.
+  const local = await resolveBinding({ cwd: repo, vaultRoot: vault, mode: 'local' })
+  assert.equal(local.kind, 'bound')
+  assert.equal(local.pointerCreated, true)
+  assert.equal(JSON.parse(await readFile(join(repo, POINTER_FILENAME), 'utf8')).projectId, local.projectId)
+
   for (const mode of ['nonsense', '', 42, {}]) {
     await assert.rejects(resolveBinding({ cwd: repo, vaultRoot: vault, mode }), /mode/i)
   }
-  await assert.rejects(readFile(join(repo, POINTER_FILENAME)), { code: 'ENOENT' })
 })
 
 // ---------------------------------------------------------------------------

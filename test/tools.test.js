@@ -76,11 +76,37 @@ const SAMPLE_NOTE = Object.freeze({
   id: SAMPLE_ID,
 })
 
-/** What a `mem_admin` action returns while Task 17 is unimplemented. */
-const notReady = (action) => ({
-  action,
-  result: { status: 'not-ready-in-p1', message: `${action} is not implemented in P1` },
-})
+/** The `mem_admin` values every action returns now that all six are real. */
+const adminResult = (action) => {
+  if (action === 'lint') {
+    return {
+      action,
+      result: {
+        projectId: '1c392abb-7b08-42f7-871d-2a379caf9448',
+        relativeDir: '项目/demo--1c392abb',
+        generatedAt: '2026-09-24T00:00:00.000Z',
+        readOnly: true,
+        total: 0,
+        counts: {},
+        findings: [],
+        index: { backend: 'sqlite', ready: true, notes: 1, rows: 1, files: 1, compared: true, reason: null },
+        history: { policy: { keepCount: 200 }, directories: 0, bytes: 0, prunable: 0, pruned: [], needsRepair: [], oversized: false },
+        pending: { jobs: 0, failed: 0, invalid: 0, known: true },
+        repository: { scanned: 0, candidates: 0, truncated: false, known: true },
+        report: { status: 'none', path: null, message: null },
+        safetyExclusions: ['_meta/log.md'],
+        ignoreGlobs: [],
+        truncated: { vault: false, repo: false },
+      },
+    }
+  }
+  return {
+    action,
+    result: action === 'promote'
+      ? { source: SAMPLE_PATH, moved: false, id: SAMPLE_ID, path: '方法/样例.md', receipt: sampleReceipt('write') }
+      : { status: 'listed', jobs: [], failed: 0, message: null },
+  }
+}
 
 /**
  * A services stub that records every call and returns schema-valid values.
@@ -99,8 +125,8 @@ function stubServices(overrides = {}) {
     read: () => SAMPLE_NOTE,
     write: () => ({ id: SAMPLE_ID, path: SAMPLE_PATH, receipt: sampleReceipt('write') }),
     log: () => sampleReceipt('log'),
-    brief: () => ({ status: 'not-ready-in-p1', message: 'mem_brief is bound in Task 11' }),
-    admin: (args) => notReady(args.action),
+    brief: () => ({ status: 'unbound', message: 'this working directory is not a bound project' }),
+    admin: (args) => adminResult(args.action),
   }
   const services = { calls }
   for (const key of Object.keys(defaults)) {
@@ -234,6 +260,8 @@ test('the documented enums and defaults are exactly spec §9', async (t) => {
   assert.deepEqual(params('mem_admin').mode.enum, ['show', 'local', 'fork', 'retain'])
   assert.equal(params('mem_admin').mode.default, 'show')
   assert.equal(params('mem_admin').rebuild.default, false)
+  assert.equal(params('mem_admin').report.default, false)
+  assert.deepEqual(Object.keys(params('mem_admin')).sort(), ['action', 'jobId', 'mode', 'path', 'rebuild', 'report', 'retry'])
   assert.deepEqual(params('mem_write').assertion.enum, ['stated', 'inferred', 'observed'])
 
   assert.deepEqual(Object.keys(params('mem_brief')), [])
@@ -357,12 +385,12 @@ test('mem_search fills the spec §9 defaults before the service sees them', asyn
   assert.equal(forwarded.limit, 8)
 })
 
-test('mem_admin defaults mode to show for bind and retry to false for jobs', async (t) => {
+test('mem_admin defaults mode to show, retry to false and report to false', async (t) => {
   const ctx = await toolbed(t)
   const services = stubServices({
     admin: (args) => (args.action === 'bind'
       ? { action: 'bind', result: { mode: 'show', status: 'shown', resolution: { kind: 'unbound', reason: 'no-pointer' } } }
-      : notReady(args.action)),
+      : adminResult(args.action)),
   })
   registerTools(ctx, services)
 
@@ -374,6 +402,12 @@ test('mem_admin defaults mode to show for bind and retry to false for jobs', asy
   const jobs = await call(ctx, 'mem_admin', { action: 'jobs' })
   assert.equal(jobs.isError, false, jobs.error?.message)
   assert.equal(services.calls[1].args.retry, false)
+
+  // `lint` is read-only unless the caller asks for the report explicitly.
+  const lint = await call(ctx, 'mem_admin', { action: 'lint' })
+  assert.equal(lint.isError, false, lint.error?.message)
+  assert.equal(services.calls[2].args.report, false)
+  assert.equal(lint.value.result.readOnly, true)
 })
 
 test('mem_admin refuses a parameter that the requested action cannot act on', async (t) => {
@@ -422,15 +456,15 @@ test('a malformed value returned by a service is refused by the output schema', 
   assert.match(result.error.message, /title/)
 })
 
-test('mem_brief is honestly not-ready in P1 rather than an empty brief', async (t) => {
+test('mem_brief reports an unbound project instead of an empty brief', async (t) => {
   const ctx = await toolbed(t)
   registerTools(ctx, stubServices())
   const result = await call(ctx, 'mem_brief', {})
   assert.equal(result.isError, false, result.error?.message)
-  assert.deepEqual(result.value, { status: 'not-ready-in-p1', message: 'mem_brief is bound in Task 11' })
+  assert.deepEqual(result.value, { status: 'unbound', message: 'this working directory is not a bound project' })
 })
 
-test('mem_admin carries the not-ready marker for lint, promote and jobs', async (t) => {
+test('every mem_admin action answers its own real result shape, with no placeholder', async (t) => {
   const ctx = await toolbed(t)
   const services = stubServices()
   registerTools(ctx, services)
@@ -438,6 +472,10 @@ test('mem_admin carries the not-ready marker for lint, promote and jobs', async 
     const result = await call(ctx, 'mem_admin', { action })
     assert.equal(result.isError, false, result.error?.message)
     assert.equal(result.value.action, action)
-    assert.equal(result.value.result.status, 'not-ready-in-p1')
+    assert.notEqual(JSON.stringify(result.value).includes('not-ready-in-p1'), true)
   }
+  // `path` belongs to promote; lint has no use for it and must say so.
+  const refused = await call(ctx, 'mem_admin', { action: 'lint', path: SAMPLE_PATH })
+  assert.equal(refused.isError, true)
+  assert.match(refused.error.message, /path/)
 })

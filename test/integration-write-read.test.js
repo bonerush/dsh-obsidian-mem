@@ -11,8 +11,9 @@
 // note in the vault, `mem_search` finds the same id through the index, and
 // `mem_read` returns that same note's body and hash. Around that chain the file
 // also pins the honesty boundary — Task 11 binds `mem_brief` to the real
-// `buildBrief`, and the unavailable `mem_admin` actions answer
-// `not-ready-in-p1` instead of inventing a result.
+// `buildBrief`, and Task 17 makes all six `mem_admin` actions real: a lint
+// report traces to vault-relative paths, and a bind refusal reports its reason
+// instead of a silent success.
 //
 // Like `test/tools.test.js`, this file mounts the real `@deepseek-ai/dsh-tools`
 // runtime, which is an optional peer dependency DSH provides to an installed
@@ -409,23 +410,97 @@ test('mem_admin exposes index status, the project list and bind(show)', async (t
   assert.equal(bind.result.resolution.relativeDir, f.binding.relativeDir)
 })
 
-test('mem_admin reports the P1 boundary instead of faking an action or an identity change', async (t) => {
+test('mem_admin(lint) stays read-only by default and reports real vault facts', async (t) => {
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
-  const cases = [
-    { action: 'lint' },
-    { action: 'promote' },
-    { action: 'jobs' },
-    { action: 'bind', mode: 'fork' },
-    { action: 'bind', mode: 'retain' },
-    { action: 'bind', mode: 'local' },
-  ]
-  for (const args of cases) {
-    const result = value(await call(ctx, 'mem_admin', args, { cwd: f.repo }), JSON.stringify(args))
-    assert.equal(result.action, args.action)
-    assert.equal(result.result.status, 'not-ready-in-p1')
-    assert.equal(typeof result.result.message, 'string')
-  }
+
+  const report = value(await call(ctx, 'mem_admin', { action: 'lint' }, { cwd: f.repo }), 'lint')
+  assert.equal(report.action, 'lint')
+  assert.equal(report.result.readOnly, true)
+  assert.equal(report.result.relativeDir, f.binding.relativeDir)
+  assert.equal(report.result.report.status, 'none')
+  assert.equal(report.result.index.compared, true)
+  // The plugin's own receipts log and registry are permanently excluded.
+  assert.equal(report.result.findings.some((finding) => finding.path === '_meta/log.md'), false)
+  assert.ok(report.result.safetyExclusions.length > 0)
+  // The dated report note is written only when the caller asks for it.
+  await assert.rejects(readFile(at(f.vault, `_meta/Lint Report ${DATE}.md`)), { code: 'ENOENT' })
+
+  const written = value(await call(ctx, 'mem_admin', { action: 'lint', report: true }, { cwd: f.repo }), 'lint report')
+  assert.equal(written.result.report.status, 'written')
+  const text = await readFile(at(f.vault, written.result.report.path), 'utf8')
+  assert.match(text, /<!-- obsidian-mem:generated begin sha256:[0-9a-f]{64} -->/)
+  assert.match(text, /永久安全排除/)
+})
+
+test('mem_admin(promote) creates a 方法 note and leaves the source untouched', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+  const source = value(await call(ctx, 'mem_write', {
+    type: 'convention', title: '项目内约定', body: '只在本项目成立。\n',
+  }, { cwd: f.repo }), 'write')
+
+  const before = await readFile(at(f.vault, source.path))
+  const promoted = value(await call(ctx, 'mem_admin', { action: 'promote', path: source.path }, { cwd: f.repo }), 'promote')
+  assert.equal(promoted.action, 'promote')
+  assert.equal(promoted.result.moved, false)
+  assert.equal(promoted.result.source, source.path)
+  assert.match(promoted.result.path, /^方法\//)
+  const method = await readFile(at(f.vault, promoted.result.path), 'utf8')
+  assert.ok(method.includes('来源：'))
+  assert.deepEqual(await readFile(at(f.vault, source.path)), before)
+
+  // A source outside the vault is refused by the vault jail, not by a guess.
+  const refused = await call(ctx, 'mem_admin', { action: 'promote', path: '../../outside.md' }, { cwd: f.repo })
+  assert.equal(refused.isError, true)
+})
+
+test('mem_admin(jobs) lists the queue and reports a retry refusal honestly', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+  const listed = value(await call(ctx, 'mem_admin', { action: 'jobs' }, { cwd: f.repo }), 'jobs')
+  assert.equal(listed.action, 'jobs')
+  assert.equal(listed.result.status, 'listed')
+  assert.deepEqual(listed.result.jobs, [])
+  assert.equal(listed.result.failed, 0)
+
+  const missing = value(await call(ctx, 'mem_admin', { action: 'jobs', jobId: 'job-404', retry: true }, { cwd: f.repo }), 'retry')
+  assert.equal(missing.result.status, 'refused')
+  assert.match(missing.result.message, /job-404/)
+
+  const unnamed = await call(ctx, 'mem_admin', { action: 'jobs', retry: true }, { cwd: f.repo })
+  assert.equal(unnamed.isError, true)
+  assert.match(unnamed.error.message, /jobId/)
+})
+
+test('mem_admin(bind) modes report what they did, or why they refused', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+
+  const shown = value(await call(ctx, 'mem_admin', { action: 'bind' }, { cwd: f.repo }), 'bind show')
+  assert.equal(shown.result.mode, 'show')
+  assert.equal(shown.result.status, 'shown')
+  assert.equal(shown.result.resolution.kind, 'bound')
+
+  // `retain` with no origin remote has nothing to confirm.
+  const refused = value(await call(ctx, 'mem_admin', { action: 'bind', mode: 'retain' }, { cwd: f.repo }), 'bind retain')
+  assert.equal(refused.result.mode, 'retain')
+  assert.equal(refused.result.status, 'refused')
+  assert.equal(refused.result.resolution.kind, 'conflict')
+  assert.equal(refused.result.resolution.reason, 'no-remote')
+  assert.equal(typeof refused.result.message, 'string')
+
+  // `fork` separates this worktree's identity without touching the old project.
+  const before = await readFile(at(f.vault, `${f.binding.relativeDir}/index.md`), 'utf8')
+  const forked = value(await call(ctx, 'mem_admin', { action: 'bind', mode: 'fork' }, { cwd: f.repo }), 'bind fork')
+  assert.equal(forked.result.mode, 'fork')
+  assert.equal(forked.result.status, 'forked')
+  assert.equal(forked.result.previousProjectId, f.binding.projectId)
+  assert.notEqual(forked.result.resolution.projectId, f.binding.projectId)
+  assert.equal(forked.result.bootstrapped, true)
+  assert.equal(forked.result.registryUpdated, true)
+  assert.equal(await readFile(at(f.vault, `${f.binding.relativeDir}/index.md`), 'utf8'), before)
+  assert.equal(existsSync(at(f.vault, forked.result.resolution.relativeDir)), true)
 })
 
 // ---------------------------------------------------------------------------
