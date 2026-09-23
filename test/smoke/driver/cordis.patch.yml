@@ -1,0 +1,10 @@
+# Discardable smoke-test driver row. Never shipped with the plugin.
+#
+# Installed with `link:` into the isolated smoke profile, AFTER the
+# `dsh-obsidian-mem` bundle so its `agent/pre-step` listener is the INNER one:
+# `lib/hooks.js` awaits `next()` and then appends the recall message, so the
+# driver's deterministic tool scenario has to finish inside that `next()` for the
+# injected brief to see the notes it just wrote.
+- insert:
+    - id: obsidian-mem-smoke-driver
+      name: dsh-obsidian-mem-smoke-driver

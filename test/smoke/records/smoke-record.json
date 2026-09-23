@@ -1,0 +1,1578 @@
+{
+  "schema": 1,
+  "startedAt": "2026-09-23T20:56:00.593Z",
+  "repoRoot": "/Users/yukisala/subject/dsh-obsidian-mem",
+  "versions": {
+    "dsh": "0.1.5-rc.2",
+    "node": "v25.9.0",
+    "platform": "darwin arm64",
+    "obsidian": null
+  },
+  "paths": {
+    "baseDir": "<tmp>/smoke",
+    "dshHome": "<tmp>/smoke/home",
+    "vault": "<tmp>/smoke/vault",
+    "repo": "<tmp>/smoke/repo",
+    "queueRoot": "<tmp>/smoke/home/data/obsidian-mem/pending",
+    "record": "/tmp/dshsmoke-final4.json"
+  },
+  "distillRoute": {
+    "provider": "deepseek-official",
+    "model": "deepseek-flash"
+  },
+  "profile": {
+    "name": "smoke",
+    "bundles": [
+      "@deepseek-ai/dsh-base",
+      "@deepseek-ai/dsh-headless",
+      "dsh-obsidian-mem",
+      "dsh-obsidian-mem-smoke-driver"
+    ],
+    "driverInstalled": true,
+    "dumpConfigHasRow": true,
+    "dumpConfigRowLine": "- id: obsidian-mem",
+    "dumpConfigChars": 11208,
+    "dumpConfigPath": "<tmp>/smoke/records/dump-config.yml"
+  },
+  "credentialRoute": "store-ref",
+  "passes": {
+    "dryRunSeed1": {
+      "config": {
+        "vaultPath": "<tmp>/smoke/vault",
+        "distill": {
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "dryRun": true
+        },
+        "captureIdleMs": 15000,
+        "autoCapture": true,
+        "indexBackend": "sqlite",
+        "briefBudgetChars": 6000
+      },
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL",
+        "timedOut": false
+      },
+      "recordCount": 25,
+      "stdoutBytes": 102,
+      "stderrBytes": 373,
+      "clearedJobs": [],
+      "leftoverJobs": [
+        {
+          "jobId": "job-787f8450a01ac34ebc7c52f4c8b2ec64",
+          "sessionId": "session-a79b5040-d5bc-434d-ac85-9b9e0bde45c6",
+          "fromSeq": 4,
+          "toSeq": 19,
+          "state": "pending",
+          "attempts": 0,
+          "deferredReason": null,
+          "route": {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash"
+          },
+          "outputState": null,
+          "lastErrorCode": null,
+          "lastErrorName": null,
+          "lastErrorMessage": null,
+          "lastErrorAt": null,
+          "createdAt": "2026-09-23T20:49:05.592Z",
+          "updatedAt": "2026-09-23T20:49:05.592Z",
+          "failedAt": null,
+          "safeInputChars": 291,
+          "allowedEvents": 2
+        }
+      ],
+      "sessionIds": [
+        "doc-97aa3180-5ea2-43c1-b610-3361420ab197",
+        "con-d8c674b7-5844-4c28-899b-5071a33882be",
+        "session-a79b5040-d5bc-434d-ac85-9b9e0bde45c6"
+      ],
+      "turnReasons": [
+        "completed"
+      ]
+    },
+    "dryRunRecover1": {
+      "config": {
+        "vaultPath": "<tmp>/smoke/vault",
+        "distill": {
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "dryRun": true
+        },
+        "captureIdleMs": 1000,
+        "autoCapture": false,
+        "indexBackend": "sqlite",
+        "briefBudgetChars": 6000
+      },
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timedOut": false
+      },
+      "recordCount": 30,
+      "stdoutBytes": 13,
+      "stderrBytes": 0,
+      "clearedJobs": [],
+      "leftoverJobs": [
+        {
+          "jobId": "job-787f8450a01ac34ebc7c52f4c8b2ec64",
+          "sessionId": "session-a79b5040-d5bc-434d-ac85-9b9e0bde45c6",
+          "fromSeq": 4,
+          "toSeq": 19,
+          "state": "pending",
+          "attempts": 1,
+          "deferredReason": null,
+          "route": {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash"
+          },
+          "outputState": null,
+          "lastErrorCode": "aborted",
+          "lastErrorName": null,
+          "lastErrorMessage": "aborted: distill-finish:aborted (aborted)",
+          "lastErrorAt": "2026-09-23T20:49:25.078Z",
+          "createdAt": "2026-09-23T20:49:05.592Z",
+          "updatedAt": "2026-09-23T20:49:25.078Z",
+          "failedAt": null,
+          "safeInputChars": 291,
+          "allowedEvents": 2
+        }
+      ],
+      "sessionIds": [
+        "session-634ff930-5365-4c0a-82b3-e6b70ac325b7"
+      ],
+      "turnReasons": [
+        "completed"
+      ]
+    },
+    "dryRunVerify": {
+      "config": {
+        "vaultPath": "<tmp>/smoke/vault",
+        "distill": {
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "dryRun": true
+        },
+        "captureIdleMs": 1000,
+        "autoCapture": false,
+        "indexBackend": "sqlite",
+        "briefBudgetChars": 6000
+      },
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timedOut": false
+      },
+      "recordCount": 22,
+      "stdoutBytes": 13,
+      "stderrBytes": 0,
+      "clearedJobs": [],
+      "leftoverJobs": [
+        {
+          "jobId": "job-787f8450a01ac34ebc7c52f4c8b2ec64",
+          "sessionId": "session-a79b5040-d5bc-434d-ac85-9b9e0bde45c6",
+          "fromSeq": 4,
+          "toSeq": 19,
+          "state": "pending",
+          "attempts": 2,
+          "deferredReason": null,
+          "route": {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash"
+          },
+          "outputState": null,
+          "lastErrorCode": "aborted",
+          "lastErrorName": null,
+          "lastErrorMessage": "aborted: distill-finish:aborted (aborted)",
+          "lastErrorAt": "2026-09-23T20:49:57.344Z",
+          "createdAt": "2026-09-23T20:49:05.592Z",
+          "updatedAt": "2026-09-23T20:49:57.344Z",
+          "failedAt": null,
+          "safeInputChars": 291,
+          "allowedEvents": 2
+        }
+      ],
+      "sessionIds": [
+        "session-02f6adb8-f8bd-48f4-9b3c-df8246d4f8c4"
+      ],
+      "turnReasons": [
+        "completed"
+      ]
+    },
+    "liveSeed1": {
+      "config": {
+        "vaultPath": "<tmp>/smoke/vault",
+        "distill": {
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "dryRun": false
+        },
+        "captureIdleMs": 15000,
+        "autoCapture": true,
+        "indexBackend": "sqlite",
+        "briefBudgetChars": 6000
+      },
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL",
+        "timedOut": false
+      },
+      "recordCount": 14,
+      "stdoutBytes": 118,
+      "stderrBytes": 285,
+      "clearedJobs": [
+        "job-787f8450a01ac34ebc7c52f4c8b2ec64.json"
+      ],
+      "leftoverJobs": [
+        {
+          "jobId": "job-cc4760e3b1e667cbeac558f79e290ac2",
+          "sessionId": "session-fa377bbf-607d-4f9f-b224-c0a8ef4ee76e",
+          "fromSeq": 4,
+          "toSeq": 20,
+          "state": "pending",
+          "attempts": 0,
+          "deferredReason": null,
+          "route": {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash"
+          },
+          "outputState": null,
+          "lastErrorCode": null,
+          "lastErrorName": null,
+          "lastErrorMessage": null,
+          "lastErrorAt": null,
+          "createdAt": "2026-09-23T20:50:04.498Z",
+          "updatedAt": "2026-09-23T20:50:04.498Z",
+          "failedAt": null,
+          "safeInputChars": 278,
+          "allowedEvents": 2
+        }
+      ],
+      "sessionIds": [
+        "session-fa377bbf-607d-4f9f-b224-c0a8ef4ee76e"
+      ],
+      "turnReasons": [
+        "completed"
+      ]
+    },
+    "liveRecover1": {
+      "config": {
+        "vaultPath": "<tmp>/smoke/vault",
+        "distill": {
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "dryRun": false
+        },
+        "captureIdleMs": 1000,
+        "autoCapture": false,
+        "indexBackend": "sqlite",
+        "briefBudgetChars": 6000
+      },
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timedOut": false
+      },
+      "recordCount": 30,
+      "stdoutBytes": 13,
+      "stderrBytes": 0,
+      "clearedJobs": [],
+      "leftoverJobs": [
+        {
+          "jobId": "job-cc4760e3b1e667cbeac558f79e290ac2",
+          "sessionId": "session-fa377bbf-607d-4f9f-b224-c0a8ef4ee76e",
+          "fromSeq": 4,
+          "toSeq": 20,
+          "state": "pending",
+          "attempts": 1,
+          "deferredReason": null,
+          "route": {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash"
+          },
+          "outputState": null,
+          "lastErrorCode": "aborted",
+          "lastErrorName": null,
+          "lastErrorMessage": "aborted: distill-finish:aborted (aborted)",
+          "lastErrorAt": "2026-09-23T20:50:23.848Z",
+          "createdAt": "2026-09-23T20:50:04.498Z",
+          "updatedAt": "2026-09-23T20:50:23.848Z",
+          "failedAt": null,
+          "safeInputChars": 278,
+          "allowedEvents": 2
+        }
+      ],
+      "sessionIds": [
+        "session-b3f85aad-61f7-4283-8440-dd61e377e6a6"
+      ],
+      "turnReasons": [
+        "completed"
+      ]
+    },
+    "liveVerify": {
+      "config": {
+        "vaultPath": "<tmp>/smoke/vault",
+        "distill": {
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "dryRun": false
+        },
+        "captureIdleMs": 1000,
+        "autoCapture": false,
+        "indexBackend": "sqlite",
+        "briefBudgetChars": 6000
+      },
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timedOut": false
+      },
+      "recordCount": 22,
+      "stdoutBytes": 13,
+      "stderrBytes": 0,
+      "clearedJobs": [],
+      "leftoverJobs": [
+        {
+          "jobId": "job-cc4760e3b1e667cbeac558f79e290ac2",
+          "sessionId": "session-fa377bbf-607d-4f9f-b224-c0a8ef4ee76e",
+          "fromSeq": 4,
+          "toSeq": 20,
+          "state": "pending",
+          "attempts": 2,
+          "deferredReason": null,
+          "route": {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash"
+          },
+          "outputState": null,
+          "lastErrorCode": "aborted",
+          "lastErrorName": null,
+          "lastErrorMessage": "aborted: distill-finish:aborted (aborted)",
+          "lastErrorAt": "2026-09-23T20:50:55.593Z",
+          "createdAt": "2026-09-23T20:50:04.498Z",
+          "updatedAt": "2026-09-23T20:50:55.593Z",
+          "failedAt": null,
+          "safeInputChars": 278,
+          "allowedEvents": 2
+        }
+      ],
+      "sessionIds": [
+        "session-818d1071-80d0-47ea-9f95-2ff9ad229481"
+      ],
+      "turnReasons": [
+        "completed"
+      ]
+    },
+    "resumedryRunSeed": {
+      "config": {
+        "vaultPath": "<tmp>/smoke/vault",
+        "distill": {
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "dryRun": true
+        },
+        "captureIdleMs": 15000,
+        "autoCapture": true,
+        "indexBackend": "sqlite",
+        "briefBudgetChars": 6000
+      },
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL",
+        "timedOut": false
+      },
+      "recordCount": 14,
+      "stdoutBytes": 70,
+      "stderrBytes": 317,
+      "clearedJobs": [
+        "job-cc4760e3b1e667cbeac558f79e290ac2.json"
+      ],
+      "leftoverJobs": [
+        {
+          "jobId": "job-6babfdd1c0dd186c937a7d1e3d9a9815",
+          "sessionId": "session-30a0f642-b676-4459-b760-96f5aedb7fe4",
+          "fromSeq": 4,
+          "toSeq": 20,
+          "state": "pending",
+          "attempts": 0,
+          "deferredReason": null,
+          "route": {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash"
+          },
+          "outputState": null,
+          "lastErrorCode": null,
+          "lastErrorName": null,
+          "lastErrorMessage": null,
+          "lastErrorAt": null,
+          "createdAt": "2026-09-23T20:51:03.369Z",
+          "updatedAt": "2026-09-23T20:51:03.369Z",
+          "failedAt": null,
+          "safeInputChars": 279,
+          "allowedEvents": 2
+        }
+      ],
+      "sessionIds": [
+        "session-30a0f642-b676-4459-b760-96f5aedb7fe4"
+      ],
+      "turnReasons": [
+        "completed"
+      ]
+    },
+    "resumedryRunRecover": {
+      "config": {
+        "vaultPath": "<tmp>/smoke/vault",
+        "distill": {
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "dryRun": true
+        },
+        "captureIdleMs": 1000,
+        "autoCapture": false,
+        "indexBackend": "sqlite",
+        "briefBudgetChars": 6000
+      },
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timedOut": false
+      },
+      "recordCount": 16,
+      "stdoutBytes": 13,
+      "stderrBytes": 135,
+      "clearedJobs": [],
+      "leftoverJobs": [],
+      "sessionIds": [
+        "session-8ac3a45b-c259-4bcf-b553-63db5d054cc2"
+      ],
+      "turnReasons": [
+        "completed"
+      ]
+    },
+    "resumedryRunVerify": {
+      "config": {
+        "vaultPath": "<tmp>/smoke/vault",
+        "distill": {
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "dryRun": true
+        },
+        "captureIdleMs": 1000,
+        "autoCapture": false,
+        "indexBackend": "sqlite",
+        "briefBudgetChars": 6000
+      },
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timedOut": false
+      },
+      "recordCount": 16,
+      "stdoutBytes": 13,
+      "stderrBytes": 0,
+      "clearedJobs": [],
+      "leftoverJobs": [],
+      "sessionIds": [
+        "session-056f8957-7a54-4fc4-9e51-239f8cb98ee2"
+      ],
+      "turnReasons": [
+        "completed"
+      ]
+    },
+    "resumeliveSeed": {
+      "config": {
+        "vaultPath": "<tmp>/smoke/vault",
+        "distill": {
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "dryRun": false
+        },
+        "captureIdleMs": 15000,
+        "autoCapture": true,
+        "indexBackend": "sqlite",
+        "briefBudgetChars": 6000
+      },
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL",
+        "timedOut": false
+      },
+      "recordCount": 14,
+      "stdoutBytes": 100,
+      "stderrBytes": 254,
+      "clearedJobs": [],
+      "leftoverJobs": [
+        {
+          "jobId": "job-4ee479464542100c4da5c22767ae46a8",
+          "sessionId": "session-3748b2b4-3caa-4cc8-aa31-63bdf517a012",
+          "fromSeq": 4,
+          "toSeq": 20,
+          "state": "pending",
+          "attempts": 0,
+          "deferredReason": null,
+          "route": {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash"
+          },
+          "outputState": null,
+          "lastErrorCode": null,
+          "lastErrorName": null,
+          "lastErrorMessage": null,
+          "lastErrorAt": null,
+          "createdAt": "2026-09-23T20:53:33.197Z",
+          "updatedAt": "2026-09-23T20:53:33.197Z",
+          "failedAt": null,
+          "safeInputChars": 272,
+          "allowedEvents": 2
+        }
+      ],
+      "sessionIds": [
+        "session-3748b2b4-3caa-4cc8-aa31-63bdf517a012"
+      ],
+      "turnReasons": [
+        "completed"
+      ]
+    },
+    "resumeliveRecover": {
+      "config": {
+        "vaultPath": "<tmp>/smoke/vault",
+        "distill": {
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "dryRun": false
+        },
+        "captureIdleMs": 1000,
+        "autoCapture": false,
+        "indexBackend": "sqlite",
+        "briefBudgetChars": 6000
+      },
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timedOut": false
+      },
+      "recordCount": 16,
+      "stdoutBytes": 13,
+      "stderrBytes": 0,
+      "clearedJobs": [],
+      "leftoverJobs": [],
+      "sessionIds": [
+        "session-078bc38e-922d-4844-bcc7-4e3f1fa7cd0b"
+      ],
+      "turnReasons": [
+        "completed"
+      ]
+    },
+    "resumeliveVerify": {
+      "config": {
+        "vaultPath": "<tmp>/smoke/vault",
+        "distill": {
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "dryRun": false
+        },
+        "captureIdleMs": 1000,
+        "autoCapture": false,
+        "indexBackend": "sqlite",
+        "briefBudgetChars": 6000
+      },
+      "exit": {
+        "code": 0,
+        "signal": null,
+        "timedOut": false
+      },
+      "recordCount": 16,
+      "stdoutBytes": 13,
+      "stderrBytes": 0,
+      "clearedJobs": [],
+      "leftoverJobs": [],
+      "sessionIds": [
+        "session-2a901f80-d395-4758-a351-9113463de68e"
+      ],
+      "turnReasons": [
+        "completed"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "label": "profile:dump-default",
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stderrBytes": 0
+    },
+    {
+      "label": "plugin:add",
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stderrBytes": 0
+    },
+    {
+      "label": "driver:add",
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stderrBytes": 0
+    },
+    {
+      "label": "profile:dump-config",
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stderrBytes": 0
+    },
+    {
+      "label": "run:dryRunSeed1",
+      "code": null,
+      "signal": "SIGKILL",
+      "timedOut": false,
+      "stderrBytes": 373
+    },
+    {
+      "label": "run:dryRunRecover1",
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stderrBytes": 0
+    },
+    {
+      "label": "run:dryRunVerify",
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stderrBytes": 0
+    },
+    {
+      "label": "run:liveSeed1",
+      "code": null,
+      "signal": "SIGKILL",
+      "timedOut": false,
+      "stderrBytes": 285
+    },
+    {
+      "label": "run:liveRecover1",
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stderrBytes": 0
+    },
+    {
+      "label": "run:liveVerify",
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stderrBytes": 0
+    },
+    {
+      "label": "run:resumedryRunSeed",
+      "code": null,
+      "signal": "SIGKILL",
+      "timedOut": false,
+      "stderrBytes": 317
+    },
+    {
+      "label": "run:resumedryRunRecover",
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stderrBytes": 135
+    },
+    {
+      "label": "run:resumedryRunVerify",
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stderrBytes": 0
+    },
+    {
+      "label": "run:resumeliveSeed",
+      "code": null,
+      "signal": "SIGKILL",
+      "timedOut": false,
+      "stderrBytes": 254
+    },
+    {
+      "label": "run:resumeliveRecover",
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stderrBytes": 0
+    },
+    {
+      "label": "run:resumeliveVerify",
+      "code": 0,
+      "signal": null,
+      "timedOut": false,
+      "stderrBytes": 0
+    }
+  ],
+  "checks": {
+    "pluginRowInDumpConfig": true,
+    "driverRowInDumpConfig": true,
+    "briefBudgetChars": 6000,
+    "firstStepBriefCount": 1,
+    "firstStepBriefChars": 109,
+    "firstStepBriefSha256": "b68aaf038a9f36143a46fc0ab2117c2e4d7d4aa1dfac9fb1491767c4ab34751f",
+    "sessionBriefCount": 1,
+    "firstRecallSeq": 10,
+    "tools": {
+      "name": "smoke/tools",
+      "available": [
+        "mem_search",
+        "mem_read",
+        "mem_write",
+        "mem_log",
+        "mem_brief",
+        "mem_admin"
+      ],
+      "expected": 6
+    },
+    "chineseSearch": {
+      "name": "smoke/stage",
+      "stage": "search-cn",
+      "ok": true,
+      "queryChars": 4,
+      "hitCount": 1,
+      "hitPaths": [
+        "项目/repo--3fa2e4cf/文档/冒烟文档：中文检索目标.md"
+      ],
+      "matchedDocPath": true
+    },
+    "documentWrite": {
+      "name": "smoke/stage",
+      "stage": "doc-write",
+      "ok": true,
+      "path": "项目/repo--3fa2e4cf/文档/冒烟文档：中文检索目标.md",
+      "id": "doc-97aa3180-5ea2-43c1-b610-3361420ab197",
+      "bytes": 471,
+      "sha256": "b64b9a49a38432db8d7621faa87c38428eae98e07631d67dad679d07a927a288",
+      "receiptAction": "write",
+      "existsOnDisk": true
+    },
+    "supersede": {
+      "name": "smoke/stage",
+      "stage": "supersede",
+      "ok": true,
+      "oldId": "dec-5b82eb18-f38d-45d8-86a9-c1ddb8b8c87d",
+      "newId": "dec-8a05bddd-1ada-4aa4-a4db-b24003134eb0",
+      "oldPath": "项目/repo--3fa2e4cf/决策/ADR-1-冒烟决策（旧）.md",
+      "newPath": "项目/repo--3fa2e4cf/决策/ADR-2-冒烟决策（新）.md",
+      "oldFileStillExists": true,
+      "oldStatus": "superseded",
+      "oldSupersededBy": "dec-8a05bddd-1ada-4aa4-a4db-b24003134eb0",
+      "defaultSearchHasOld": false,
+      "defaultSearchHasNew": true,
+      "historySearchHasOld": true
+    },
+    "externalEdit": {
+      "name": "smoke/stage",
+      "stage": "external-edit",
+      "ok": true,
+      "path": "项目/repo--3fa2e4cf/文档/外部编辑目标文档.md",
+      "hashBeforeSupersede": "23125381c6a03115c5a46165d12a275f6dd66b7ce4644d166946437a79b8edfc",
+      "hashAfterSupersede": "9799f311b71b5b4bc7c89919dfebd328837323dbf5c6d5cc93621611dbf7d28e",
+      "humanLineSurvived": true,
+      "candidateWritten": true,
+      "refusalCode": null,
+      "statusAfter": "superseded",
+      "existsOnDisk": true,
+      "humanLineOnDiskAfterAllPasses": true,
+      "obsidianUntouched": true
+    },
+    "humanOwned": {
+      "name": "smoke/stage",
+      "stage": "human-owned",
+      "ok": true,
+      "path": "项目/repo--3fa2e4cf/约定/人写的约定.md",
+      "id": "con-d8c674b7-5844-4c28-899b-5071a33882be",
+      "hashBefore": "ab62976823704e3e3a6aebcc26a3afba0dac02ae1219b8d162fe472e20a74113",
+      "hashAfterUpdate": "ab62976823704e3e3a6aebcc26a3afba0dac02ae1219b8d162fe472e20a74113",
+      "hashAfterSupersede": "ab62976823704e3e3a6aebcc26a3afba0dac02ae1219b8d162fe472e20a74113",
+      "survivedUpdate": true,
+      "survivedSupersede": true,
+      "updateRefusalCode": "human-owned",
+      "supersedeRefusalCode": "human-owned",
+      "bytesOnDisk": 166,
+      "existsOnDisk": true,
+      "hashOnDiskAfterAllPasses": "ab62976823704e3e3a6aebcc26a3afba0dac02ae1219b8d162fe472e20a74113",
+      "byteIdenticalOnDisk": true
+    },
+    "lintReadonly": {
+      "name": "smoke/stage",
+      "stage": "lint-readonly",
+      "ok": true,
+      "total": 2,
+      "readOnly": true,
+      "counts": {
+        "orphan-file": 1,
+        "unlinked-repo-markdown": 1
+      },
+      "pendingJobs": 0,
+      "treeHashBefore": "b9702062d103d88b60bd882705f29387b36ccf28e33303441bf6460b282ec557",
+      "treeHashAfter": "b9702062d103d88b60bd882705f29387b36ccf28e33303441bf6460b282ec557",
+      "treeUntouched": true
+    },
+    "briefTool": {
+      "name": "smoke/stage",
+      "stage": "brief-tool",
+      "ok": true,
+      "charCount": 620,
+      "textChars": 620,
+      "indexStatus": "ready",
+      "hotItems": 0,
+      "truncated": false
+    },
+    "logWrite": {
+      "name": "smoke/stage",
+      "stage": "log-write",
+      "ok": true,
+      "paths": [
+        "项目/repo--3fa2e4cf/日志/2026-09-24.md"
+      ]
+    },
+    "capture": {
+      "inProcessApplied": {
+        "seedsObserved": 4,
+        "seedPolls": 0,
+        "seedAttempts": [],
+        "anySeedSawAnAttempt": false
+      },
+      "modelLane": {
+        "dryRun": {
+          "jobId": "job-787f8450a01ac34ebc7c52f4c8b2ec64",
+          "cycles": [
+            {
+              "cycle": 1,
+              "seedKey": "dryRunSeed1",
+              "recoverKey": "dryRunRecover1",
+              "jobId": "job-787f8450a01ac34ebc7c52f4c8b2ec64",
+              "jobState": "pending",
+              "treeBefore": {
+                ".gitignore": "7c55645977b17d97f6ed25faca9790defea18ee9fb4ee35d4a884489daa354ed",
+                ".obsidian/app.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+                ".obsidian/workspace.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+                "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/1__外部编辑目标文档.md": "23125381c6a03115c5a46165d12a275f6dd66b7ce4644d166946437a79b8edfc",
+                "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/2__index.md": "3079f12b4c5cc7017ea4cf0e27e27be8e3f8f9383fea54745b11d314705a00a0",
+                "_meta/.history/tx-5581b237-85e2-49c9-9440-d385b5c178a5/1__index.md": "2b7ce9372762b53e9062221a2ed0d25f4b7ab279a4effc8e326951423ec9b094",
+                "_meta/.history/tx-da355e4e-f262-438c-be46-5c04a41eabf8/1__index.md": "8f99bcae5b3b1cf1b3fd47308794ec159d2cc3b6ec9c1f6981fdaeda160f5c44",
+                "_meta/.history/tx-f37d06e0-d1f9-4c5f-9b60-dd4bb8dea085/1__index.md": "6f27e188b7276a6fa09ad248ce0e318162518a1bee21facbdcdf86be3e599515",
+                "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/1__ADR-1-冒烟决策（旧）.md": "eb4447cceb09fa4b5080b902806c334ad6fcbb7e39ab2cb62cd8d5c9940abd02",
+                "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/2__index.md": "b9e62a4b026db3b7a4b46fd997d46927286c87a17ed97d7565e830f9cce1ae47",
+                "_meta/log.md": "72083e526dfe4f6ddcda7dd2cf9fd34b08bb56b2deee1cb2caa487bfb3d6c0f5",
+                "_meta/user.md": "e752e14cd77238813ed4b158572babd0f82a95c3f5791ce27e608ce26cb2b995",
+                "_meta/项目注册表.md": "3e648cdd6e14f52cd9723bbc159bfa7eb5c3eafe5921675f4d10a29fa0a65960",
+                "方法/index.md": "45fcec0d6c2ae3ef2752ef4fc3caca468d6e313cb59e1ed9581b50497dcd899e",
+                "项目/repo--3fa2e4cf/_meta/hot.md": "22176699299855b3987ffb70df9370fafa77f5d32277a56389358c78320c36a6",
+                "项目/repo--3fa2e4cf/index.md": "78b39d797b900eff7eb8951251e558d7fb49f6a3d65d6fd70c0a4c306b5f9be9",
+                "项目/repo--3fa2e4cf/决策/ADR-1-冒烟决策（旧）.md": "3cc5168750636cd0aadf76de49d29f5a425b4f3763c4f5f35b954e7bfd4dd6d5",
+                "项目/repo--3fa2e4cf/决策/ADR-2-冒烟决策（新）.md": "29bff48b04904e27d941a193aba6110c71c22df27596ae8351d26d504e800574",
+                "项目/repo--3fa2e4cf/决策/index.md": "be4445995d2db329209e247f10b947119e325416622d19095a3e07071fa7ea9b",
+                "项目/repo--3fa2e4cf/收件箱/index.md": "54c913d3bd93c7612df99da1a2be1b3a1ecbd20bf5debf4e36d8eda526a50b45",
+                "项目/repo--3fa2e4cf/文档/index.md": "94131ce81fd44dbac9d88f47c306a0986f39df5d4176f6a7199318d0ba99557a",
+                "项目/repo--3fa2e4cf/文档/冒烟文档：中文检索目标.md": "b64b9a49a38432db8d7621faa87c38428eae98e07631d67dad679d07a927a288",
+                "项目/repo--3fa2e4cf/文档/外部编辑后的候选文档.md": "cc8ee53fca657f0e6d387019ba333964dc811567fbc60f0960f27e482be46174",
+                "项目/repo--3fa2e4cf/文档/外部编辑目标文档.md": "9799f311b71b5b4bc7c89919dfebd328837323dbf5c6d5cc93621611dbf7d28e",
+                "项目/repo--3fa2e4cf/日志/2026-09-24.md": "10b711666d20e9aa7214e0602595a32d40b87fb972b77bb9fe0be77bc278040b",
+                "项目/repo--3fa2e4cf/日志/index.md": "23cbf1b241e1a3d770143aa5b6c8580a546a0155a30a8e95e05620434db4c375",
+                "项目/repo--3fa2e4cf/约定/index.md": "750c756387b56ef5d7f48c44e4f388297c27e2346fee749e10e9053776d3fd90",
+                "项目/repo--3fa2e4cf/约定/人写的约定.md": "ab62976823704e3e3a6aebcc26a3afba0dac02ae1219b8d162fe472e20a74113",
+                "项目/repo--3fa2e4cf/踩坑/index.md": "891c7949ab81095b12a7d4998ece90e1ee354c85007ed5ba27f433fcfc4fd7d0"
+              },
+              "treeAfter": {
+                ".gitignore": "7c55645977b17d97f6ed25faca9790defea18ee9fb4ee35d4a884489daa354ed",
+                ".obsidian/app.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+                ".obsidian/workspace.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+                "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/1__外部编辑目标文档.md": "23125381c6a03115c5a46165d12a275f6dd66b7ce4644d166946437a79b8edfc",
+                "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/2__index.md": "3079f12b4c5cc7017ea4cf0e27e27be8e3f8f9383fea54745b11d314705a00a0",
+                "_meta/.history/tx-5581b237-85e2-49c9-9440-d385b5c178a5/1__index.md": "2b7ce9372762b53e9062221a2ed0d25f4b7ab279a4effc8e326951423ec9b094",
+                "_meta/.history/tx-da355e4e-f262-438c-be46-5c04a41eabf8/1__index.md": "8f99bcae5b3b1cf1b3fd47308794ec159d2cc3b6ec9c1f6981fdaeda160f5c44",
+                "_meta/.history/tx-f37d06e0-d1f9-4c5f-9b60-dd4bb8dea085/1__index.md": "6f27e188b7276a6fa09ad248ce0e318162518a1bee21facbdcdf86be3e599515",
+                "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/1__ADR-1-冒烟决策（旧）.md": "eb4447cceb09fa4b5080b902806c334ad6fcbb7e39ab2cb62cd8d5c9940abd02",
+                "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/2__index.md": "b9e62a4b026db3b7a4b46fd997d46927286c87a17ed97d7565e830f9cce1ae47",
+                "_meta/log.md": "72083e526dfe4f6ddcda7dd2cf9fd34b08bb56b2deee1cb2caa487bfb3d6c0f5",
+                "_meta/user.md": "e752e14cd77238813ed4b158572babd0f82a95c3f5791ce27e608ce26cb2b995",
+                "_meta/项目注册表.md": "3e648cdd6e14f52cd9723bbc159bfa7eb5c3eafe5921675f4d10a29fa0a65960",
+                "方法/index.md": "45fcec0d6c2ae3ef2752ef4fc3caca468d6e313cb59e1ed9581b50497dcd899e",
+                "项目/repo--3fa2e4cf/_meta/hot.md": "22176699299855b3987ffb70df9370fafa77f5d32277a56389358c78320c36a6",
+                "项目/repo--3fa2e4cf/index.md": "78b39d797b900eff7eb8951251e558d7fb49f6a3d65d6fd70c0a4c306b5f9be9",
+                "项目/repo--3fa2e4cf/决策/ADR-1-冒烟决策（旧）.md": "3cc5168750636cd0aadf76de49d29f5a425b4f3763c4f5f35b954e7bfd4dd6d5",
+                "项目/repo--3fa2e4cf/决策/ADR-2-冒烟决策（新）.md": "29bff48b04904e27d941a193aba6110c71c22df27596ae8351d26d504e800574",
+                "项目/repo--3fa2e4cf/决策/index.md": "be4445995d2db329209e247f10b947119e325416622d19095a3e07071fa7ea9b",
+                "项目/repo--3fa2e4cf/收件箱/index.md": "54c913d3bd93c7612df99da1a2be1b3a1ecbd20bf5debf4e36d8eda526a50b45",
+                "项目/repo--3fa2e4cf/文档/index.md": "94131ce81fd44dbac9d88f47c306a0986f39df5d4176f6a7199318d0ba99557a",
+                "项目/repo--3fa2e4cf/文档/冒烟文档：中文检索目标.md": "b64b9a49a38432db8d7621faa87c38428eae98e07631d67dad679d07a927a288",
+                "项目/repo--3fa2e4cf/文档/外部编辑后的候选文档.md": "cc8ee53fca657f0e6d387019ba333964dc811567fbc60f0960f27e482be46174",
+                "项目/repo--3fa2e4cf/文档/外部编辑目标文档.md": "9799f311b71b5b4bc7c89919dfebd328837323dbf5c6d5cc93621611dbf7d28e",
+                "项目/repo--3fa2e4cf/日志/2026-09-24.md": "10b711666d20e9aa7214e0602595a32d40b87fb972b77bb9fe0be77bc278040b",
+                "项目/repo--3fa2e4cf/日志/index.md": "23cbf1b241e1a3d770143aa5b6c8580a546a0155a30a8e95e05620434db4c375",
+                "项目/repo--3fa2e4cf/约定/index.md": "750c756387b56ef5d7f48c44e4f388297c27e2346fee749e10e9053776d3fd90",
+                "项目/repo--3fa2e4cf/约定/人写的约定.md": "ab62976823704e3e3a6aebcc26a3afba0dac02ae1219b8d162fe472e20a74113",
+                "项目/repo--3fa2e4cf/踩坑/index.md": "891c7949ab81095b12a7d4998ece90e1ee354c85007ed5ba27f433fcfc4fd7d0"
+              },
+              "vaultChanged": true,
+              "receiptResult": null,
+              "receiptDryRun": null,
+              "recoverExit": {
+                "code": 0,
+                "signal": null,
+                "timedOut": false
+              },
+              "holdReceipt": false
+            }
+          ],
+          "receipt": null
+        },
+        "live": {
+          "jobId": "job-cc4760e3b1e667cbeac558f79e290ac2",
+          "cycles": [
+            {
+              "cycle": 1,
+              "seedKey": "liveSeed1",
+              "recoverKey": "liveRecover1",
+              "jobId": "job-cc4760e3b1e667cbeac558f79e290ac2",
+              "jobState": "pending",
+              "treeBefore": {
+                ".gitignore": "7c55645977b17d97f6ed25faca9790defea18ee9fb4ee35d4a884489daa354ed",
+                ".obsidian/app.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+                ".obsidian/workspace.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+                "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/1__外部编辑目标文档.md": "23125381c6a03115c5a46165d12a275f6dd66b7ce4644d166946437a79b8edfc",
+                "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/2__index.md": "3079f12b4c5cc7017ea4cf0e27e27be8e3f8f9383fea54745b11d314705a00a0",
+                "_meta/.history/tx-5581b237-85e2-49c9-9440-d385b5c178a5/1__index.md": "2b7ce9372762b53e9062221a2ed0d25f4b7ab279a4effc8e326951423ec9b094",
+                "_meta/.history/tx-da355e4e-f262-438c-be46-5c04a41eabf8/1__index.md": "8f99bcae5b3b1cf1b3fd47308794ec159d2cc3b6ec9c1f6981fdaeda160f5c44",
+                "_meta/.history/tx-f37d06e0-d1f9-4c5f-9b60-dd4bb8dea085/1__index.md": "6f27e188b7276a6fa09ad248ce0e318162518a1bee21facbdcdf86be3e599515",
+                "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/1__ADR-1-冒烟决策（旧）.md": "eb4447cceb09fa4b5080b902806c334ad6fcbb7e39ab2cb62cd8d5c9940abd02",
+                "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/2__index.md": "b9e62a4b026db3b7a4b46fd997d46927286c87a17ed97d7565e830f9cce1ae47",
+                "_meta/log.md": "72083e526dfe4f6ddcda7dd2cf9fd34b08bb56b2deee1cb2caa487bfb3d6c0f5",
+                "_meta/user.md": "e752e14cd77238813ed4b158572babd0f82a95c3f5791ce27e608ce26cb2b995",
+                "_meta/项目注册表.md": "3e648cdd6e14f52cd9723bbc159bfa7eb5c3eafe5921675f4d10a29fa0a65960",
+                "方法/index.md": "45fcec0d6c2ae3ef2752ef4fc3caca468d6e313cb59e1ed9581b50497dcd899e",
+                "项目/repo--3fa2e4cf/_meta/hot.md": "22176699299855b3987ffb70df9370fafa77f5d32277a56389358c78320c36a6",
+                "项目/repo--3fa2e4cf/index.md": "78b39d797b900eff7eb8951251e558d7fb49f6a3d65d6fd70c0a4c306b5f9be9",
+                "项目/repo--3fa2e4cf/决策/ADR-1-冒烟决策（旧）.md": "3cc5168750636cd0aadf76de49d29f5a425b4f3763c4f5f35b954e7bfd4dd6d5",
+                "项目/repo--3fa2e4cf/决策/ADR-2-冒烟决策（新）.md": "29bff48b04904e27d941a193aba6110c71c22df27596ae8351d26d504e800574",
+                "项目/repo--3fa2e4cf/决策/index.md": "be4445995d2db329209e247f10b947119e325416622d19095a3e07071fa7ea9b",
+                "项目/repo--3fa2e4cf/收件箱/index.md": "54c913d3bd93c7612df99da1a2be1b3a1ecbd20bf5debf4e36d8eda526a50b45",
+                "项目/repo--3fa2e4cf/文档/index.md": "94131ce81fd44dbac9d88f47c306a0986f39df5d4176f6a7199318d0ba99557a",
+                "项目/repo--3fa2e4cf/文档/冒烟文档：中文检索目标.md": "b64b9a49a38432db8d7621faa87c38428eae98e07631d67dad679d07a927a288",
+                "项目/repo--3fa2e4cf/文档/外部编辑后的候选文档.md": "cc8ee53fca657f0e6d387019ba333964dc811567fbc60f0960f27e482be46174",
+                "项目/repo--3fa2e4cf/文档/外部编辑目标文档.md": "9799f311b71b5b4bc7c89919dfebd328837323dbf5c6d5cc93621611dbf7d28e",
+                "项目/repo--3fa2e4cf/日志/2026-09-24.md": "10b711666d20e9aa7214e0602595a32d40b87fb972b77bb9fe0be77bc278040b",
+                "项目/repo--3fa2e4cf/日志/index.md": "23cbf1b241e1a3d770143aa5b6c8580a546a0155a30a8e95e05620434db4c375",
+                "项目/repo--3fa2e4cf/约定/index.md": "750c756387b56ef5d7f48c44e4f388297c27e2346fee749e10e9053776d3fd90",
+                "项目/repo--3fa2e4cf/约定/人写的约定.md": "ab62976823704e3e3a6aebcc26a3afba0dac02ae1219b8d162fe472e20a74113",
+                "项目/repo--3fa2e4cf/踩坑/index.md": "891c7949ab81095b12a7d4998ece90e1ee354c85007ed5ba27f433fcfc4fd7d0"
+              },
+              "treeAfter": {
+                ".gitignore": "7c55645977b17d97f6ed25faca9790defea18ee9fb4ee35d4a884489daa354ed",
+                ".obsidian/app.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+                ".obsidian/workspace.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+                "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/1__外部编辑目标文档.md": "23125381c6a03115c5a46165d12a275f6dd66b7ce4644d166946437a79b8edfc",
+                "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/2__index.md": "3079f12b4c5cc7017ea4cf0e27e27be8e3f8f9383fea54745b11d314705a00a0",
+                "_meta/.history/tx-5581b237-85e2-49c9-9440-d385b5c178a5/1__index.md": "2b7ce9372762b53e9062221a2ed0d25f4b7ab279a4effc8e326951423ec9b094",
+                "_meta/.history/tx-da355e4e-f262-438c-be46-5c04a41eabf8/1__index.md": "8f99bcae5b3b1cf1b3fd47308794ec159d2cc3b6ec9c1f6981fdaeda160f5c44",
+                "_meta/.history/tx-f37d06e0-d1f9-4c5f-9b60-dd4bb8dea085/1__index.md": "6f27e188b7276a6fa09ad248ce0e318162518a1bee21facbdcdf86be3e599515",
+                "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/1__ADR-1-冒烟决策（旧）.md": "eb4447cceb09fa4b5080b902806c334ad6fcbb7e39ab2cb62cd8d5c9940abd02",
+                "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/2__index.md": "b9e62a4b026db3b7a4b46fd997d46927286c87a17ed97d7565e830f9cce1ae47",
+                "_meta/log.md": "72083e526dfe4f6ddcda7dd2cf9fd34b08bb56b2deee1cb2caa487bfb3d6c0f5",
+                "_meta/user.md": "e752e14cd77238813ed4b158572babd0f82a95c3f5791ce27e608ce26cb2b995",
+                "_meta/项目注册表.md": "3e648cdd6e14f52cd9723bbc159bfa7eb5c3eafe5921675f4d10a29fa0a65960",
+                "方法/index.md": "45fcec0d6c2ae3ef2752ef4fc3caca468d6e313cb59e1ed9581b50497dcd899e",
+                "项目/repo--3fa2e4cf/_meta/hot.md": "22176699299855b3987ffb70df9370fafa77f5d32277a56389358c78320c36a6",
+                "项目/repo--3fa2e4cf/index.md": "78b39d797b900eff7eb8951251e558d7fb49f6a3d65d6fd70c0a4c306b5f9be9",
+                "项目/repo--3fa2e4cf/决策/ADR-1-冒烟决策（旧）.md": "3cc5168750636cd0aadf76de49d29f5a425b4f3763c4f5f35b954e7bfd4dd6d5",
+                "项目/repo--3fa2e4cf/决策/ADR-2-冒烟决策（新）.md": "29bff48b04904e27d941a193aba6110c71c22df27596ae8351d26d504e800574",
+                "项目/repo--3fa2e4cf/决策/index.md": "be4445995d2db329209e247f10b947119e325416622d19095a3e07071fa7ea9b",
+                "项目/repo--3fa2e4cf/收件箱/index.md": "54c913d3bd93c7612df99da1a2be1b3a1ecbd20bf5debf4e36d8eda526a50b45",
+                "项目/repo--3fa2e4cf/文档/index.md": "94131ce81fd44dbac9d88f47c306a0986f39df5d4176f6a7199318d0ba99557a",
+                "项目/repo--3fa2e4cf/文档/冒烟文档：中文检索目标.md": "b64b9a49a38432db8d7621faa87c38428eae98e07631d67dad679d07a927a288",
+                "项目/repo--3fa2e4cf/文档/外部编辑后的候选文档.md": "cc8ee53fca657f0e6d387019ba333964dc811567fbc60f0960f27e482be46174",
+                "项目/repo--3fa2e4cf/文档/外部编辑目标文档.md": "9799f311b71b5b4bc7c89919dfebd328837323dbf5c6d5cc93621611dbf7d28e",
+                "项目/repo--3fa2e4cf/日志/2026-09-24.md": "10b711666d20e9aa7214e0602595a32d40b87fb972b77bb9fe0be77bc278040b",
+                "项目/repo--3fa2e4cf/日志/index.md": "23cbf1b241e1a3d770143aa5b6c8580a546a0155a30a8e95e05620434db4c375",
+                "项目/repo--3fa2e4cf/约定/index.md": "750c756387b56ef5d7f48c44e4f388297c27e2346fee749e10e9053776d3fd90",
+                "项目/repo--3fa2e4cf/约定/人写的约定.md": "ab62976823704e3e3a6aebcc26a3afba0dac02ae1219b8d162fe472e20a74113",
+                "项目/repo--3fa2e4cf/踩坑/index.md": "891c7949ab81095b12a7d4998ece90e1ee354c85007ed5ba27f433fcfc4fd7d0"
+              },
+              "vaultChanged": true,
+              "receiptResult": null,
+              "receiptDryRun": null,
+              "recoverExit": {
+                "code": 0,
+                "signal": null,
+                "timedOut": false
+              },
+              "holdReceipt": false
+            }
+          ],
+          "receipt": null
+        },
+        "llmProbe": {
+          "name": "smoke/llm-probe",
+          "provider": "deepseek-official",
+          "model": "deepseek-flash",
+          "finishKind": "stop",
+          "failureCode": null,
+          "textChars": 2,
+          "chunks": 26,
+          "ok": true,
+          "ms": 383
+        }
+      },
+      "dryRunJobId": "job-6babfdd1c0dd186c937a7d1e3d9a9815",
+      "dryRunReceipt": {
+        "schema": 1,
+        "jobId": "job-6babfdd1c0dd186c937a7d1e3d9a9815",
+        "projectId": "3fa2e4cf-9290-4caf-8691-298e61bffeb9",
+        "sessionId": "session-30a0f642-b676-4459-b760-96f5aedb7fe4",
+        "toSeq": 20,
+        "result": "dry-run",
+        "dryRun": true,
+        "attempts": 0,
+        "at": "2026-09-23T20:51:21.064Z",
+        "items": [
+          {
+            "idempotencyKey": "session-30a0f642-b676-4459-b760-96f5aedb7fe4:20:0",
+            "preassignedId": "con-319fd985-b3c1-4372-9782-e1eb1504524c",
+            "type": "convention",
+            "title": "恢复通道约定（dryRun）",
+            "status": "active",
+            "assertion": "stated",
+            "confidence": 0.9,
+            "inbox": false,
+            "supersedesId": null,
+            "evidenceSeqs": [
+              8
+            ],
+            "downgrades": []
+          }
+        ],
+        "refused": [],
+        "refusedCount": 0,
+        "index": "none",
+        "usage": null,
+        "durationMs": 10
+      },
+      "dryRunCycle": {
+        "jobId": "job-6babfdd1c0dd186c937a7d1e3d9a9815",
+        "seedExit": {
+          "code": null,
+          "signal": "SIGKILL",
+          "timedOut": false
+        },
+        "treeBefore": {
+          ".gitignore": "7c55645977b17d97f6ed25faca9790defea18ee9fb4ee35d4a884489daa354ed",
+          ".obsidian/app.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+          ".obsidian/workspace.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+          "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/1__外部编辑目标文档.md": "23125381c6a03115c5a46165d12a275f6dd66b7ce4644d166946437a79b8edfc",
+          "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/2__index.md": "3079f12b4c5cc7017ea4cf0e27e27be8e3f8f9383fea54745b11d314705a00a0",
+          "_meta/.history/tx-5581b237-85e2-49c9-9440-d385b5c178a5/1__index.md": "2b7ce9372762b53e9062221a2ed0d25f4b7ab279a4effc8e326951423ec9b094",
+          "_meta/.history/tx-da355e4e-f262-438c-be46-5c04a41eabf8/1__index.md": "8f99bcae5b3b1cf1b3fd47308794ec159d2cc3b6ec9c1f6981fdaeda160f5c44",
+          "_meta/.history/tx-f37d06e0-d1f9-4c5f-9b60-dd4bb8dea085/1__index.md": "6f27e188b7276a6fa09ad248ce0e318162518a1bee21facbdcdf86be3e599515",
+          "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/1__ADR-1-冒烟决策（旧）.md": "eb4447cceb09fa4b5080b902806c334ad6fcbb7e39ab2cb62cd8d5c9940abd02",
+          "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/2__index.md": "b9e62a4b026db3b7a4b46fd997d46927286c87a17ed97d7565e830f9cce1ae47",
+          "_meta/log.md": "72083e526dfe4f6ddcda7dd2cf9fd34b08bb56b2deee1cb2caa487bfb3d6c0f5",
+          "_meta/user.md": "e752e14cd77238813ed4b158572babd0f82a95c3f5791ce27e608ce26cb2b995",
+          "_meta/项目注册表.md": "3e648cdd6e14f52cd9723bbc159bfa7eb5c3eafe5921675f4d10a29fa0a65960",
+          "方法/index.md": "45fcec0d6c2ae3ef2752ef4fc3caca468d6e313cb59e1ed9581b50497dcd899e",
+          "项目/repo--3fa2e4cf/_meta/hot.md": "22176699299855b3987ffb70df9370fafa77f5d32277a56389358c78320c36a6",
+          "项目/repo--3fa2e4cf/index.md": "78b39d797b900eff7eb8951251e558d7fb49f6a3d65d6fd70c0a4c306b5f9be9",
+          "项目/repo--3fa2e4cf/决策/ADR-1-冒烟决策（旧）.md": "3cc5168750636cd0aadf76de49d29f5a425b4f3763c4f5f35b954e7bfd4dd6d5",
+          "项目/repo--3fa2e4cf/决策/ADR-2-冒烟决策（新）.md": "29bff48b04904e27d941a193aba6110c71c22df27596ae8351d26d504e800574",
+          "项目/repo--3fa2e4cf/决策/index.md": "be4445995d2db329209e247f10b947119e325416622d19095a3e07071fa7ea9b",
+          "项目/repo--3fa2e4cf/收件箱/index.md": "54c913d3bd93c7612df99da1a2be1b3a1ecbd20bf5debf4e36d8eda526a50b45",
+          "项目/repo--3fa2e4cf/文档/index.md": "94131ce81fd44dbac9d88f47c306a0986f39df5d4176f6a7199318d0ba99557a",
+          "项目/repo--3fa2e4cf/文档/冒烟文档：中文检索目标.md": "b64b9a49a38432db8d7621faa87c38428eae98e07631d67dad679d07a927a288",
+          "项目/repo--3fa2e4cf/文档/外部编辑后的候选文档.md": "cc8ee53fca657f0e6d387019ba333964dc811567fbc60f0960f27e482be46174",
+          "项目/repo--3fa2e4cf/文档/外部编辑目标文档.md": "9799f311b71b5b4bc7c89919dfebd328837323dbf5c6d5cc93621611dbf7d28e",
+          "项目/repo--3fa2e4cf/日志/2026-09-24.md": "10b711666d20e9aa7214e0602595a32d40b87fb972b77bb9fe0be77bc278040b",
+          "项目/repo--3fa2e4cf/日志/index.md": "23cbf1b241e1a3d770143aa5b6c8580a546a0155a30a8e95e05620434db4c375",
+          "项目/repo--3fa2e4cf/约定/index.md": "750c756387b56ef5d7f48c44e4f388297c27e2346fee749e10e9053776d3fd90",
+          "项目/repo--3fa2e4cf/约定/人写的约定.md": "ab62976823704e3e3a6aebcc26a3afba0dac02ae1219b8d162fe472e20a74113",
+          "项目/repo--3fa2e4cf/踩坑/index.md": "891c7949ab81095b12a7d4998ece90e1ee354c85007ed5ba27f433fcfc4fd7d0"
+        },
+        "treeAfter": {
+          ".gitignore": "7c55645977b17d97f6ed25faca9790defea18ee9fb4ee35d4a884489daa354ed",
+          ".obsidian/app.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+          ".obsidian/workspace.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+          "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/1__外部编辑目标文档.md": "23125381c6a03115c5a46165d12a275f6dd66b7ce4644d166946437a79b8edfc",
+          "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/2__index.md": "3079f12b4c5cc7017ea4cf0e27e27be8e3f8f9383fea54745b11d314705a00a0",
+          "_meta/.history/tx-5581b237-85e2-49c9-9440-d385b5c178a5/1__index.md": "2b7ce9372762b53e9062221a2ed0d25f4b7ab279a4effc8e326951423ec9b094",
+          "_meta/.history/tx-da355e4e-f262-438c-be46-5c04a41eabf8/1__index.md": "8f99bcae5b3b1cf1b3fd47308794ec159d2cc3b6ec9c1f6981fdaeda160f5c44",
+          "_meta/.history/tx-f37d06e0-d1f9-4c5f-9b60-dd4bb8dea085/1__index.md": "6f27e188b7276a6fa09ad248ce0e318162518a1bee21facbdcdf86be3e599515",
+          "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/1__ADR-1-冒烟决策（旧）.md": "eb4447cceb09fa4b5080b902806c334ad6fcbb7e39ab2cb62cd8d5c9940abd02",
+          "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/2__index.md": "b9e62a4b026db3b7a4b46fd997d46927286c87a17ed97d7565e830f9cce1ae47",
+          "_meta/log.md": "72083e526dfe4f6ddcda7dd2cf9fd34b08bb56b2deee1cb2caa487bfb3d6c0f5",
+          "_meta/user.md": "e752e14cd77238813ed4b158572babd0f82a95c3f5791ce27e608ce26cb2b995",
+          "_meta/项目注册表.md": "3e648cdd6e14f52cd9723bbc159bfa7eb5c3eafe5921675f4d10a29fa0a65960",
+          "方法/index.md": "45fcec0d6c2ae3ef2752ef4fc3caca468d6e313cb59e1ed9581b50497dcd899e",
+          "项目/repo--3fa2e4cf/_meta/hot.md": "22176699299855b3987ffb70df9370fafa77f5d32277a56389358c78320c36a6",
+          "项目/repo--3fa2e4cf/index.md": "78b39d797b900eff7eb8951251e558d7fb49f6a3d65d6fd70c0a4c306b5f9be9",
+          "项目/repo--3fa2e4cf/决策/ADR-1-冒烟决策（旧）.md": "3cc5168750636cd0aadf76de49d29f5a425b4f3763c4f5f35b954e7bfd4dd6d5",
+          "项目/repo--3fa2e4cf/决策/ADR-2-冒烟决策（新）.md": "29bff48b04904e27d941a193aba6110c71c22df27596ae8351d26d504e800574",
+          "项目/repo--3fa2e4cf/决策/index.md": "be4445995d2db329209e247f10b947119e325416622d19095a3e07071fa7ea9b",
+          "项目/repo--3fa2e4cf/收件箱/index.md": "54c913d3bd93c7612df99da1a2be1b3a1ecbd20bf5debf4e36d8eda526a50b45",
+          "项目/repo--3fa2e4cf/文档/index.md": "94131ce81fd44dbac9d88f47c306a0986f39df5d4176f6a7199318d0ba99557a",
+          "项目/repo--3fa2e4cf/文档/冒烟文档：中文检索目标.md": "b64b9a49a38432db8d7621faa87c38428eae98e07631d67dad679d07a927a288",
+          "项目/repo--3fa2e4cf/文档/外部编辑后的候选文档.md": "cc8ee53fca657f0e6d387019ba333964dc811567fbc60f0960f27e482be46174",
+          "项目/repo--3fa2e4cf/文档/外部编辑目标文档.md": "9799f311b71b5b4bc7c89919dfebd328837323dbf5c6d5cc93621611dbf7d28e",
+          "项目/repo--3fa2e4cf/日志/2026-09-24.md": "10b711666d20e9aa7214e0602595a32d40b87fb972b77bb9fe0be77bc278040b",
+          "项目/repo--3fa2e4cf/日志/index.md": "23cbf1b241e1a3d770143aa5b6c8580a546a0155a30a8e95e05620434db4c375",
+          "项目/repo--3fa2e4cf/约定/index.md": "750c756387b56ef5d7f48c44e4f388297c27e2346fee749e10e9053776d3fd90",
+          "项目/repo--3fa2e4cf/约定/人写的约定.md": "ab62976823704e3e3a6aebcc26a3afba0dac02ae1219b8d162fe472e20a74113",
+          "项目/repo--3fa2e4cf/踩坑/index.md": "891c7949ab81095b12a7d4998ece90e1ee354c85007ed5ba27f433fcfc4fd7d0"
+        },
+        "vaultChanged": true,
+        "receiptResult": "dry-run",
+        "receiptDryRun": true,
+        "recoverExit": {
+          "code": 0,
+          "signal": null,
+          "timedOut": false
+        }
+      },
+      "dryRunInjection": {
+        "jobId": "job-6babfdd1c0dd186c937a7d1e3d9a9815",
+        "outputState": "raw-durable",
+        "rawChars": 227,
+        "evidenceSeq": 8,
+        "itemCount": 1
+      },
+      "dryRunErrorAudit": [
+        {
+          "cycle": 1,
+          "receiptResult": null,
+          "jobState": "pending"
+        }
+      ],
+      "liveJobId": "job-4ee479464542100c4da5c22767ae46a8",
+      "liveReceipt": {
+        "schema": 1,
+        "jobId": "job-4ee479464542100c4da5c22767ae46a8",
+        "projectId": "3fa2e4cf-9290-4caf-8691-298e61bffeb9",
+        "sessionId": "session-3748b2b4-3caa-4cc8-aa31-63bdf517a012",
+        "toSeq": 20,
+        "result": "applied",
+        "dryRun": false,
+        "attempts": 0,
+        "at": "2026-09-23T20:53:50.946Z",
+        "items": [
+          {
+            "idempotencyKey": "session-3748b2b4-3caa-4cc8-aa31-63bdf517a012:20:0",
+            "preassignedId": "con-e40f9519-a15e-4818-9c88-9e33239de027",
+            "type": "convention",
+            "title": "恢复通道约定（live）",
+            "status": "active",
+            "assertion": "stated",
+            "confidence": 0.9,
+            "inbox": false,
+            "supersedesId": null,
+            "evidenceSeqs": [
+              8
+            ],
+            "downgrades": [],
+            "id": "con-e40f9519-a15e-4818-9c88-9e33239de027",
+            "path": "项目/repo--3fa2e4cf/约定/恢复通道约定（live）.md",
+            "superseded": false,
+            "conflicts": []
+          }
+        ],
+        "refused": [],
+        "refusedCount": 0,
+        "index": "refreshed",
+        "usage": null,
+        "durationMs": 9
+      },
+      "liveCycle": {
+        "jobId": "job-4ee479464542100c4da5c22767ae46a8",
+        "seedExit": {
+          "code": null,
+          "signal": "SIGKILL",
+          "timedOut": false
+        },
+        "treeBefore": {
+          ".gitignore": "7c55645977b17d97f6ed25faca9790defea18ee9fb4ee35d4a884489daa354ed",
+          ".obsidian/app.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+          ".obsidian/workspace.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+          "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/1__外部编辑目标文档.md": "23125381c6a03115c5a46165d12a275f6dd66b7ce4644d166946437a79b8edfc",
+          "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/2__index.md": "3079f12b4c5cc7017ea4cf0e27e27be8e3f8f9383fea54745b11d314705a00a0",
+          "_meta/.history/tx-5581b237-85e2-49c9-9440-d385b5c178a5/1__index.md": "2b7ce9372762b53e9062221a2ed0d25f4b7ab279a4effc8e326951423ec9b094",
+          "_meta/.history/tx-da355e4e-f262-438c-be46-5c04a41eabf8/1__index.md": "8f99bcae5b3b1cf1b3fd47308794ec159d2cc3b6ec9c1f6981fdaeda160f5c44",
+          "_meta/.history/tx-f37d06e0-d1f9-4c5f-9b60-dd4bb8dea085/1__index.md": "6f27e188b7276a6fa09ad248ce0e318162518a1bee21facbdcdf86be3e599515",
+          "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/1__ADR-1-冒烟决策（旧）.md": "eb4447cceb09fa4b5080b902806c334ad6fcbb7e39ab2cb62cd8d5c9940abd02",
+          "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/2__index.md": "b9e62a4b026db3b7a4b46fd997d46927286c87a17ed97d7565e830f9cce1ae47",
+          "_meta/log.md": "72083e526dfe4f6ddcda7dd2cf9fd34b08bb56b2deee1cb2caa487bfb3d6c0f5",
+          "_meta/user.md": "e752e14cd77238813ed4b158572babd0f82a95c3f5791ce27e608ce26cb2b995",
+          "_meta/项目注册表.md": "3e648cdd6e14f52cd9723bbc159bfa7eb5c3eafe5921675f4d10a29fa0a65960",
+          "方法/index.md": "45fcec0d6c2ae3ef2752ef4fc3caca468d6e313cb59e1ed9581b50497dcd899e",
+          "项目/repo--3fa2e4cf/_meta/hot.md": "22176699299855b3987ffb70df9370fafa77f5d32277a56389358c78320c36a6",
+          "项目/repo--3fa2e4cf/index.md": "78b39d797b900eff7eb8951251e558d7fb49f6a3d65d6fd70c0a4c306b5f9be9",
+          "项目/repo--3fa2e4cf/决策/ADR-1-冒烟决策（旧）.md": "3cc5168750636cd0aadf76de49d29f5a425b4f3763c4f5f35b954e7bfd4dd6d5",
+          "项目/repo--3fa2e4cf/决策/ADR-2-冒烟决策（新）.md": "29bff48b04904e27d941a193aba6110c71c22df27596ae8351d26d504e800574",
+          "项目/repo--3fa2e4cf/决策/index.md": "be4445995d2db329209e247f10b947119e325416622d19095a3e07071fa7ea9b",
+          "项目/repo--3fa2e4cf/收件箱/index.md": "54c913d3bd93c7612df99da1a2be1b3a1ecbd20bf5debf4e36d8eda526a50b45",
+          "项目/repo--3fa2e4cf/文档/index.md": "94131ce81fd44dbac9d88f47c306a0986f39df5d4176f6a7199318d0ba99557a",
+          "项目/repo--3fa2e4cf/文档/冒烟文档：中文检索目标.md": "b64b9a49a38432db8d7621faa87c38428eae98e07631d67dad679d07a927a288",
+          "项目/repo--3fa2e4cf/文档/外部编辑后的候选文档.md": "cc8ee53fca657f0e6d387019ba333964dc811567fbc60f0960f27e482be46174",
+          "项目/repo--3fa2e4cf/文档/外部编辑目标文档.md": "9799f311b71b5b4bc7c89919dfebd328837323dbf5c6d5cc93621611dbf7d28e",
+          "项目/repo--3fa2e4cf/日志/2026-09-24.md": "10b711666d20e9aa7214e0602595a32d40b87fb972b77bb9fe0be77bc278040b",
+          "项目/repo--3fa2e4cf/日志/index.md": "23cbf1b241e1a3d770143aa5b6c8580a546a0155a30a8e95e05620434db4c375",
+          "项目/repo--3fa2e4cf/约定/index.md": "750c756387b56ef5d7f48c44e4f388297c27e2346fee749e10e9053776d3fd90",
+          "项目/repo--3fa2e4cf/约定/人写的约定.md": "ab62976823704e3e3a6aebcc26a3afba0dac02ae1219b8d162fe472e20a74113",
+          "项目/repo--3fa2e4cf/踩坑/index.md": "891c7949ab81095b12a7d4998ece90e1ee354c85007ed5ba27f433fcfc4fd7d0"
+        },
+        "treeAfter": {
+          ".gitignore": "7c55645977b17d97f6ed25faca9790defea18ee9fb4ee35d4a884489daa354ed",
+          ".obsidian/app.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+          ".obsidian/workspace.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+          "_meta/.history/tx-0119379a-5fd9-47b3-805a-e9a54defd151/1__index.md": "750c756387b56ef5d7f48c44e4f388297c27e2346fee749e10e9053776d3fd90",
+          "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/1__外部编辑目标文档.md": "23125381c6a03115c5a46165d12a275f6dd66b7ce4644d166946437a79b8edfc",
+          "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/2__index.md": "3079f12b4c5cc7017ea4cf0e27e27be8e3f8f9383fea54745b11d314705a00a0",
+          "_meta/.history/tx-5581b237-85e2-49c9-9440-d385b5c178a5/1__index.md": "2b7ce9372762b53e9062221a2ed0d25f4b7ab279a4effc8e326951423ec9b094",
+          "_meta/.history/tx-da355e4e-f262-438c-be46-5c04a41eabf8/1__index.md": "8f99bcae5b3b1cf1b3fd47308794ec159d2cc3b6ec9c1f6981fdaeda160f5c44",
+          "_meta/.history/tx-f37d06e0-d1f9-4c5f-9b60-dd4bb8dea085/1__index.md": "6f27e188b7276a6fa09ad248ce0e318162518a1bee21facbdcdf86be3e599515",
+          "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/1__ADR-1-冒烟决策（旧）.md": "eb4447cceb09fa4b5080b902806c334ad6fcbb7e39ab2cb62cd8d5c9940abd02",
+          "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/2__index.md": "b9e62a4b026db3b7a4b46fd997d46927286c87a17ed97d7565e830f9cce1ae47",
+          "_meta/log.md": "330d465b0d0e60ed1b94ee6e176f0bef1cb9c6645ae523547c86ac7e1efce078",
+          "_meta/user.md": "e752e14cd77238813ed4b158572babd0f82a95c3f5791ce27e608ce26cb2b995",
+          "_meta/项目注册表.md": "3e648cdd6e14f52cd9723bbc159bfa7eb5c3eafe5921675f4d10a29fa0a65960",
+          "方法/index.md": "45fcec0d6c2ae3ef2752ef4fc3caca468d6e313cb59e1ed9581b50497dcd899e",
+          "项目/repo--3fa2e4cf/_meta/hot.md": "22176699299855b3987ffb70df9370fafa77f5d32277a56389358c78320c36a6",
+          "项目/repo--3fa2e4cf/index.md": "78b39d797b900eff7eb8951251e558d7fb49f6a3d65d6fd70c0a4c306b5f9be9",
+          "项目/repo--3fa2e4cf/决策/ADR-1-冒烟决策（旧）.md": "3cc5168750636cd0aadf76de49d29f5a425b4f3763c4f5f35b954e7bfd4dd6d5",
+          "项目/repo--3fa2e4cf/决策/ADR-2-冒烟决策（新）.md": "29bff48b04904e27d941a193aba6110c71c22df27596ae8351d26d504e800574",
+          "项目/repo--3fa2e4cf/决策/index.md": "be4445995d2db329209e247f10b947119e325416622d19095a3e07071fa7ea9b",
+          "项目/repo--3fa2e4cf/收件箱/index.md": "54c913d3bd93c7612df99da1a2be1b3a1ecbd20bf5debf4e36d8eda526a50b45",
+          "项目/repo--3fa2e4cf/文档/index.md": "94131ce81fd44dbac9d88f47c306a0986f39df5d4176f6a7199318d0ba99557a",
+          "项目/repo--3fa2e4cf/文档/冒烟文档：中文检索目标.md": "b64b9a49a38432db8d7621faa87c38428eae98e07631d67dad679d07a927a288",
+          "项目/repo--3fa2e4cf/文档/外部编辑后的候选文档.md": "cc8ee53fca657f0e6d387019ba333964dc811567fbc60f0960f27e482be46174",
+          "项目/repo--3fa2e4cf/文档/外部编辑目标文档.md": "9799f311b71b5b4bc7c89919dfebd328837323dbf5c6d5cc93621611dbf7d28e",
+          "项目/repo--3fa2e4cf/日志/2026-09-24.md": "10b711666d20e9aa7214e0602595a32d40b87fb972b77bb9fe0be77bc278040b",
+          "项目/repo--3fa2e4cf/日志/index.md": "23cbf1b241e1a3d770143aa5b6c8580a546a0155a30a8e95e05620434db4c375",
+          "项目/repo--3fa2e4cf/约定/index.md": "6ff2e0700b598074bf251353720ecb6a2bf9011a6fae6063bf319bfd3a1f3585",
+          "项目/repo--3fa2e4cf/约定/人写的约定.md": "ab62976823704e3e3a6aebcc26a3afba0dac02ae1219b8d162fe472e20a74113",
+          "项目/repo--3fa2e4cf/约定/恢复通道约定（live）.md": "c1380c1ba8fade0a2d9459cd4fc170572a1c3acba69df90b7904af0282f3f727",
+          "项目/repo--3fa2e4cf/踩坑/index.md": "891c7949ab81095b12a7d4998ece90e1ee354c85007ed5ba27f433fcfc4fd7d0"
+        },
+        "vaultChanged": true,
+        "receiptResult": "applied",
+        "receiptDryRun": false,
+        "recoverExit": {
+          "code": 0,
+          "signal": null,
+          "timedOut": false
+        }
+      },
+      "liveInjection": {
+        "jobId": "job-4ee479464542100c4da5c22767ae46a8",
+        "outputState": "raw-durable",
+        "rawChars": 225,
+        "evidenceSeq": 8,
+        "itemCount": 1
+      },
+      "laneVerify": {
+        "dryRun": {
+          "exit": {
+            "code": 0,
+            "signal": null,
+            "timedOut": false
+          }
+        },
+        "live": {
+          "exit": {
+            "code": 0,
+            "signal": null,
+            "timedOut": false
+          }
+        }
+      }
+    },
+    "restart": {
+      "dryRunKilledBy": "SIGKILL",
+      "killedBy": "SIGKILL",
+      "jobId": "job-4ee479464542100c4da5c22767ae46a8",
+      "receiptCount": 1,
+      "receiptsTotal": 2,
+      "duplicateNoteIds": [],
+      "memoryNoteCount": 20,
+      "noteIds": [
+        "con-d8c674b7-5844-4c28-899b-5071a33882be",
+        "con-e40f9519-a15e-4818-9c88-9e33239de027",
+        "dec-5b82eb18-f38d-45d8-86a9-c1ddb8b8c87d",
+        "dec-8a05bddd-1ada-4aa4-a4db-b24003134eb0",
+        "doc-55063061-6d8b-467e-ae18-815bfaf3753a",
+        "doc-71fa0a84-f390-496b-bb73-f2c3cc8de2d5",
+        "doc-97aa3180-5ea2-43c1-b610-3361420ab197",
+        "hub-1cf6aa08-4ed4-4ec2-86fa-ecea182027bc",
+        "hub-399248c1-32fe-47d7-b46f-340e807c1e6f",
+        "hub-451b355c-5df2-469a-8a44-32ead502657b",
+        "hub-787a7293-3f31-4845-a15d-d0842a355708",
+        "hub-be47629b-99ec-4e2f-ad0d-5d6ddff6cdb2",
+        "hub-c67cddbc-5e3a-416f-b7ac-2e405c0d8a42",
+        "hub-f387df33-f5b9-4902-b102-86cd456fb166",
+        "hub-f809fec0-1f54-4cdb-b478-01a4834dc1f5",
+        "log-b30d1137-3712-4e37-a990-991e1159dacb"
+      ],
+      "noPendingJobAfterRecovery": true
+    },
+    "realHomeUnchanged": true
+  },
+  "vault": {
+    "files": [
+      ".obsidian/app.json",
+      ".obsidian/workspace.json",
+      "_meta/.history/tx-0119379a-5fd9-47b3-805a-e9a54defd151/1__index.md",
+      "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/1__外部编辑目标文档.md",
+      "_meta/.history/tx-3c693290-991d-4cd5-8d21-555791f0c42c/2__index.md",
+      "_meta/.history/tx-5581b237-85e2-49c9-9440-d385b5c178a5/1__index.md",
+      "_meta/.history/tx-da355e4e-f262-438c-be46-5c04a41eabf8/1__index.md",
+      "_meta/.history/tx-f37d06e0-d1f9-4c5f-9b60-dd4bb8dea085/1__index.md",
+      "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/1__ADR-1-冒烟决策（旧）.md",
+      "_meta/.history/tx-ff4d1fad-f730-4fb4-8625-4076488614a7/2__index.md",
+      "_meta/log.md",
+      "_meta/user.md",
+      "_meta/项目注册表.md",
+      "方法/index.md",
+      "项目/repo--3fa2e4cf/_meta/hot.md",
+      "项目/repo--3fa2e4cf/index.md",
+      "项目/repo--3fa2e4cf/决策/ADR-1-冒烟决策（旧）.md",
+      "项目/repo--3fa2e4cf/决策/ADR-2-冒烟决策（新）.md",
+      "项目/repo--3fa2e4cf/决策/index.md",
+      "项目/repo--3fa2e4cf/收件箱/index.md",
+      "项目/repo--3fa2e4cf/文档/index.md",
+      "项目/repo--3fa2e4cf/文档/冒烟文档：中文检索目标.md",
+      "项目/repo--3fa2e4cf/文档/外部编辑后的候选文档.md",
+      "项目/repo--3fa2e4cf/文档/外部编辑目标文档.md",
+      "项目/repo--3fa2e4cf/日志/2026-09-24.md",
+      "项目/repo--3fa2e4cf/日志/index.md",
+      "项目/repo--3fa2e4cf/约定/index.md",
+      "项目/repo--3fa2e4cf/约定/人写的约定.md",
+      "项目/repo--3fa2e4cf/约定/恢复通道约定（live）.md",
+      "项目/repo--3fa2e4cf/踩坑/index.md"
+    ],
+    "obsidianBefore": {
+      "app.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+      "workspace.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2"
+    },
+    "obsidianAfter": {
+      "app.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2",
+      "workspace.json": "1bfb90b958c76aa24a4a11ddb8a0bd7fe7b760573a0255ab48ce696c770f19a2"
+    },
+    "memoryNotes": [
+      {
+        "path": "_meta/log.md",
+        "id": null,
+        "type": null,
+        "status": null,
+        "tags": null
+      },
+      {
+        "path": "_meta/user.md",
+        "id": null,
+        "type": null,
+        "status": null,
+        "tags": [
+          "dsh-mem/user"
+        ]
+      },
+      {
+        "path": "_meta/项目注册表.md",
+        "id": null,
+        "type": null,
+        "status": null,
+        "tags": null
+      },
+      {
+        "path": "方法/index.md",
+        "id": "hub-787a7293-3f31-4845-a15d-d0842a355708",
+        "type": "hub",
+        "status": "active",
+        "tags": [
+          "dsh-mem/hub"
+        ]
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/_meta/hot.md",
+        "id": null,
+        "type": "hot",
+        "status": "active",
+        "tags": [
+          "dsh-mem/hot",
+          "project/repo"
+        ]
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/index.md",
+        "id": "hub-f809fec0-1f54-4cdb-b478-01a4834dc1f5",
+        "type": "hub",
+        "status": "active",
+        "tags": [
+          "dsh-mem/hub",
+          "project/repo"
+        ]
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/决策/ADR-1-冒烟决策（旧）.md",
+        "id": "dec-5b82eb18-f38d-45d8-86a9-c1ddb8b8c87d",
+        "type": "decision",
+        "status": "superseded",
+        "tags": [
+          "dsh-mem/decision",
+          "project/repo"
+        ]
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/决策/ADR-2-冒烟决策（新）.md",
+        "id": "dec-8a05bddd-1ada-4aa4-a4db-b24003134eb0",
+        "type": "decision",
+        "status": "accepted",
+        "tags": [
+          "dsh-mem/decision",
+          "project/repo"
+        ]
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/决策/index.md",
+        "id": "hub-451b355c-5df2-469a-8a44-32ead502657b",
+        "type": "hub",
+        "status": "active",
+        "tags": [
+          "dsh-mem/hub",
+          "project/repo"
+        ]
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/收件箱/index.md",
+        "id": "hub-be47629b-99ec-4e2f-ad0d-5d6ddff6cdb2",
+        "type": "hub",
+        "status": "active",
+        "tags": [
+          "dsh-mem/hub",
+          "project/repo"
+        ]
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/文档/index.md",
+        "id": "hub-1cf6aa08-4ed4-4ec2-86fa-ecea182027bc",
+        "type": "hub",
+        "status": "active",
+        "tags": [
+          "dsh-mem/hub",
+          "project/repo"
+        ]
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/文档/冒烟文档：中文检索目标.md",
+        "id": "doc-97aa3180-5ea2-43c1-b610-3361420ab197",
+        "type": "doc",
+        "status": "active",
+        "tags": [
+          "smoke",
+          "中文"
+        ]
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/文档/外部编辑后的候选文档.md",
+        "id": "doc-71fa0a84-f390-496b-bb73-f2c3cc8de2d5",
+        "type": "doc",
+        "status": "active",
+        "tags": [
+          "dsh-mem/doc",
+          "project/repo"
+        ]
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/文档/外部编辑目标文档.md",
+        "id": "doc-55063061-6d8b-467e-ae18-815bfaf3753a",
+        "type": "doc",
+        "status": "superseded",
+        "tags": [
+          "dsh-mem/doc",
+          "project/repo"
+        ]
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/日志/2026-09-24.md",
+        "id": "log-b30d1137-3712-4e37-a990-991e1159dacb",
+        "type": "session-log",
+        "status": "active",
+        "tags": [
+          "dsh-mem/session-log",
+          "project/repo"
+        ]
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/日志/index.md",
+        "id": "hub-c67cddbc-5e3a-416f-b7ac-2e405c0d8a42",
+        "type": "hub",
+        "status": "active",
+        "tags": [
+          "dsh-mem/hub",
+          "project/repo"
+        ]
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/约定/index.md",
+        "id": "hub-f387df33-f5b9-4902-b102-86cd456fb166",
+        "type": "hub",
+        "status": "active",
+        "tags": [
+          "dsh-mem/hub",
+          "project/repo"
+        ]
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/约定/人写的约定.md",
+        "id": "con-d8c674b7-5844-4c28-899b-5071a33882be",
+        "type": "convention",
+        "status": null,
+        "tags": null
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/约定/恢复通道约定（live）.md",
+        "id": "con-e40f9519-a15e-4818-9c88-9e33239de027",
+        "type": "convention",
+        "status": "active",
+        "tags": [
+          "smoke",
+          "resume"
+        ]
+      },
+      {
+        "path": "项目/repo--3fa2e4cf/踩坑/index.md",
+        "id": "hub-399248c1-32fe-47d7-b46f-340e807c1e6f",
+        "type": "hub",
+        "status": "active",
+        "tags": [
+          "dsh-mem/hub",
+          "project/repo"
+        ]
+      }
+    ]
+  },
+  "realHome": {
+    "before": {
+      "cordis.patch.yml": "217fa09df295df5381c6931c80ce283f0a9985f28b806e25ad455a95ca75ff9e",
+      "settings.yaml": "2d809694268d357e4d304d228a73aff95a789357af3eb6e45f24cc68913f6314",
+      ".credentials.yaml": "9a8970ee234e3dc8c9a6bbe648ba9f76cca190799f5285723af07a77d02deecb",
+      "profiles/web/package.json": "306c8cf14f19648f5e68ca726b1a5ccba4fc9d0646a44cdb2f8f76febbd383b9",
+      "profiles/web/pnpm-workspace.yaml": "c6eca2f620a7fdc740b135d663018a06d97cb666a5036eb110ccb5188869b249",
+      "profiles/web/pnpm-lock.yaml": "9c2a85e861877b16ab85382f9d836a722ca95e6996fde3553face0277fad368c",
+      "profiles/web/cordis.patch.yml": "ef189a8c27db6d63930aa3046a3040482e952eafcb7487c644d508e8d461f027",
+      "profiles/": "97081aeac3cdbf6cc527a29c52aba0532f64c15a04ea26d13e105414138ee5b3"
+    },
+    "after": {
+      "cordis.patch.yml": "217fa09df295df5381c6931c80ce283f0a9985f28b806e25ad455a95ca75ff9e",
+      "settings.yaml": "2d809694268d357e4d304d228a73aff95a789357af3eb6e45f24cc68913f6314",
+      ".credentials.yaml": "9a8970ee234e3dc8c9a6bbe648ba9f76cca190799f5285723af07a77d02deecb",
+      "profiles/web/package.json": "306c8cf14f19648f5e68ca726b1a5ccba4fc9d0646a44cdb2f8f76febbd383b9",
+      "profiles/web/pnpm-workspace.yaml": "c6eca2f620a7fdc740b135d663018a06d97cb666a5036eb110ccb5188869b249",
+      "profiles/web/pnpm-lock.yaml": "9c2a85e861877b16ab85382f9d836a722ca95e6996fde3553face0277fad368c",
+      "profiles/web/cordis.patch.yml": "ef189a8c27db6d63930aa3046a3040482e952eafcb7487c644d508e8d461f027",
+      "profiles/": "97081aeac3cdbf6cc527a29c52aba0532f64c15a04ea26d13e105414138ee5b3"
+    }
+  },
+  "redaction": "every absolute path under the temporary base directory was replaced with <tmp>/smoke, and every captured stderr tail was replaced by its byte count (DSH prints the model reasoning to stderr). This file is a frozen transcript of the run, not a re-runnable input: its vault is gone, so verify.mjs refuses it with exit 2."
+}
