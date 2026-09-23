@@ -16,10 +16,12 @@
 //     §8 measured, and the test asserts the two are told apart by
 //     `signal.reason.name` alone (`AbortError` vs `TimeoutError`).
 //   * **Evidence rules.** Only seqs drawn from the job's own `allowedEvents`
-//     count, an unknown seq / a cross-project path / a disallowed type /
-//     over-long output are refusals, and the model can never promote its own
-//     claim: `accepted` without a user seq becomes `provisional`, `observed`
-//     without an independently verified tool result becomes `inferred`.
+//     count; an unknown seq, a disallowed type and over-long output refuse the
+//     whole output, while a foreign supersede target refuses only its own item
+//     (prose that merely mentions a path costs nothing), and the model can never
+//     promote its own claim: `accepted` without a user seq becomes
+//     `provisional`, `observed` without an independently verified tool result
+//     becomes `inferred`.
 //   * **The two durability barriers.** The complete raw output is written to the
 //     0600 pending job (`raw-durable`) BEFORE validation, and the validated
 //     items (`validated`) before anything could write a vault. A restart
@@ -37,7 +39,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { DistillError, distillSettings, runPendingJob, validateDistillation } from '../lib/distill.js'
+import { DistillError, distillCandidates, distillSettings, runPendingJob, validateDistillation } from '../lib/distill.js'
 import { isValidNoteId } from '../lib/routing.js'
 import {
   JOB_FILE_MODE,
@@ -251,12 +253,34 @@ test('an over-long raw output is refused before it is even parsed', () => {
   assert.throws(() => validateDistillation(raw, JOB, config), throwsCode('output-too-long'))
 })
 
-test('a supersedesId must be null or a plugin-shaped note id, never a path', () => {
+test('a supersedesId is null, a plugin-shaped note id, or a foreign target that drops the item', () => {
   assert.equal(onlyItem(json([decisionItem({ supersedesId: null })])).supersedesId, null)
   const valid = 'dec-5d46ff43-1bf8-496d-8b9f-c11e89d4e2aa'
   assert.equal(onlyItem(json([decisionItem({ supersedesId: valid })])).supersedesId, valid)
-  for (const supersedesId of ['项目/demo--1c392abb/决策/ADR-1.md', 'dec-not-a-uuid', 7, true]) {
-    assert.throws(() => validateDistillation(json([decisionItem({ supersedesId })]), JOB, CONFIG), throwsCode('schema'))
+
+  // A supersede target the plugin would act on but cannot resolve inside this
+  // project refuses the ITEM, never the whole turn.
+  for (const supersedesId of [
+    '项目/x--ffffffff/决策/ADR-1.md',
+    '/etc/passwd',
+    '~/.dsh/x.md',
+    '../secret/notes.md',
+    '_meta/user.md',
+    '方法/调度器.md',
+  ]) {
+    assert.deepEqual(validateDistillation(json([decisionItem({ supersedesId })]), JOB, CONFIG), [], supersedesId)
+  }
+
+  // Anything else is not a target at all: it is a malformed contract.
+  for (const supersedesId of [
+    'dec-not-a-uuid',
+    '见 ADR-1',
+    `项目/demo--${PROJECT_ID.slice(0, 8)}/决策/ADR-1.md`,
+    7,
+    true,
+    '',
+  ]) {
+    assert.throws(() => validateDistillation(json([decisionItem({ supersedesId })]), JOB, CONFIG), throwsCode('schema'), String(supersedesId))
   }
 })
 
@@ -282,32 +306,80 @@ test('every allowed seq is accepted, and repeated seqs are refused', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Evidence: no cross-project or escaping path
+// Paths: prose never costs a candidate; only a foreign acted-on target does
 // ---------------------------------------------------------------------------
 
-test('a cross-project, absolute or escaping path is refused', () => {
-  const bad = [
-    '见 项目/other--deadbeef/决策/ADR-1.md',
-    '见 [[项目/other--deadbeef/决策/ADR-1]]',
-    '编辑 ~/.dsh/data/obsidian-mem/pending/x.json',
-    '读 /etc/passwd 后结论',
-    '打开 C:\\Users\\me\\notes.md',
-    '引用 ../secret/notes.md',
-    '写入 _meta/user.md',
-    '登记到 _meta/项目注册表.md',
-    '沉淀到 方法/调度器后端.md',
-  ]
-  for (const body of bad) {
-    assert.throws(() => validateDistillation(json([decisionItem({ body })]), JOB, CONFIG), throwsCode('cross-project'), body)
+/** The path shapes that must never be acted on outside this project. */
+const FOREIGN_PATHS = [
+  '项目/other--deadbeef/决策/ADR-1.md',
+  '项目/x--ffffffff/约定/a.md',
+  '/etc/passwd',
+  '~/.dsh/data/obsidian-mem/pending/x.json',
+  'C:\\Users\\me\\notes.md',
+  '../secret/notes.md',
+  '_meta/user.md',
+  '_meta/项目注册表.md',
+  '方法/调度器后端.md',
+]
+
+test('prose mentions of foreign or vault-level paths never cost a candidate', () => {
+  // The narrowing: a body that merely MENTIONS `_meta/log.md` (or any other
+  // path) is ordinary text — the plugin acts on no path from it, so refusing
+  // the turn over a wording accident is memory loss.
+  for (const mention of FOREIGN_PATHS) {
+    const body = `记录在 ${mention} 的旁注里，与结论无关。`
+    const items = validateDistillation(json([decisionItem({ body })]), JOB, CONFIG)
+    assert.equal(items.length, 1, mention)
+    assert.equal(items[0].body, body)
   }
-  assert.throws(
-    () => validateDistillation(json([decisionItem({ title: '见 项目/x--ffffffff/约定/a.md' })]), JOB, CONFIG),
-    throwsCode('cross-project'),
-  )
-  assert.throws(
-    () => validateDistillation(json([decisionItem({ tags: ['项目/other--deadbeef/决策'] })]), JOB, CONFIG),
-    throwsCode('cross-project'),
-  )
+  const wikilink = '见 [[项目/other--deadbeef/决策/ADR-1]]'
+  assert.equal(onlyItem(json([decisionItem({ body: wikilink })])).body, wikilink)
+  assert.equal(validateDistillation(json([decisionItem({ title: '见 项目/x--ffffffff/约定/a.md' })]), JOB, CONFIG).length, 1)
+  assert.equal(validateDistillation(json([decisionItem({ tags: ['项目/other--deadbeef/决策'] })]), JOB, CONFIG).length, 1)
+})
+
+test('a body that mentions _meta/log.md survives alongside its siblings', () => {
+  const raw = json([
+    decisionItem({ title: 'a', body: '结论一，记录在 _meta/log.md。' }),
+    decisionItem({ title: 'b', body: '结论二，见 项目/other--deadbeef/决策/ADR-1.md。' }),
+    decisionItem({ title: 'c', body: '结论三，无路径。' }),
+  ])
+  assert.deepEqual(validateDistillation(raw, JOB, CONFIG).map((item) => item.title), ['a', 'b', 'c'])
+})
+
+test('a foreign supersede target drops that item and leaves its siblings', () => {
+  const raw = json([
+    decisionItem({ title: 'a' }),
+    decisionItem({ title: 'b', supersedesId: '项目/other--deadbeef/决策/ADR-1.md' }),
+    decisionItem({ title: 'c' }),
+  ])
+  assert.deepEqual(validateDistillation(raw, JOB, CONFIG).map((item) => item.title), ['a', 'c'])
+  const { refused } = distillCandidates(raw, JOB, CONFIG)
+  assert.deepEqual(refused, [{
+    index: 1,
+    reason: 'foreign-target',
+    field: 'supersedesId',
+    value: '项目/other--deadbeef/决策/ADR-1.md',
+  }])
+})
+
+test('every foreign target class drops only its own item', () => {
+  for (const target of FOREIGN_PATHS) {
+    const raw = json([
+      decisionItem({ title: 'drop', supersedesId: target }),
+      decisionItem({ title: 'keep' }),
+    ])
+    assert.deepEqual(validateDistillation(raw, JOB, CONFIG).map((item) => item.title), ['keep'], target)
+  }
+})
+
+test('a malformed output is never salvaged by dropping a foreign-target sibling', () => {
+  const dropped = decisionItem({ supersedesId: '项目/x--ffffffff/决策/a.md' })
+  assert.throws(() => validateDistillation('not json', JOB, CONFIG), throwsCode('not-json'))
+  assert.throws(() => validateDistillation(json([dropped, { type: 'doc' }]), JOB, CONFIG), throwsCode('type'))
+  assert.throws(() => validateDistillation(json([dropped, decisionItem({ title: 'bad', evidenceSeqs: [999] })]), JOB, CONFIG), throwsCode('evidence'))
+  assert.throws(() => validateDistillation(json([dropped, { ...decisionItem({ title: 'x' }), extra: 1 }]), JOB, CONFIG), throwsCode('schema'))
+  assert.throws(() => validateDistillation(json([{ ...dropped, confidence: 3 }]), JOB, CONFIG), throwsCode('schema'))
 })
 
 test("the job's own project path, a bare tag namespace and a URL are not paths out", () => {
@@ -618,8 +690,45 @@ test('the raw output is durable before validation, and the validated items after
   assert.equal((await stat(join(queueRoot, `${JOB_ID}.json`))).mode & 0o777, JOB_FILE_MODE)
 })
 
-test('the persisted metadata holds only measured tokens and no invented currency cost', async (t) => {
+test('a dropped foreign-target item is reported, and only survivors reach the validated barrier', async (t) => {
   const { queueRoot, persistOutput } = await queueIn(t)
+  await writeJobAtomic(queueRoot, jobFixture())
+  const raw = json([
+    decisionItem({ title: 'a' }),
+    decisionItem({ title: 'b', supersedesId: '项目/other--deadbeef/决策/ADR-1.md' }),
+  ])
+  const llm = recordingLlm(() => textStream(raw))
+  const result = await runPendingJob(jobFixture(), { llm, config: CONFIG, persistOutput })
+
+  assert.deepEqual(result.items.map((item) => item.title), ['a'])
+  assert.deepEqual(result.refused, [{
+    index: 1,
+    reason: 'foreign-target',
+    field: 'supersedesId',
+    value: '项目/other--deadbeef/决策/ADR-1.md',
+  }])
+  const [stored] = await loadPending(queueRoot)
+  assert.deepEqual(stored.output.items.map((item) => item.title), ['a'])
+  assert.deepEqual(stored.output.items.map((item) => item.idempotencyKey), [`${SESSION_ID}:${TO_SEQ}:0`])
+})
+
+test('a job whose every item is dropped is still a durable, model-call-free resume', async (t) => {
+  const { queueRoot, persistOutput } = await queueIn(t)
+  await writeJobAtomic(queueRoot, jobFixture())
+  const raw = json([decisionItem({ supersedesId: '_meta/user.md' })])
+  const result = await runPendingJob(jobFixture(), { llm: recordingLlm(() => textStream(raw)), config: CONFIG, persistOutput })
+  assert.deepEqual(result.items, [])
+  assert.equal(result.refused.length, 1)
+
+  const [reloaded] = await loadPending(queueRoot)
+  const deadLlm = recordingLlm(() => { throw new Error('the model must not be called again') })
+  const second = await runPendingJob(reloaded, { llm: deadLlm, config: CONFIG, persistOutput })
+  assert.equal(deadLlm.calls.length, 0)
+  assert.deepEqual(second.items, [])
+  assert.deepEqual(second.refused, [], 'a validated resume reports no new refusals')
+})
+
+test('the persisted metadata holds only measured tokens and no invented currency cost', async (t) => {  const { queueRoot, persistOutput } = await queueIn(t)
   await writeJobAtomic(queueRoot, jobFixture())
   const llm = recordingLlm(() => textStream(json([decisionItem()])))
   const result = await runPendingJob(jobFixture(), { llm, config: CONFIG, persistOutput })
