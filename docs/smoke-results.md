@@ -1,7 +1,7 @@
 # 独立 profile 冒烟实测（Task 18 / Task 18b）
 
 - **日期**：2026-09-24
-- **状态**：验收脚本 **25/25 通过**；负控 **8/8** 通过；**1 项未验证**（Obsidian GUI，见 §5）
+- **状态**：验收脚本 **25/25 通过**；负控 **9/9** 通过；**1 项未验证**（Obsidian GUI，见 §5）
 - **被测环境**：DSH `0.1.5-rc.2`；Node `v25.9.0`；`darwin arm64`；蒸馏路由 `deepseek-official` / `deepseek-flash`
 - **产物**：`test/smoke/`（runner + checker + 负控 + 驱动插件）、`test/smoke/records/smoke-record.json`（Task 18 的**修正前**冻结记录）、`docs/p0-compatibility.md` §9（Task 18b 定位到的宿主事实）
 - **计划要求**：`docs/superpowers/plans/2026-09-23-dsh-obsidian-mem-implementation.md` Task 18
@@ -15,12 +15,14 @@
 在临时 `DSH_HOME` 下（`mkdtemp`，用完删除）从随包 `headless` 模板创建 profile `smoke`，把本仓库与一次性驱动插件 `test/smoke/driver` 以 `link:` 装入，然后跑真实的 headless 会话：
 
 ```sh
-node test/smoke/run-smoke.mjs --out /tmp/dshsmoke-fix2.json
-node test/smoke/verify.mjs /tmp/dshsmoke-fix2.json          # 独立重算 vault 事实后才判定
-node test/smoke/negative-controls.mjs /tmp/dshsmoke-fix2.json
+node test/smoke/run-smoke.mjs --out /tmp/dshsmoke-fix3.json
+node test/smoke/verify.mjs /tmp/dshsmoke-fix3.json          # 独立重算 vault 事实后才判定
+node test/smoke/negative-controls.mjs /tmp/dshsmoke-fix3.json
 ```
 
-下文引用的数字来自**最终 runner 的第二次独立运行**（`/tmp/dshsmoke-fix2.json`）；修复后的第一次运行（`/tmp/dshsmoke-fix.json`）在**同样 25/25** 下给出了同样的结论（差异只在模型 token 计数与耗时：dryRun 415 tokens/2257 ms、live 267 tokens/1840 ms；其余计数完全相同）。两次都用同一套命令。
+下文引用的数字来自**最终 runner + 最终 checker 的第三次独立运行**（`/tmp/dshsmoke-fix3.json`）；修复后的前两次运行（`/tmp/dshsmoke-fix.json`、`/tmp/dshsmoke-fix2.json`）在**同样 25/25** 下给出了同样的结论（差异只在模型 token 计数与耗时：`415/2257`、`267/1840`，以及 `409/2178`、`186/1312`；其余计数完全相同）。三次都用同一套命令。
+
+`verify.mjs` 只把**显式带 `skipped: true`**（由 `--only` 分支写入）的通道当作"未运行"；一条**真的跑了但没有捕获到任何 job**（`jobId` 为 null 且无该标记）的通道是**失败**——acceptance 不允许在"什么都没捕获"时通过。负控 `model-lane-captured-nothing` 正是这条断言的守卫。
 
 驱动插件通过 `ctx.tools.get(name).execute(args, exec)` 调用**插件自己注册的六个 `mem_*` 工具**（与模型调用的是同一批定义），只记录收据、路径、id、状态、计数与哈希。
 
@@ -33,12 +35,12 @@ node test/smoke/negative-controls.mjs /tmp/dshsmoke-fix2.json
 
 驱动插件的 referenced interval 是必需的：DSH 在会话跑完后立即处置插件树（`docs/p0-compatibility.md` §9），一次性 headless 进程需要被**引用计时器**留住，在飞的模型调用才有时间收尾；否则 job 保持 `pending`，由下一次进程接手（既有崩溃契约）。
 
-**本次的运行记录（`/tmp/dshsmoke-fix.json`、`/tmp/dshsmoke-fix2.json`）不提交**：它现在包含模型自己生成的笔记标题与由标题派生的路径（主路径真的写了笔记），而本仓库不提交模型输出或会话正文。提交的 `test/smoke/records/smoke-record.json` 仍是 **Task 18 的修正前冻结记录**（其内容不含模型正文），作为"无模型 apply 半段"的对照证据保留。
+**本次的运行记录（`/tmp/dshsmoke-fix.json`、`/tmp/dshsmoke-fix2.json`、`/tmp/dshsmoke-fix3.json`）不提交**：它现在包含模型自己生成的笔记标题与由标题派生的路径（主路径真的写了笔记），而本仓库不提交模型输出或会话正文。提交的 `test/smoke/records/smoke-record.json` 仍是 **Task 18 的修正前冻结记录**（其内容不含模型正文），作为"无模型 apply 半段"的对照证据保留。
 
 ## 2. 检查器结果（原始输出）
 
 ```
-verify: /tmp/dshsmoke-fix2.json
+verify: /tmp/dshsmoke-fix3.json
   versions: dsh=0.1.5-rc.2 node=v25.9.0 obsidian=(not supplied; GUI checks unverified)
   PASS plugin-row-in-dump-config — dump-config has "- id: obsidian-mem": true (11208 chars)
   PASS plugin-row-line-recorded — - id: obsidian-mem
@@ -46,18 +48,18 @@ verify: /tmp/dshsmoke-fix2.json
   PASS brief-not-repeated-later — sessionBriefCount=1
   PASS brief-within-budget — 109 code points <= 6000
   PASS chinese-search-hit — queryChars=4 hitCount=1 matchedDocPath=true
-  PASS document-write-on-disk — 项目/repo--df7af20b/文档/冒烟文档：中文检索目标.md
-  PASS supersede-chain-correct — old=dec-691d9e98-2eb4-4ec0-b7ba-be1d8520786b status=superseded superseded_by=dec-81d1500d-df6f-4819-94f6-48208146de22 defaultHasOld=false historyHasOld=true
-  PASS interrupted-process-was-killed — killedBy=SIGKILL jobId=job-be27c94be9da5459abf91e12dbf44888 injected=raw-durable
-  PASS restart-recovered-exactly-once — result receipts for job-be27c94be9da5459abf91e12dbf44888: 1 (total 4)
+  PASS document-write-on-disk — 项目/repo--e9cca4c2/文档/冒烟文档：中文检索目标.md
+  PASS supersede-chain-correct — old=dec-07815a5d-4d05-4df7-9fc8-b9746b6ba811 status=superseded superseded_by=dec-1172285e-b043-45ea-af13-4a71bb89e18b defaultHasOld=false historyHasOld=true
+  PASS interrupted-process-was-killed — killedBy=SIGKILL jobId=job-0d3c6dba36749ce371c244f1cfd76e6e injected=raw-durable
+  PASS restart-recovered-exactly-once — result receipts for job-0d3c6dba36749ce371c244f1cfd76e6e: 1 (total 4)
   PASS restart-live-apply-succeeded — live receipt: applied dryRun=false
   PASS restart-wrote-to-the-vault — vault changed across the live restart: true (receipt applied)
   PASS no-duplicate-note-ids — duplicate ids: []
   PASS dry-run-wrote-nothing — dry-run receipt: dry-run vaultChanged=false
-  PASS model-lane-dry-run-real-distill — result=dry-run attempts=0 outputTokens=409 durationMs=2178 vaultChanged=false
-  PASS model-lane-live-real-distill — result=applied attempts=0 outputTokens=186 durationMs=1312 vaultChanged=true
-  PASS external-edit-survived — path=项目/repo--df7af20b/文档/外部编辑目标文档.md humanLineSurvived=true onDiskAfterAllPasses=true
-  PASS human-owned-file-byte-identical — path=项目/repo--df7af20b/约定/人写的约定.md update=human-owned supersede=human-owned byteIdentical=true
+  PASS model-lane-dry-run-real-distill — result=dry-run attempts=0 outputTokens=401 durationMs=2572 vaultChanged=false
+  PASS model-lane-live-real-distill — result=applied attempts=0 outputTokens=231 durationMs=1981 vaultChanged=true
+  PASS external-edit-survived — path=项目/repo--e9cca4c2/文档/外部编辑目标文档.md humanLineSurvived=true onDiskAfterAllPasses=true
+  PASS human-owned-file-byte-identical — path=项目/repo--e9cca4c2/约定/人写的约定.md update=human-owned supersede=human-owned byteIdentical=true
   PASS read-only-lint-never-writes — findings=2 treeUntouched=true
   PASS real-dsh-home-unchanged — real ~/.dsh fingerprint unchanged: true
   PASS frontmatter-parses-under-yaml-v2 — 21 notes parsed
@@ -81,11 +83,12 @@ negative-controls: clean record exit=0 (expected 0)
   PASS pending-restart-duplicate -> verify exit=1
   PASS external-edit-overwritten -> verify exit=1
   PASS model-lane-lost-its-receipt -> verify exit=1
+  PASS model-lane-captured-nothing -> verify exit=1
   PASS refuses-personal-vault-path -> verify exit=2
-negative-controls: OK (8 negative controls)   # exit=0
+negative-controls: OK (9 negative controls)   # exit=0
 ```
 
-`npm test`：**542/542 通过**（`node scripts/run-tests.mjs`；比 Task 18 多的 2 条是 Task 18b 的回归用例，见 §3）。
+`npm test`：**543/543 通过**（`node scripts/run-tests.mjs`；比 Task 18 多的 3 条是 Task 18b 的回归用例，见 §3）。
 
 ## 3. 逐项证据
 
@@ -99,7 +102,7 @@ negative-controls: OK (8 negative controls)   # exit=0
 | 取代链 | PASS | 旧笔记仍在，`status=superseded`、`superseded_by` = 新 id；默认检索不再返回旧笔记，`includeHistory:true` 返回 |
 | 完成回合被捕获 | PASS | 真实 `turn/end:completed` → 恰好一个 pending job 落盘（`fromSeq=4,toSeq=19`，`route` 非空） |
 | 进程中断 | PASS | 驱动在 job 文件出现后 `process.kill(pid,'SIGKILL')`；子进程退出信号 = `SIGKILL` |
-| **主路径：真实模型蒸馏** | **PASS** | 模型通道两轮各自的 receipt（字段级）：dryRun 轮 `result=dry-run`、`dryRun=true`、`attempts=0`、1 个 item（`type=convention`）、`outputTokens=409`、`durationMs=2178`、`index=none`、`refusedCount=0`、无 `lastError`；live 轮 `result=applied`、`dryRun=false`、`attempts=0`、1 个 item（`type=decision`）、`outputTokens=186`、`durationMs=1312`、`index=refreshed`、`refusedCount=0`、vault 树跨重启发生变化。两轮 `holdReceipt=true`（驱动在 hold 窗口内看到 receipt）。两次独立运行的 token 计数与耗时不同（第一次为 415/2257、267/1840），结论相同 |
+| **主路径：真实模型蒸馏** | **PASS** | 模型通道两轮各自的 receipt（字段级）：dryRun 轮 `result=dry-run`、`dryRun=true`、`attempts=0`、1 个 item（`type=convention`）、`outputTokens=401`、`durationMs=2572`、`index=none`、`refusedCount=0`、无 `lastError`；live 轮 `result=applied`、`dryRun=false`、`attempts=0`、1 个 item（`type=decision`）、`outputTokens=231`、`durationMs=1981`、`index=refreshed`、`refusedCount=0`、vault 树跨重启发生变化。两轮 `holdReceipt=true`（驱动在 hold 窗口内看到 receipt）。三次独立运行的 token 计数与耗时不同（`415/2257`、`267/1840`；`409/2178`、`186/1312`），结论相同 |
 | 对照探针（in-context） | PASS | 驱动在首个 `agent/pre-step` 内的 `ctx.get('llm').stream()`：`finish=stop`、23 chunks、414 ms——与主路径同路由、同凭据的独立对照 |
 | 重启恢复不重复 | PASS | 恢复通道的 job 其 result receipt 恰好 1 份；vault 内无重复 note id（21 篇） |
 | dryRun 零写入 | PASS | receipt `result=dry-run`、`dryRun=true`；重启前后 vault 树哈希映射**完全相同** |
@@ -110,7 +113,7 @@ negative-controls: OK (8 negative controls)   # exit=0
 | Obsidian 文件事实 | PASS | 21 篇笔记 YAML 可解析；18 篇 `tags` 为列表；34 个日期字段为 `YYYY-MM-DD`；17 个 wikilink 按路径或 basename 解析成功 |
 | `.obsidian/` 未被触碰 | PASS | 运行前后 `.obsidian/` 全树哈希相同 |
 | 真实 home 未被写入 | PASS | 见 §4 |
-| Task 18b 回归（离线） | PASS | `test/auto-capture.test.js`：`a host unload mid-call lets the job finish instead of reporting a caller abort (Task 18b)`（修正前 RED：`summary.completed 0 !== 1`，job 被记 `lastError.code='aborted'`；修正后 GREEN：receipt `applied`、note 落盘、`attempts` 不增长），以及 `an explicit worker.abort() still cancels an in-flight model call`（真正的取消仍然是被记账的中止） |
+| Task 18b 回归（离线） | PASS | `test/auto-capture.test.js` 三条：① `a host unload mid-call lets the job finish instead of reporting a caller abort (Task 18b)`（RED：`summary.completed 0 !== 1`，job 被记 `lastError.code='aborted'`；GREEN：receipt `applied`、note 落盘、`attempts` 不增长）；② `a pass that outlives the plugin tree defers the rest of the queue instead of failing it (Task 18b)`（两个到期 job：RED `llm.calls 2 !== 1`；GREEN 只调用 1 次、第二个 job 以 `deferred/unloaded` 推迟、`attempts=0`、`lastError` 未写、job 文件保持 `pending`）；③ `an explicit worker.abort() still cancels an in-flight model call`（真正的取消仍然是被记账的中止） |
 | Task 18b 宿主事实（隔离探针） | PASS | `node test/p0/run-teardown-probe.mjs` → `OK (13 assertion(s))`；见 `docs/p0-compatibility.md` §9 |
 
 ## 4. 安全与隔离（硬约束逐条）

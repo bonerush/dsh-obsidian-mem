@@ -252,8 +252,10 @@ check(
 // is the acceptance: a real completed turn, distilled by the real worker with a
 // real model call, applied to the vault.
 //
-// A lane that was skipped (`--only dry-run` / `--only live`) is reported as a
-// pass with that fact in its detail: there is nothing to accept or reject.
+// A lane that never ran (`--only dry-run` / `--only live`) carries the runner's
+// explicit `skipped: true` and is reported as a pass with that fact. A lane that
+// RAN but captured no job (`jobId === null` with no sentinel) is a FAILURE: the
+// headline acceptance must not pass because nothing was ever captured.
 const modelLane = capture.modelLane ?? {}
 /** Whether the worker's receipt shows a real model answer (not a stubbed path). */
 const realModelCall = (receipt) => (receipt?.usage?.outputTokens ?? 0) > 0 && (receipt?.durationMs ?? 0) > 0
@@ -261,22 +263,26 @@ for (const [label, lane, expected] of [
   ['dry-run', modelLane.dryRun, 'dry-run'],
   ['live', modelLane.live, 'applied'],
 ]) {
-  if (lane === undefined || lane === null || lane.jobId === null || lane.jobId === undefined) {
-    check(`model-lane-${label}-real-distill`, true, `the ${label} lane was skipped in this run; nothing to verify`)
+  if (lane === undefined || lane === null || lane.skipped === true) {
+    check(`model-lane-${label}-real-distill`, true, `the ${label} lane was skipped by --only; nothing to verify`)
     continue
   }
   const cycle = Array.isArray(lane.cycles) ? lane.cycles[lane.cycles.length - 1] : {}
   const receipt = lane.receipt ?? null
+  const captured = lane.jobId !== null && lane.jobId !== undefined
   check(
     `model-lane-${label}-real-distill`,
-    receipt !== null &&
+    captured &&
+      receipt !== null &&
       receipt.result === expected &&
       receipt.attempts === 0 &&
       realModelCall(receipt) &&
       cycle.vaultChanged === (expected === 'applied'),
-    receipt === null
-      ? 'no result receipt: the worker\'s own model call did not complete'
-      : `result=${receipt.result} attempts=${receipt.attempts} outputTokens=${receipt.usage?.outputTokens ?? '(none)'} durationMs=${receipt.durationMs ?? '(none)'} vaultChanged=${cycle.vaultChanged}`,
+    captured
+      ? (receipt === null
+          ? 'a job was captured but no result receipt exists: the worker\'s own model call did not complete'
+          : `result=${receipt.result} attempts=${receipt.attempts} outputTokens=${receipt.usage?.outputTokens ?? '(none)'} durationMs=${receipt.durationMs ?? '(none)'} vaultChanged=${cycle.vaultChanged}`)
+      : 'no job was captured on this lane, so there is nothing the worker could have distilled',
   )
 }
 
@@ -334,7 +340,7 @@ const unverified = []
 // from the model-free `raw-durable` resume path. The in-context probe is the
 // control that tells "the route is broken" apart from "the worker's call was cut
 // off", so it is reported beside it.
-const modelLaneRan = ['dryRun', 'live'].filter((key) => modelLane[key]?.jobId !== null && modelLane[key]?.jobId !== undefined)
+const modelLaneRan = ['dryRun', 'live'].filter((key) => modelLane[key]?.skipped !== true)
 const modelLaneMissing = modelLaneRan.filter((key) => modelLane[key]?.receipt === null || modelLane[key]?.receipt === undefined)
 if (modelLaneMissing.length > 0) {
   unverified.push(

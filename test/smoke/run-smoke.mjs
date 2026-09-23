@@ -565,17 +565,21 @@ async function main() {
   }
 
   const queueRoot = join(dshHome, 'data', 'obsidian-mem', 'pending')
+  // `skipped: true` is the ONLY thing that tells the checker a lane was never
+  // attempted (`--only`). A lane that ran but captured nothing leaves `jobId`
+  // null WITHOUT this flag, and `verify.mjs` scores that as the failure it is —
+  // otherwise the headline acceptance could pass on a total capture failure.
   const dryRunLane = args.only === 'live'
-    ? { lane: 'dryRun', jobId: null, receipt: null, cycles: [], verify: null, scenarioPass: null }
+    ? { lane: 'dryRun', skipped: true, jobId: null, receipt: null, cycles: [], verify: null, scenarioPass: null }
     : await runLane({ label: 'dryRun', dryRun: true, task: SCENARIO_TASK, scenarioOnFirstCycle: true, llmProbe: true, cycles: 1, recoverHoldMs: 30_000 })
   const liveLane = args.only === 'dryRun'
-    ? { lane: 'live', jobId: null, receipt: null, cycles: [], verify: null, scenarioPass: null }
+    ? { lane: 'live', skipped: true, jobId: null, receipt: null, cycles: [], verify: null, scenarioPass: null }
     : await runLane({ label: 'live', dryRun: false, task: LIVE_TASK, scenarioOnFirstCycle: false, cycles: 1, recoverHoldMs: 30_000 })
   const resumeDryRunLane = args.only === 'live'
-    ? { lane: 'resumedryRun', jobId: null, receipt: null, cycle: null, injection: null, verify: null }
+    ? { lane: 'resumedryRun', skipped: true, jobId: null, receipt: null, cycle: null, injection: null, verify: null }
     : await runResumeLane({ label: 'dryRun', dryRun: true, task: SCENARIO_TASK })
   const resumeLiveLane = args.only === 'dryRun'
-    ? { lane: 'resumelive', jobId: null, receipt: null, cycle: null, injection: null, verify: null }
+    ? { lane: 'resumelive', skipped: true, jobId: null, receipt: null, cycle: null, injection: null, verify: null }
     : await runResumeLane({ label: 'live', dryRun: false, task: LIVE_TASK })
 
   // --- observations ------------------------------------------------------------

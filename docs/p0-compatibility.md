@@ -391,3 +391,11 @@ run-teardown-probe: OK (13 assertion(s))
 - 凭据只走环境路由；仓库与记录对凭据值及其 4 字符前缀 0 命中（探针不打印任何凭据，`run-teardown-probe.mjs` 的断言含真实 home 指纹、`~/.dsh/data` 不存在、`~/.dsh/skills` 只有 `ultramath`、`~/Documents/dsh-memory` 不存在）。
 - 临时 home/vault/repo 全在系统临时根下，默认跑完即删（`--keep` 才保留）；真实 `~/.dsh` 只读。
 - 记录与本节不含 prompt、响应、推理正文、笔记正文；模型输出的正文从不落盘。
+
+### 9.6 追加实测推论（Task 18b 评审后）：settling pass 只能"收尾一个 job"
+
+9.4 的第 2 条只说"卸载时停止调度、让在飞调用收尾"，不足以描述**一次 pass 里有多个到期 job** 的情形：`processQueue` 在 pass 开始时**快照一次** `llm`（`lib/capture.js` 的 `pass()`），随后 `runQueuePass` 会**遍历所有到期 job**。处置之后这个快照已经死了（§9.2 的 `post-run-captured-handle` → `finish=error` / `failure.code=NO_ADAPTER`），而 `distill.js` 的 `hasRoute()` 只检查"服务对象有 `stream` 且路由非空"，因此它**仍然接受**这个死 handle，调用立刻得到 `NO_ADAPTER` 终止块 → 记一次**模型从未产生的失败尝试**，并在 `maxRetries` 后把 job 打成终态 `failed`。
+
+实测复现（真实 `createQueueWorker` + 真实 `processQueue`，只把"处置后的 handle"按 §9.2 的实测形状 stub）：队列里两个到期 job 时，旧形状 `stop()` → **2 次模型调用**、第二个 job 拿到 `{attempts:1, code:'no-adapter'}`；而旧的 `abort()` → 1 次调用、第二个 job `{attempts:0}`。也就是说"不许消耗 R43 上限"这条保证在旧形状下**只对第一个 job 成立**。
+
+因此宿主事实的完整形状是：**一旦插件树开始处置，这次 pass 只能收尾它已经开始的**那一个** job**；其余到期 job 必须**推迟**（`reason='unloaded'`）并且**不写 job 文件、不消耗尝试**，留给下一次进程。实现就是把 `isStopped: () => stopped` 交给 `processQueue`，并在 job 循环顶部检查（`lib/capture.js`）；回归用例 `test/auto-capture.test.js` 的 `a pass that outlives the plugin tree defers the rest of the queue instead of failing it (Task 18b)`（修正前 RED：`2 !== 1`）。

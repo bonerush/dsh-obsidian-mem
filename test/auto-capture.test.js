@@ -239,8 +239,15 @@ function abortedLlm() {
  * always finishes with `stop` would hide exactly the defect the teardown tests
  * exist to catch, so this one watches its own `signal`.
  *
+ * `dispose()` switches the stub to the OTHER measured post-teardown shape
+ * (`docs/p0-compatibility.md` §9): once the provider fiber is DISPOSED its
+ * adapter is unregistered, so a call answers a terminal `error`/`NO_ADAPTER`
+ * chunk immediately. A worker that keeps its pass running past disposal and
+ * starts another job with the same snapshotted handle therefore records a
+ * failure the model never produced.
+ *
  * @param {string|Function} raw - the model text, or a function of the request.
- * @returns {{calls: object[], opened: Promise<void>, release: Function, stream: Function}} the stub.
+ * @returns {object} the stub (`calls`, `opened`, `release`, `dispose`, `stream`).
  */
 function inFlightLlm(raw) {
   const calls = []
@@ -248,12 +255,21 @@ function inFlightLlm(raw) {
   const opened = new Promise((resolve) => { openedResolve = resolve })
   let releaseResolve
   const release = new Promise((resolve) => { releaseResolve = resolve })
-  return {
+  const stub = {
     calls,
     opened,
+    disposed: false,
     release: () => releaseResolve(),
+    dispose() {
+      stub.disposed = true
+    },
     stream(options) {
       calls.push(options)
+      if (stub.disposed) {
+        return (async function* () {
+          yield { type: 'finish', reason: { kind: 'error', failure: { code: 'NO_ADAPTER', message: 'no adapter registered for provider "deepseek-official"' } } }
+        })()
+      }
       return (async function* () {
         // Open and streaming: from here the only endings are the caller's signal
         // and the test's release.
@@ -280,6 +296,7 @@ function inFlightLlm(raw) {
       })()
     },
   }
+  return stub
 }
 
 /** The default worker options for a fixture: explicit roots, no debounce, no backoff. */
@@ -1472,4 +1489,48 @@ test('an explicit worker.abort() still cancels an in-flight model call', async (
   const job = await jobOnDisk(f)
   assert.equal(job.attempts, 1)
   assert.equal(job.lastError.code, 'aborted')
+})
+
+test('a pass that outlives the plugin tree defers the rest of the queue instead of failing it (Task 18b)', async (t) => {
+  const f = await fixture(t)
+  // Two due jobs in ONE pass: two completed turns captured inside one debounce
+  // window coalesce into two ranges the same pass has to work. Job ids decide the
+  // order (`readPendingJobs` sorts by `createdAt`, then id), so the first job is
+  // the one this test allows to finish.
+  const firstJob = 'job-00000000000000000000000000000001'
+  const secondJob = 'job-00000000000000000000000000000002'
+  await writeJobAtomic(f.queueRoot, jobFixture({ jobId: firstJob }))
+  await writeJobAtomic(f.queueRoot, jobFixture({ jobId: secondJob, fromSeq: 2, toSeq: 8 }))
+  const llm = inFlightLlm(JSON.stringify({ items: [itemFixture()] }))
+  const worker = createQueueWorker({
+    ...queueOptions(f, { debounceMs: 0 }),
+    llm,
+    getLlm: () => llm,
+  })
+
+  const pass = worker.pass()
+  await llm.opened
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  // The host disposes the tree while the first job is streaming: the handle the
+  // pass snapshotted at its start is dead from here on (measured `NO_ADAPTER`).
+  worker.stop()
+  llm.dispose()
+  llm.release()
+  const summary = await pass
+
+  assert.equal(llm.calls.length, 1, 'the settling pass did not start a second job with a dead handle')
+  assert.equal(summary.completed, 1, 'the job that was already in flight still completed')
+  assert.deepEqual(
+    summary.results.filter((entry) => entry.status === 'deferred').map((entry) => entry.reason),
+    ['unloaded'],
+    'the remaining job is reported as unloaded, not as a model failure',
+  )
+  const remaining = await loadPending(f.queueRoot)
+  assert.equal(remaining.length, 1, 'the second job is kept for the next process')
+  assert.equal(remaining[0].jobId, secondJob)
+  assert.equal(remaining[0].attempts, 0, 'a deferred job must not consume an attempt')
+  assert.equal(remaining[0].lastError, undefined, 'and it must not record a failure the model never produced')
+  assert.equal(remaining[0].state, 'pending')
+  assert.equal((await readReceipts(f)).length, 1)
+  assert.equal((await memoryNotes(f)).length, 1)
 })

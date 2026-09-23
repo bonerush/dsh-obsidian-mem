@@ -78,6 +78,18 @@ const MUTATIONS = [
       record.checks.capture.modelLane.live.cycles = record.checks.capture.modelLane.live.cycles.map((entry) => ({ ...entry, receiptResult: null }))
     },
   },
+  {
+    id: 'model-lane-captured-nothing',
+    expectation: 'the checker fails when the model lane ran but never captured a job',
+    mutate: (record) => {
+      // A lane that ran and captured nothing leaves `jobId` null WITHOUT the
+      // `skipped` sentinel. Reporting that as a skip would let the headline
+      // acceptance pass on a total capture failure.
+      record.checks.capture.modelLane.live.jobId = null
+      record.checks.capture.modelLane.live.receipt = null
+      record.checks.capture.modelLane.live.cycles = []
+    },
+  },
 ]
 
 const base = JSON.parse(readFileSync(resolve(recordPath), 'utf8'))

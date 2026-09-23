@@ -29,11 +29,26 @@ development rather than a release artifact.
   `test/auto-capture.test.js` (`a host unload mid-call lets the job finish
   instead of reporting a caller abort (Task 18b)`, and the explicit-`abort()`
   counterpart).
+- **A settling pass finishes exactly one job — the one already in flight.** A pass
+  snapshots `llm` once and iterates every due job, so letting it settle without a
+  boundary re-created the same defect one job later: after the disposal the
+  snapshotted handle answers `NO_ADAPTER`, `distill.js`'s route check still
+  accepts it, and each remaining job would record a failure the model never
+  produced until it terminally failed. The worker now hands the pass an
+  `isStopped` predicate; once it is stopping, the remaining due jobs are deferred
+  as `unloaded` and are not written at all, so the next process resumes them with
+  `attempts` untouched. Regression test: `a pass that outlives the plugin tree
+  defers the rest of the queue instead of failing it (Task 18b)` (two due jobs,
+  RED before the fix with `2 !== 1`).
 - **Live model distillation is now verified end to end.** The isolated-profile
   smoke (`docs/smoke-results.md`) now scores the worker's own model-backed
   distill: a real completed turn, a real `deepseek-official`/`deepseek-flash`
   call with a real token `usage`, and either a `dry-run` receipt that wrote
   nothing or an `applied` receipt that wrote the note — both with `attempts: 0`.
+  The checker only treats a lane as "skipped" when the runner sets an explicit
+  `skipped: true` (`--only`); a lane that ran and captured nothing is a failure,
+  so the acceptance can no longer pass on a total capture failure.
+  `test/smoke/negative-controls.mjs` covers both model-lane mutations.
 
 ### Changed
 
