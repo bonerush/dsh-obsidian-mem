@@ -55,6 +55,18 @@ development rather than a release artifact.
 - **Honest limits corrected** (`README.md`, `docs/smoke-results.md`): the
   "no live model call has ever been made" item is replaced by what is still
   unmeasured (one host, one route; the one-shot timing window; the Obsidian GUI).
+- **The first-bind instruction now says what the code does** (`README.md`,
+  measured in `docs/dogfood-results.md`). A Git repository with no
+  `.obsidian-mem` does **not** get one on first write: every internal seam
+  resolves with `mode: "show"` (`lib/index.js:80`, `lib/tools.js:931`), which
+  reports an unbound repository, so `mem_write` refuses with `not-bound`. Only
+  `mem_admin(action="bind", mode="local")` mints the pointer and the skeleton,
+  and the unbound resolution is cached per working directory for the life of the
+  loaded plugin, so the six tools keep refusing until a new session. The
+  "Verify it works" row, the `deferred` row and the "memory is silently absent"
+  recovery row now say so. A `deferred` job can also be a validation refusal
+  (`truncated`, `too-many-items`) backing off, which the recovery table
+  previously attributed only to a missing route or binding.
 
 ## 0.1.0 — 2026-09-23
 

@@ -129,7 +129,7 @@ Start a session in any Git repository and ask, or just check the tools are there
 | Check | How |
 |---|---|
 | Row mounted | `dsh --profile web --dump-config \| grep obsidian-mem` |
-| Project bound | `mem_admin(action="projects")` — with no pointer, a Git repository gets a fresh `.obsidian-mem` and a project skeleton on first write |
+| Project bound | `mem_admin(action="projects")` reports the resolution. A Git repository with **no** `.obsidian-mem` stays unbound — nothing binds it implicitly: the six tools resolve with `mode: "show"`, so `mem_write` refuses with `not-bound` instead of minting the pointer. Run `mem_admin(action="bind", mode="local")` to create the pointer and the project skeleton, then **start a new session**: the unbound resolution is cached per working directory for the life of the loaded plugin, so the tools keep refusing until the plugin reloads (measured, `docs/dogfood-results.md`). |
 | Recall injected once | the first request of a session carries one `obsidian-mem` recall message (≤ `briefBudgetChars`) |
 | CJK search works | write a note, then `mem_search` a two-character Chinese word |
 | Vault files are real | `ls "$vault/项目/"` — plain Markdown, readable with the plugin uninstalled |
@@ -546,11 +546,11 @@ decide what to trust:
 | A generated block reports a conflict | A human edited that block, so its declared hash no longer matches. | Reconcile by hand: restore the generated content, or decide the human version is authoritative and keep it — the plugin keeps reporting the same conflict until the declared hash matches the body again. |
 | Search returns nothing, or says not-ready | The index is missing, unreadable or still scanning. | `mem_admin(action="index")` for status, `mem_admin(action="index", rebuild=true)` to rebuild. The vault is untouched. |
 | A distillation job is `failed` | The model call or validation failed `maxRetries` times. The job keeps its reason. | `mem_admin(action="jobs")` to inspect, then `mem_admin(action="jobs", jobId="…", retry=true)`. |
-| A job sits in `deferred` | No usable model route, or the repository is not bound. It retries on each idle window. | Set `distill.provider` + `distill.model`, or bind the project. |
+| A job sits in `deferred` | No usable model route, the repository is not bound, or the model's output was refused by validation (`truncated`, `too-many-items`) and the job is backing off. It retries on each idle window. | Set `distill.provider` + `distill.model`, bind the project, or raise `distill.maxOutputTokens` / `distill.maxItems` for those two refusal codes. |
 | DSH crashed mid-write | An unfinished transaction is journalled under `$DSH_HOME/data/obsidian-mem/transactions/`. | Restart the session: recovery runs before new work. If a file was edited externally during the crash, both versions are kept and reported — nothing is overwritten. |
 | A repository refuses to write | A remote-URL mismatch, a different `projectId` for the same directory, a sibling worktree with conflicting metadata, or an unreadable sibling. | `mem_admin(action="bind", mode="show")` reports the situation; `mode="retain"` or `mode="fork"` is the explicit fix. A stale worktree needs `git worktree prune`. |
 | A plain directory stays read-only | It is not inside a Git repository, so the plugin will not add it to long-term memory on its own. | `mem_admin(action="bind", mode="local")` to bind it explicitly. |
-| Memory is silently absent for a session | Any non-`bound` resolution means "no memory for this session" — by design, it never throws and never guesses. | Check `mem_admin(action="projects")` and the pointer file. |
+| Memory is silently absent for a session | Any non-`bound` resolution means "no memory for this session" — by design, it never throws and never guesses. A repository with no pointer is the common case, and it does not bind itself. | Check `mem_admin(action="projects")` and the pointer file; `mem_admin(action="bind", mode="local")` creates a missing pointer, then start a new session so the tools pick the binding up. |
 
 ---
 
