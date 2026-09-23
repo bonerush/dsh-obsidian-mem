@@ -15,7 +15,11 @@ import { basename, isAbsolute, join, resolve, sep } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
+import * as gitModule from '../lib/git.js'
 import { isCloudManagedVaultRoot, resolveDataRoot, resolveVaultFile, resolveVaultRoot } from '../lib/paths.js'
+import * as pointerModule from '../lib/pointer.js'
+import * as registryModule from '../lib/registry.js'
+import * as vaultModule from '../lib/vault.js'
 import { POINTER_FILENAME, PROJECTS_DIR, resolveBinding } from '../lib/vault.js'
 
 const execFileAsync = promisify(execFile)
@@ -96,26 +100,29 @@ async function readPointerOf(dir) {
 }
 
 /**
- * Write `_meta/项目注册表.md` in the shape Task 5 owns: the plugin-managed
+ * The registry document body in the shape Task 5 owns: the plugin-managed
  * region with the fixed four columns, hub cells as vault-relative wikilinks
  * (`link: false` writes a plain relative path instead). The alias separator `|`
  * inside the cell is escaped as `\|`, exactly as spec §5.2 requires of any `|`
  * in a cell. The generator hash is a placeholder: this stage only reads the
  * region, it never verifies or writes it.
  */
-async function writeRegistry(vault, rows, { link = true } = {}) {
-  const meta = join(vault, '_meta')
-  await mkdir(meta, { recursive: true })
+function registryMarkdown(rows, { link = true } = {}) {
   const hubCell = (hub) => (link ? `[[${hub}/index\\|${basename(hub)}]]` : hub)
-  const lines = [
+  return [
     '<!-- obsidian-mem:registry begin sha256:0000000000000000000000000000000000000000000000000000000000000000 -->',
     '| projectId | hub 相对路径 | displayName | remote |',
     '| --- | --- | --- | --- |',
     ...rows.map((row) => `| ${row.projectId} | ${hubCell(row.hub)} | ${row.displayName ?? basename(row.hub)} | ${row.remote ?? ''} |`),
     '<!-- obsidian-mem:registry end -->',
     '',
-  ]
-  await writeFile(join(meta, '项目注册表.md'), lines.join('\n'))
+  ].join('\n')
+}
+
+async function writeRegistry(vault, rows, options) {
+  const meta = join(vault, '_meta')
+  await mkdir(meta, { recursive: true })
+  await writeFile(join(meta, '项目注册表.md'), registryMarkdown(rows, options))
 }
 
 /** Create the project directory a registry row promises, with stable content. */
@@ -722,7 +729,33 @@ test('an unreadable registry pauses binding instead of being treated as empty', 
   }
 })
 
-const MALFORMED_REGISTRY_ROWS = [  ['a hub whose id suffix is not its own project id', { projectId: ID1, hub: `${PROJECTS_DIR}/alpha--deadbeef` }],
+test('a symlinked registry path is refused instead of read from outside the vault', async (t) => {
+  const { root, vault, repo } = await fixture(t)
+  await initRepo(repo)
+  await writePointer(repo, pointerFor(ID1, { slug: 'alpha', displayName: 'Alpha' }))
+  const hub = `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}`
+  // A perfectly valid registry living outside the vault: it must never be read.
+  const outside = join(root, 'outside-meta')
+  await mkdir(outside, { recursive: true })
+  await writeFile(join(outside, '项目注册表.md'), registryMarkdown([{ projectId: ID1, hub }]))
+
+  // 1. a symlinked `_meta` directory
+  await symlink(outside, join(vault, '_meta'))
+  const symlinkedDirectory = await resolveBinding({ cwd: repo, vaultRoot: vault })
+  assert.equal(symlinkedDirectory.kind, 'conflict')
+  assert.equal(symlinkedDirectory.reason, 'registry-symlink')
+
+  // 2. a symlinked registry file inside a real `_meta` directory
+  await rm(join(vault, '_meta'))
+  await mkdir(join(vault, '_meta'), { recursive: true })
+  await symlink(join(outside, '项目注册表.md'), join(vault, '_meta', '项目注册表.md'))
+  const symlinkedFile = await resolveBinding({ cwd: repo, vaultRoot: vault })
+  assert.equal(symlinkedFile.kind, 'conflict')
+  assert.equal(symlinkedFile.reason, 'registry-symlink')
+})
+
+const MALFORMED_REGISTRY_ROWS = [
+  ['a hub whose id suffix is not its own project id', { projectId: ID1, hub: `${PROJECTS_DIR}/alpha--deadbeef` }],
   ['a non-uuid project id', { projectId: 'not-a-uuid', hub: `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}` }],
   ['a traversal hub path', { projectId: ID1, hub: '../../etc' }],
   ['a hub path escaping through ..', { projectId: ID1, hub: `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}/../../..` }],
@@ -818,4 +851,72 @@ test('a vault without a registry file binds through the derived fixed directory'
   assert.equal(binding.registered, false)
   assert.equal(binding.relativeDir, `${PROJECTS_DIR}/${binding.slug}--${binding.projectId.slice(0, 8)}`)
   assert.equal(binding.projectDir, join(vaultReal, binding.relativeDir))
+})
+
+// ---------------------------------------------------------------------------
+// Concurrent first bind (two fresh sibling worktrees, one repository)
+// ---------------------------------------------------------------------------
+
+test('concurrent first binds in fresh worktrees never leave two project ids', async (t) => {
+  // A genuine interleaving: both worktrees pass the inheritance scan before
+  // either writes, so each would mint its own id. The regression this guards is
+  // "one repository, two project ids, both reported as bound"; each round
+  // re-runs the race with a fresh repository and vault.
+  const rounds = 6
+  for (let round = 0; round < rounds; round += 1) {
+    const { root, vault, repo } = await fixture(t)
+    await initRepo(repo)
+    const worktrees = [
+      await addWorktree(repo, join(root, 'wt-a')),
+      await addWorktree(repo, join(root, 'wt-b')),
+    ]
+
+    const results = await Promise.all(
+      worktrees.map((cwd) => resolveBinding({ cwd, vaultRoot: vault })),
+    )
+
+    const ids = new Set()
+    for (let index = 0; index < worktrees.length; index += 1) {
+      const pointer = await readPointerOf(worktrees[index]).catch(() => null)
+      if (pointer !== null) ids.add(pointer.projectId)
+      const result = results[index]
+      if (result.kind === 'bound') {
+        assert.equal(pointer?.projectId, result.projectId, 'a bound worktree must hold the id it reported')
+      } else {
+        assert.equal(result.kind, 'conflict')
+        assert.equal(pointer, null, `a refused first bind must unwind its own pointer (${result.reason})`)
+      }
+    }
+    assert.ok(ids.size <= 1, `round ${round} left ${ids.size} project ids for one repository`)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// The R20 split: contracts moved, the public surface did not
+// ---------------------------------------------------------------------------
+
+test('lib/vault.js still re-exports the split contracts unchanged', () => {
+  const fromPointer = [
+    'POINTER_FILENAME', 'POINTER_SCHEMA', 'MAX_POINTER_BYTES', 'PointerError',
+    'isUuidV4', 'isValidSlug', 'slugify', 'parsePointerBytes', 'readPointer',
+    'createPointerExclusive', 'newPointer', 'samePointer',
+  ]
+  for (const name of fromPointer) {
+    assert.equal(vaultModule[name], pointerModule[name], `vault.${name} must be pointer.${name}`)
+  }
+  const fromRegistry = [
+    'PROJECTS_DIR', 'PROJECT_DIR_SEPARATOR', 'REGISTRY_RELATIVE_PATH', 'RegistryError',
+    'projectRelativeDir', 'parseRegistryMarkdown', 'readRegistry',
+  ]
+  for (const name of fromRegistry) {
+    assert.equal(vaultModule[name], registryModule[name], `vault.${name} must be registry.${name}`)
+  }
+  for (const name of ['findGitRoot', 'scanSiblingPointers']) {
+    assert.equal(vaultModule[name], gitModule[name], `vault.${name} must be git.${name}`)
+  }
+  // the pre-split surface that always came from vault.js itself
+  for (const name of ['resolveBinding', 'isCloudManagedVaultRoot', 'resolveVaultRoot', 'resolveVaultFile', 'splitRelativeVaultPath']) {
+    assert.equal(typeof vaultModule[name], 'function', `vault.${name} must still be a function export`)
+  }
+  assert.ok(Array.isArray(vaultModule.BIND_MODES), 'vault.BIND_MODES must still be exported')
 })
