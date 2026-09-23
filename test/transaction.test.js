@@ -22,7 +22,7 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
@@ -704,6 +704,84 @@ test('a delivered notification still keeps the manifest until the receipt is sto
   assert.deepEqual(report.committed, [txId])
   assert.equal((await findReceipt(bindingA, key, { dataRoot })).result.stored, true)
   assert.equal(await exists(manifestPath), false, 'the manifest is dropped once nothing is owed')
+})
+
+// ---------------------------------------------------------------------------
+// A manifest read from disk is not trusted with a path
+// ---------------------------------------------------------------------------
+
+test('a manifest whose txId traverses is refused, and nothing outside the vault is deleted', async (t) => {
+  // `discard()` removes `_meta/.history/<txId>/` by joining the manifest's own
+  // `txId`, so a tampered manifest could delete outside the vault. The sentinel
+  // sits at exactly that joined path (`<root>/victim`, one level above the vault).
+  const { root, vault, dataRoot, bindingA } = await fixture(t)
+  const victim = join(root, 'victim')
+  await mkdir(victim, { recursive: true })
+  await writeFile(join(victim, 'keep.txt'), 'outside the vault')
+
+  const vaultHash = sha256(await realpath(vault))
+  const directory = join(dataRoot, 'transactions', vaultHash)
+  await mkdir(directory, { recursive: true })
+  const manifestFile = join(directory, 'tampered-txid.json')
+  await writeFile(manifestFile, JSON.stringify({
+    schema: 1,
+    txId: '../../../victim',
+    vaultHash,
+    projectId: ID_A,
+    state: 'staging',
+    steps: {},
+    receipt: null,
+    targets: [],
+  }))
+
+  await assert.rejects(
+    recoverTransactions(bindingA, { dataRoot }),
+    (error) => error instanceof TransactionError && error.code === 'manifest-corrupt' && /unsafe txId/.test(error.message),
+  )
+  assert.equal(await exists(join(victim, 'keep.txt')), true, 'a traversing txId must never delete outside the vault')
+  assert.equal(await exists(manifestFile), true, 'the refused manifest is left for a human, not acted on')
+
+  // Every disk-loading entry point re-applies the same rule, not just recovery.
+  await assert.rejects(
+    listPendingIndexNotifications(bindingA, { dataRoot }),
+    (error) => error instanceof TransactionError && error.code === 'manifest-corrupt',
+  )
+})
+
+test('a manifest whose vaultHash traverses is refused, and nothing outside the data root is deleted', async (t) => {
+  // `removeManifest` joins `manifest.vaultHash` under `<dataRoot>/transactions/`,
+  // so a tampered hash names a directory no transaction of this vault owns. The
+  // data root is nested inside the fixture root, so the escape target is the
+  // sentinel next to it rather than a shared temporary directory.
+  const { root, vault, bindingA } = await fixture(t)
+  const dataRoot = join(root, 'data')
+  await mkdir(dataRoot, { recursive: true })
+  const txId = newTransactionId()
+  const escapeDir = resolve(dataRoot, 'transactions', '../../victim')
+  await mkdir(escapeDir, { recursive: true })
+  const sentinel = join(escapeDir, `${txId}.json`)
+  await writeFile(sentinel, 'another vault region must not be touched')
+
+  const directory = join(dataRoot, 'transactions', sha256(await realpath(vault)))
+  await mkdir(directory, { recursive: true })
+  const manifestFile = join(directory, `${txId}.json`)
+  await writeFile(manifestFile, JSON.stringify({
+    schema: 1,
+    txId,
+    vaultHash: '../../victim',
+    projectId: ID_A,
+    state: 'rolled-back',
+    steps: {},
+    receipt: null,
+    targets: [],
+  }))
+
+  await assert.rejects(
+    recoverTransactions(bindingA, { dataRoot }),
+    (error) => error instanceof TransactionError && error.code === 'manifest-corrupt' && /unsafe vaultHash/.test(error.message),
+  )
+  assert.equal(await readFile(sentinel, 'utf8'), 'another vault region must not be touched')
+  assert.equal(await exists(manifestFile), true)
 })
 
 test('a txId whose history already exists is refused instead of overwritten', async (t) => {

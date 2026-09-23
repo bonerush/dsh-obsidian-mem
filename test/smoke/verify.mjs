@@ -13,7 +13,9 @@
 //   4. a Chinese search returned no hit for the written document
 //   5. the supersede chain is wrong
 //   6. a restart duplicated the interrupted turn's work
-//   7. the queue worker's own model-backed distill produced no receipt (Task 18b)
+//   7. the queue worker's own model-backed distill produced no receipt, or a
+//      model lane is absent without the runner's explicit `skipped: true`
+//      sentinel (Task 18b)
 //   8. an external edit was overwritten
 //
 // Safety: it takes only *temporary* paths. A record or vault argument outside
@@ -253,9 +255,14 @@ check(
 // real model call, applied to the vault.
 //
 // A lane that never ran (`--only dry-run` / `--only live`) carries the runner's
-// explicit `skipped: true` and is reported as a pass with that fact. A lane that
-// RAN but captured no job (`jobId === null` with no sentinel) is a FAILURE: the
-// headline acceptance must not pass because nothing was ever captured.
+// explicit `skipped: true` and is reported as a pass with that fact. Anything
+// else is a FAILURE:
+//
+//   * an ABSENT lane means the record does not carry the headline evidence at
+//     all — trusting absence let a record with no `capture.modelLane` pass both
+//     checks, which is the fail-open shape the whole-branch review found; and
+//   * a lane that RAN but captured no job (`jobId === null` with no sentinel) is
+//     a failure too, so the acceptance cannot pass on a total capture failure.
 const modelLane = capture.modelLane ?? {}
 /** Whether the worker's receipt shows a real model answer (not a stubbed path). */
 const realModelCall = (receipt) => (receipt?.usage?.outputTokens ?? 0) > 0 && (receipt?.durationMs ?? 0) > 0
@@ -263,8 +270,17 @@ for (const [label, lane, expected] of [
   ['dry-run', modelLane.dryRun, 'dry-run'],
   ['live', modelLane.live, 'applied'],
 ]) {
-  if (lane === undefined || lane === null || lane.skipped === true) {
-    check(`model-lane-${label}-real-distill`, true, `the ${label} lane was skipped by --only; nothing to verify`)
+  if (lane === undefined || lane === null) {
+    check(
+      `model-lane-${label}-real-distill`,
+      false,
+      `the ${label} lane is absent from the record, so nothing about the headline path was verified; ` +
+      'only an explicit `skipped: true` from the runner (`--only`) marks a lane as not run',
+    )
+    continue
+  }
+  if (lane.skipped === true) {
+    check(`model-lane-${label}-real-distill`, true, `the ${label} lane carries the runner's explicit skipped: true (--only); nothing to verify`)
     continue
   }
   const cycle = Array.isArray(lane.cycles) ? lane.cycles[lane.cycles.length - 1] : {}

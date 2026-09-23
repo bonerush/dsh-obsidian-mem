@@ -175,6 +175,16 @@ Omitting the `config:` block entirely gives you exactly those defaults.
 `enabled: false` registers nothing at all — no tools, no hooks, no data root, no
 lock.
 
+**An unknown key is an error, not a no-op.** The table below is the complete field
+set: a key it does not list (at the top level or inside `distill`) makes the row
+fail to load and the error names the key. This matters because a typo would
+otherwise keep the intended field's default — a row that says `vaultpath: "/tmp/x"`
+would silently use `~/Documents/dsh-memory` and bootstrap it. The error also lists
+the design document's deliberately-dropped fields (`projectsDir`, `methodsDir`,
+`metaDir`, `reservedPrefixes`, `docMirror`, `distill.mode`,
+`distill.maxCostPerSession`) so a config copied from there fails with an
+explanation instead of doing nothing.
+
 | Field | Default | Accepted | What it does |
 |---|---|---|---|
 | `enabled` | `true` | boolean | `false` mounts nothing. |
@@ -200,9 +210,11 @@ lock.
 
 One shape of stale documentation to ignore: the design document's §12 lists
 fields this plugin does **not** have (`projectsDir`, `methodsDir`, `metaDir`,
-`reservedPrefixes`, `docMirror`, `distill.mode`, `maxCostPerSession`). The plan's
-field set — the table above — is the one the code implements. Directory names and
-the pointer filename are protocol constants and are not configurable.
+`reservedPrefixes`, `docMirror`, `distill.mode`, `distill.maxCostPerSession`). The
+plan's field set — the table above — is the one the code implements. Directory
+names and the pointer filename are protocol constants and are not configurable.
+Those seven fields are **refused**, not ignored: a row carrying one fails to load
+with an error that says the field was dropped by design.
 
 ---
 
@@ -548,7 +560,9 @@ decide what to trust:
 | Search returns nothing, or says not-ready | The index is missing, unreadable or still scanning. | `mem_admin(action="index")` for status, `mem_admin(action="index", rebuild=true)` to rebuild. The vault is untouched. |
 | A distillation job is `failed` | The model call or validation failed `maxRetries` times. The job keeps its reason. | `mem_admin(action="jobs")` to inspect, then `mem_admin(action="jobs", jobId="…", retry=true)`. |
 | A job sits in `deferred` | No usable model route, the repository is not bound, or the model's output was refused by validation (`truncated`, `too-many-items`) and the job is backing off. It retries on each idle window. | Set `distill.provider` + `distill.model`, bind the project, or raise `distill.maxOutputTokens` / `distill.maxItems` for those two refusal codes. |
-| DSH crashed mid-write | An unfinished transaction is journalled under `$DSH_HOME/data/obsidian-mem/transactions/`. | Restart the session: recovery runs before new work. If a file was edited externally during the crash, both versions are kept and reported — nothing is overwritten. |
+| DSH crashed mid-write | An unfinished transaction is journalled under `$DSH_HOME/data/obsidian-mem/transactions/`. | Restart the session: recovery runs before new writes. If a file was edited externally during the crash, both versions are kept and reported — nothing is overwritten. |
+| `lock-corrupt` | The vault's write lock file (`$DSH_HOME/data/obsidian-mem/locks/vault-<hash>.lock`) exists but is unreadable — typically zero-length or truncated, from a process killed between creating it and writing its record. The plugin never treats an unreadable lock as "nobody holds it" and never steals it, so every write waits out the timeout and then refuses with this code. | Read the path named in the error and delete that **one file** by hand (`rm`), then retry. Nothing else needs cleaning: the lock is re-created on the next write, and no vault content depends on it. |
+| `lock-timeout` | Another live process holds the vault's write lock, or a process died while holding a lock whose record is still readable and whose pid has not been observed as gone yet. | Wait for the other session to finish and retry. If you are sure the holder is dead, the lock is broken automatically once its recorded pid is gone — do not delete a readable lock by hand while a `dsh` process may still be running. |
 | A repository refuses to write | A remote-URL mismatch, a different `projectId` for the same directory, a sibling worktree with conflicting metadata, or an unreadable sibling. The refusal names the reason and leaves the pointer exactly as it was — it never repairs or replaces one. | `mem_admin(action="bind", mode="show")` reports the situation; `mode="retain"` or `mode="fork"` is the explicit fix. A stale worktree needs `git worktree prune`. |
 | A plain directory stays read-only | It is not inside a Git repository, so the plugin will not add it to long-term memory on its own — an implicit first write binds Git repositories only. | `mem_admin(action="bind", mode="local")` to bind it explicitly; the binding is live for the same session. |
 | Memory is silently absent for a session | Any non-`bound` resolution means "no memory for this session" — by design, it never throws and never guesses. Reads never bind a repository, and a Git repository with no pointer is bound by its first write; a repository whose pointer or registry the plugin refuses to trust stays unbound until that is resolved. | Check `mem_admin(action="projects")` and the pointer file, then write once (a Git repository) or run `mem_admin(action="bind", mode="local")` (any directory) — both take effect in the same session. |

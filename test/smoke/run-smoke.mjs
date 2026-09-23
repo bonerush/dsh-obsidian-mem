@@ -707,8 +707,21 @@ async function main() {
         // its own model call and applied (or dry-ran) it. `verify.mjs` scores
         // these as `model-lane-<label>-real-distill`.
         modelLane: {
-          dryRun: { jobId: dryRunLane.jobId, cycles: dryRunLane.cycles, receipt: dryRunLane.receipt },
-          live: { jobId: liveLane.jobId, cycles: liveLane.cycles, receipt: liveLane.receipt },
+          // `skipped` is projected, not dropped: a record built by `--only live`
+          // has a dry-run lane that never ran, and the checker can only tell
+          // "not run" apart from "ran and captured nothing" by this sentinel.
+          dryRun: {
+            skipped: dryRunLane.skipped === true,
+            jobId: dryRunLane.jobId,
+            cycles: dryRunLane.cycles,
+            receipt: dryRunLane.receipt,
+          },
+          live: {
+            skipped: liveLane.skipped === true,
+            jobId: liveLane.jobId,
+            cycles: liveLane.cycles,
+            receipt: liveLane.receipt,
+          },
           llmProbe: (dryRunLane.scenarioPass?.records ?? []).find((entry) => entry.name === 'smoke/llm-probe') ?? null,
         },
         // The apply half observed WITHOUT a model call, on the resume lane.

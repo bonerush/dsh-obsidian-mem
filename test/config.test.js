@@ -191,6 +191,30 @@ test('ignoreGlobs defaults to empty and only appends exclusions', () => {
   assertRejected(/ignoreGlobs/, { ignoreGlobs: ['ok', 7] })
 })
 
+test('an unknown top-level key is refused instead of silently defaulting', () => {
+  // The measured defect: `vaultpath` (one letter off) validated cleanly and the
+  // plugin pointed at — and bootstrapped — `~/Documents/dsh-memory`.
+  assertRejected(/vaultpath/, { vaultpath: '/tmp/nope' })
+  assert.throws(
+    () => validateConfig({ vaultpath: '/tmp/nope' }),
+    (error) => {
+      assert.match(error.message, /unknown config key/)
+      assert.match(error.message, /vaultpath/)
+      // The message has to help a user who copied the design document's block.
+      assert.match(error.message, /dropped|deliberately does not have/)
+      assert.match(error.message, /projectsDir/)
+      return true
+    },
+  )
+})
+
+test('an unknown distill key is refused, named with its path', () => {
+  assertRejected(/distill\.mode/, { distill: { mode: 'manual' } })
+  assertRejected(/distill\.maxCostPerSession/, { distill: { maxCostPerSession: 5 } })
+  // A known sibling next to the unknown key still does not smuggle it through.
+  assertRejected(/distill\.mode/, { distill: { dryRun: true, mode: 'manual' } })
+})
+
 test('the plugin descriptor is the entry point Task 10 will extend', () => {
   assert.equal(name, 'obsidian-mem')
   assert.deepStrictEqual(inject, ['tools'])
@@ -201,6 +225,14 @@ test('the plugin descriptor is the entry point Task 10 will extend', () => {
 test('apply rejects an out-of-range config eagerly', () => {
   const { ctx } = recordingContext()
   assert.throws(() => apply(ctx, { briefBudgetChars: 0 }), /briefBudgetChars/)
+})
+
+test('apply refuses a mistyped key before it resolves a vault or touches a service', () => {
+  // The whole point of the refusal: a typo must not bootstrap a different vault.
+  // `validateConfig` is the first statement of `apply`, so nothing is read.
+  const { ctx, accesses } = recordingContext()
+  assert.throws(() => apply(ctx, { vaultpath: '/tmp/nope' }), /vaultpath/)
+  assert.deepStrictEqual(accesses, [])
 })
 
 test('apply registers no tool or hook, and reaches for no service, when enabled is false', () => {

@@ -458,6 +458,59 @@ test('a failure after the skeleton is written keeps the identity, and an explici
   assert.match(registry, new RegExp(pointer.projectId))
 })
 
+test('a pointer minted by another writer since the memoized miss is adopted, not refused', async (t) => {
+  const f = await fixture(t)
+  // Two loaded service sets over the same repository: the closest stand-in for a
+  // second process, and the only way to make the race deterministic. The first
+  // set memoizes a miss for this working directory; the second mints the pointer.
+  const mine = await memoryBed(t, f)
+  const other = await memoryBed(t, f)
+
+  assert.match(
+    refused(await call(mine.ctx, 'mem_search', { query: '调度器' }, { cwd: f.repo }), 'memoized miss'),
+    /needs a bound project/,
+  )
+  const bound = value(await call(other.ctx, 'mem_admin', { action: 'bind', mode: 'local' }, { cwd: f.repo }), 'other writer bind')
+  assert.equal(bound.result.status, 'bound')
+
+  // This call's `show` probe now answers `bound`, which carries no `reason` or
+  // `message`. Reporting it as a refusal printed `cannot be bound (undefined):
+  // undefined`; it is the binding.
+  const written = value(await call(mine.ctx, 'mem_write', {
+    type: 'doc', title: '竞争中的写入', body: '另一进程已经铸出指针。',
+  }, { cwd: f.repo }), 'write after the race')
+  assert.match(written.path, /^项目\//)
+  const pointer = JSON.parse((await readPointerBytes(f.repo)).toString('utf8'))
+  assert.equal(pointer.projectId, bound.result.resolution.projectId, 'the adopted identity is the one on disk')
+
+  // The memoized miss was replaced, so the next call does not replay it.
+  const after = await call(mine.ctx, 'mem_search', { query: '竞争' }, { cwd: f.repo })
+  assert.equal(after.isError, false, `the adopted binding must survive the memo: ${after.error?.message}`)
+})
+
+// ---------------------------------------------------------------------------
+// The explicit bind follows the same pre-write release policy
+// ---------------------------------------------------------------------------
+
+test('an explicit bind that refuses before its first write hands the pointer and the memo back', async (t) => {
+  const f = await fixture(t)
+  // The §6.4 property preflight refuses inside `bootstrapVault`, before any vault
+  // write: exactly the class of refusal `autoBindProject` releases on.
+  await mkdir(join(f.vault, '项目', 'x--deadbeef'), { recursive: true })
+  await writeFile(join(f.vault, '项目', 'x--deadbeef', '坏笔记.md'), '---\nid: "dec-1"\ntags: foo\n---\nBody\n')
+  const { ctx } = await memoryBed(t, f)
+
+  const message = refused(await call(ctx, 'mem_admin', { action: 'bind', mode: 'local' }, { cwd: f.repo }), 'explicit bind')
+  assert.match(message, /tags/)
+  await pointerIsAbsent(f.repo)
+
+  // The memo must not have been published either: with it published the next
+  // write would resolve as bound and skip the preflight that just refused it.
+  const second = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'write after the refused bind')
+  assert.match(second, /tags/)
+  await pointerIsAbsent(f.repo)
+})
+
 test('a cloud-managed vault still refuses and mints nothing', async (t) => {
   const f = await fixture(t)
   const vault = join(f.home, 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'dsh-memory')

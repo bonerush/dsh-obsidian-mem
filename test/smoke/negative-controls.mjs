@@ -6,6 +6,10 @@
 // that `verify.mjs` exits non-zero for each mutation. The clean record must
 // still pass, so the controls measure the checker and not the environment.
 //
+// One control goes the other way: the runner's explicit `skipped: true` sentinel
+// (`--only`) must still PASS, so a lane that never ran is not failed. Together
+// the two directions pin the sentinel: absence is a failure, the sentinel is not.
+//
 // Every path it writes is a fresh temporary file; nothing is copied out of the
 // temp tree.
 //
@@ -90,7 +94,40 @@ const MUTATIONS = [
       record.checks.capture.modelLane.live.cycles = []
     },
   },
+  {
+    id: 'model-lane-absent',
+    expectation: 'the checker fails when a model lane is missing from the record entirely',
+    mutate: (record) => {
+      // The fail-open shape the whole-branch review found: with the lane absent,
+      // `lane === undefined` was scored PASS. Absence is not evidence.
+      delete record.checks.capture.modelLane.live
+    },
+  },
+  {
+    id: 'model-lane-absent-at-the-top',
+    expectation: 'the checker fails when capture.modelLane itself is missing',
+    mutate: (record) => {
+      // The same rule one level up: a record that never recorded the headline
+      // lanes at all must not pass them by default.
+      delete record.checks.capture.modelLane
+    },
+  },
 ]
+
+/**
+ * The one shape that MUST still pass: a lane the runner marked `skipped: true`.
+ *
+ * `--only live` leaves the dry-run lane present with only the sentinel. That is
+ * the projection `run-smoke.mjs` now emits; if it stops passing, the `--only`
+ * paths are back to failing a lane that never ran.
+ */
+const SKIPPED_LANE = {
+  id: 'model-lane-explicitly-skipped',
+  expectation: "a lane carrying the runner's explicit skipped: true still passes",
+  mutate: (record) => {
+    record.checks.capture.modelLane.dryRun = { skipped: true, jobId: null, cycles: [], receipt: null }
+  },
+}
 
 const base = JSON.parse(readFileSync(resolve(recordPath), 'utf8'))
 const workDir = mkdtempSync(join(tmpdir(), 'dsh-obsidian-mem-negative-'))
@@ -115,6 +152,14 @@ for (const mutation of MUTATIONS) {
   results.push({ id: mutation.id, expectation: mutation.expectation, exit, passed: exit !== 0 })
 }
 
+// The one positive control: the explicit `skipped: true` sentinel really does
+// pass, so the `--only` paths are not failed for a lane that never ran.
+const skippedRecord = JSON.parse(JSON.stringify(base))
+SKIPPED_LANE.mutate(skippedRecord)
+const skippedPath = join(workDir, `${SKIPPED_LANE.id}.json`)
+writeFileSync(skippedPath, `${JSON.stringify(skippedRecord, null, 2)}\n`)
+const skippedExit = verifyExit(skippedPath)
+
 const refusedPersonalPath = spawnSync(process.execPath, [VERIFY, cleanPath, '--vault', join(process.env.HOME ?? '/root', 'Documents', 'dsh-memory')], { encoding: 'utf8' })
 
 const failures = results.filter((entry) => !entry.passed)
@@ -122,8 +167,9 @@ process.stdout.write(`negative-controls: clean record exit=${cleanExit} (expecte
 for (const entry of results) {
   process.stdout.write(`  ${entry.passed ? 'PASS' : 'FAIL'} ${entry.id} -> verify exit=${entry.exit} (${entry.expectation})\n`)
 }
+process.stdout.write(`  ${skippedExit === 0 ? 'PASS' : 'FAIL'} ${SKIPPED_LANE.id} -> verify exit=${skippedExit} (${SKIPPED_LANE.expectation})\n`)
 process.stdout.write(`  ${refusedPersonalPath.status === 2 ? 'PASS' : 'FAIL'} refuses-personal-vault-path -> verify exit=${refusedPersonalPath.status} (expected 2)\n`)
 
-const ok = cleanExit === 0 && failures.length === 0 && refusedPersonalPath.status === 2
-process.stdout.write(`negative-controls: ${ok ? 'OK' : 'FAILED'} (${results.length} negative controls)\n`)
+const ok = cleanExit === 0 && failures.length === 0 && skippedExit === 0 && refusedPersonalPath.status === 2
+process.stdout.write(`negative-controls: ${ok ? 'OK' : 'FAILED'} (${results.length} negative controls, 1 positive control)\n`)
 process.exit(ok ? 0 : 1)

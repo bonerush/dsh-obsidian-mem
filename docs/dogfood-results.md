@@ -48,7 +48,7 @@
 | G4 | 记忆可取代、可标争议、无删除 | C10 | **PASS**（取代在隔离 vault 复现；真实 vault 未发生） |
 | G5 | 方法论可复用、可脱离插件运转 | C12 + 独立 SDK 依赖 | **PASS** |
 | G6 | 参考 Hindsight：自动摄取、来源标记、按项目边界、按预算注入 | C4/C6/C11 + 逐条对应 | **PASS** |
-| P0 | 宿主要害契约有实测证据（事件顺序、注入时机、`llm.stream`、FTS5） | `docs/p0-compatibility.md` + 本次重跑的两条探针 | **PASS**（探针 12/13，唯一红项是前置断言，F2） |
+| P0 | 宿主要害契约有实测证据（事件顺序、注入时机、`llm.stream`、FTS5） | `docs/p0-compatibility.md` + 本次重跑的两条探针 | **PASS**（探针 13/13；dogfood 当时 12/13，唯一红项是前置断言，已由 Task 20b 修好，见 F2） |
 | P1 | 骨架/读写：全链路、幂等、外部编辑不覆盖、中文检索 | C1–C3/C5/C9 | **PASS** |
 | P2 | 注入与技能：首轮一次 ≤ 预算、超时补发、技能落位 | C4/C12 + 定向用例 | **PASS** |
 | P3 | 自动提炼：入队、中止不沉淀、重启不重复、低置信入收件箱、dryRun 只写收据、外部改动零覆盖 | C6/C7/C9/C11 + 定向用例 | **PASS** |
@@ -341,11 +341,11 @@ git status --short
 
 **处理结果（Task 20b，本文件写于修复之后）**：建议的前半段被采纳并实现——`mem_write` / `mem_log` 在 `mode: 'show'` 给出 `kind:'unbound' / reason:'no-pointer'` 时，改用 `mode: 'local'` 重新解析一次，走的正是本节引用的 `lib/vault.js` 创建分支（独占写指针、继承 sibling worktree 指针、注册表冲突检查），成功后再 `bootstrapVault`（`lib/tools.js` 的 `autoBindProject`），然后继续这次写入；`mode: 'show'` 的探测保证**读不铸指针**、**非 Git 目录不铸指针**、**任何拒绝原因（`pointer-corrupt` / `pointer-unsupported-schema` / `sibling-unreadable` / 注册表不可读 / cloud-managed）都不会被绕过**。`bind` 成功后用一个 `rememberBinding(key, bound)` 覆盖 `bindingByCwd` 里那条 miss，显式 `mem_admin(action="bind", …)` 也走同一个回调，所以**同一会话**内六个工具立刻生效，不再需要新会话。另：解析在铸指针之后才拒绝时（注册表不可读、目录被占）会把这次自己创建的指针收回，避免一次拒绝变成永久粘住的半绑定。README 的 *Verify it works* Project bound 行与「A repository refuses to write」「A plain directory stays read-only」「Memory is silently absent」三处恢复表行已按上面的行为重写。
 
-**补（复审后 Task 20b 第 2 轮）**：上面那句「解析在铸指针之后才拒绝时」原本只覆盖 `resolveBinding` 内部的拒绝。自动绑定还会在**铸完指针之后**调 `bootstrapVault`，而 bootstrap 的拒绝发生在第一次写入**之前**（§6.4 属性预检；以及注册表区显式声明的 sha256 与其正文不符——`readRegistry` 不校验该哈希，`prepareRegistry` 在写任何东西之前拒绝，`registry-hash-mismatch`。`vault-root-not-directory` 与 `template-invalid` 同属 pre-write，但经工具 seam 到不了：前者会先被 `resolveBinding` 的注册表读取拒掉）。这类拒绝此前会把指针留在磁盘上：仓库被绑到一个 vault 从未接受的身份，且下一次写入会以 `bound` 解析、跳过刚刚拒绝它的那道预检。现在 `bootstrapVault` 把 `vaultWritten`（是否已创建骨架文件或提交注册表行；仅创建 vault 根目录不算）附在它抛出的每个错误上，`autoBindProject` 只在 `vaultWritten !== true` 时调 `releaseCreatedPointer`：**pre-write 拒绝一律归还指针**，下一次写入干净地重试绑定；**确实写入了内容的失败保留身份**（骨架可能只建了一半），修复办法是显式 `mem_admin(action="bind", mode="local")`——它每次都会重跑 bootstrap，而写入路径不会。两条分支各有一个用例钉住（见下）。
+**补（复审后 Task 20b 第 2 轮）**：上面那句「解析在铸指针之后才拒绝时」原本只覆盖 `resolveBinding` 内部的拒绝。自动绑定还会在**铸完指针之后**调 `bootstrapVault`，而 bootstrap 的拒绝发生在第一次写入**之前**（§6.4 属性预检；以及注册表区显式声明的 sha256 与其正文不符——`readRegistry` 不校验该哈希，`prepareRegistry` 在写任何东西之前拒绝，`registry-hash-mismatch`。`vault-root-not-directory` 与 `template-invalid` 同属 pre-write，但经工具 seam 到不了：前者会先被 `resolveBinding` 的注册表读取拒掉）。这类拒绝此前会把指针留在磁盘上：仓库被绑到一个 vault 从未接受的身份，且下一次写入会以 `bound` 解析、跳过刚刚拒绝它的那道预检。现在 `bootstrapVault` 把 `vaultWritten`（是否已创建骨架文件**或目录**、或提交注册表行；仅创建 vault 根目录不算）附在它抛出的每个错误上，`autoBindProject` 只在 `vaultWritten !== true` 时调 `releaseCreatedPointer`：**pre-write 拒绝一律归还指针**，下一次写入干净地重试绑定；**确实写入了内容的失败保留身份**（骨架可能只建了一半），修复办法是显式 `mem_admin(action="bind", mode="local")`——它每次都会重跑 bootstrap，而写入路径不会。两条分支各有一个用例钉住（见下）。
 
 证据（修复本身）：新增 `test/auto-bind.test.js`，15 个用例全部走真实 `@deepseek-ai/dsh-tools` 运行时 + 临时 git 仓库/临时 vault，`npm test` 558/558。其中 (a) 首次 `mem_write` 铸出四字段指针（无绝对路径）并落地笔记、(b) 同一会话下一次调用可见（自动与显式各一条）、(c) 第二次写入指针逐字节不变、(d) 新的 worktree 继承同一 projectId、(e) 八类拒绝仍拒绝且不铸指针（非 Git 目录、指针损坏、schema 未知、注册表解析失败、注册表哈希不符、sibling worktree 不可读、属性预检、cloud-managed），且属性预检与哈希不符两条还断言**第二次写入以同样理由再拒**、(f) post-skeleton 失败（`dataRoot/transactions` 是一个普通文件）断言**身份保留、骨架仍在、注册表行缺失**，并验证显式 `mem_admin(action="bind", mode="local")` 用**同一 projectId** 补上注册表行；`mem_log` 单列一条。**falsification**：`git archive 2e55641`（修复前的 `lib/`）只保留新测试文件 → 14/15 失败，唯一通过的是 cloud-managed 那条（它在 `vaultRoot()` 处就拒绝，与绑定路径无关）；`git archive 4cffa6e`（第 1 轮修复后、第 2 轮之前）→ 14 通过 / 1 失败，失败的正是不符的哈希那条，断言停在 `Missing expected rejection`（指针仍在磁盘上）。
 
-### F2（小，本任务造成）P0 teardown 探针现在 12/13
+### F2（小，本任务造成）P0 teardown 探针在 dogfood 当时 12/13
 
 `env -u DSH_HOME node test/p0/run-teardown-probe.mjs` 在创建 vault 之前是 13/13，现在稳定（连跑两次）报：
 

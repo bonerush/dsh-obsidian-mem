@@ -50,14 +50,6 @@ development rather than a release artifact.
   so the acceptance can no longer pass on a total capture failure.
   `test/smoke/negative-controls.mjs` covers both model-lane mutations.
 
-### Changed
-
-- **Honest limits corrected** (`README.md`, `docs/smoke-results.md`): the
-  "no live model call has ever been made" item is replaced by what is still
-  unmeasured (one host, one route; the one-shot timing window; the Obsidian GUI).
-
-### Fixed
-
 - **A Git repository with no `.obsidian-mem` is bound by its first write, and a
   bind is visible in the session that made it.** The dogfood run measured
   (`docs/dogfood-results.md` §10 F1) that every internal seam resolved with
@@ -88,6 +80,47 @@ development rather than a release artifact.
   A `deferred` job can also be a validation refusal (`truncated`,
   `too-many-items`) backing off, which the recovery table previously attributed
   only to a missing route or binding.
+- **A transaction manifest read from disk is no longer trusted with a path.**
+  `txId` and `vaultHash` are the two manifest fields that name one:
+  `discard()` removes `_meta/.history/<txId>/` inside the vault, and
+  `writeManifest`/`removeManifest` write or delete
+  `<dataRoot>/transactions/<vaultHash>/<txId>.json`. Both were taken verbatim, so
+  a manifest carrying `txId: "../../.."` or a traversing `vaultHash` deleted or
+  wrote **outside** the vault. Every manifest read from disk — recovery,
+  `listPendingIndexNotifications` and `markIndexNotified` — and every act site
+  that joins one of those fields re-applies the request-path rules
+  (`[A-Za-z0-9][A-Za-z0-9._-]{0,127}` and 64 lowercase hex) and refuses with
+  `manifest-corrupt` instead of acting on it. This is hardening rather than a
+  fixed violated invariant: it takes a same-user process rewriting
+  `$DSH_HOME/data/obsidian-mem/transactions/`. Regression tests:
+  `test/transaction.test.js` (`a manifest whose txId traverses is refused, and
+  nothing outside the vault is deleted`, and its `vaultHash` twin) — both
+  falsified against the previous `lib/`.
+- **The smoke checker no longer passes a model lane that is absent.** A record
+  with no `capture.modelLane` (or one missing a lane) scored both
+  `model-lane-*-real-distill` checks as PASS, because `lane === undefined` was
+  read as "skipped by `--only`". The runner also dropped the `skipped` sentinel
+  when it rebuilt the lane, so a real `--only live` / `--only dry-run` run
+  *failed* a lane that never ran. Absence is now a failure, only the runner's
+  explicit `skipped: true` marks a lane as not run, and the runner projects that
+  flag. `test/smoke/negative-controls.mjs` covers both directions (absent lane and
+  the absent-`modelLane` shape fail; the sentinel still passes).
+
+### Changed
+
+- **Honest limits corrected** (`README.md`, `docs/smoke-results.md`): the
+  "no live model call has ever been made" item is replaced by what is still
+  unmeasured (one host, one route; the one-shot timing window; the Obsidian GUI).
+- **An unknown config key is now refused instead of silently ignored.**
+  schemastery's `z.object` passes unknown keys through, so a hand-written row with
+  a typo (`vaultpath`) kept `vaultPath`'s default and pointed the plugin — and its
+  bootstrap — at a different vault. `validateConfig` now refuses an unknown
+  top-level or `distill` key, names it, and lists the design document's
+  deliberately-dropped fields (`projectsDir`, `methodsDir`, `metaDir`,
+  `reservedPrefixes`, `docMirror`, `distill.mode`, `distill.maxCostPerSession`).
+  **Action for anyone who copied the design document's §12 block:** those fields
+  now produce a loud error where they used to be a silent no-op. Remove them; the
+  accepted field set is the README table.
 
 ## 0.1.0 — 2026-09-23
 

@@ -155,7 +155,15 @@ function bed(t, options = {}) {
     return inner(binding, briefOptions)
   }
 
-  const disposers = registerHooks(ctx, { resolveBinding, index, buildBrief, config })
+  const disposers = registerHooks(ctx, {
+    resolveBinding,
+    index,
+    buildBrief,
+    config,
+    // An injected capture seam, so a case can pin down what the disposal flush
+    // does with a rejection without building a queue on disk.
+    ...(options.capture === undefined ? {} : { capture: options.capture }),
+  })
   t.after(async () => {
     for (const dispose of disposers) await dispose()
   })
@@ -567,6 +575,26 @@ test('agent/disposed clears the session state so a long-lived host does not leak
   assert.equal(recalled(await h.preStep(agent)).length, 1)
   assert.equal(h.calls.resolveBinding.length, 2)
   assert.equal(h.calls.buildBrief.filter((call) => call.options.mode === 'full').length, 2)
+})
+
+test('a rejected disposal flush reaches the host log instead of vanishing', async (t) => {
+  const warnings = []
+  const h = bed(t, {
+    logger: { warn: (...args) => warnings.push(args), info: () => {}, error: () => {} },
+    capture: {
+      recover: async () => {},
+      sessionEvent: () => {},
+      flush: async () => {},
+      disposed: async () => { throw new Error('pending flush down') },
+    },
+  })
+  h.disposed()
+  // The listener never awaits this promise (the host does not await the emit), so
+  // the log line lands a microtask later; before the fix the rejection was
+  // swallowed by a bare `.catch(() => {})`.
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(warnings.length, 1, 'the async disposal failure must be logged once')
+  assert.match(String(warnings[0][0]), /pending flush down/)
 })
 
 test('a failing dependency never breaks the turn — the decision passes through unchanged', async (t) => {

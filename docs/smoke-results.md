@@ -1,7 +1,7 @@
-# 独立 profile 冒烟实测（Task 18 / Task 18b）
+# 独立 profile 冒烟实测（Task 18 / Task 18b / 终修波）
 
 - **日期**：2026-09-24
-- **状态**：验收脚本 **25/25 通过**；负控 **9/9** 通过；**1 项未验证**（Obsidian GUI，见 §5）
+- **状态**：验收脚本 **25/25 通过**；负控 **11/11** + 正控 **1/1** 通过；**1 项未验证**（Obsidian GUI，见 §5）
 - **被测环境**：DSH `0.1.5-rc.2`；Node `v25.9.0`；`darwin arm64`；蒸馏路由 `deepseek-official` / `deepseek-flash`
 - **产物**：`test/smoke/`（runner + checker + 负控 + 驱动插件）、`test/smoke/records/smoke-record.json`（Task 18 的**修正前**冻结记录）、`docs/p0-compatibility.md` §9（Task 18b 定位到的宿主事实）
 - **计划要求**：`docs/superpowers/plans/2026-09-23-dsh-obsidian-mem-implementation.md` Task 18
@@ -15,14 +15,14 @@
 在临时 `DSH_HOME` 下（`mkdtemp`，用完删除）从随包 `headless` 模板创建 profile `smoke`，把本仓库与一次性驱动插件 `test/smoke/driver` 以 `link:` 装入，然后跑真实的 headless 会话：
 
 ```sh
-node test/smoke/run-smoke.mjs --out /tmp/dshsmoke-fix3.json
-node test/smoke/verify.mjs /tmp/dshsmoke-fix3.json          # 独立重算 vault 事实后才判定
-node test/smoke/negative-controls.mjs /tmp/dshsmoke-fix3.json
+node test/smoke/run-smoke.mjs --out /tmp/dshsmoke-final4.json
+node test/smoke/verify.mjs /tmp/dshsmoke-final4.json        # 独立重算 vault 事实后才判定
+node test/smoke/negative-controls.mjs /tmp/dshsmoke-final4.json
 ```
 
-下文引用的数字来自**最终 runner + 最终 checker 的第三次独立运行**（`/tmp/dshsmoke-fix3.json`）；修复后的前两次运行（`/tmp/dshsmoke-fix.json`、`/tmp/dshsmoke-fix2.json`）在**同样 25/25** 下给出了同样的结论（差异只在模型 token 计数与耗时：`415/2257`、`267/1840`，以及 `409/2178`、`186/1312`；其余计数完全相同）。三次都用同一套命令。
+下文引用的数字来自**终修波在最终 runner + 最终 checker 下的独立运行**（`/tmp/dshsmoke-final4.json`，2026-09-24）。Task 18b 的三次运行（`/tmp/dshsmoke-fix.json`、`/tmp/dshsmoke-fix2.json`、`/tmp/dshsmoke-fix3.json`）在**同样 25/25** 下给出同样结论；终修波新增的 `--only` 证据见 §2.1。
 
-`verify.mjs` 只把**显式带 `skipped: true`**（由 `--only` 分支写入）的通道当作"未运行"；一条**真的跑了但没有捕获到任何 job**（`jobId` 为 null 且无该标记）的通道是**失败**——acceptance 不允许在"什么都没捕获"时通过。负控 `model-lane-captured-nothing` 正是这条断言的守卫。
+`verify.mjs` 只把**显式带 `skipped: true`**（由 `--only` 分支写入，终修波起由 runner 投影进 `capture.modelLane.*`）的通道当作"未运行"；一条**真的跑了但没有捕获到任何 job**（`jobId` 为 null 且无该标记）的通道是**失败**——acceptance 不允许在"什么都没捕获"时通过。终修波补上两个方向：**通道整个缺失**（记录里没有 `capture.modelLane`，或少了某条 channel）同样是**失败**，因为"没有证据"不是证据；显式的 `skipped: true` 仍然通过。负控 `model-lane-captured-nothing`、`model-lane-absent`、`model-lane-absent-at-the-top` 与正控 `model-lane-explicitly-skipped` 就是这两条断言的守卫。
 
 驱动插件通过 `ctx.tools.get(name).execute(args, exec)` 调用**插件自己注册的六个 `mem_*` 工具**（与模型调用的是同一批定义），只记录收据、路径、id、状态、计数与哈希。
 
@@ -40,7 +40,7 @@ node test/smoke/negative-controls.mjs /tmp/dshsmoke-fix3.json
 ## 2. 检查器结果（原始输出）
 
 ```
-verify: /tmp/dshsmoke-fix3.json
+verify: /tmp/dshsmoke-final4.json
   versions: dsh=0.1.5-rc.2 node=v25.9.0 obsidian=(not supplied; GUI checks unverified)
   PASS plugin-row-in-dump-config — dump-config has "- id: obsidian-mem": true (11208 chars)
   PASS plugin-row-line-recorded — - id: obsidian-mem
@@ -48,18 +48,18 @@ verify: /tmp/dshsmoke-fix3.json
   PASS brief-not-repeated-later — sessionBriefCount=1
   PASS brief-within-budget — 109 code points <= 6000
   PASS chinese-search-hit — queryChars=4 hitCount=1 matchedDocPath=true
-  PASS document-write-on-disk — 项目/repo--e9cca4c2/文档/冒烟文档：中文检索目标.md
-  PASS supersede-chain-correct — old=dec-07815a5d-4d05-4df7-9fc8-b9746b6ba811 status=superseded superseded_by=dec-1172285e-b043-45ea-af13-4a71bb89e18b defaultHasOld=false historyHasOld=true
-  PASS interrupted-process-was-killed — killedBy=SIGKILL jobId=job-0d3c6dba36749ce371c244f1cfd76e6e injected=raw-durable
-  PASS restart-recovered-exactly-once — result receipts for job-0d3c6dba36749ce371c244f1cfd76e6e: 1 (total 4)
+  PASS document-write-on-disk — 项目/repo--32f56b1f/文档/冒烟文档：中文检索目标.md
+  PASS supersede-chain-correct — old=dec-a90b1e96-7af3-4ec6-8af5-56fc652ae946 status=superseded superseded_by=dec-94d99d6d-beab-450e-9020-cb54ddaae7b8 defaultHasOld=false historyHasOld=true
+  PASS interrupted-process-was-killed — killedBy=SIGKILL jobId=job-927547faa187e4322b3aac494df2bac0 injected=raw-durable
+  PASS restart-recovered-exactly-once — result receipts for job-927547faa187e4322b3aac494df2bac0: 1 (total 4)
   PASS restart-live-apply-succeeded — live receipt: applied dryRun=false
   PASS restart-wrote-to-the-vault — vault changed across the live restart: true (receipt applied)
   PASS no-duplicate-note-ids — duplicate ids: []
   PASS dry-run-wrote-nothing — dry-run receipt: dry-run vaultChanged=false
-  PASS model-lane-dry-run-real-distill — result=dry-run attempts=0 outputTokens=401 durationMs=2572 vaultChanged=false
-  PASS model-lane-live-real-distill — result=applied attempts=0 outputTokens=231 durationMs=1981 vaultChanged=true
-  PASS external-edit-survived — path=项目/repo--e9cca4c2/文档/外部编辑目标文档.md humanLineSurvived=true onDiskAfterAllPasses=true
-  PASS human-owned-file-byte-identical — path=项目/repo--e9cca4c2/约定/人写的约定.md update=human-owned supersede=human-owned byteIdentical=true
+  PASS model-lane-dry-run-real-distill — result=dry-run attempts=0 outputTokens=419 durationMs=2101 vaultChanged=false
+  PASS model-lane-live-real-distill — result=applied attempts=0 outputTokens=216 durationMs=1568 vaultChanged=true
+  PASS external-edit-survived — path=项目/repo--32f56b1f/文档/外部编辑目标文档.md humanLineSurvived=true onDiskAfterAllPasses=true
+  PASS human-owned-file-byte-identical — path=项目/repo--32f56b1f/约定/人写的约定.md update=human-owned supersede=human-owned byteIdentical=true
   PASS read-only-lint-never-writes — findings=2 treeUntouched=true
   PASS real-dsh-home-unchanged — real ~/.dsh fingerprint unchanged: true
   PASS frontmatter-parses-under-yaml-v2 — 21 notes parsed
@@ -71,7 +71,7 @@ verify: /tmp/dshsmoke-fix3.json
 verify: OK (25 checks, 21 vault notes)      # exit=0
 ```
 
-`test/smoke/negative-controls.mjs` 逐条破坏一个验收条件并断言检查器非零退出：
+`test/smoke/negative-controls.mjs` 逐条破坏一个验收条件并断言检查器非零退出，另有一条正控断言显式 `skipped: true` 仍然通过：
 
 ```
 negative-controls: clean record exit=0 (expected 0)
@@ -84,11 +84,32 @@ negative-controls: clean record exit=0 (expected 0)
   PASS external-edit-overwritten -> verify exit=1
   PASS model-lane-lost-its-receipt -> verify exit=1
   PASS model-lane-captured-nothing -> verify exit=1
+  PASS model-lane-absent -> verify exit=1
+  PASS model-lane-absent-at-the-top -> verify exit=1
+  PASS model-lane-explicitly-skipped -> verify exit=0
   PASS refuses-personal-vault-path -> verify exit=2
-negative-controls: OK (9 negative controls)   # exit=0
+negative-controls: OK (11 negative controls, 1 positive control)   # exit=0
 ```
 
-`npm test`：**543/543 通过**（`node scripts/run-tests.mjs`；比 Task 18 多的 3 条是 Task 18b 的回归用例，见 §3）。
+### 2.1 `--only` 的 skip 通道（终修波新增证据）
+
+`--only dryRun` 让 dry-run 通道真跑、live 通道不跑。此时 runner 必须把 `skipped: true` 投影进记录，checker 才分得清"没跑"与"跑了但什么都没捕获"。同一份 `--only dryRun` 记录，修正前/后的 checker 只差这一条：
+
+```
+# 终修波（runner 投影了 skipped；checker 认 sentinel）
+  PASS model-lane-dry-run-real-distill — result=dry-run attempts=0 outputTokens=406 durationMs=2125 vaultChanged=false
+  PASS model-lane-live-real-distill — the live lane carries the runner's explicit skipped: true (--only); nothing to verify
+verify: 4 FAILED (25 checks, 19 vault notes)      # exit=1
+
+# 修正前（runner 丢掉 skipped；checker 把它当成"跑了却没捕获"）
+  PASS model-lane-dry-run-real-distill — result=dry-run attempts=0 outputTokens=411 durationMs=2042 vaultChanged=false
+  FAIL model-lane-live-real-distill — no job was captured on this lane, so there is nothing the worker could have distilled
+verify: 5 FAILED (25 checks, 19 vault notes)      # exit=1
+```
+
+两边的 4 条共同 FAIL 是 `--only` 的固有结果（live 的恢复通道没跑，所以 `interrupted-process-was-killed` / `restart-recovered-exactly-once` / `restart-live-apply-succeeded` / `restart-wrote-to-the-vault` 无从判定）——`--only` 只选模型通道，不是一次全绿运行；差别只在那条 model-lane 断言：修正前一条合法的 `--only` 运行会**失败一条从未运行的通道**，修正后该通道以 sentinel 记为 pass。
+
+`npm test`：**566/566 通过**（`node scripts/run-tests.mjs`；Task 18 之后新增 18b 的 3 条与终修波的 8 条）。
 
 ## 3. 逐项证据
 
@@ -102,7 +123,8 @@ negative-controls: OK (9 negative controls)   # exit=0
 | 取代链 | PASS | 旧笔记仍在，`status=superseded`、`superseded_by` = 新 id；默认检索不再返回旧笔记，`includeHistory:true` 返回 |
 | 完成回合被捕获 | PASS | 真实 `turn/end:completed` → 恰好一个 pending job 落盘（`fromSeq=4,toSeq=19`，`route` 非空） |
 | 进程中断 | PASS | 驱动在 job 文件出现后 `process.kill(pid,'SIGKILL')`；子进程退出信号 = `SIGKILL` |
-| **主路径：真实模型蒸馏** | **PASS** | 模型通道两轮各自的 receipt（字段级）：dryRun 轮 `result=dry-run`、`dryRun=true`、`attempts=0`、1 个 item（`type=convention`）、`outputTokens=401`、`durationMs=2572`、`index=none`、`refusedCount=0`、无 `lastError`；live 轮 `result=applied`、`dryRun=false`、`attempts=0`、1 个 item（`type=decision`）、`outputTokens=231`、`durationMs=1981`、`index=refreshed`、`refusedCount=0`、vault 树跨重启发生变化。两轮 `holdReceipt=true`（驱动在 hold 窗口内看到 receipt）。三次独立运行的 token 计数与耗时不同（`415/2257`、`267/1840`；`409/2178`、`186/1312`），结论相同 |
+| **主路径：真实模型蒸馏** | **PASS** | 模型通道两轮各自的 receipt（字段级）：dryRun 轮 `result=dry-run`、`dryRun=true`、`attempts=0`、1 个 item（`type=convention`）、`outputTokens=419`、`durationMs=2101`、`index=none`、`refusedCount=0`、无 `lastError`；live 轮 `result=applied`、`dryRun=false`、`attempts=0`、1 个 item（`type=decision`）、`outputTokens=216`、`durationMs=1568`、`index=refreshed`、`refusedCount=0`、vault 树跨重启发生变化。两轮 `holdReceipt=true`（驱动在 hold 窗口内看到 receipt）。四次独立运行的 token 计数与耗时不同（`415/2257`、`267/1840`；`409/2178`、`186/1312`；`419/2101`、`216/1568`），结论相同 |
+| 验收器不 fail-open | PASS | 终修波前：`capture.modelLane` 缺失时两条 `model-lane-*-real-distill` 都记 PASS（负控 `model-lane-absent` / `model-lane-absent-at-the-top` 对修正前 checker 退出 0，即**没抓住**）；终修波后两者都退出 1，显式 `skipped: true` 的正控仍然退出 0。同一份真实 `--only dryRun` 记录在修正前会额外 FAIL 一条从未运行的通道（见 §2.1） |
 | 对照探针（in-context） | PASS | 驱动在首个 `agent/pre-step` 内的 `ctx.get('llm').stream()`：`finish=stop`、23 chunks、414 ms——与主路径同路由、同凭据的独立对照 |
 | 重启恢复不重复 | PASS | 恢复通道的 job 其 result receipt 恰好 1 份；vault 内无重复 note id（21 篇） |
 | dryRun 零写入 | PASS | receipt `result=dry-run`、`dryRun=true`；重启前后 vault 树哈希映射**完全相同** |
@@ -124,7 +146,7 @@ negative-controls: OK (9 negative controls)   # exit=0
 - **`~/Documents/dsh-memory` 不存在**：配置里的 `vaultPath` 一直是临时 vault，默认路径从未被创建。
 - **凭据只走子进程环境**：`DEEPSEEK_API_KEY` 从环境或 `~/.dsh/.credentials.yaml` 的 `refs` 读出后只注入子进程 `env`；从不打印、不写进临时 home、不写进记录。
 - **无真实会话正文入库**：驱动只记录元数据；stderr 只记字节数（DSH 会把模型推理打到 stderr）。修复后的运行记录**不提交**，因为它包含模型生成的笔记标题与路径；提交的冻结记录仍是修正前那份（不含模型正文）。
-- **提交卫生**：Task 18b 改动 `lib/capture.js`、`lib/hooks.js`、`test/auto-capture.test.js`、`test/smoke/{run-smoke,verify,negative-controls}.mjs`、`test/p0/teardown/**`、`test/p0/run-teardown-probe.mjs`、`docs/{p0-compatibility,smoke-results}.md`、`README.md`、`CHANGELOG.md`；仓库内对凭据值及其 4 字符前缀 0 命中。
+- **提交卫生**：Task 18b 改动 `lib/capture.js`、`lib/hooks.js`、`test/auto-capture.test.js`、`test/smoke/{run-smoke,verify,negative-controls}.mjs`、`test/p0/teardown/**`、`test/p0/run-teardown-probe.mjs`、`docs/{p0-compatibility,smoke-results}.md`、`README.md`、`CHANGELOG.md`；终修波只再动 `test/smoke/{run-smoke,verify,negative-controls}.mjs` 与 `docs/smoke-results.md`（外加与冒烟无关的 `lib/`、`test/`、README/CHANGELOG/dogfood 修正，见终修波报告）；仓库内对凭据值及其 4 字符前缀 0 命中。
 
 ## 5. 未验证项（明确不作为 PASS）
 
