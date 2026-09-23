@@ -287,7 +287,7 @@ id = "<type 三字母前缀>-<crypto.randomUUID() 的 UUIDv4>"
 
 ## 7. 检索与索引
 
-- **后端**：`node:sqlite`（`DatabaseSync`；最低版本以打包测试验证，建议 Node ≥22.13 以免旧版必须加实验标志）FTS5；FTS5 不可用时使用等价过滤的扫描后端并明确报告降级。`DatabaseSync` 是同步 API，初扫必须分批、让出事件循环，限制单文件大小和并发读取。
+- **后端**：`node:sqlite`（`DatabaseSync`）FTS5；FTS5 不可用时使用等价过滤的扫描后端并明确报告降级。`DatabaseSync` 是同步 API，初扫必须分批、让出事件循环，限制单文件大小和并发读取。**实测（P0 Task 2，见 `docs/p0-compatibility.md`）**：`node:sqlite` 在 Node 22.13.0 上已可免标志 `import`，但该版本内置的 SQLite 3.47.2 **没有编译 `ENABLE_FTS5`**（`CREATE VIRTUAL TABLE … USING fts5` 报 `no such module: fts5`，加 `--experimental-sqlite` 亦然）。Node 22.22.2（SQLite 3.51.2）与 25.9.0（3.51.3）的 `compile_options` 含 `ENABLE_FTS5` 且实测可用。**去实验标志与 FTS5 可用是两件事**，因此声明的下限取实测最低可用版本 **`engines.node >= 22.22.2`**，不是 22.13；22.14.0–22.21.x 未实测。`indexBackend='auto'` 在这类版本上必须落到扫描后端并报告，显式 `sqlite` 必须失败。
 - **位置**：`~/.dsh/data/obsidian-mem/index/index-<sha256(realpath(vaultPath))>.db`（WAL）；索引不进 vault。数据库损坏可隔离后重建，不得清除 `pending/` 待处理任务。
 - **分词**：拉丁小写化；CJK 连续段切重叠二元组。索引和查询使用同一个纯函数；单字 CJK 查询走安全的原文子串分支。FTS 查询对每个 token 加引号并设长度/数量上限，避免用户文本被解释为 FTS 运算符；多词召回先 OR，再以命中数和字段权重排序，不要求每个词同时出现。
 - **表**：`notes(path, mtime, size, id, type, title, status, project, updated, hash)`、`notes_fts(title, body, tokens)`、`fm_kv(note_id, key, value)`、`tags(note_id, tag)`、`links(src_id, target, resolved_id)`、`kv(key, value)`（含 `schema_version`、`last_scan`）。
@@ -363,6 +363,8 @@ session/event 中的 turn/end(completed)
 同一根会话在 debounce 内的多个完成回合合并成一个 pending job，范围从上次成功收据的 `toSeq` 到最新 `turn/end.seq`；正在提炼时到来的新回合另建后继 job。只取最后一条不含 tool-call 的已提交 assistant 文本作为该回合结论，排除中间工具调用前的草稿。任务失败采用有上限的指数退避（默认 `maxRetries=3`），之后标为 `failed` 保留供 `mem_admin(action=jobs)` 查看和显式重试，不在每次启动无限调用模型。
 
 提炼采用可选的 `ctx.get('llm')` 服务和当前会话最后一次已记录的 provider/model 路由；缺服务或路由时保留 pending 并记 `deferred`，不凭空生成摘要。v1 不借用 subagent，避免子会话递归触发提炼和父 agent 销毁后的生命周期问题。单次调用使用 `maxInputChars`、`maxOutputTokens`、超时与 AbortSignal；实际 token/耗时只作审计，不用未知模型价格假装能预先保证美元成本。
+
+**实测的 `ctx.llm.stream()` 契约（P0 Task 2，字段级证据见 `docs/p0-compatibility.md`）**：`stream({provider,model,messages,system,maxTokens,signal})` 直接返回 `AsyncIterable<StreamChunk>`（无 `llm/stream` 监听器时同步返回，不是 Promise；`messages` 每条需 `id`/`role`/`content`/`source`）。一次成功流的块序是 `block-start → (reasoning-delta|text-delta) → block-end → usage → finish`，`usage` 在终止块之前，`finish.reason.kind` 取 `stop|max-tokens|tool-calls|aborted|error`。**路由失败、取消与超时都不会向调用方抛错**——它们都归一化为终止块：空路由（`provider:''`/`model:''`）得到 `finish.reason.kind='error'`、`failure.code='NO_ADAPTER'`；调用方 `AbortSignal` 与 `AbortSignal.timeout()` 触发后得到 `finish.reason.kind='aborted'`（`failure.code='ABORTED'`，且 `failure.message` 不区分超时与用户取消）。因此提炼实现必须：先解析出非空路由再调用（空路由不可能成功）；以终止块的 `reason.kind` 作为唯一结果判据，不靠 try/catch 捕获"取消"；容忍 `aborted` 流没有 `usage`、没有 `block-end`。
 
 只送入真实用户消息、已提交的 assistant 最终文本、已验证的工具名称/退出状态及有限的路径与行号。根会话用 `session.header.parentSession`/`origin` 排除子 agent。绝不读取 DSH 的凭据配置、环境变量、推理块、原始工具输出、插件注入和子 agent 转写；用户消息/最终文本仍可能自行包含未知密钥，故对常见凭据格式做确定性扫描，命中时跳过整条消息并报告，不能宣称已穷尽所有敏感信息。超限按最近完成的回合裁剪并记录省略范围。只提取项目决策、约定、踩坑，排除对网页/论文/个人材料的摘要或“见解”。外部文本是数据，提炼器不得把其中的命令当系统指令；该 LLM 调用不附带工具 schema。待处理快照位于 `~/.dsh/data/obsidian-mem/pending/`，权限 `0700/0600`，不进 vault、Git 或日志；用户可关闭自动提炼。README 明示本地暂存、二次模型调用和剩余隐私风险。
 
@@ -540,10 +542,10 @@ dsh --profile web --dump-config | grep -n obsidian-mem      # 确认行已装配
 | 7 | **重名 basename 导致链接歧义** | 写入时保证 basename 唯一（冲突加后缀）；lint 检测；必要时路径限定链接 |
 | 8 | **提炼成本与延迟** | 空闲 debounce、单飞、输入/输出/超时硬上限；失败保留 pending 并报告，不以空日志伪装成功 |
 | 9 | **与既有 in-repo vault 并存**（如 `~/subject/Xerintosh/doc`） | v1 不动、不迁移；lint 输出「可纳入候选」清单 |
-| 10 | **模型路由**：提炼用哪个 provider/model | 优先显式配置，否则取最后一次已记录路由；路由缺失则 deferred，待下次可用时恢复 |
+| 10 | **模型路由**：提炼用哪个 provider/model | 优先显式配置，否则取最后一次已记录路由；路由缺失则 deferred，待下次可用时恢复。**P0 实测：空路由不是"用默认值"，而是终止块 `finish.reason.kind='error'`、`failure.code='NO_ADAPTER'`**，所以解析不出路由时绝不可发起调用 |
 | 11 | **文档覆盖率无法从插件单方面保证** | 权威 `mem_write` + 只读仓库 Markdown 审计；README 写清外部编辑器/命令产生的缺口 |
 
-**P0 必须关闭的风险**：① `session/event` 对完成回合的顺序和作用域（Task 1 已关闭，见 `docs/p0-compatibility.md`）；② `llm.stream` 对当前 provider/model、超时与取消的真实行为；③ 同一回合首个 pre-step 的注入时机（Task 1 已关闭：首个 `request/header` 晚于 pre-step 5 个事件）；④ 最低受支持 Node 版本的 FTS5 与文件写入 API。当前本机 Node v25.9.0 的 FTS5 已验证可用，但不能据此推断所有最低版本和打包环境。
+**P0 必须关闭的风险**：① `session/event` 对完成回合的顺序和作用域（Task 1 已关闭，见 `docs/p0-compatibility.md`）；② `llm.stream` 对当前 provider/model、超时与取消的真实行为（**Task 2 已关闭**：显式路由返回 `AsyncIterable<StreamChunk>`，成功块序 `block-start→…→usage→finish`，空路由与取消/超时都归一化为终止块而**不抛错**；见 `docs/p0-compatibility.md` §8）；③ 同一回合首个 pre-step 的注入时机（Task 1 已关闭：首个 `request/header` 晚于 pre-step 5 个事件）；④ 最低受支持 Node 版本的 FTS5 与文件写入 API（**Task 2 已关闭**：`engines.node >= 22.22.2`；Node 22.13.0 实测**无** `ENABLE_FTS5`，22.22.2/25.9.0 实测 FTS5 与全部文件原语可用，22.14–22.21 未实测）。
 
 ---
 
