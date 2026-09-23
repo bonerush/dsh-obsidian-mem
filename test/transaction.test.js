@@ -24,6 +24,7 @@ import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, sym
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
@@ -1016,6 +1017,121 @@ test('staged lock records are swept only when their owner is gone', async (t) =>
   assert.equal(receipt.result.status, 'applied')
   assert.equal(await exists(dead), false, 'an abandoned staged record is swept')
   assert.equal(await exists(live), true, 'a staged record whose writer is alive is left alone')
+})
+
+test('a committed receipt that cannot be stored blocks a same-key retry instead of applying twice', async (t) => {
+  if (process.getuid?.() === 0) t.skip('root ignores the read-only receipt directory')
+  const { vault, dataRoot, bindingA } = await fixture(t)
+  const receiptDirectory = join(dataRoot, 'receipts', sha256(await realpath(vault)), ID_A)
+  await mkdir(receiptDirectory, { recursive: true })
+  await chmod(receiptDirectory, 0o500)
+
+  const key = 'persistent-store-failure'
+  // a transform, not a create: a duplicate here is silent — the registry simply
+  // gains a second row and the log a second receipt
+  const addRow = (row) => (current) => {
+    const rows = current === null ? [] : parseRegistryMarkdown(current.toString('utf8')).rows
+    return renderRegistryDocument([...rows, row])
+  }
+  const tx = () => ({
+    txId: newTransactionId(),
+    idempotencyKey: key,
+    updates: [{ path: REGISTRY, transform: addRow({ projectId: ID_A, dir: PROJECT_A, displayName: 'Alpha', remote: '' }) }],
+    receipt: { action: 'write' },
+  })
+
+  const first = await runTransaction(bindingA, tx(), { dataRoot })
+  assert.equal(first.result.status, 'applied')
+  assert.equal(first.result.stored, false, 'the receipt is only in the manifest')
+  const registryAfterFirst = await readFile(at(vault, REGISTRY), 'utf8')
+  const logAfterFirst = await readFile(at(vault, LOG_RELATIVE_PATH), 'utf8')
+  assert.equal(parseRegistryMarkdown(registryAfterFirst).rows.length, 1)
+
+  // the store keeps failing: recovery must fail closed, not pretend
+  const report = await recoverTransactions(bindingA, { dataRoot })
+  assert.equal(report.unresolved.length, 1)
+  assert.equal(report.unresolved[0].reason, 'receipt-store-unavailable')
+
+  // the same key can never be applied a second time while its receipt is unstored
+  await assert.rejects(
+    runTransaction(bindingA, tx(), { dataRoot }),
+    (error) => error instanceof TransactionError && error.code === 'recovery-required',
+  )
+  assert.equal(await readFile(at(vault, REGISTRY), 'utf8'), registryAfterFirst, 'the registry must not gain a second row')
+  assert.equal(await readFile(at(vault, LOG_RELATIVE_PATH), 'utf8'), logAfterFirst, 'the log must not gain a second receipt')
+
+  // once the store works the receipt lands, the block clears, and the key replays
+  await chmod(receiptDirectory, 0o700)
+  const healed = await recoverTransactions(bindingA, { dataRoot })
+  assert.deepEqual(healed.unresolved, [])
+  assert.equal((await findReceipt(bindingA, key, { dataRoot })).txId, first.txId)
+  const replay = await runTransaction(bindingA, tx(), { dataRoot })
+  assert.equal(replay.txId, first.txId)
+  assert.equal(await readFile(at(vault, REGISTRY), 'utf8'), registryAfterFirst)
+  assert.equal(await readFile(at(vault, LOG_RELATIVE_PATH), 'utf8'), logAfterFirst)
+})
+
+test('a filesystem without hard links still publishes a readable lock record', async (t) => {
+  const { vault, dataRoot, bindingA } = await fixture(t)
+  const staged = []
+  const io = {
+    link: async (temporary) => {
+      // the record is complete before it is ever visible under the lock name
+      staged.push(JSON.parse(await readFile(temporary, 'utf8')))
+      throw Object.assign(new Error('operation not supported'), { code: 'EOPNOTSUPP' })
+    },
+  }
+  const lockPath = join(dataRoot, 'locks', `vault-${sha256(await realpath(vault))}.lock`)
+
+  let releaseHolder
+  const hold = new Promise((resolve) => { releaseHolder = resolve })
+  const holder = runTransaction(bindingA, {
+    txId: newTransactionId(),
+    updates: [{
+      path: MOC,
+      transform: async (current) => {
+        await hold
+        return `${current.toString('utf8')}\n追加\n`
+      },
+    }],
+    receipt: null,
+  }, { dataRoot, io })
+
+  for (let attempt = 0; attempt < 200 && !(await exists(lockPath)); attempt += 1) await delay(10)
+  assert.equal(await exists(lockPath), true, 'the exclusive-create fallback must publish the lock')
+
+  // a concurrent attempt reads a complete, live record: it waits and times out
+  // instead of reporting the lock as unreadable or stealing it
+  await assert.rejects(
+    runTransaction(bindingA, {
+      txId: newTransactionId(),
+      updates: [{ path: STATUS_NOTE, hash: sha256(STATUS_BEFORE), contents: 'replacement' }],
+      receipt: null,
+    }, { dataRoot, io, lockTimeoutMs: 150, pollMs: 20 }),
+    (error) => error instanceof TransactionError && error.code === 'lock-timeout',
+  )
+
+  releaseHolder()
+  const receipt = await holder
+  assert.equal(receipt.result.status, 'applied')
+  // every staged record (one per acquisition attempt) was a complete record
+  assert.ok(staged.length >= 1)
+  for (const record of staged) {
+    assert.equal(record.pid, process.pid)
+    assert.equal(typeof record.token, 'string')
+    assert.equal(typeof record.txId, 'string')
+  }
+  assert.equal(await exists(lockPath), false, 'the fallback lock is released')
+
+  // and a later transaction acquires through the same fallback, leaving nothing behind
+  const current = await readFile(at(vault, MOC))
+  const again = await runTransaction(bindingA, {
+    txId: newTransactionId(),
+    updates: [{ path: MOC, hash: sha256(current), contents: current }],
+    receipt: null,
+  }, { dataRoot, io })
+  assert.equal(again.result.status, 'no-op')
+  assert.deepEqual(await readdir(join(dataRoot, 'locks')), [], 'no staged lock record is left behind')
 })
 
 test('no temporary file survives a refused transaction', async (t) => {
