@@ -168,7 +168,7 @@ test('a transaction publishes creates and updates and appends exactly one receip
   assert.equal(receipt.toSeq, 9)
   assert.equal(receipt.idempotencyKey, null)
   assert.equal(receipt.result.status, 'applied')
-  assert.deepEqual(receipt.result, { status: 'applied', created: 1, updated: 2, skipped: 0, index: 'queued' })
+  assert.deepEqual(receipt.result, { status: 'applied', created: 1, updated: 2, skipped: 0, index: 'queued', stored: true })
   assert.deepEqual(receipt.paths, [NEW_NOTE, STATUS_NOTE, MOC])
   assert.deepEqual(receipt.beforeHashes, {
     [NEW_NOTE]: null,
@@ -378,7 +378,7 @@ test('an update whose bytes already match is skipped and keeps the mtime', async
     receipt: null,
   }, { dataRoot })
 
-  assert.deepEqual(receipt.result, { status: 'no-op', created: 0, updated: 0, skipped: 1, index: 'queued' })
+  assert.deepEqual(receipt.result, { status: 'no-op', created: 0, updated: 0, skipped: 1, index: 'queued', stored: true })
   assert.equal(await readFile(at(vault, STATUS_NOTE), 'utf8'), STATUS_BEFORE)
   assert.equal((await stat(at(vault, STATUS_NOTE))).mtimeMs, before.mtimeMs, 'a semantic no-op must not touch the mtime')
   assert.equal(await exists(at(vault, LOG_RELATIVE_PATH)), false)
@@ -568,6 +568,156 @@ test('a crash during a rollback resumes instead of reporting a conflict', async 
   assert.deepEqual(report.rolledBack, [txId])
   assert.equal(await readFile(at(vault, MOC), 'utf8'), MOC_BEFORE)
   assert.equal(await exists(at(vault, NEW_NOTE)), false)
+})
+
+// ---------------------------------------------------------------------------
+// Step 4: an unreadable target is a conflict during rollback, never "absent"
+// ---------------------------------------------------------------------------
+
+test('an unreadable target during rollback is a conflict, never "already undone"', async (t) => {
+  // Review finding: `readGuarded` throwing left `current` null, and for a create
+  // "current === null" was read as "already quarantined". Recovery then reported
+  // a clean rollback while the created note was still in the vault.
+  const deadlock = Object.assign(new Error('Resource deadlock avoided'), { code: 'EDEADLK' })
+
+  // (a) injected through the documented read seam, on the one published target
+  {
+    const { vault, dataRoot, bindingA } = await fixture(t)
+    const txId = newTransactionId()
+    await assert.rejects(
+      runTransaction(bindingA, request(txId), { dataRoot, failAfter: 'new-note' }),
+      { code: 'injected-failure' },
+    )
+    assert.equal(await exists(at(vault, NEW_NOTE)), true)
+
+    const report = await recoverTransactions(bindingA, { dataRoot, io: { readFile: async () => { throw deadlock } } })
+    assert.equal(report.rolledBack.includes(txId), false, 'an unreadable target must not be reported as rolled back')
+    assert.equal(report.unresolved.length, 1)
+    assert.equal(report.unresolved[0].txId, txId)
+    assert.equal(report.unresolved[0].reason, 'unreadable-target')
+    assert.deepEqual(report.unresolved[0].paths, [NEW_NOTE])
+    assert.equal(await exists(at(vault, NEW_NOTE)), true, 'a failed read is never an absent file')
+    assert.equal(await exists(join(dataRoot, 'transactions', report.vaultHash, `${txId}.json`)), true, 'the manifest must survive')
+
+    // the conflict is sticky: a readable retry cannot make it disappear unnoticed
+    const again = await recoverTransactions(bindingA, { dataRoot })
+    assert.equal(again.unresolved.length, 1)
+    assert.equal(again.unresolved[0].reason, 'needs-manual-repair')
+    await assert.rejects(
+      runTransaction(bindingA, request(newTransactionId()), { dataRoot }),
+      (error) => error instanceof TransactionError && error.code === 'recovery-required',
+    )
+  }
+
+  // (b) the same rule with a real filesystem failure
+  if (process.getuid?.() !== 0) {
+    const { vault, dataRoot, bindingA } = await fixture(t)
+    const txId = newTransactionId()
+    await assert.rejects(runTransaction(bindingA, request(txId), { dataRoot, failAfter: 'moc' }), { code: 'injected-failure' })
+    await chmod(at(vault, NEW_NOTE), 0o000)
+
+    const report = await recoverTransactions(bindingA, { dataRoot })
+    assert.equal(report.rolledBack.includes(txId), false)
+    assert.equal(report.unresolved.length, 1)
+    assert.equal(report.unresolved[0].reason, 'unreadable-target')
+    assert.deepEqual(report.unresolved[0].paths, [NEW_NOTE])
+    assert.equal(await exists(at(vault, NEW_NOTE)), true)
+    // the readable targets of the same transaction were still restored
+    assert.equal(await readFile(at(vault, MOC), 'utf8'), MOC_BEFORE)
+    assert.equal(await readFile(at(vault, STATUS_NOTE), 'utf8'), STATUS_BEFORE)
+    await chmod(at(vault, NEW_NOTE), 0o644)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Step 4: a committed transaction rolls forward, even when its receipt store fails
+// ---------------------------------------------------------------------------
+
+test('a receipt-store failure after the commit point rolls forward, never back', async (t) => {
+  if (process.getuid?.() === 0) t.skip('root ignores the read-only receipt directory')
+  const { vault, dataRoot, bindingA } = await fixture(t)
+  // A real, deterministic failure: the receipt store's directory exists but may
+  // not be written. The pre-flight lookup still reports "no receipt yet" (ENOENT
+  // inside a searchable directory), so only the post-commit store fails.
+  const receiptDirectory = join(dataRoot, 'receipts', sha256(await realpath(vault)), ID_A)
+  await mkdir(receiptDirectory, { recursive: true })
+  await chmod(receiptDirectory, 0o500)
+
+  const txId = newTransactionId()
+  const key = 'store-failure'
+  const receipt = await runTransaction(bindingA, request(txId, { idempotencyKey: key }), { dataRoot })
+
+  // the transaction committed and tells the caller its receipt is not stored yet
+  assert.equal(receipt.result.status, 'applied')
+  assert.equal(receipt.result.stored, false)
+  assert.equal(await readFile(at(vault, STATUS_NOTE), 'utf8'), STATUS_AFTER, 'a committed vault write must never be undone')
+  assert.equal(await readFile(at(vault, NEW_NOTE), 'utf8'), NEW_NOTE_TEXT)
+  assert.equal(countOf(await readFile(at(vault, LOG_RELATIVE_PATH), 'utf8'), txId), 1)
+  // the log snapshot was pruned before the failure, so a rollback here would have
+  // failed on a missing snapshot while the committed log entry stayed
+  assert.equal((await historyEntries(vault, txId)).some((name) => name.endsWith('log.md')), false)
+  assert.deepEqual((await listPendingIndexNotifications(bindingA, { dataRoot })).map((entry) => entry.txId), [txId])
+
+  // recovery completes the receipt store, and the key then replays without re-applying
+  await chmod(receiptDirectory, 0o700)
+  const report = await recoverTransactions(bindingA, { dataRoot })
+  assert.deepEqual(report.unresolved, [])
+  assert.deepEqual(report.committed, [txId])
+  const stored = await findReceipt(bindingA, key, { dataRoot })
+  assert.equal(stored.txId, txId)
+  assert.equal(stored.result.stored, true)
+
+  const before = await stat(at(vault, LOG_RELATIVE_PATH))
+  const replay = await runTransaction(bindingA, request(newTransactionId(), { idempotencyKey: key }), { dataRoot })
+  assert.equal(replay.txId, txId)
+  assert.equal((await stat(at(vault, LOG_RELATIVE_PATH))).mtimeMs, before.mtimeMs, 'a replay must not re-apply')
+})
+
+test('a delivered notification still keeps the manifest until the receipt is stored', async (t) => {
+  if (process.getuid?.() === 0) t.skip('root ignores the read-only receipt directory')
+  const { vault, dataRoot, bindingA } = await fixture(t)
+  const receiptDirectory = join(dataRoot, 'receipts', sha256(await realpath(vault)), ID_A)
+  await mkdir(receiptDirectory, { recursive: true })
+  await chmod(receiptDirectory, 0o500)
+
+  const txId = newTransactionId()
+  const key = 'delivered-but-unstored'
+  const notified = []
+  const receipt = await runTransaction(bindingA, request(txId, { idempotencyKey: key }), {
+    dataRoot,
+    notifyIndex: async (value) => { notified.push(value.txId) },
+  })
+  assert.deepEqual(notified, [txId])
+  assert.equal(receipt.result.index, 'notified')
+  assert.equal(receipt.result.stored, false)
+
+  // the manifest is the only copy of the receipt, so it is not dropped
+  const manifestPath = join(dataRoot, 'transactions', sha256(await realpath(vault)), `${txId}.json`)
+  assert.equal(await exists(manifestPath), true)
+  assert.equal(await markIndexNotified(bindingA, { dataRoot, txId }), false, 'a manifest that still owes the receipt store is never dropped')
+  assert.equal(await exists(manifestPath), true)
+
+  await chmod(receiptDirectory, 0o700)
+  const report = await recoverTransactions(bindingA, { dataRoot })
+  assert.deepEqual(report.unresolved, [])
+  assert.deepEqual(report.committed, [txId])
+  assert.equal((await findReceipt(bindingA, key, { dataRoot })).result.stored, true)
+  assert.equal(await exists(manifestPath), false, 'the manifest is dropped once nothing is owed')
+})
+
+test('a txId whose history already exists is refused instead of overwritten', async (t) => {
+  const { vault, dataRoot, bindingA } = await fixture(t)
+  const txId = newTransactionId()
+  await assert.rejects(runTransaction(bindingA, request(txId), { dataRoot, failAfter: 'new-note' }), { code: 'injected-failure' })
+  await recoverTransactions(bindingA, { dataRoot })
+  assert.ok((await historyEntries(vault, txId)).some((name) => name.endsWith('ADR-1-调度器.md')), 'the create was quarantined')
+
+  await assert.rejects(
+    runTransaction(bindingA, request(txId), { dataRoot }),
+    (error) => error instanceof TransactionError && error.code === 'txid-in-use',
+  )
+  // reusing the id did not delete the quarantine
+  assert.ok((await historyEntries(vault, txId)).some((name) => name.endsWith('ADR-1-调度器.md')))
 })
 
 // ---------------------------------------------------------------------------
@@ -832,6 +982,40 @@ test('a transaction leaks no file descriptor and leaves no lock behind', async (
   }
   assert.equal(new Set(counts).size, 1, `a transaction must not leak a descriptor: ${counts.join(',')}`)
   assert.deepEqual(await readdir(join(dataRoot, 'locks')), [], 'the vault lock must be released')
+})
+
+test('a lock record that cannot be read is reported, never stolen', async (t) => {
+  const { vault, dataRoot, bindingA } = await fixture(t)
+  const vaultHash = sha256(await realpath(vault))
+  await mkdir(join(dataRoot, 'locks'), { recursive: true })
+  const lockPath = join(dataRoot, 'locks', `vault-${vaultHash}.lock`)
+  await writeFile(lockPath, '')
+
+  await assert.rejects(
+    runTransaction(bindingA, request(newTransactionId()), { dataRoot, lockTimeoutMs: 150, pollMs: 20 }),
+    (error) => error instanceof TransactionError && error.code === 'lock-corrupt',
+  )
+  assert.equal(await exists(lockPath), true, 'an unreadable lock is never removed on a guess')
+
+  await rm(lockPath)
+  const receipt = await runTransaction(bindingA, request(newTransactionId()), { dataRoot })
+  assert.equal(receipt.result.status, 'applied')
+})
+
+test('staged lock records are swept only when their owner is gone', async (t) => {
+  const { vault, dataRoot, bindingA } = await fixture(t)
+  const vaultHash = sha256(await realpath(vault))
+  const locks = join(dataRoot, 'locks')
+  await mkdir(locks, { recursive: true })
+  const dead = join(locks, '.dead.0.lock.tmp')
+  const live = join(locks, `.${process.pid}.0.lock.tmp`)
+  await writeFile(dead, JSON.stringify({ schema: 1, pid: 999_999_999, token: 'dead' }))
+  await writeFile(live, JSON.stringify({ schema: 1, pid: process.pid, token: 'live' }))
+
+  const receipt = await runTransaction(bindingA, request(newTransactionId()), { dataRoot })
+  assert.equal(receipt.result.status, 'applied')
+  assert.equal(await exists(dead), false, 'an abandoned staged record is swept')
+  assert.equal(await exists(live), true, 'a staged record whose writer is alive is left alone')
 })
 
 test('no temporary file survives a refused transaction', async (t) => {
