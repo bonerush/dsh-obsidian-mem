@@ -1,0 +1,4 @@
+# A real vault's `gitignore` also ignores `.obsidian/workspace*.json` and
+# `.obsidian/cache` (see the bootstrap template). This corpus must keep every
+# fixture committed so a fresh clone is complete, so it carries no ignore rules
+# of its own: the file exists to exercise the root dot-file path rule.

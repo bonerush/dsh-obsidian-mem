@@ -1,0 +1,94 @@
+{
+  "description": "Fixed retrieval corpus for Task 9 (rebuildable SQLite/scan index). `corpus/` is copied verbatim into a throwaway vault; this manifest names the role of every file so the test can assert filtering and ranking without re-deriving paths.",
+  "vault": "corpus",
+  "projects": {
+    "alpha": {
+      "projectId": "1c392abb-7b08-42f7-871d-2a379caf9448",
+      "slug": "alpha",
+      "displayName": "alpha",
+      "dir": "项目/alpha--1c392abb"
+    },
+    "beta": {
+      "projectId": "9f8e7d6c-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+      "slug": "beta",
+      "displayName": "beta",
+      "dir": "项目/beta--9f8e7d6c"
+    }
+  },
+  "notes": {
+    "alphaExactTitle": "项目/alpha--1c392abb/文档/调度器.md",
+    "alphaDecision": "项目/alpha--1c392abb/决策/调度器后端选型.md",
+    "alphaDecisionSuperseded": "项目/alpha--1c392abb/决策/调度器后端选型-旧版.md",
+    "alphaArchived": "项目/alpha--1c392abb/文档/归档说明.md",
+    "alphaBrokenFrontmatter": "项目/alpha--1c392abb/文档/坏元数据.md",
+    "alphaExternalRewrite": "项目/alpha--1c392abb/文档/外部改写.md",
+    "alphaDeleted": "项目/alpha--1c392abb/文档/待删除.md",
+    "alphaDangerousOperators": "项目/alpha--1c392abb/文档/危险运算符.md",
+    "alphaConvention": "项目/alpha--1c392abb/约定/命名规范.md",
+    "alphaGotcha": "项目/alpha--1c392abb/踩坑/调度器死锁.md",
+    "alphaInbox": "项目/alpha--1c392abb/收件箱/待定条目.md",
+    "alphaLog": "项目/alpha--1c392abb/日志/2026-09-22.md",
+    "alphaProjectHot": "项目/alpha--1c392abb/_meta/hot.md",
+    "alphaHub": "项目/alpha--1c392abb/index.md",
+    "betaDecision": "项目/beta--9f8e7d6c/决策/调度器后端选型.md",
+    "betaEnglish": "项目/beta--9f8e7d6c/文档/English Scheduler Notes.md",
+    "method": "方法/重试策略.md",
+    "user": "_meta/user.md"
+  },
+  "excluded": {
+    "receipts": "_meta/log.md",
+    "registry": "_meta/项目注册表.md",
+    "lint": "_meta/Lint Report 2026-09-23.md",
+    "history": "_meta/.history/tx-0001/manifest.json",
+    "obsidian": ".obsidian/workspace.json",
+    "gitignore": ".gitignore"
+  },
+  "excludedMarkers": {
+    "收据": "_meta/log.md",
+    "注册表": "_meta/项目注册表.md",
+    "死链": "_meta/Lint Report 2026-09-23.md",
+    "恢复材料": "_meta/.history/tx-0001/manifest.json"
+  },
+  "duplicateTitle": "调度器后端选型",
+  "queries": {
+    "threeCharCjk": "调度器",
+    "twoCharCjk": "调度",
+    "singleCharCjk": "器",
+    "latin": "scheduler",
+    "methodWord": "退避",
+    "userWord": "提交信息",
+    "brokenWord": "断链",
+    "deletedWord": "缓存正文",
+    "rewriteBefore": "蓝色方案",
+    "rewriteAfter": "绿色办法",
+    "dangerLiteral": "NEAR"
+  },
+  "expected": {
+    "projectScopeThreeChar": [
+      "项目/alpha--1c392abb/文档/调度器.md",
+      "项目/alpha--1c392abb/决策/调度器后端选型.md",
+      "项目/alpha--1c392abb/踩坑/调度器死锁.md",
+      "项目/alpha--1c392abb/_meta/hot.md",
+      "项目/alpha--1c392abb/文档/坏元数据.md",
+      "项目/alpha--1c392abb/收件箱/待定条目.md",
+      "项目/alpha--1c392abb/日志/2026-09-22.md"
+    ],
+    "projectScopeThreeCharWithHistory": [
+      "项目/alpha--1c392abb/文档/调度器.md",
+      "项目/alpha--1c392abb/决策/调度器后端选型.md",
+      "项目/alpha--1c392abb/踩坑/调度器死锁.md",
+      "项目/alpha--1c392abb/文档/归档说明.md",
+      "项目/alpha--1c392abb/决策/调度器后端选型-旧版.md",
+      "项目/alpha--1c392abb/_meta/hot.md",
+      "项目/alpha--1c392abb/文档/坏元数据.md",
+      "项目/alpha--1c392abb/收件箱/待定条目.md",
+      "项目/alpha--1c392abb/日志/2026-09-22.md"
+    ],
+    "globalScopeMethodWord": ["方法/重试策略.md"],
+    "globalScopeUserWord": ["_meta/user.md"],
+    "allScopeDuplicateTitle": [
+      "项目/alpha--1c392abb/决策/调度器后端选型.md",
+      "项目/beta--9f8e7d6c/决策/调度器后端选型.md"
+    ]
+  }
+}
