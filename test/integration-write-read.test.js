@@ -1,0 +1,421 @@
+// Task 10: the P1 integration chain — a real vault, the real tool runtime.
+//
+// Every case builds a throwaway home, repo and vault under `mkdtemp`, binds and
+// bootstraps them with the Task 4/5 modules, and then drives the six tools
+// through the SHIPPED `ToolRuntime`. The user's real vault, real `~/.dsh` and
+// real repositories are never read or written: the plugin's data root is an
+// explicit temporary directory except in the two `apply` cases, which point
+// `DSH_HOME` at a temporary home first.
+//
+// What is under test end to end is exactly the P1 claim: `mem_write` lands a
+// note in the vault, `mem_search` finds the same id through the index, and
+// `mem_read` returns that same note's body and hash. Around that chain the file
+// also pins the P1 honesty boundary — `mem_brief` and the unavailable
+// `mem_admin` actions answer `not-ready-in-p1` instead of inventing a result.
+//
+// Like `test/tools.test.js`, this file mounts the real `@deepseek-ai/dsh-tools`
+// runtime, which is an optional peer dependency DSH provides to an installed
+// plugin (`~/.dsh/profiles/node_modules/@deepseek-ai/*` symlinks).
+import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test } from 'node:test'
+import { promisify } from 'node:util'
+
+import { Context } from '@deepseek-ai/cordis'
+import toolsPlugin from '@deepseek-ai/dsh-tools'
+
+import { validateConfig } from '../lib/config.js'
+import { apply } from '../lib/index.js'
+import { createMemoryServices, registerTools } from '../lib/tools.js'
+import { bootstrapVault, resolveBinding } from '../lib/vault.js'
+
+const execFileAsync = promisify(execFile)
+
+const DATE = (() => {
+  const now = new Date()
+  const pad = (value) => String(value).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+})()
+
+function gitEnvironment() {
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY']) {
+    delete env[key]
+  }
+  return env
+}
+
+async function initRepo(dir) {
+  await mkdir(dir, { recursive: true })
+  await execFileAsync('git', ['-c', 'init.defaultBranch=main', 'init', '-q'], { cwd: dir, env: gitEnvironment() })
+}
+
+/** Vault-relative path → absolute path inside the throwaway vault. */
+const at = (vault, relative) => join(vault, ...relative.split('/'))
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+/**
+ * A bound, bootstrapped throwaway project: a temporary home, a real git repo
+ * carrying a `.obsidian-mem` pointer, and a vault whose skeleton exists.
+ */
+async function fixture(t) {
+  const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t10-'))
+  const dataRoot = await mkdtemp(join(tmpdir(), 'obsidian-mem-t10-data-'))
+  t.after(() => Promise.all([
+    rm(root, { recursive: true, force: true, maxRetries: 4 }),
+    rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }),
+  ]))
+  const home = join(root, 'home')
+  const repo = join(root, 'repo')
+  const vault = join(root, 'vault')
+  await mkdir(home, { recursive: true })
+  await initRepo(repo)
+  const binding = await resolveBinding({ cwd: repo, vaultRoot: vault, home })
+  assert.equal(binding.kind, 'bound', `fixture must bind: ${JSON.stringify(binding)}`)
+  await bootstrapVault(binding, { dataRoot, home })
+  return { root, dataRoot, home, repo, vault, binding }
+}
+
+/** A real Cordis context with the shipped ToolRuntime mounted, and no tools. */
+async function bareBed(t) {
+  const ctx = new Context()
+  ctx.provide('systemPrompt', { tools: () => () => {} })
+  const fork = ctx.plugin(toolsPlugin)
+  await fork
+  t.after(async () => { await fork.dispose().catch(() => {}) })
+  return ctx
+}
+
+/** The same context, with the six tools registered against real services. */
+async function memoryBed(t, fixture, config = {}) {
+  const ctx = await bareBed(t)
+  const services = createMemoryServices({
+    config: validateConfig({ vaultPath: fixture.vault, ...config }),
+    dataRoot: fixture.dataRoot,
+    cwd: fixture.repo,
+    home: fixture.home,
+  })
+  const disposers = registerTools(ctx, services)
+  t.after(async () => {
+    for (const dispose of disposers) dispose()
+    await services.close()
+  })
+  return { ctx, services }
+}
+
+let callSeq = 0
+
+/** Execute one tool with an agent whose session carries `cwd`. */
+function call(ctx, name, args, { cwd, signal } = {}) {
+  return ctx.tools.execute({
+    callId: `call-${(callSeq += 1)}`,
+    name,
+    arguments: args,
+    signal: signal ?? new AbortController().signal,
+    agent: { session: { header: { id: 'sess-integration', ...(cwd === undefined ? {} : { cwd }) } } },
+  })
+}
+
+/** Assert a call succeeded and hand back its canonical value. */
+function value(result, label) {
+  assert.equal(result.isError, false, `${label}: ${result.error?.message ?? JSON.stringify(result)}`)
+  return result.value
+}
+
+// ---------------------------------------------------------------------------
+// The chain
+// ---------------------------------------------------------------------------
+
+test('mem_write → mem_search → mem_read round-trips one note id', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+
+  const written = value(await call(ctx, 'mem_write', {
+    type: 'doc',
+    title: '调度器改为可插拔后端',
+    body: '采用可插拔调度器方案，理由与备选方案见正文。',
+  }, { cwd: f.repo }), 'mem_write')
+
+  assert.match(written.id, /^doc-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+  assert.match(written.path, /^项目\/[^/]+--[0-9a-f]{8}\/文档\//)
+  assert.equal(written.receipt.action, 'write')
+  assert.equal(written.receipt.result.status, 'applied')
+  assert.equal(written.receipt.afterHashes[written.path].length, 64)
+
+  const found = value(await call(ctx, 'mem_search', { query: '调度器' }, { cwd: f.repo }), 'mem_search')
+  const hit = found.hits.find((candidate) => candidate.id === written.id)
+  assert.ok(hit, `mem_search must return the written id: ${JSON.stringify(found.hits)}`)
+  assert.equal(hit.path, written.path)
+  assert.equal(hit.projectId, f.binding.projectId)
+  assert.equal(hit.type, 'doc')
+  assert.equal(hit.title, '调度器改为可插拔后端')
+  assert.ok(hit.scoreSignals.length > 0, 'a hit must explain its ranking')
+  assert.match(hit.snippet, /调度器/)
+
+  const read = value(await call(ctx, 'mem_read', { path: written.path }, { cwd: f.repo }), 'mem_read')
+  assert.equal(read.id, written.id)
+  assert.equal(read.path, written.path)
+  assert.equal(read.hash, written.receipt.afterHashes[written.path])
+  assert.match(read.body, /采用可插拔调度器方案/)
+  assert.equal(read.frontmatter.id, written.id)
+  assert.equal(read.frontmatter.project, f.binding.projectId)
+  // Provenance: the producing session is recorded from the execution context,
+  // not asked of the model (spec §6.4 `session:`, R13).
+  assert.equal(read.frontmatter.session, 'sess-integration')
+
+  // The type filter is the closed §6.4 vocabulary: an unknown type is refused
+  // rather than silently matching nothing, and the `invariant` input alias
+  // resolves to `convention`.
+  const badType = await call(ctx, 'mem_search', { query: '调度器', type: 'nope' }, { cwd: f.repo })
+  assert.equal(badType.isError, true)
+  assert.match(badType.error.message, /type must be one of/)
+  const aliased = value(await call(ctx, 'mem_search', { query: '调度器', type: 'invariant' }, { cwd: f.repo }), 'aliased type')
+  assert.deepEqual(aliased.hits, [], 'a convention filter must not return the doc note')
+})
+
+test('a note written after the first scan is searchable in the same session', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+
+  const before = value(await call(ctx, 'mem_search', { query: '索引未刷新' }, { cwd: f.repo }), 'first search')
+  assert.deepEqual(before.hits, [], 'the index must be ready and empty before the write')
+
+  value(await call(ctx, 'mem_write', {
+    type: 'gotcha',
+    title: '写后必须刷新索引',
+    body: '索引未刷新时，同一会话搜不到刚写入的笔记。',
+  }, { cwd: f.repo }), 'mem_write')
+
+  const after = value(await call(ctx, 'mem_search', { query: '索引未刷新' }, { cwd: f.repo }), 'second search')
+  assert.equal(after.hits.some((h) => h.title === '写后必须刷新索引'), true, JSON.stringify(after.hits))
+})
+
+test('a repeated idempotencyKey replays the original receipt instead of writing twice', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+  const args = { type: 'gotcha', title: '重试幂等', body: '同一 key 只写一次。', idempotencyKey: 'k-replay-1' }
+
+  const first = value(await call(ctx, 'mem_write', args, { cwd: f.repo }), 'first write')
+  const replay = value(await call(ctx, 'mem_write', args, { cwd: f.repo }), 'replay write')
+  assert.equal(replay.id, first.id)
+  assert.equal(replay.path, first.path)
+  assert.equal(replay.receipt.txId, first.receipt.txId)
+
+  const notes = await readdir(at(f.vault, `${f.binding.relativeDir}/踩坑`))
+  assert.deepEqual(notes.filter((name) => name.endsWith('.md') && name !== 'index.md'), ['重试幂等.md'])
+})
+
+test('mem_write updates a known id and refuses an unknown one', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+  const created = value(await call(ctx, 'mem_write', {
+    type: 'decision', title: '调度器改为可插拔后端', body: '初始正文。',
+  }, { cwd: f.repo }), 'create')
+
+  const updated = value(await call(ctx, 'mem_write', {
+    id: created.id, type: 'decision', title: '调度器改为可插拔后端', body: '改后的正文。',
+  }, { cwd: f.repo }), 'update')
+  assert.equal(updated.id, created.id)
+  assert.equal(updated.path, created.path)
+
+  const read = value(await call(ctx, 'mem_read', { path: created.path }, { cwd: f.repo }), 'read')
+  assert.match(read.body, /改后的正文/)
+
+  const missing = await call(ctx, 'mem_write', {
+    id: 'dec-00000000-0000-4000-8000-000000000000', type: 'decision', title: '不存在', body: '正文',
+  }, { cwd: f.repo })
+  assert.equal(missing.isError, true)
+  assert.match(missing.error.message, /carries id/)
+})
+
+test('mem_write refuses an unknown type through the real memory layer', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+  const result = await call(ctx, 'mem_write', { type: 'docs', title: '标题', body: '正文' }, { cwd: f.repo })
+  assert.equal(result.isError, true)
+  assert.match(result.error.message, /type must be one of/)
+})
+
+test('mem_read keeps every path inside the vault jail', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+  // An existing non-Markdown file, so the not-a-note branch is exercised on a
+  // path that really exists: `readNote` resolves the path first, so a missing
+  // internal path is reported as missing rather than as internal plumbing.
+  const plainText = `${f.binding.relativeDir}/文档/样例.txt`
+  await writeFile(at(f.vault, plainText), '不是笔记\n')
+  const cases = [
+    ['/etc/passwd', /absolute path is not allowed/],
+    ['../../secrets.md', /path traversal is not allowed/],
+    [`${f.binding.relativeDir}/文档/../约定/x.md`, /path traversal is not allowed/],
+    ['_meta/项目注册表.md', /internal vault plumbing/],
+    ['_meta/.history', /internal vault plumbing/],
+    [plainText, /not a retrievable Markdown note/],
+    ['_meta/log.md', /does not exist|internal vault plumbing/],
+  ]
+  for (const [path, pattern] of cases) {
+    const result = await call(ctx, 'mem_read', { path }, { cwd: f.repo })
+    assert.equal(result.isError, true, `${path} must be refused`)
+    assert.match(result.error.message, pattern, `${path}: ${result.error.message}`)
+  }
+  // The refusal above never returned bytes: the file it points at is untouched.
+  assert.equal(await readFile(at(f.vault, plainText), 'utf8'), '不是笔记\n')
+})
+
+test('an unbound working directory refuses project scope and writes but still reads globally', async (t) => {
+  const f = await fixture(t)
+  const other = join(f.root, 'unbound')
+  await initRepo(other)
+  const { ctx } = await memoryBed(t, f)
+
+  const search = await call(ctx, 'mem_search', { query: '调度器' }, { cwd: other })
+  assert.equal(search.isError, true)
+  assert.match(search.error.message, /needs a bound project/)
+
+  const global = value(await call(ctx, 'mem_search', { query: '调度器', scope: 'global' }, { cwd: other }), 'global search')
+  assert.deepEqual(global.hits, [])
+
+  const write = await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文' }, { cwd: other })
+  assert.equal(write.isError, true)
+  assert.match(write.error.message, /bound project/)
+})
+
+test('mem_log appends exactly one idempotent day-log block', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+  const args = { text: '本轮修好了索引刷新。', session: '20260923-120000-abcd', idempotencyKey: 'log-key-1' }
+
+  const first = value(await call(ctx, 'mem_log', args, { cwd: f.repo }), 'first log')
+  const replay = value(await call(ctx, 'mem_log', args, { cwd: f.repo }), 'replayed log')
+  assert.equal(first.action, 'log')
+  assert.equal(replay.txId, first.txId)
+
+  const logPath = at(f.vault, `${f.binding.relativeDir}/日志/${DATE}.md`)
+  const text = await readFile(logPath, 'utf8')
+  assert.equal(text.split('本轮修好了索引刷新。').length - 1, 1, 'the block is written once')
+  assert.match(text, /## 20260923-120000-abcd · 会话/)
+})
+
+test('mem_log section=hot writes the controlled 进行中 zone, not a day log', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+  const result = value(await call(ctx, 'mem_log', {
+    text: '正在实现六个工具。', session: 'sess-hot', section: 'hot', idempotencyKey: 'hot-key-1',
+  }, { cwd: f.repo }), 'hot log')
+  assert.equal(result.action, 'hot')
+
+  const hot = await readFile(at(f.vault, `${f.binding.relativeDir}/_meta/hot.md`), 'utf8')
+  const start = hot.indexOf('## 进行中')
+  const end = hot.indexOf('## 已完成')
+  assert.ok(start > -1 && end > start, 'hot.md keeps its three fixed zones')
+  assert.match(hot.slice(start, end), /正在实现六个工具。/)
+})
+
+test('mem_brief answers with the structured P1 boundary marker', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+  const brief = value(await call(ctx, 'mem_brief', {}, { cwd: f.repo }), 'mem_brief')
+  assert.equal(brief.status, 'not-ready-in-p1')
+  assert.equal(typeof brief.message, 'string')
+})
+
+test('mem_admin exposes index status, the project list and bind(show)', async (t) => {
+  const f = await fixture(t)
+  const { ctx, services } = await memoryBed(t, f)
+
+  const projects = value(await call(ctx, 'mem_admin', { action: 'projects' }, { cwd: f.repo }), 'projects')
+  assert.equal(projects.action, 'projects')
+  assert.deepEqual(projects.result.projects.map((row) => row.projectId), [f.binding.projectId])
+
+  const status = value(await call(ctx, 'mem_admin', { action: 'index' }, { cwd: f.repo }), 'index')
+  assert.equal(status.action, 'index')
+  assert.equal(status.result.rebuilt, false)
+  assert.ok(['sqlite', 'scan'].includes(status.result.backend))
+  assert.equal(status.result.boundProjectId, f.binding.projectId)
+  // The tools and a future brief compose from one memoised handle per project.
+  const handle = await services.index({ agent: { session: { header: { cwd: f.repo } } } })
+  assert.equal(handle.boundProjectId, f.binding.projectId)
+  assert.equal(handle.status().boundProjectId, f.binding.projectId)
+
+  const rebuilt = value(await call(ctx, 'mem_admin', { action: 'index', rebuild: true }, { cwd: f.repo }), 'index rebuild')
+  assert.equal(rebuilt.result.rebuilt, true)
+  assert.equal(rebuilt.result.ready, true)
+
+  const bind = value(await call(ctx, 'mem_admin', { action: 'bind' }, { cwd: f.repo }), 'bind show')
+  assert.equal(bind.action, 'bind')
+  assert.equal(bind.result.mode, 'show')
+  assert.equal(bind.result.status, 'shown')
+  assert.equal(bind.result.resolution.kind, 'bound')
+  assert.equal(bind.result.resolution.projectId, f.binding.projectId)
+  assert.equal(bind.result.resolution.relativeDir, f.binding.relativeDir)
+})
+
+test('mem_admin reports the P1 boundary instead of faking an action or an identity change', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+  const cases = [
+    { action: 'lint' },
+    { action: 'promote' },
+    { action: 'jobs' },
+    { action: 'bind', mode: 'fork' },
+    { action: 'bind', mode: 'retain' },
+    { action: 'bind', mode: 'local' },
+  ]
+  for (const args of cases) {
+    const result = value(await call(ctx, 'mem_admin', args, { cwd: f.repo }), JSON.stringify(args))
+    assert.equal(result.action, args.action)
+    assert.equal(result.result.status, 'not-ready-in-p1')
+    assert.equal(typeof result.result.message, 'string')
+  }
+})
+
+// ---------------------------------------------------------------------------
+// The host assembly
+// ---------------------------------------------------------------------------
+
+test('apply registers exactly the six tools, and nothing at all when enabled is false', async (t) => {
+  const ctx = await bareBed(t)
+  assert.equal(apply(ctx, { enabled: false }), undefined)
+  assert.deepEqual(ctx.tools.schemas(), [])
+
+  const f = await fixture(t)
+  apply(ctx, { vaultPath: f.vault })
+  assert.deepEqual(ctx.tools.schemas().map((schema) => schema.name).sort(), [
+    'mem_admin', 'mem_brief', 'mem_log', 'mem_read', 'mem_search', 'mem_write',
+  ])
+})
+
+test('apply hands one DSH_HOME-derived data root to the transaction engine and the index', async (t) => {
+  const f = await fixture(t)
+  const dshHome = join(f.root, 'dsh-home')
+  await mkdir(dshHome, { recursive: true })
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = dshHome
+  t.after(() => {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+  })
+
+  const ctx = await bareBed(t)
+  apply(ctx, { vaultPath: f.vault })
+
+  const written = value(await call(ctx, 'mem_write', {
+    type: 'doc', title: '装配说明', body: '数据根由 DSH_HOME 推导。',
+  }, { cwd: f.repo }), 'mem_write through apply')
+  assert.match(written.path, /^项目\//)
+
+  const dataRoot = join(dshHome, 'data', 'obsidian-mem')
+  assert.equal(existsSync(join(dataRoot, 'locks')), true, 'the transaction lock lives under the derived data root')
+  assert.equal(existsSync(join(dataRoot, 'receipts')), true, 'the receipt store lives under the derived data root')
+
+  const found = value(await call(ctx, 'mem_search', { query: '装配说明' }, { cwd: f.repo }), 'mem_search through apply')
+  assert.equal(found.hits.some((hit) => hit.id === written.id), true)
+  assert.equal(existsSync(join(dataRoot, 'index')), true, 'the index lives under the same derived data root')
+})
