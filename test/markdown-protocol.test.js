@@ -180,6 +180,34 @@ test('safeBasename derives the suffix from the title, so distinct titles stay di
   assert.notEqual(first, second, 'two different titles must not collapse onto one basename')
 })
 
+test('safeBasename folds a trailing .md so a readdir list keeps the collision guard', () => {
+  // `existingNames` naturally comes from `readdir`, which returns filenames; a
+  // guard that misses `foo.md` would silently overwrite an existing note.
+  const collided = safeBasename('foo', ['foo.md'])
+  assert.match(collided, /^foo-[0-9a-f]{8}$/)
+  assert.equal(safeBasename('foo', ['foo.md']), collided, 'still deterministic')
+  assert.match(safeBasename('Foo', ['foo.MD']), /^Foo-[0-9a-f]{8}$/)
+  assert.match(safeBasename('foo', ['FOO.Md']), /^foo-[0-9a-f]{8}$/)
+  // only a real collision triggers the suffix
+  assert.equal(safeBasename('foo', ['foobar.md', 'bar.md', 'foo-bar.md']), 'foo')
+  // and the budget still holds when the existing name carries its extension
+  const long = safeBasename('决'.repeat(120), [`${'决'.repeat(66)}.md`])
+  assert.ok(Buffer.byteLength(long, 'utf8') <= 200)
+  assert.match(long, /^决+-[0-9a-f]{8}$/)
+})
+
+test('a real readdir list can never lose the collision guard', async (t) => {
+  const root = await tempRoot(t)
+  await writeFile(join(root, 'foo.md'), '---\nid: "a"\n---\n')
+  const existing = await readdir(root)
+
+  const name = safeBasename('foo', existing)
+  assert.notEqual(name.toLowerCase(), 'foo')
+  const folded = existing.map((entry) => entry.replace(/\.md$/iu, '').toLowerCase())
+  assert.equal(folded.includes(name.toLowerCase()), false, `${name} must not collide with ${existing.join(', ')}`)
+  assert.equal(existing.includes(`${name}.md`), false)
+})
+
 test('safeBasename rejects a non-string title', () => {
   assert.throws(() => safeBasename(null), RangeError)
   assert.throws(() => safeBasename(42), RangeError)
@@ -201,6 +229,45 @@ test('parseNote reads frontmatter and body without changing the bytes it was giv
   assert.equal(note.bodyOffset, Buffer.byteLength('---\nid: "dec-1"\ntitle: "调度器"\ntags: ["dsh-mem/decision"]\nproject: null\n---\n', 'utf8'))
   assert.equal(note.bodyBytes.equals(SIMPLE.subarray(note.bodyOffset)), true)
   assert.deepEqual(SIMPLE, before, 'parsing must not mutate the caller buffer')
+})
+
+test('parseNote refuses a fragment line as the closing marker when the caller says it is a head', () => {
+  const head = Buffer.from('---\nid: "a"\n---')
+  // read whole, the file really does close on that line
+  assert.equal(parseNote(head).hasFrontmatter, true)
+  // read as a head, the same bytes cannot prove the line ended
+  assert.throws(
+    () => parseNote(head, { truncated: true }),
+    (error) => error instanceof FrontmatterError && error.code === 'unclosed-frontmatter',
+  )
+  assert.throws(() => parseNote(head, { truncated: 'yes' }), RangeError)
+})
+
+test('a preflight head cut exactly at a would-be closing marker is refused, not parsed', async (t) => {
+  const root = await tempRoot(t)
+  const vault = join(root, 'vault')
+  await mkdir(at(vault, '方法'), { recursive: true })
+
+  // The head ends exactly after `---`, but the real line continues with `xyz`:
+  // re-deriving `truncated` from the buffer length would accept the fragment,
+  // parse a 65 KiB "frontmatter" and report a clean vault.
+  const opening = '---\nid: "a"\n'
+  const filler = `note: ${'x'.repeat(FRONTMATTER_SCAN_LIMIT - Buffer.byteLength(opening) - 'note: '.length - 1 - 3)}`
+  assert.equal(Buffer.byteLength(`${opening}${filler}\n---`), FRONTMATTER_SCAN_LIMIT, 'the window must end inside the marker')
+  await writeFile(at(vault, '方法/片段.md'), `${opening}${filler}\n---xyz\nmore\n`)
+
+  const result = await validateKnownPropertyTypes(vault, { home: root })
+  assert.equal(result.conflicts.length, 1, JSON.stringify(result.conflicts))
+  assert.equal(result.conflicts[0].reason, 'frontmatter-beyond-scan-limit')
+})
+
+test('patchOwnedFields refuses a note whose frontmatter never closes inside the window', () => {
+  const opening = '---\nid: "a"\n'
+  const bytes = Buffer.from(`${opening}note: ${'x'.repeat(FRONTMATTER_SCAN_LIMIT)}\n---\nBody\n`)
+  assert.throws(
+    () => patchOwnedFields(bytes, { status: 'accepted' }, sha256(bytes)),
+    (error) => error instanceof FrontmatterError && error.code === 'unclosed-frontmatter',
+  )
 })
 
 test('parseNote reports a file with no frontmatter as such', () => {
@@ -574,7 +641,7 @@ test('bootstrap refuses a vault note whose frontmatter cannot be trusted', async
     await assert.rejects(
       bootstrapVault(binding(vault), { initGitOnCreate: false, home: root }),
       (error) => error instanceof BootstrapError
-        && error.code === 'property-type-conflict'
+        && error.code === 'property-preflight-conflict'
         && error.conflicts.some((conflict) => conflict.reason === 'invalid-frontmatter' && conflict.code === code),
       `expected ${code} to stop bootstrap`,
     )
