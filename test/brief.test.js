@@ -176,6 +176,9 @@ test('a full brief names the binding, quotes the vault as data and reports its o
   assert.ok(built.charCount <= BUDGET)
   assert.equal(built.indexState.status, 'ready')
   assert.match(built.hotHash, /^[0-9a-f]{64}$/)
+  // R38: nothing was dropped, so the caller may advance its snapshot.
+  assert.equal(built.truncated, false)
+  assert.equal(built.omitted, 0)
 })
 
 // ---------------------------------------------------------------------------
@@ -615,4 +618,65 @@ test('a delta that drops entries says how many left, without inventing text for 
   assert.ok(!delta.text.includes('会被移除的进行中'))
   assert.match(delta.text, /hot 条目减少 1 条/)
   assert.ok(!delta.text.includes('会被保留的进行中'), 'an untouched item is not re-injected')
+})
+
+// ---------------------------------------------------------------------------
+// R38: the structured truncation signal
+// ---------------------------------------------------------------------------
+
+test('the truncation signal is truthful in full mode: a cut reports true plus the count', async (t) => {
+  const env = await fixture(t, { bootstrap: false })
+  const preferences = Array.from({ length: 40 }, (_x, index) => `- 截断信号-${String(index).padStart(2, '0')}`)
+  await writeUserMemory(env, `${preferences.join('\n')}\n`)
+
+  // Over budget: only the preference lines are units, so the count is exact.
+  const cut = await brief(env, { budget: 560 })
+  const present = preferences.filter((line) => cut.text.includes(line.slice(2)))
+  assert.equal(cut.truncated, true, 'a budget cut is reported')
+  assert.ok(cut.omitted > 0)
+  assert.equal(cut.omitted, preferences.length - present.length, 'the count is exactly what was left out')
+  assert.equal(cut.omitted, omittedOf(cut.text), 'the structured count agrees with the footer')
+  assert.match(cut.text, /省略 \d+ 条完整条目/)
+  assert.ok(codePoints(cut.text) <= 560)
+
+  // Everything fits: the caller is cleared to advance its snapshot.
+  const whole = await brief(env)
+  assert.equal(whole.truncated, false)
+  assert.equal(whole.omitted, 0)
+  assert.ok(!whole.text.includes('省略'), 'a complete brief never claims to omit anything')
+  assert.ok(preferences.every((line) => whole.text.includes(line.slice(2))))
+})
+
+test("the truncation signal is truthful in delta mode, so a snapshot is never advanced past a cut", async (t) => {
+  const env = await fixture(t)
+  await addHot(env, '进行中', `截断-基线-${'内容'.repeat(20)}`)
+  const baseline = await brief(env)
+  assert.equal(baseline.truncated, false, 'the baseline fits, so it is a legitimate snapshot')
+
+  const changed = ['A', 'B', 'C'].map((label) => `截断-变更-${label}-${'内容'.repeat(200)}`)
+  for (const text of changed) await addHot(env, '进行中', text)
+
+  // Over budget: the delta drops whole items, and says so.
+  const cut = await brief(env, { mode: 'delta', previousHotItems: baseline.hotItems, budget: 700 })
+  const present = changed.filter((text) => cut.text.includes(text))
+  assert.ok(present.length > 0, 'at least the first changed item is injected')
+  assert.ok(present.length < changed.length, 'the fixture really overflows the delta budget')
+  assert.equal(cut.truncated, true)
+  assert.equal(cut.omitted, changed.length - present.length, 'every dropped delta item is counted')
+  assert.equal(cut.omitted, omittedOf(cut.text), 'the structured count agrees with the footer')
+  assert.equal(cut.hotItems.length, 4, 'hotItems still reports the complete current list')
+  assert.ok(codePoints(cut.text) <= 700)
+
+  // The same delta inside the budget carries every changed item, and clears the
+  // snapshot: `truncated === false` is what Task 12 keys on.
+  const fits = await brief(env, { mode: 'delta', previousHotItems: baseline.hotItems })
+  assert.equal(fits.truncated, false)
+  assert.equal(fits.omitted, 0)
+  for (const text of changed) assert.ok(fits.text.includes(text), 'every changed item is injected when it fits')
+  assert.ok(!fits.text.includes('省略'))
+
+  // A delta with nothing to inject is also complete.
+  const quiet = await brief(env, { mode: 'delta', previousHotItems: fits.hotItems })
+  assert.equal(quiet.truncated, false)
+  assert.equal(quiet.omitted, 0)
 })
