@@ -33,6 +33,7 @@ import {
   SYSTEM_PROMPT_TEXT,
   registerHooks,
 } from '../lib/hooks.js'
+import { registerTools } from '../lib/tools.js'
 import { bootstrapVault } from '../lib/vault.js'
 
 /** Fixed, valid UUIDv4 identity (version nibble `4`, variant nibble `8`). */
@@ -131,6 +132,11 @@ function bed(t, options = {}) {
     })
   }
   const calls = { resolveBinding: [], index: [], buildBrief: [] }
+  if (options.logger !== undefined) {
+    // `ctx.logger` is the host log sink; a case can replace it with a recorder
+    // (or a throwing stub) to pin down what the failure path does with it.
+    Object.defineProperty(ctx, 'logger', { configurable: true, get: () => options.logger })
+  }
   const config = { briefBudgetChars: BUDGET, injectBrief: true, ...(options.config ?? {}) }
   const resolveBinding = options.resolveBinding
     ?? (async (cwd) => {
@@ -579,6 +585,131 @@ test('a failing dependency never breaks the turn — the decision passes through
   const decision = await refused.preStep(refusedAgent)
   assert.equal(decision.kind, 'enter')
   assert.equal(decision.messages.length, 0)
+})
+
+// ---------------------------------------------------------------------------
+// R39 — an index that cannot be opened must not fail silent
+// ---------------------------------------------------------------------------
+
+test('an unopenable index injects one status-bearing message, never an empty decision', async (t) => {
+  const h = bed(t, { index: async () => { throw new Error('ENOTDIR: not a directory, mkdir /tmp/data/index') } })
+  const agent = h.start()
+  const first = await h.preStep(agent, async () => ({
+    kind: 'enter',
+    messages: [{ id: 'm0', role: 'user', content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } }],
+  }))
+
+  const injected = recalled(first)
+  assert.equal(injected.length, 1, 'the session is told, instead of receiving nothing')
+  assert.equal(first.messages.length, 2, 'the status is appended to the real decision, not a blank one')
+  const text = injected[0].content[0].text
+  assert.match(text, /记忆索引当前不可用/)
+  assert.match(text, /ENOTDIR/, 'the caught reason is the diagnostic')
+  assert.ok([...text].length <= BUDGET)
+  assert.equal(injected[0].source.form, 'recall')
+  assert.equal(h.calls.buildBrief.length, 0, 'there is no handle to build a brief with')
+
+  // Reported once: neither the failing step nor a later one repeats it.
+  for (let step = 0; step < 3; step += 1) {
+    assert.equal((await h.preStep(agent)).messages.length, 0)
+  }
+})
+
+test('the unavailable status stays inside the budget, dropping the reason when it must', async (t) => {
+  // `validateConfig` floors the real budget at 256, where the detailed line fits;
+  // this drives the helper's defensive branch directly, so the guard keeps
+  // holding if the floor or the status text ever grows.
+  const h = bed(t, {
+    config: { briefBudgetChars: 120 },
+    index: async () => { throw new Error(`ENOTDIR: ${'x'.repeat(4000)}`) },
+  })
+  const agent = h.start()
+  const first = await h.preStep(agent)
+  const [message] = recalled(first)
+  assert.equal(recalled(first).length, 1)
+  const text = message.content[0].text
+  assert.ok([...text].length <= 120, 'the status line is budget-checked like every other injection')
+  assert.match(text, /记忆索引当前不可用/)
+  assert.ok(!text.includes('xxxx'), 'an over-long reason is dropped rather than truncated mid-line')
+})
+
+test('once the index opens, the owed full brief arrives exactly once', async (t) => {
+  let failing = true
+  const handle = readyHandle()
+  const h = bed(t, {
+    index: async () => {
+      if (failing) throw new Error('EAGAIN: index locked')
+      return handle
+    },
+    buildBrief: async () => briefValue({ text: 'FULL BRIEF', hotHash: 'h1', hotItems: [hotItem('hot-a', 'alpha')] }),
+  })
+  const agent = h.start()
+
+  assert.equal(recalled(await h.preStep(agent)).length, 1, 'the status')
+  assert.equal((await h.preStep(agent)).messages.length, 0, 'and not again')
+  failing = false
+  const owed = await h.preStep(agent)
+  assert.equal(recalled(owed).length, 1)
+  assert.equal(recalled(owed)[0].content[0].text, 'FULL BRIEF', 'the owed brief is delivered, not the status')
+  assert.equal((await h.preStep(agent)).messages.length, 0)
+  assert.equal(h.calls.buildBrief.filter((call) => call.options.mode === 'full').length, 1)
+})
+
+test('the caught reason reaches the host log once, and a broken logger changes nothing', async (t) => {
+  const warnings = []
+  const logged = bed(t, {
+    logger: { warn: (...args) => warnings.push(args), info: () => {}, error: () => {} },
+    index: async () => { throw new Error('ENOTDIR: not a directory') },
+  })
+  const agent = logged.start()
+  await logged.preStep(agent)
+  await logged.preStep(agent)
+  assert.equal(warnings.length, 1, 'one diagnostic per session, not one per step')
+  assert.match(String(warnings[0][0]), /ENOTDIR/)
+
+  const broken = bed(t, { logger: { get warn() { throw new Error('logger down') } }, index: async () => { throw new Error('EACCES') } })
+  const brokenAgent = broken.start()
+  const decision = await broken.preStep(brokenAgent)
+  assert.equal(decision.kind, 'enter')
+  assert.equal(recalled(decision).length, 1, 'a throwing logger must not swallow the status line')
+})
+
+test('the six tools still register while the index is unavailable, and the injection still works', async (t) => {
+  const ctx = new Context()
+  ctx.provide('systemPrompt', { tools: () => () => {} })
+  const fork = ctx.plugin(toolsPlugin)
+  await fork
+  t.after(async () => { await fork.dispose().catch(() => {}) })
+
+  const services = {}
+  for (const key of ['search', 'read', 'write', 'log', 'brief', 'admin']) services[key] = async () => ({})
+  registerTools(ctx, services)
+  assert.deepEqual(ctx.tools.schemas().map((schema) => schema.name).sort(), SIX)
+
+  registerHooks(ctx, {
+    resolveBinding: async () => BINDING,
+    index: async () => { throw new Error('ENOTDIR: not a directory') },
+    buildBrief,
+    config: { briefBudgetChars: BUDGET, injectBrief: true },
+  })
+  const agent = agentFor()
+  ctx.emit('agent/session-start', { agent, source: 'startup' })
+  const decision = await ctx.waterfall(
+    'agent/pre-step',
+    { agent, messages: [], turn: 1, step: 1, signal: new AbortController().signal },
+    async () => ({ kind: 'enter', messages: [] }),
+  )
+  assert.deepEqual(ctx.tools.schemas().map((schema) => schema.name).sort(), SIX, 'the six tools are unaffected')
+  assert.equal(recalled(decision).length, 1, 'and the injection path still runs')
+})
+
+test('two concurrent pre-steps for one session inject exactly one brief', async (t) => {
+  const h = bed(t)
+  const agent = h.start()
+  const [left, right] = await Promise.all([h.preStep(agent), h.preStep(agent)])
+  assert.equal(recalled(left).length + recalled(right).length, 1)
+  assert.equal(h.calls.buildBrief.filter((call) => call.options.mode === 'full').length, 1)
+  assert.equal((await h.preStep(agent)).messages.length, 0)
 })
 
 // ---------------------------------------------------------------------------
