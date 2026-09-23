@@ -10,7 +10,36 @@ development rather than a release artifact.
 
 ## Unreleased
 
-Nothing yet. The next release changes this section.
+### Fixed
+
+- **The queue worker no longer reports the host's shutdown as a caller
+  cancellation.** DSH disposes the whole plugin tree when a headless run's
+  session completes; the worker's fiber disposer ran `controller.abort()` inside
+  that teardown, which the LLM service reports as a terminal
+  `finish.reason.kind === 'aborted'`. Every such pass therefore recorded a failed
+  attempt the model never produced (`lastError.code === 'aborted'`), consumed the
+  R43 retry bound, and left the headline path — completed turn → real
+  distillation → automatic write — unverified on a real host. Measured in
+  `docs/p0-compatibility.md` §9 with a disposable probe
+  (`test/p0/run-teardown-probe.mjs`, 13 assertions): the tree teardown does *not*
+  kill an in-flight stream (a 7.2 s stream finished 4.7 s after its provider
+  fiber was `DISPOSED`), so `stop()` now stops scheduling and lets the in-flight
+  pass settle, while a new `abort()` keeps the real cancellation path (and its
+  truthful `aborted` reason). Regression tests:
+  `test/auto-capture.test.js` (`a host unload mid-call lets the job finish
+  instead of reporting a caller abort (Task 18b)`, and the explicit-`abort()`
+  counterpart).
+- **Live model distillation is now verified end to end.** The isolated-profile
+  smoke (`docs/smoke-results.md`) now scores the worker's own model-backed
+  distill: a real completed turn, a real `deepseek-official`/`deepseek-flash`
+  call with a real token `usage`, and either a `dry-run` receipt that wrote
+  nothing or an `applied` receipt that wrote the note — both with `attempts: 0`.
+
+### Changed
+
+- **Honest limits corrected** (`README.md`, `docs/smoke-results.md`): the
+  "no live model call has ever been made" item is replaced by what is still
+  unmeasured (one host, one route; the one-shot timing window; the Obsidian GUI).
 
 ## 0.1.0 — 2026-09-23
 
@@ -123,6 +152,8 @@ one is a boundary that was measured, or explicitly not measured.
   installed host in `docs/p0-compatibility.md` §8, but the distillation code path
   itself has only ever run against stubs built to those measured shapes. It has
   never distilled a real turn on a real route.
+  *(Superseded by Unreleased: the isolated-profile smoke now distils a real turn
+  through the real route — `docs/smoke-results.md`.)*
 - **Not verified: no power-loss test.** Crash recovery is exercised with
   `SIGKILL` at specific barriers, not with an actual power cut or a kernel-level
   flush failure.

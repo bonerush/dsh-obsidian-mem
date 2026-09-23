@@ -307,3 +307,87 @@ llm-sqlite-probe: FAIL — 1 of 5 assertion(s) failed (node v22.13.0 darwin/arm6
 1. §7 后端条目：写明"去实验标志 ≠ FTS5 可用"，下界改为实测的 `engines.node >= 22.22.2`，并说明 22.13.0 实测不支持、22.14–22.21 未实测。
 2. §10.1：新增实测的 `ctx.llm.stream()` 契约与三条实现约束（先解析非空路由；只以终止块判定；容忍 `aborted` 流无 `usage`/`block-end`）。
 3. §16 风险 10 与"P0 必须关闭的风险"②④：改为实测结论（②③④ 现均为已关闭）。
+
+---
+
+## 9. Task 18b 实测：会话结束时整棵插件树被处置，以及"谁结束了在飞的模型调用"
+
+- **结论一句话**：`ctx.get('llm')` 的可见性**只**取决于**提供该服务的 fiber 是否仍处于 ACTIVE**；真正的宿主事实是 DSH 在 headless 会话跑完后**立即处置整棵插件树**（`llm`/`tools`/`sessions` 的实现被注销，plugin fiber 变 `DISPOSED`）。worker 的模型调用**不是因为"不在 Cordis 调用里"而失败**：同一个 provider/model/凭据，从**裸定时器**在存活窗口内发起返回 `stop`（实测）。把在飞调用变成 `finish.reason.kind='aborted'` 的，是**队列 worker 自己的 disposer 调用了 `controller.abort()`**；而**处置本身杀不掉在飞的流**（实测：一个 7190 ms 的流在 provider fiber 已 `DISPOSED` 之后 4.7 s 仍正常收尾）。
+- **被测环境**：DSH `0.1.5-rc.2`；Node `v25.9.0`；`darwin arm64`；路由 `deepseek-official` / `deepseek-flash`。
+- **探针**：`test/p0/teardown/`（`dsh-obsidian-mem-teardown-probe`，丢弃式，不随插件发布）+ 断言/运行脚本 `test/p0/run-teardown-probe.mjs`。
+
+### 9.1 方法与复现命令
+
+在隔离 `DSH_HOME`（`mktemp -d`，用完删除）里从随包 `headless` 模板派生 profile `mem-teardown`，把探针以 `link:` 装入，跑一轮真实 headless 会话：
+
+```sh
+node test/p0/run-teardown-probe.mjs          # 自建临时 home、装 link:、跑一轮、打印记录并断言 13 条
+node test/p0/run-teardown-probe.mjs --keep    # 保留临时目录以便人工查看
+```
+
+凭据按 §1 的路由只进子进程环境（`DEEPSEEK_API_KEY`），从不打印、从不落盘。记录只含标签、服务可见性、provider fiber 名称/状态、块计数、终止 `finish.reason.kind`/`failure.code` 与耗时；**不含** prompt、响应、推理正文、笔记正文或凭据。断言脚本在任一契约不成立时非零退出。
+
+探针做四件事：
+
+1. 每个 `session/flush`、`agent/session-start`、`agent/pre-step`、以及一个每 500 ms 的 `setInterval` 里记录 `ctx.get(name)` 与 `ctx.get(name, false)` 的结果、服务提供者 fiber 的名称/状态、以及该 ctx 的 isolate key；
+2. 在 `agent/pre-step` 里做一次**在处理器内**的对照调用（§8.3 的成功路径）；
+3. 在 plugin boot 时按 `createQueueWorker` 的形状做一次 boot pass，并挂一个 1000 ms 的**裸定时器**，在存活窗口内发起一次调用；
+4. 用**两个**只在"谁可以取消它"上不同的调用跨越处置窗口：一个 compose 了 worker 形状的 `AbortController`（其 disposer 会 `abort()`），一个没有任何我们 abort 的 signal。
+
+### 9.2 原始记录（字段级，脱敏）
+
+```jsonl
+{"t":254,"rec":"apply","dshHomeIsTemp":true}
+{"t":255,"rec":"vis","label":"apply","pluginFiber":"LOADING","llm":{"strictHas":false,"looseHas":false,"providerFiber":null,"isolateKey":"none"}}
+{"t":255,"rec":"boot-pass","strictHas":false}
+{"t":404,"rec":"vis","label":"flush","seq":3,"pluginFiber":"ACTIVE","llm":{"strictHas":true,"looseHas":true,"providerFiber":"LlmRuntime","providerState":"ACTIVE","isolateKey":"Symbol(llm)"}}
+{"t":1029,"rec":"llm","label":"in-handler-control","chunks":35,"usageFields":5,"finishKind":"max-tokens","ms":606}
+{"t":1255,"rec":"vis","label":"boot-timer-fires","pluginFiber":"ACTIVE","llm":{"strictHas":true,"providerFiber":"LlmRuntime","providerState":"ACTIVE"}}
+{"t":1691,"rec":"llm","label":"bare-timer-live-window","chunks":24,"finishKind":"stop","ms":435}
+{"t":2343,"rec":"vis","label":"turn-end","pluginFiber":"ACTIVE","llm":{"strictHas":true,"providerFiber":"LlmRuntime","providerState":"ACTIVE"}}
+{"t":2344,"rec":"capture","hasHandle":true,"hasAgentHandle":true}
+{"t":2885,"rec":"disposer","workerControllerAbortedBefore":false}
+{"t":2888,"rec":"llm","label":"live-window-worker-signal","chunks":325,"finishKind":"aborted","failureCode":"ABORTED","failureMessage":"DeepSeek request aborted by caller","ms":2484,"finishedAt":2888,"callerAbortedAtFinish":true}
+{"t":2889,"rec":"vis","label":"interval","pluginFiber":"DISPOSED","llm":{"strictHas":false,"looseHas":false,"providerFiber":null,"isolateKey":"Symbol(llm)"}}
+{"t":3346,"rec":"llm","label":"post-run-fresh-lookup","chunks":0,"reason":"no-service"}
+{"t":3347,"rec":"llm","label":"post-run-captured-handle","chunks":1,"finishKind":"error","failureCode":"NO_ADAPTER","failureMessage":"no adapter registered for provider \"deepseek-official\""}
+{"t":7595,"rec":"llm","label":"live-window-private-signal","chunks":1504,"usageFields":5,"finishKind":"max-tokens","ms":7190,"finishedAt":7595,"callerAbortedAtFinish":false}
+```
+
+断言脚本输出（同一份记录）：
+
+```
+  PASS service-is-live-with-an-active-provider-fiber — label=flush provider=LlmRuntime/ACTIVE isolateKey=Symbol(llm)
+  PASS in-handler-call-is-a-real-answer — finish=max-tokens chunks=35 ms=606
+  PASS bare-timer-in-the-live-window-is-a-real-answer — finish=stop chunks=24 ms=435
+  PASS the-tree-is-disposed-at-the-end-of-the-run — disposer t=2885; after it, ctx.get('llm') strict=false loose=false at t=2889
+  PASS an-in-flight-stream-survives-the-disposal — finish=max-tokens ms=7190 finishedAt=7595 (disposer t=2885)
+  PASS the-worker-signal-disposer-abort-is-what-produces-aborted — finish=aborted failureCode=ABORTED callerAbortedAtFinish=true finishedAt=2888 (disposer t=2885)
+  PASS no-lookup-path-works-after-the-disposal — fresh=no-service/- captured=error/NO_ADAPTER
+run-teardown-probe: OK (13 assertion(s))
+```
+
+### 9.3 三个候选解释的判定
+
+| 候选 | 判定 | 反证 |
+|---|---|---|
+| (a) 服务只在事件处理器内解析，所以要"在存活事件里捕获 handle 再交给 worker" | **否证** | 解析不依赖调用点：`apply`/boot 时 `isolateKey:"none"`（服务还没被 provide），此后任何调用点（`session/flush`、裸定时器）都解析成功；反过来处置后**严格与非严格** `ctx.get('llm')` 都是 `false`，而此时**在存活窗口捕获的同一个 handle** 调用得到 `NO_ADAPTER`（adapter 注册表随卸载清空）。→ 捕获 handle **不能**跨越处置，也没有"ctx.get 失效但 handle 仍活"的窗口 |
+| (b) 调用必须运行在拥有该作用域的 Cordis invocation/fork 内 | **否证** | 裸定时器（任何 Cordis invocation 之外）在存活窗口内返回 `stop`；`finish.kind='aborted'` 只在**disposer 调用了我们自己的 `controller.abort()`** 的那 3 ms 内出现（`callerAbortedAtFinish:true`） |
+| (c) 宿主**卸载 ≠ 调用方取消**（其余为实测事实） | **成立** | 在飞的流**不被处置杀死**（7190 ms 的流在 `DISPOSED` 后 4.7 s 正常收尾）；被杀死的是我们自己的 abort |
+
+因此 Task 18 记录的 `aborted: distill-finish:aborted (aborted)` / `lastError.code='aborted'` 的成因是：**队列 worker 在插件卸载时 `controller.abort()`，把宿主的生命周期卸载翻译成了"调用方取消"**，于是 `distill.js` 以终止块判定为失败、R43 记一次失败尝试并最终终态 `failed`——即"边界失败、可查可重试"的词汇是对的，但**原因不真实**，而且被消耗的是从未发生过的模型失败。
+
+### 9.4 对设计与后续任务有约束力的推论
+
+1. **`ctx.get()` 的可见性 = 提供者 fiber 的状态**。`ctx.get(name, false)`（非严格）也救不了场：处置时 `store[key]` 被注销，`isolateKey` 还在但 impl 已经没了。任何"缓存/捕获服务引用以便稍后使用"的设计都必须先回答"这个引用会不会跨过一次卸载"——本机实测答案是**会失效**。
+2. **生命周期卸载（fiber disposer / 插件卸载 / `agent/disposed`）不是调用方取消。** 把卸载翻译成 `finish.kind='aborted'` 会把宿主生命周期记成模型失败，消耗 R43 的尝试上限。插件侧的正确形状是：卸载时**停止调度**，让在飞调用自然收尾（或由进程退出把它留给下一次恢复），只有真正的取消才 `abort()`。
+3. **在飞的 `llm.stream()` 会跨过插件树处置继续产出**（本机 7190 ms，处置后 4.7 s 收尾）。因此"让在飞调用自然收尾"是可行的；但**进程退出**仍会丢失它——此时 job 保持 `pending`，由下一次恢复接手（这是既有的崩溃契约）。
+4. **一次 headless 运行在 turn 结束后的存活窗口只有秒级**（本机 `turn-end` → disposer ≈ 2.4–3.4 s，且 disposer 之前定时器会被推迟）。因此"回合结束后再等一个 debounce/backoff 才发起的模型调用"在一次性运行的宿主里**必然赶不上**；能完成的路径只有"存活窗口内发起 + 不在卸载时自杀"。
+5. **处置之后 `services.close()` 已经跑过**（`lib/tools.js` 的 fiber effect）。此时仍可能发生的 apply 是纯文件工作（事务引擎、receipt、floor、job 删除），索引刷新会重新打开一个 handle 并在进程退出时释放；索引刷新失败只记在 receipt 的 `index` 字段上，绝不回滚已提交的 vault 事务（既有约束 6）。
+6. 本节的**非**结论：本机没有测"多帧持久日志恢复"、"Obsidian GUI"、"跨进程锁竞争"；也不给跨环境结论——本节只声明本机测量。
+
+### 9.5 安全与清理
+
+- 凭据只走环境路由；仓库与记录对凭据值及其 4 字符前缀 0 命中（探针不打印任何凭据，`run-teardown-probe.mjs` 的断言含真实 home 指纹、`~/.dsh/data` 不存在、`~/.dsh/skills` 只有 `ultramath`、`~/Documents/dsh-memory` 不存在）。
+- 临时 home/vault/repo 全在系统临时根下，默认跑完即删（`--keep` 才保留）；真实 `~/.dsh` 只读。
+- 记录与本节不含 prompt、响应、推理正文、笔记正文；模型输出的正文从不落盘。

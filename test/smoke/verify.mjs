@@ -13,7 +13,8 @@
 //   4. a Chinese search returned no hit for the written document
 //   5. the supersede chain is wrong
 //   6. a restart duplicated the interrupted turn's work
-//   7. an external edit was overwritten
+//   7. the queue worker's own model-backed distill produced no receipt (Task 18b)
+//   8. an external edit was overwritten
 //
 // Safety: it takes only *temporary* paths. A record or vault argument outside
 // the OS temp root is refused outright, so this checker can never be pointed at
@@ -243,7 +244,44 @@ check(
 )
 
 // ---------------------------------------------------------------------------
-// 7. an external edit was never overwritten
+// 7. the queue worker's OWN model-backed distill completed (the headline path)
+// ---------------------------------------------------------------------------
+// Task 18 recorded this as unverified: the worker's model call never finished on
+// a real host, so every apply receipt came from the documented `raw-durable`
+// resume path. Task 18b fixed the cause (`docs/p0-compatibility.md` §9), and this
+// is the acceptance: a real completed turn, distilled by the real worker with a
+// real model call, applied to the vault.
+//
+// A lane that was skipped (`--only dry-run` / `--only live`) is reported as a
+// pass with that fact in its detail: there is nothing to accept or reject.
+const modelLane = capture.modelLane ?? {}
+/** Whether the worker's receipt shows a real model answer (not a stubbed path). */
+const realModelCall = (receipt) => (receipt?.usage?.outputTokens ?? 0) > 0 && (receipt?.durationMs ?? 0) > 0
+for (const [label, lane, expected] of [
+  ['dry-run', modelLane.dryRun, 'dry-run'],
+  ['live', modelLane.live, 'applied'],
+]) {
+  if (lane === undefined || lane === null || lane.jobId === null || lane.jobId === undefined) {
+    check(`model-lane-${label}-real-distill`, true, `the ${label} lane was skipped in this run; nothing to verify`)
+    continue
+  }
+  const cycle = Array.isArray(lane.cycles) ? lane.cycles[lane.cycles.length - 1] : {}
+  const receipt = lane.receipt ?? null
+  check(
+    `model-lane-${label}-real-distill`,
+    receipt !== null &&
+      receipt.result === expected &&
+      receipt.attempts === 0 &&
+      realModelCall(receipt) &&
+      cycle.vaultChanged === (expected === 'applied'),
+    receipt === null
+      ? 'no result receipt: the worker\'s own model call did not complete'
+      : `result=${receipt.result} attempts=${receipt.attempts} outputTokens=${receipt.usage?.outputTokens ?? '(none)'} durationMs=${receipt.durationMs ?? '(none)'} vaultChanged=${cycle.vaultChanged}`,
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 8. an external edit was never overwritten
 // ---------------------------------------------------------------------------
 const externalEdit = vault.externalEdit ?? {}
 const humanOwned = vault.humanOwned ?? {}
@@ -291,12 +329,20 @@ check('obsidian-directory-untouched', vault.externalEdit?.obsidianUntouched === 
 // receipt is an open item for a human to read, not a PASS and not a FAIL of a
 // behaviour the plugin claims.
 const unverified = []
-const modelLane = capture.modelLane ?? {}
-if (Array.isArray(modelLane.dryRun?.cycles) && modelLane.dryRun.cycles.some((entry) => entry.receiptResult === null)) {
-  unverified.push('the queue worker\'s own model-backed distill produced no receipt in this run; the apply checks above were satisfied through the documented `raw-durable` resume path instead')
-}
-if (modelLane.llmProbe !== null && modelLane.llmProbe !== undefined) {
-  unverified.push(`in-context llm.stream() probe: finish=${modelLane.llmProbe.finishKind} ms=${modelLane.llmProbe.ms} (the worker\'s out-of-context call is the one that aborts)`)
+// A lane that ran and produced no receipt is exactly the Task 18 defect: the
+// worker's own model call did not complete, so the apply evidence above came
+// from the model-free `raw-durable` resume path. The in-context probe is the
+// control that tells "the route is broken" apart from "the worker's call was cut
+// off", so it is reported beside it.
+const modelLaneRan = ['dryRun', 'live'].filter((key) => modelLane[key]?.jobId !== null && modelLane[key]?.jobId !== undefined)
+const modelLaneMissing = modelLaneRan.filter((key) => modelLane[key]?.receipt === null || modelLane[key]?.receipt === undefined)
+if (modelLaneMissing.length > 0) {
+  unverified.push(
+    `the queue worker's own model-backed distill produced no receipt on the ${modelLaneMissing.join(', ')} lane(s); the apply checks above were satisfied through the documented \`raw-durable\` resume path instead`,
+  )
+  if (modelLane.llmProbe !== null && modelLane.llmProbe !== undefined) {
+    unverified.push(`in-context llm.stream() control: finish=${modelLane.llmProbe.finishKind} ms=${modelLane.llmProbe.ms} — the route itself answered, so the worker's call is what did not complete`)
+  }
 }
 if (record.versions?.obsidian === null || record.versions?.obsidian === undefined) {
   unverified.push('Obsidian GUI checks (rendered tag list, date property, clickable wikilink): the vault was never opened in Obsidian')

@@ -286,13 +286,18 @@ async function main() {
 
   // --- the passes --------------------------------------------------------------
   //
-  // Measured host fact this shape rests on: a captured job is applied by the
-  // queue worker's *boot* pass (which runs inside a Cordis invocation), while a
-  // mid-session retry — which runs from a bare `setTimeout` — did not apply the
-  // job within a 60 s hold in five consecutive isolated runs. The smoke therefore
-  // takes each configuration through capture → real SIGKILL → restart, which is
-  // the crash contract the design names, and records the in-process outcome as
-  // its own observation instead of assuming it.
+  // Each configuration goes through capture → real SIGKILL at the job's
+  // durability boundary → restart, which is the crash contract the design names,
+  // and the in-process outcome is recorded as its own observation instead of
+  // being assumed. Two measured host facts shape the lanes
+  // (`docs/p0-compatibility.md` §9):
+  //
+  //   * DSH disposes the whole plugin tree when a headless run's session
+  //     completes, so a pass that is scheduled after the run needs the process to
+  //     survive — the driver's referenced hold interval is what keeps it alive;
+  //   * an in-flight model call is NOT killed by that disposal, which is why the
+  //     recover lane's freshly resumed job can still distil after the tree is
+  //     gone (the worker no longer aborts its own call on unload).
   const SCENARIO_TASK = '不要调用任何工具。请用一句话复述这个项目约定：本仓库的模块格式统一为 ESM，测试命令是 npm test。'
   const LIVE_TASK = '不要调用任何工具。请用一句话确认这个项目决定：数据库迁移必须在同一个事务里完成，失败整体回滚。'
   const IDLE_TASK = '不要调用任何工具。请只回答：已收到。'
@@ -371,11 +376,11 @@ async function main() {
    * One lane: capture a completed turn, SIGKILL the process at the durability
    * boundary, then restart and let the real worker resume the job.
    *
-   * The model-backed distill aborts intermittently on this host (a
-   * `finish.reason.kind === 'aborted'` terminal chunk with no signal of ours
-   * aborted), so the lane retries with a FRESH turn up to three cycles rather
-   * than hammering one bounded-failed job — a failed job is never retried
-   * automatically (R43), and that refusal is itself the designed behaviour.
+   * This is the headline path the acceptance is about: a real completed turn,
+   * distilled by the real worker with a real model call, applied to the vault.
+   * The lane still allows more than one cycle so that a transient provider
+   * failure produces a fresh turn instead of hammering one bounded-failed job — a
+   * failed job is never retried automatically (R43).
    *
    * The vault tree is hashed by the orchestrator on both sides of each restart,
    * which is the one observation the driver cannot make when the resume happens
@@ -446,19 +451,19 @@ async function main() {
   /**
    * Apply one captured job through the documented `raw-durable` resume path.
    *
-   * This is a fault injection, and it is labelled as one. The queue worker's own
-   * model call cannot complete in this host (see `capture.modelLane` below and
-   * `docs/smoke-results.md`): it aborts as soon as it runs, so a fresh distill
-   * never produces a receipt here. The design's answer to an interrupted model
-   * call is exactly `output.state === 'raw-durable'` — "the bytes are already
-   * durable: re-validating them is the whole resume path" — and `runPendingJob`
-   * takes that path WITHOUT a model call.
-   *
-   * So the job file is rewritten with a durable raw answer and the real worker
-   * applies it in a real process. What this proves is the apply half: identities
+   * This is a fault injection, and it is labelled as one. The design's answer to
+   * an interrupted model call is exactly `output.state === 'raw-durable'` — "the
+   * bytes are already durable: re-validating them is the whole resume path" — and
+   * `runPendingJob` takes that path WITHOUT a model call. Rewriting the job that
+   * way lets the real worker apply in a real process with the model provably out
+   * of the picture, which is the cleanest evidence for the apply half: identities
    * are minted, notes are written, `dryRun` writes nothing, the restart is not
-   * duplicated, and human files are untouched. What it does NOT prove is the
-   * model call, which is reported separately and never claimed as PASS.
+   * duplicated, and human files are untouched.
+   *
+   * The model half is a separate, scored observation: the model lane above
+   * (`capture.modelLane`, checked by `verify.mjs` as `model-lane-*-real-distill`)
+   * is the real completed turn → real model call → real apply path. Neither lane
+   * substitutes for the other.
    *
    * @param {{label: string, dryRun: boolean, task: string}} lane - the lane.
    * @returns {Promise<object>} the lane's receipt, cycle and what was injected.
@@ -694,14 +699,17 @@ async function main() {
         // The capture half, observed on the model lane: a completed turn became a
         // durable job, and a real SIGKILL at that boundary left it on disk.
         inProcessApplied,
+        // The headline half: the real worker distilled the interrupted turn with
+        // its own model call and applied (or dry-ran) it. `verify.mjs` scores
+        // these as `model-lane-<label>-real-distill`.
         modelLane: {
           dryRun: { jobId: dryRunLane.jobId, cycles: dryRunLane.cycles, receipt: dryRunLane.receipt },
           live: { jobId: liveLane.jobId, cycles: liveLane.cycles, receipt: liveLane.receipt },
           llmProbe: (dryRunLane.scenarioPass?.records ?? []).find((entry) => entry.name === 'smoke/llm-probe') ?? null,
         },
-        // The apply half, observed on the model-free resume lane. `injection`
-        // records exactly what was placed on the job, so the claim cannot be read
-        // as "a fresh model call was verified".
+        // The apply half observed WITHOUT a model call, on the resume lane.
+        // `injection` records exactly what was placed on the job, so this half is
+        // never read as "a fresh model call was verified".
         dryRunJobId: resumeDryRunLane.jobId,
         dryRunReceipt: resumeDryRunLane.receipt,
         dryRunCycle: resumeDryRunLane.cycle,
@@ -753,6 +761,11 @@ async function main() {
     externalEditSurvived: record.checks.externalEdit?.ok === true,
     humanOwnedSurvived: record.checks.humanOwned?.ok === true && record.checks.humanOwned?.byteIdenticalOnDisk === true,
     lintReadOnly: record.checks.lintReadonly?.ok === true,
+    // The worker's own model-backed distill: a real receipt here is the headline
+    // acceptance (Task 18b), not an observation.
+    modelLaneDryRunReceipt: record.checks.capture.modelLane?.dryRun?.receipt?.result ?? null,
+    modelLaneLiveReceipt: record.checks.capture.modelLane?.live?.receipt?.result ?? null,
+    modelLaneLiveNotePath: record.checks.capture.modelLane?.live?.receipt?.items?.[0]?.path ?? null,
     dryRunReceipt: record.checks.capture.dryRunReceipt?.result ?? null,
     dryRunWroteNothing: record.checks.capture.dryRunReceipt?.result === 'dry-run' && record.checks.capture.dryRunCycle?.vaultChanged === false,
     dryRunJobId,

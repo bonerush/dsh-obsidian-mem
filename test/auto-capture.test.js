@@ -229,6 +229,59 @@ function abortedLlm() {
   }
 }
 
+/**
+ * A provider-shaped `llm` stub that stays open until the test releases it, and
+ * turns a caller-side abort into the terminal chunk the host really emits.
+ *
+ * The measured contract (`docs/p0-compatibility.md` §8.3) is that a cancellation
+ * is DATA, not a throw: the adapter ends the stream with
+ * `finish.reason.kind === 'aborted'` (`failure.code === 'ABORTED'`). A stub that
+ * always finishes with `stop` would hide exactly the defect the teardown tests
+ * exist to catch, so this one watches its own `signal`.
+ *
+ * @param {string|Function} raw - the model text, or a function of the request.
+ * @returns {{calls: object[], opened: Promise<void>, release: Function, stream: Function}} the stub.
+ */
+function inFlightLlm(raw) {
+  const calls = []
+  let openedResolve
+  const opened = new Promise((resolve) => { openedResolve = resolve })
+  let releaseResolve
+  const release = new Promise((resolve) => { releaseResolve = resolve })
+  return {
+    calls,
+    opened,
+    release: () => releaseResolve(),
+    stream(options) {
+      calls.push(options)
+      return (async function* () {
+        // Open and streaming: from here the only endings are the caller's signal
+        // and the test's release.
+        yield { type: 'block-start', index: 0, block: { type: 'reasoning' } }
+        openedResolve()
+        const aborted = new Promise((resolve) => {
+          const signal = options.signal
+          if (signal === undefined || signal === null) return
+          if (signal.aborted === true) {
+            resolve()
+            return
+          }
+          signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+        await Promise.race([aborted, release])
+        if (options.signal?.aborted === true) {
+          yield { type: 'finish', reason: { kind: 'aborted', failure: { code: 'ABORTED', message: 'aborted by caller' } } }
+          return
+        }
+        const text = typeof raw === 'function' ? raw(options) : raw
+        yield { type: 'text-delta', index: 0, text }
+        yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      })()
+    },
+  }
+}
+
 /** The default worker options for a fixture: explicit roots, no debounce, no backoff. */
 function queueOptions(f, overrides = {}) {
   return {
@@ -1346,8 +1399,77 @@ test('the queue worker is single-flight, debounce-aware and disposable', async (
   })
   assert.equal(typeof worker.start, 'function')
   assert.equal(typeof worker.stop, 'function')
+  assert.equal(typeof worker.abort, 'function')
   await worker.pass()
   assert.ok(worker.pass() instanceof Promise)
   worker.stop()
   await worker.pass()
+})
+
+// ---------------------------------------------------------------------------
+// The host unloads the plugin while the model call is still streaming
+// ---------------------------------------------------------------------------
+
+/**
+ * The measured host fact these cases pin (`docs/p0-compatibility.md` §9): DSH
+ * disposes the whole plugin tree when a headless run's session completes, and
+ * that disposal happens while the queue worker's model call can still be in
+ * flight. The stream itself is NOT killed by the teardown, so the only thing
+ * that ended it was the worker's own `stop()` aborting its controller — which
+ * `distill.js` then reported as a terminal `aborted` and the queue recorded as a
+ * failed attempt (the R43 bound was consumed by a failure the model never
+ * produced). A lifecycle unload must therefore not be mistaken for a caller
+ * cancellation; `abort()` remains the explicit way to cancel.
+ */
+test('a host unload mid-call lets the job finish instead of reporting a caller abort (Task 18b)', async (t) => {
+  const f = await fixture(t)
+  await writeJobAtomic(f.queueRoot, jobFixture())
+  const llm = inFlightLlm(JSON.stringify({ items: [itemFixture()] }))
+  const worker = createQueueWorker({
+    ...queueOptions(f, { debounceMs: 0 }),
+    llm,
+    getLlm: () => llm,
+  })
+
+  const pass = worker.pass()
+  await llm.opened
+  // Let the generator reach its await so `stop()` really lands mid-call.
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  worker.stop()
+  llm.release()
+  const summary = await pass
+
+  assert.equal(summary.completed, 1, 'the unloaded worker still finished the job it had in flight')
+  assert.equal(await jobOnDisk(f), null, 'a completed job is deleted')
+  const receipts = await readReceipts(f)
+  assert.equal(receipts.length, 1)
+  assert.equal(receipts[0].result, 'applied', 'the note was written by the real apply path')
+  assert.equal((await memoryNotes(f)).length, 1)
+  assert.equal(llm.calls.length, 1)
+})
+
+test('an explicit worker.abort() still cancels an in-flight model call', async (t) => {
+  const f = await fixture(t)
+  await writeJobAtomic(f.queueRoot, jobFixture())
+  const llm = inFlightLlm(JSON.stringify({ items: [itemFixture()] }))
+  const worker = createQueueWorker({
+    ...queueOptions(f, { debounceMs: 0 }),
+    llm,
+    getLlm: () => llm,
+  })
+
+  const pass = worker.pass()
+  await llm.opened
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  worker.abort()
+  const summary = await pass
+
+  // The cancellation is real and is accounted for the way R43 requires: one
+  // recorded attempt with the stream's own reason, no receipt, no vault write.
+  assert.equal(summary.deferred, 1)
+  assert.equal((await readReceipts(f)).length, 0)
+  assert.deepEqual(await memoryNotes(f), [])
+  const job = await jobOnDisk(f)
+  assert.equal(job.attempts, 1)
+  assert.equal(job.lastError.code, 'aborted')
 })

@@ -507,22 +507,31 @@ sandbox.
 These are not hedges. They are things that were not tested, listed so you can
 decide what to trust:
 
-1. **No live model call has ever been made by the distillation path.** The
-   `ctx.llm.stream` contract it is written against was measured on the real host
-   (`docs/p0-compatibility.md` §8), and the distillation code is tested against
-   stubs built to exactly those measured chunk shapes. It has never distilled a
-   real turn through a real route.
-2. **No power-loss test.** Crash recovery is exercised by `SIGKILL` at specific
+1. **The live model call has been measured on exactly one host and one route.**
+   `docs/smoke-results.md` records a real isolated-profile run (DSH
+   `0.1.5-rc.2`, route `deepseek-official`/`deepseek-flash`) in which the queue
+   worker distilled a real completed turn and applied the note, with a real
+   `usage` and `attempts: 0`. No other provider or model has been exercised, and
+   the request shape is pinned to the contract measured in
+   `docs/p0-compatibility.md` §8.
+2. **The automatic write needs a process that is still alive when the job comes
+   due.** DSH disposes the plugin tree when a headless run's session completes
+   (`docs/p0-compatibility.md` §9), so in a one-shot `dsh "…"` run a freshly
+   captured turn is normally applied by the *next* run: the job stays `pending`
+   and is resumed at startup. A long-lived host (the GUI server) applies it in
+   the same process. Either way the guarantee is "at least once after the job is
+   fsynced", never "immediately".
+3. **No power-loss test.** Crash recovery is exercised by `SIGKILL` at specific
    barriers, not by cutting power or inducing a kernel flush failure.
-3. **Cross-process lock contention is untested.** The vault lock is tested within
+4. **Cross-process lock contention is untested.** The vault lock is tested within
    one process and against a dead child process. Two live processes contending for
    the same vault have not been tested.
-4. **Obsidian GUI rendering and typed properties are unverified.** The files are
+5. **Obsidian GUI rendering and typed properties are unverified.** The files are
    written to be readable and the frontmatter is validated against the vocabulary
    in the design, but nobody has opened this plugin's output in a running
    Obsidian and confirmed how tags, date properties and path-qualified links
    render.
-5. **`fork` and `retain` are untested on a worktree-sibling layout.** Both modes
+6. **`fork` and `retain` are untested on a worktree-sibling layout.** Both modes
    have tests, but not on the multi-worktree arrangement they exist to handle.
 
 ---

@@ -1,0 +1,4 @@
+# Discardable Task 18b teardown probe row. Never shipped with the plugin.
+- insert:
+    - id: obsidian-mem-teardown-probe
+      name: dsh-obsidian-mem-teardown-probe

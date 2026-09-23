@@ -68,6 +68,16 @@ const MUTATIONS = [
     expectation: 'the checker fails when an external edit was overwritten',
     mutate: (record) => { record.checks.humanOwned.hashAfterUpdate = 'deadbeef'; record.checks.humanOwned.survivedUpdate = false; record.checks.humanOwned.ok = false },
   },
+  {
+    id: 'model-lane-lost-its-receipt',
+    expectation: "the checker fails when the worker's own model-backed distill produced no receipt",
+    mutate: (record) => {
+      // Exactly the Task 18 shape: the lane ran, the seed job is on disk, but no
+      // result receipt exists for it (the model call never completed).
+      record.checks.capture.modelLane.live.receipt = null
+      record.checks.capture.modelLane.live.cycles = record.checks.capture.modelLane.live.cycles.map((entry) => ({ ...entry, receiptResult: null }))
+    },
+  },
 ]
 
 const base = JSON.parse(readFileSync(resolve(recordPath), 'utf8'))

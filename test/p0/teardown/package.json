@@ -1,0 +1,12 @@
+{
+  "name": "dsh-obsidian-mem-teardown-probe",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "probe-plugin.js",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
