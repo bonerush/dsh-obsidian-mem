@@ -269,6 +269,45 @@ test('mem_read keeps every path inside the vault jail', async (t) => {
   assert.equal(await readFile(at(f.vault, plainText), 'utf8'), '不是笔记\n')
 })
 
+test('a cloud-managed vault root refuses every read path without touching the vault', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t10-cloud-'))
+  const dataRoot = await mkdtemp(join(tmpdir(), 'obsidian-mem-t10-cloud-data-'))
+  t.after(() => Promise.all([
+    rm(root, { recursive: true, force: true, maxRetries: 4 }),
+    rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }),
+  ]))
+  const home = join(root, 'home')
+  const repo = join(root, 'repo')
+  // iCloud's documented root: `~/Library/Mobile Documents/`. A dataless file
+  // there can hard-fail or trigger a mass download, so R14 refuses the whole
+  // vault — reads as well as writes.
+  const vault = join(home, 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'dsh-memory')
+  await mkdir(vault, { recursive: true })
+  await initRepo(repo)
+  const note = '---\nid: "doc-11111111-1111-4111-8111-111111111111"\ntype: "doc"\ntitle: "云端笔记"\n---\n云端正文\n'
+  await writeFile(join(vault, 'note.md'), note)
+  const { ctx } = await memoryBed(t, { home, repo, vault, dataRoot })
+
+  const cases = [
+    ['mem_read', { path: 'note.md' }],
+    ['mem_read', { path: '_meta/user.md' }],
+    ['mem_search', { query: '云端', scope: 'global' }],
+    ['mem_search', { query: '云端' }],
+    ['mem_admin', { action: 'projects' }],
+    ['mem_admin', { action: 'index' }],
+    ['mem_write', { type: 'doc', title: '云端写入', body: '正文' }],
+  ]
+  for (const [name, args] of cases) {
+    const result = await call(ctx, name, args, { cwd: repo })
+    assert.equal(result.isError, true, `${name} ${JSON.stringify(args)} must refuse a cloud-managed vault`)
+    assert.match(result.error.message, /cloud-managed/, `${name}: ${result.error.message}`)
+  }
+  // Nothing was opened, scanned, locked or written: no index directory, no lock,
+  // no receipt, and the note's bytes are exactly as they were.
+  assert.deepEqual(await readdir(dataRoot), [])
+  assert.equal(await readFile(join(vault, 'note.md'), 'utf8'), note)
+})
+
 test('an unbound working directory refuses project scope and writes but still reads globally', async (t) => {
   const f = await fixture(t)
   const other = join(f.root, 'unbound')
