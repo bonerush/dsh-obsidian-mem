@@ -19,7 +19,7 @@ import { test } from 'node:test'
 
 import { HOT_ARCHIVE_RATIO, HOT_CAPACITY_CHARS, updateHot } from '../lib/hot.js'
 import { appendLog, createMemoryWithId, readNoteById, writeMemory } from '../lib/memory.js'
-import { routeNote } from '../lib/routing.js'
+import { routeNote, mocPathFor } from '../lib/routing.js'
 import { bootstrapVault, findReceipt, parseNote, safeBasename } from '../lib/vault.js'
 
 /** A fixed identity (valid UUIDv4), and the machine's local date as the clock. */
@@ -36,6 +36,7 @@ const TODAY = `${NOW.getFullYear()}-${String(NOW.getMonth() + 1).padStart(2, '0'
 const DOCS = `${PROJECT}/文档`
 const DECISIONS = `${PROJECT}/决策`
 const CONVENTIONS = `${PROJECT}/约定`
+const INBOX = `${PROJECT}/收件箱`
 const LOGS = `${PROJECT}/日志`
 const HOT = `${PROJECT}/_meta/hot.md`
 const ARCHIVE = `${DOCS}/热记忆归档.md`
@@ -108,15 +109,16 @@ const failsWith = (code) => (error) => {
 }
 
 // ---------------------------------------------------------------------------
-// Step 1 (carried R28): the naming byte budget
+// Step 1 (carried R28/R31): the naming byte budget
 // ---------------------------------------------------------------------------
 
-test('safeBasename keeps a pathological stem inside the whole-file budget (R28)', () => {
+test('safeBasename keeps the emitted file name inside the 200-byte budget (R28/R31)', () => {
   // A title whose first dot sits at byte 1 and whose tail alone is 199 bytes:
   // the old `withSuffix` kept the whole tail and blew past the budget.
   const title = `a.${'b'.repeat(300)}`
   const stem = safeBasename(title)
-  assert.equal(Buffer.byteLength(stem, 'utf8'), 200, 'the unsuffixed stem still uses the Task 6 basename budget')
+  assert.equal(Buffer.byteLength(stem, 'utf8'), 197, 'the basename budget leaves room for the .md extension')
+  assert.ok(Buffer.byteLength(`${stem}.md`, 'utf8') <= 200)
 
   const suffixed = safeBasename(title, [stem])
   assert.notEqual(suffixed, stem)
@@ -127,7 +129,7 @@ test('safeBasename keeps a pathological stem inside the whole-file budget (R28)'
   )
 
   // A leading dot plus a long tail is the same hazard through sanitization, and
-  // the collision path must stay inside the budget for every shape of tail.
+  // *every* path — suffixed or not — must fit the whole-file budget (R31).
   for (const candidate of [
     `.${'a'.repeat(300)}.md`,
     `x.${'决'.repeat(120)}`,
@@ -136,11 +138,13 @@ test('safeBasename keeps a pathological stem inside the whole-file budget (R28)'
   ]) {
     const clean = safeBasename(candidate)
     const collided = safeBasename(candidate, [clean])
-    assert.ok(Buffer.byteLength(clean, 'utf8') <= 200, 'the basename budget always holds')
-    assert.ok(
-      Buffer.byteLength(`${collided}.md`, 'utf8') <= 200,
-      `${JSON.stringify(collided)} plus the extension must fit the budget`,
-    )
+    for (const name of [clean, collided]) {
+      assert.ok(Buffer.byteLength(name, 'utf8') <= 197, 'the basename budget always holds')
+      assert.ok(
+        Buffer.byteLength(`${name}.md`, 'utf8') <= 200,
+        `${JSON.stringify(name)} plus the extension must fit the budget`,
+      )
+    }
   }
 })
 
@@ -174,7 +178,16 @@ test('routeNote maps every memory type to its §6.2 landing place', () => {
   // a name that collides inside the directory gets a deterministic suffix
   const collided = routeNote(binding, 'doc', '设计稿', { existingNames: ['设计稿.md'] })
   assert.match(collided, new RegExp(`^${DOCS}/设计稿-[0-9a-f]{8}\\.md$`))
+  // the explicit inbox destination (R33) overrides the type's landing place
+  // without becoming a `type` value of its own
+  assert.equal(routeNote(binding, 'decision', '待定', { inbox: true }), `${INBOX}/待定.md`)
+  assert.equal(routeNote(binding, 'gotcha', '待定', { inbox: true }), `${INBOX}/待定.md`)
+  assert.equal(routeNote(binding, 'convention', '待定', { inbox: true }), `${INBOX}/待定.md`)
+  assert.equal(mocPathFor(binding, 'decision', { inbox: true }), `${INBOX}/index.md`)
+  assert.equal(mocPathFor(binding, 'decision'), `${DECISIONS}/index.md`)
+  assert.equal(mocPathFor(binding, 'session-log'), null)
   assert.throws(() => routeNote(binding, 'nonsense', 'x'), RangeError)
+  assert.throws(() => routeNote(binding, 'nonsense', 'x', { inbox: true }), RangeError)
   assert.throws(() => routeNote(binding, 'session-log', 'x'), RangeError)
 })
 
@@ -409,6 +422,95 @@ test('the §6.4 optional properties round-trip and a no-op update writes no byte
   // a real status change does rewrite it
   await writeMemory(binding, { id: created.id, status: 'proposed' }, deps)
   assert.equal((await readNoteById(binding, created.id, deps)).frontmatter.status, 'proposed')
+})
+
+test('a low-confidence candidate lands in 收件箱 with its real type preserved', async (t) => {
+  const { vault, binding, deps } = await fixture(t)
+  const candidate = await writeMemory(binding, {
+    type: 'decision',
+    title: '也许该换调度器',
+    body: '低置信候选，待人工分类。',
+    status: 'provisional',
+    confidence: 0.4,
+    assertion: 'inferred',
+    inbox: true,
+  }, deps)
+
+  assert.equal(candidate.path, `${INBOX}/也许该换调度器.md`)
+  const note = parseNote(await readFile(at(vault, candidate.path)))
+  // the §6.4 vocabulary stays closed: the item carries its real type, only the
+  // destination changed (R33)
+  assert.equal(note.data.type, 'decision')
+  assert.equal(note.data.id, candidate.id)
+  assert.match(candidate.id, /^dec-[0-9a-f-]{36}$/)
+  assert.equal(note.data.status, 'provisional')
+  assert.equal(note.data.confidence, 0.4)
+  assert.equal(note.data.assertion, 'inferred')
+
+  // it is registered in the inbox MOC and nowhere else
+  const inboxMoc = await read(vault, `${INBOX}/index.md`)
+  assert.equal(inboxMoc.includes(`- [[${noExt(candidate.path)}|也许该换调度器]]`), true)
+  assert.equal((await read(vault, `${DECISIONS}/index.md`)).includes('也许该换调度器'), false)
+  assert.equal(await exists(at(vault, `${DECISIONS}/ADR-1-也许该换调度器.md`)), false)
+
+  // parking a candidate burns no ADR number and creates no ADR file
+  const real = await writeMemory(binding, { type: 'decision', title: '调度器', body: '采用 A' }, deps)
+  assert.equal(real.path, `${DECISIONS}/ADR-1-调度器.md`)
+
+  // a gotcha candidate keeps its own id prefix and type in the same way
+  const gotcha = await writeMemory(binding, { type: 'gotcha', title: '缓存可疑', body: '待确认', inbox: true }, deps)
+  assert.equal(gotcha.path, `${INBOX}/缓存可疑.md`)
+  assert.match(gotcha.id, /^got-[0-9a-f-]{36}$/)
+  assert.equal(parseNote(await readFile(at(vault, gotcha.path))).data.type, 'gotcha')
+})
+
+test('an update refuses lifecycle and destination fields instead of dropping them', async (t) => {
+  const { binding, deps } = await fixture(t)
+  const a = await writeMemory(binding, { type: 'decision', title: '调度器', body: '采用 A' }, deps)
+  const b = await writeMemory(binding, { type: 'decision', title: '别的', body: 'x' }, deps)
+  const before = await readNoteById(binding, a.id, deps)
+
+  await assert.rejects(
+    writeMemory(binding, { id: a.id, supersedes: b.id, body: '被静默丢弃的取代' }, deps),
+    failsWith('lifecycle-on-update'),
+  )
+  await assert.rejects(
+    writeMemory(binding, { id: a.id, contestedWith: b.id }, deps),
+    failsWith('lifecycle-on-update'),
+  )
+  await assert.rejects(
+    writeMemory(binding, { id: a.id, inbox: true }, deps),
+    failsWith('destination-on-update'),
+  )
+
+  const after = await readNoteById(binding, a.id, deps)
+  assert.equal(after.frontmatter.status, before.frontmatter.status)
+  assert.equal(after.frontmatter.superseded_by, null)
+  assert.equal(after.body, before.body)
+  assert.equal((await readNoteById(binding, b.id, deps)).frontmatter.status, 'proposed')
+})
+
+test('an update refuses a note that changed between the scan and the transaction', async (t) => {
+  const { vault, binding, deps } = await fixture(t)
+  const note = await writeMemory(binding, { type: 'doc', title: '写入协议', body: 'v1' }, deps)
+  // The seam produces the one window a real filesystem cannot be asked to raise
+  // on demand: a hand edit landing after the id scan and before the lock.
+  const racing = {
+    ...deps,
+    afterScan: async ({ path }) => {
+      await writeFile(at(vault, path), `${await read(vault, path)}外部改动。\n`)
+    },
+  }
+  const edited = `${await read(vault, note.path)}外部改动。\n`
+
+  await assert.rejects(writeMemory(binding, { id: note.id, body: 'v2' }, racing), failsWith('hash-mismatch'))
+  assert.equal(await read(vault, note.path), edited, 'the newer revision is kept, not overwritten')
+  assert.equal(edited.includes('外部改动。'), true)
+
+  // without the edit the same request succeeds, so the refusal is the stale hash
+  const updated = await writeMemory(binding, { id: note.id, body: 'v3' }, deps)
+  assert.equal(updated.path, note.path)
+  assert.equal((await read(vault, note.path)).includes('v3'), true)
 })
 
 // ---------------------------------------------------------------------------

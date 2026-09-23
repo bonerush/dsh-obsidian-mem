@@ -140,20 +140,26 @@ test('safeBasename never returns a Windows device name', () => {
   assert.equal(safeBasename('CON'), safeBasename('CON'))
 })
 
-test('safeBasename budgets 200 UTF-8 bytes without splitting a character', () => {
+test('safeBasename budgets the file name to 200 UTF-8 bytes without splitting a character', () => {
+  // R31: the budget bounds the emitted *file name*, so it is the 200-byte
+  // contract minus the 3-byte `.md` extension. `safeBasename(title) + '.md'`
+  // therefore fits on every path, suffixed or not.
   const clean = safeBasename('决'.repeat(120))
-  assert.ok(Buffer.byteLength(clean, 'utf8') <= 200, `${Buffer.byteLength(clean, 'utf8')} bytes must fit the budget`)
-  assert.equal(clean, '决'.repeat(66), '198 bytes is the longest whole-character prefix')
+  assert.ok(Buffer.byteLength(clean, 'utf8') <= 197, `${Buffer.byteLength(clean, 'utf8')} bytes must fit the budget`)
+  assert.equal(clean, '决'.repeat(65), '195 bytes is the longest whole-character prefix')
   assert.equal(clean.includes('\uFFFD'), false)
+  assert.ok(Buffer.byteLength(`${clean}.md`, 'utf8') <= 200)
 
   const ascii = safeBasename('a'.repeat(500))
-  assert.equal(Buffer.byteLength(ascii, 'utf8'), 200)
-  assert.equal(ascii, 'a'.repeat(200))
+  assert.equal(Buffer.byteLength(ascii, 'utf8'), 197)
+  assert.equal(ascii, 'a'.repeat(197))
+  assert.ok(Buffer.byteLength(`${ascii}.md`, 'utf8') <= 200)
 
   // the budget still holds when a hash suffix has to fit
-  const collided = safeBasename('决'.repeat(120), ['决'.repeat(66)])
-  assert.ok(Buffer.byteLength(collided, 'utf8') <= 200)
-  assert.notEqual(collided, '决'.repeat(66))
+  const collided = safeBasename('决'.repeat(120), ['决'.repeat(65)])
+  assert.ok(Buffer.byteLength(collided, 'utf8') <= 197)
+  assert.ok(Buffer.byteLength(`${collided}.md`, 'utf8') <= 200)
+  assert.notEqual(collided, '决'.repeat(65))
 })
 
 test('safeBasename adds a stable short hash suffix on a case-folded collision', () => {
@@ -191,8 +197,9 @@ test('safeBasename folds a trailing .md so a readdir list keeps the collision gu
   // only a real collision triggers the suffix
   assert.equal(safeBasename('foo', ['foobar.md', 'bar.md', 'foo-bar.md']), 'foo')
   // and the budget still holds when the existing name carries its extension
-  const long = safeBasename('决'.repeat(120), [`${'决'.repeat(66)}.md`])
-  assert.ok(Buffer.byteLength(long, 'utf8') <= 200)
+  const long = safeBasename('决'.repeat(120), [`${'决'.repeat(65)}.md`])
+  assert.ok(Buffer.byteLength(long, 'utf8') <= 197)
+  assert.ok(Buffer.byteLength(`${long}.md`, 'utf8') <= 200)
   assert.match(long, /^决+-[0-9a-f]{8}$/)
 })
 
