@@ -152,6 +152,71 @@ ${body}
   return { root, vault, dataRoot, index, open: (options) => openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: PAGED_ID, ...options }) }
 }
 
+/** A third project whose match set is wider than the default candidate window. */
+const WINDOW_ID = '3c4d5e6f-7081-4293-8a4b-5c6d7e8f9012'
+const WINDOW_DIR = `项目/win--${WINDOW_ID.slice(0, 8)}`
+const WINDOW_EXACT = `${WINDOW_DIR}/文档/n39.md`
+
+/**
+ * Build a vault with 40 in-scope notes containing `器`, where the path-last note
+ * carries `器` as its exact title and therefore wins as soon as it is scored.
+ */
+async function windowHarness(t) {
+  const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t9-window-'))
+  const vault = join(root, 'vault')
+  const dataRoot = join(root, 'data')
+  await mkdir(join(vault, WINDOW_DIR, '文档'), { recursive: true })
+  for (let i = 0; i < 40; i += 1) {
+    const name = `n${String(i).padStart(2, '0')}`
+    const title = i === 39 ? '器' : name
+    await writeFile(
+      at(vault, `${WINDOW_DIR}/文档/${name}.md`),
+      `---\ntype: "doc"\ntitle: "${title}"\nstatus: "active"\nproject: "${WINDOW_ID}"\n---\n# ${title}\n\n第 ${name} 条，含 器 字。\n`,
+    )
+  }
+  const open = (options = {}) => openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: WINDOW_ID, ...options })
+  const index = await open()
+  t.after(async () => {
+    await index.close().catch(() => {})
+    await rm(root, { recursive: true, force: true })
+  })
+  return { root, vault, dataRoot, index, open }
+}
+
+/** A fourth project whose path order differs between UTF-16 and code-point order. */
+const WIDECHAR_ID = '4d5e6f70-8192-43a4-9b5c-6d7e8f901a23'
+const WIDECHAR_DIR = `项目/wide--${WIDECHAR_ID.slice(0, 8)}`
+/**
+ * Code-point (and therefore SQLite BINARY) first: U+FF01 sorts below U+1F3B5.
+ * A UTF-16 comparison instead sees the surrogate 0xD83C, which sorts *below*
+ * U+FF01, so it would take the other path first.
+ */
+const WIDECHAR_FIRST = `${WIDECHAR_DIR}/文档/！.md`
+/** UTF-16 first (surrogate 0xD83C < 0xFF01), which is the wrong prefix. */
+const WIDECHAR_UTF16_FIRST = `${WIDECHAR_DIR}/文档/🎵.md`
+
+/**
+ * Build a vault whose two notes order differently under UTF-16 code units and
+ * under code points, so the bounded substring prefix reveals which comparison a
+ * backend uses.
+ */
+async function widecharHarness(t, indexOptions = {}) {
+  const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t9-wide-'))
+  const vault = join(root, 'vault')
+  const dataRoot = join(root, 'data')
+  await mkdir(join(vault, WIDECHAR_DIR, '文档'), { recursive: true })
+  const note = (title) => `---\ntype: "doc"\ntitle: "${title}"\nstatus: "active"\nproject: "${WIDECHAR_ID}"\n---\n# ${title}\n\n正文含 器 字。\n`
+  await writeFile(at(vault, WIDECHAR_FIRST), note('！'))
+  await writeFile(at(vault, WIDECHAR_UTF16_FIRST), note('🎵'))
+  const open = (options = {}) => openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: WIDECHAR_ID, ...indexOptions, ...options })
+  const index = await open()
+  t.after(async () => {
+    await index.close().catch(() => {})
+    await rm(root, { recursive: true, force: true })
+  })
+  return { root, vault, dataRoot, index, open }
+}
+
 /** The human-readable reasons a hit sorted where it did (spec §7 "可解释的排序信号"). */
 function reasons(hit) {
   const s = hit.signals
@@ -854,14 +919,23 @@ test('paging crosses pages in path order and a bound past the vault is not flagg
   for (const options of [
     { query: Q.singleCharCjk, scope: 'project', projectId: PAGED_ID },
     { query: Q.singleCharCjk, scope: 'all' },
-    { query: '第二', scope: 'project', projectId: PAGED_ID },
   ]) {
     const a = await searchNotes(sqlite.index, { limit: 50, ...options })
     const b = await searchNotes(scan, { limit: 50, ...options })
     assert.deepEqual(sorted(a), sorted(b), `backends disagree for ${JSON.stringify(options)}`)
     assert.equal(a.truncated, b.truncated, `truncation differs for ${JSON.stringify(options)}`)
+    // `rowsExamined` is comparable exactly here: both walk the same path-ordered
+    // prefix and the plan-mandated bound applies to that number.
     assert.equal(a.rowsExamined, b.rowsExamined, `examined rows differ for ${JSON.stringify(options)}`)
   }
+  // On the tokens branch it is deliberately backend-specific: SQLite reports the
+  // rows its single relevance-ordered window fetched, the in-memory scan reports
+  // every matching record. Results and truncation still have to agree.
+  const tokensA = await searchNotes(sqlite.index, { query: '第二', scope: 'project', projectId: PAGED_ID, limit: 50 })
+  const tokensB = await searchNotes(scan, { query: '第二', scope: 'project', projectId: PAGED_ID, limit: 50 })
+  assert.deepEqual(sorted(tokensA), sorted(tokensB))
+  assert.equal(tokensA.truncated, tokensB.truncated)
+  assert.equal(tokensA.candidatesScored, tokensB.candidatesScored)
 })
 
 test('a wide bound on the real corpus is not flagged as truncated', async (t) => {
@@ -930,4 +1004,55 @@ test('a ready barrier removes its abort listener when the timeout wins', async (
     () => searchNotes(slow, { query: Q.threeCharCjk, scope: 'project', projectId: ALPHA, signal: controller.signal }),
     (error) => error instanceof IndexError && error.code === 'aborted',
   )
+})
+
+test('a substring window that withholds matches reports truncation, never a false "complete"', async (t) => {
+  const h = await windowHarness(t)
+  const scan = await h.open({ backend: 'scan' })
+  await ready(h.index)
+  await ready(scan)
+
+  for (const [backend, index] of [['sqlite', h.index], ['scan', scan]]) {
+    // limit 8 => window 32, while 40 in-scope notes match: the source itself must
+    // cap its emission and say so, instead of handing over 40 and letting the
+    // caller score 32 under a "complete" flag.
+    const narrow = await searchNotes(index, { query: Q.singleCharCjk, scope: 'project', projectId: WINDOW_ID, limit: 8 })
+    assert.equal(narrow.truncated, true, `${backend} must not claim an exhaustive scan while the window withheld matches`)
+    assert.match(String(narrow.truncationReason), /candidate-window/, `${backend} must name the window as the cause`)
+    assert.equal(narrow.candidateWindow, 32)
+    assert.equal(narrow.candidatesScored, 32)
+    assert.equal(paths(narrow).includes(WINDOW_EXACT), false)
+
+    // With a window that covers the whole vault the exact title is scored — and
+    // wins, which is what makes the truncation flag above meaningful rather than
+    // cosmetic.
+    const wide = await searchNotes(index, { query: Q.singleCharCjk, scope: 'project', projectId: WINDOW_ID, limit: 50 })
+    assert.equal(wide.truncated, false, `${backend} must report completeness when every match was scored`)
+    assert.equal(wide.truncationReason, null)
+    assert.equal(wide[0].path, WINDOW_EXACT, `${backend} must return the exact-title match once it is inside the window`)
+    assert.equal(wide.length, 40)
+  }
+
+  const a = await searchNotes(h.index, { query: Q.singleCharCjk, scope: 'project', projectId: WINDOW_ID, limit: 8 })
+  const b = await searchNotes(scan, { query: Q.singleCharCjk, scope: 'project', projectId: WINDOW_ID, limit: 8 })
+  assert.deepEqual(sorted(a), sorted(b))
+  assert.equal(a.truncationReason, b.truncationReason)
+  assert.equal(h.index.status().lastSearch.truncated, true)
+})
+
+test('both backends take the same path prefix when a later path holds a non-BMP character', async (t) => {
+  const h = await widecharHarness(t, { scanBranchMaxRows: 1, scanBranchPageSize: 1 })
+  await ready(h.index)
+  const scan = await h.open({ backend: 'scan', scanBranchMaxRows: 1, scanBranchPageSize: 1 })
+  await ready(scan)
+
+  // SQLite orders TEXT by UTF-8 bytes (code-point order); a UTF-16 comparison
+  // would pick the surrogate-pair path first and silently examine a different row.
+  for (const [backend, index] of [['sqlite', h.index], ['scan', scan]]) {
+    const hits = await searchNotes(index, { query: Q.singleCharCjk, scope: 'project', projectId: WIDECHAR_ID, limit: 50 })
+    assert.deepEqual(paths(hits), [WIDECHAR_FIRST], `${backend} must examine the code-point-first path`)
+    assert.equal(paths(hits).includes(WIDECHAR_UTF16_FIRST), false)
+    assert.equal(hits.truncated, true)
+    assert.equal(hits.rowsExamined, 1)
+  }
 })
