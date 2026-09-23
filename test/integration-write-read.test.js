@@ -20,8 +20,9 @@
 // plugin (`~/.dsh/profiles/node_modules/@deepseek-ai/*` symlinks).
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -58,6 +59,27 @@ async function initRepo(dir) {
 
 /** Vault-relative path → absolute path inside the throwaway vault. */
 const at = (vault, relative) => join(vault, ...relative.split('/'))
+
+/** Every file below `root` as `relative path -> sha256`. */
+async function hashTree(root) {
+  const found = new Map()
+  async function walk(directory, prefix) {
+    let entries
+    try {
+      entries = await readdir(directory, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries.sort((left, right) => (left.name < right.name ? -1 : 1))) {
+      const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+      const absolute = join(directory, entry.name)
+      if (entry.isDirectory()) await walk(absolute, relative)
+      else if (entry.isFile()) found.set(relative, createHash('sha256').update(await readFile(absolute)).digest('hex'))
+    }
+  }
+  await walk(root, '')
+  return found
+}
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -431,6 +453,36 @@ test('mem_admin(lint) stays read-only by default and reports real vault facts', 
   const text = await readFile(at(f.vault, written.result.report.path), 'utf8')
   assert.match(text, /<!-- obsidian-mem:generated begin sha256:[0-9a-f]{64} -->/)
   assert.match(text, /永久安全排除/)
+})
+
+test('mem_admin(lint, report=true) writes only the report; pruning is its own request', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+  // One old, unprotected snapshot directory: exactly what the retention policy
+  // is allowed to remove, and exactly what a report must never remove.
+  const snapshot = at(f.vault, '_meta/.history/tx-old')
+  await mkdir(snapshot, { recursive: true })
+  await writeFile(join(snapshot, '0__note.md'), '# old snapshot\n')
+  const longAgo = new Date(Date.now() - 400 * 24 * 3600_000)
+  await utimes(snapshot, longAgo, longAgo)
+  await utimes(join(snapshot, '0__note.md'), longAgo, longAgo)
+
+  const before = await hashTree(f.vault)
+  const reported = value(await call(ctx, 'mem_admin', { action: 'lint', report: true }, { cwd: f.repo }), 'lint report')
+  const after = await hashTree(f.vault)
+  const changed = [...new Set([...before.keys(), ...after.keys()])]
+    .filter((path) => before.get(path) !== after.get(path))
+  assert.deepEqual(changed, [reported.result.report.path], 'a report changes exactly the report note')
+  assert.equal(existsSync(snapshot), true, 'a report must not prune history')
+
+  const pruned = value(await call(ctx, 'mem_admin', { action: 'lint', prune: true }, { cwd: f.repo }), 'lint prune')
+  assert.deepEqual(pruned.result.history.pruned, ['tx-old'], 'the prune is what deletes history')
+  assert.equal(existsSync(snapshot), false)
+
+  // Neither flag alone may imply the other.
+  const plain = value(await call(ctx, 'mem_admin', { action: 'lint' }, { cwd: f.repo }), 'lint')
+  assert.equal(plain.result.readOnly, true)
+  assert.equal(plain.result.report.status, 'none')
 })
 
 test('mem_admin(promote) creates a 方法 note and leaves the source untouched', async (t) => {

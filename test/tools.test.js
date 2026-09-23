@@ -261,7 +261,8 @@ test('the documented enums and defaults are exactly spec §9', async (t) => {
   assert.equal(params('mem_admin').mode.default, 'show')
   assert.equal(params('mem_admin').rebuild.default, false)
   assert.equal(params('mem_admin').report.default, false)
-  assert.deepEqual(Object.keys(params('mem_admin')).sort(), ['action', 'jobId', 'mode', 'path', 'rebuild', 'report', 'retry'])
+  assert.equal(params('mem_admin').prune.default, false)
+  assert.deepEqual(Object.keys(params('mem_admin')).sort(), ['action', 'jobId', 'mode', 'path', 'prune', 'rebuild', 'report', 'retry'])
   assert.deepEqual(params('mem_write').assertion.enum, ['stated', 'inferred', 'observed'])
 
   assert.deepEqual(Object.keys(params('mem_brief')), [])
@@ -403,11 +404,22 @@ test('mem_admin defaults mode to show, retry to false and report to false', asyn
   assert.equal(jobs.isError, false, jobs.error?.message)
   assert.equal(services.calls[1].args.retry, false)
 
-  // `lint` is read-only unless the caller asks for the report explicitly.
+  // `lint` is read-only unless the caller asks for a report and/or a prune.
   const lint = await call(ctx, 'mem_admin', { action: 'lint' })
   assert.equal(lint.isError, false, lint.error?.message)
   assert.equal(services.calls[2].args.report, false)
+  assert.equal(services.calls[2].args.prune, false)
   assert.equal(lint.value.result.readOnly, true)
+
+  // The two write requests are independent: a report never implies a prune.
+  const reporting = await call(ctx, 'mem_admin', { action: 'lint', report: true })
+  assert.equal(reporting.isError, false, reporting.error?.message)
+  assert.equal(services.calls[3].args.report, true)
+  assert.equal(services.calls[3].args.prune, false)
+  const pruning = await call(ctx, 'mem_admin', { action: 'lint', prune: true })
+  assert.equal(pruning.isError, false, pruning.error?.message)
+  assert.equal(services.calls[4].args.report, false)
+  assert.equal(services.calls[4].args.prune, true)
 })
 
 test('mem_admin refuses a parameter that the requested action cannot act on', async (t) => {
