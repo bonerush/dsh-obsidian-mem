@@ -25,15 +25,20 @@ import { test } from 'node:test'
 import {
   JOB_FILE_MODE,
   PENDING_SCHEMA,
+  PROCESSED_DIRNAME,
   QUEUE_DIR_MODE,
   PendingError,
   ensureQueueDir,
   isSafeJobId,
   jobFileName,
   loadPending,
+  loadProcessedRecords,
   markJob,
+  processedRecordPath,
   queueRootFor,
   readPendingJobs,
+  readProcessedRecords,
+  recordProcessedRange,
   writeJobAtomic,
 } from '../lib/pending.js'
 
@@ -206,6 +211,97 @@ test('markJob patches one job atomically, preserves its identity, and refuses a 
 
 test('queueRootFor places the queue under the one plugin data root', () => {
   assert.equal(queueRootFor('/data/obsidian-mem'), join('/data/obsidian-mem', 'pending'))
+})
+
+// ---------------------------------------------------------------------------
+// The processed floor: durable memory of what the queue already handed off
+// ---------------------------------------------------------------------------
+
+test('a processed record is 0600 inside a 0700 sub-directory and is never read as a job', async (t) => {
+  const root = await temporaryRoot(t)
+  const queueRoot = join(root, 'pending')
+  const job = jobFixture()
+  await writeJobAtomic(queueRoot, job)
+
+  const record = await recordProcessedRange(queueRoot, {
+    sessionId: job.sessionId,
+    fromSeq: job.fromSeq,
+    toSeq: job.toSeq,
+    jobId: job.jobId,
+    at: '2026-09-23T00:00:00.000Z',
+  })
+  assert.deepEqual(record.ranges, [[job.fromSeq, job.toSeq]])
+
+  const directory = join(queueRoot, PROCESSED_DIRNAME)
+  assert.equal((await stat(directory)).mode & 0o777, QUEUE_DIR_MODE)
+  const [name] = await readdir(directory)
+  assert.equal((await stat(join(directory, name))).mode & 0o777, JOB_FILE_MODE)
+
+  // The processed record is state, not work: `loadPending` must not see it.
+  const jobs = await loadPending(queueRoot)
+  assert.deepEqual(jobs.map((entry) => entry.jobId), [job.jobId])
+})
+
+test('a processed record only grows: ranges merge and never shrink', async (t) => {
+  const root = await temporaryRoot(t)
+  const queueRoot = join(root, 'pending')
+  const sessionId = 'session-floor-1'
+
+  await recordProcessedRange(queueRoot, { sessionId, fromSeq: 4, toSeq: 6 })
+  await recordProcessedRange(queueRoot, { sessionId, fromSeq: 1, toSeq: 3 })
+  const disjoint = await recordProcessedRange(queueRoot, { sessionId, fromSeq: 9, toSeq: 9 })
+  assert.deepEqual(disjoint.ranges, [[1, 6], [9, 9]])
+
+  // Re-recording a contained range is a no-op...
+  assert.deepEqual((await recordProcessedRange(queueRoot, { sessionId, fromSeq: 2, toSeq: 2 })).ranges, [[1, 6], [9, 9]])
+  // ... and a new range only ever adds coverage.
+  assert.deepEqual((await recordProcessedRange(queueRoot, { sessionId, fromSeq: 0, toSeq: 0 })).ranges, [[0, 6], [9, 9]])
+
+  const records = await loadProcessedRecords(queueRoot)
+  assert.deepEqual(records.get(sessionId).ranges, [[0, 6], [9, 9]])
+  assert.equal(records.size, 1)
+})
+
+test('readProcessedRecords reports a corrupt record instead of dropping it silently', async (t) => {
+  const root = await temporaryRoot(t)
+  const queueRoot = join(root, 'pending')
+  await recordProcessedRange(queueRoot, { sessionId: 'session-good', fromSeq: 0, toSeq: 3 })
+  const directory = join(queueRoot, PROCESSED_DIRNAME)
+  await writeFile(join(directory, 'broken.json'), '{"sessionId":', { mode: 0o600 })
+
+  const { records, invalid } = await readProcessedRecords(queueRoot)
+  assert.deepEqual([...records.keys()], ['session-good'])
+  assert.equal(invalid.length, 1)
+  assert.match(invalid[0].file, /broken\.json$/)
+})
+
+test('a corrupt processed record fails closed instead of being overwritten', async (t) => {
+  const root = await temporaryRoot(t)
+  const queueRoot = join(root, 'pending')
+  const sessionId = 'session-corrupt-floor'
+  const path = processedRecordPath(queueRoot, sessionId)
+  await ensureQueueDir(join(queueRoot, PROCESSED_DIRNAME))
+  const corrupt = '{"sessionId":"session-corrupt-floor","ranges":"not-a-list"}'
+  await writeFile(path, corrupt, { mode: 0o600 })
+
+  // Dropping an unreadable record would silently lose coverage and re-enable
+  // the duplicate re-enqueue this floor exists to prevent.
+  await assert.rejects(
+    () => recordProcessedRange(queueRoot, { sessionId, fromSeq: 0, toSeq: 5 }),
+    (error) => error instanceof PendingError && error.code === 'processed-invalid',
+  )
+  assert.equal(await readFile(path, 'utf8'), corrupt, 'the unusable record is reported, not repaired')
+  assert.equal((await readProcessedRecords(queueRoot)).invalid.length, 1)
+})
+
+test('a processed record refuses a range that is not a non-negative half-open pair', async (t) => {
+  const root = await temporaryRoot(t)
+  const queueRoot = join(root, 'pending')
+  await assert.rejects(
+    () => recordProcessedRange(queueRoot, { sessionId: 's', fromSeq: 5, toSeq: 1 }),
+    (error) => error instanceof PendingError && error.code === 'processed-invalid',
+  )
+  await assert.rejects(() => recordProcessedRange(queueRoot, { sessionId: '', fromSeq: 0, toSeq: 1 }))
 })
 
 // ---------------------------------------------------------------------------
