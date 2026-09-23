@@ -1,0 +1,12 @@
+# dsh-obsidian-mem bundle patch: mount the host-plane plugin row.
+#
+# Reached through `dsh.bundle.patch` in package.json and layered onto the
+# profile's plugin list (see design §13.2 for the install and verification
+# commands). The row is a bare package name, which is legal in a bundle patch.
+#
+# The row's `config:` is the authoritative v1 config entry (design §12, R9:
+# an inline `config:` REPLACES the whole object, so it is deliberately omitted
+# here and the schema defaults apply).
+- insert:
+    - id: obsidian-mem
+      name: dsh-obsidian-mem
