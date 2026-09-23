@@ -438,10 +438,30 @@ test('apply registers exactly the six tools, and nothing at all when enabled is 
   assert.deepEqual(ctx.tools.schemas(), [])
 
   const f = await fixture(t)
+  // Task 13 made `apply` install the packaged skill under `DSH_HOME`, so this
+  // enabled case points `DSH_HOME` at the fixture — the isolation this file's
+  // header already claims for both `apply` cases — and then waits for that
+  // install, so the fixture teardown cannot race a still-running file write.
+  const dshHome = join(f.root, 'dsh-home')
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = dshHome
+  t.after(() => {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+  })
+
   apply(ctx, { vaultPath: f.vault })
   assert.deepEqual(ctx.tools.schemas().map((schema) => schema.name).sort(), [
     'mem_admin', 'mem_brief', 'mem_log', 'mem_read', 'mem_search', 'mem_write',
   ])
+
+  const installed = join(dshHome, 'skills', 'obsidian-mem', 'SKILL.md')
+  const installedManifest = join(dshHome, 'skills', 'obsidian-mem', '.obsidian-mem-manifest.json')
+  for (let attempt = 0; attempt < 400 && !existsSync(installedManifest); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  assert.equal(existsSync(installed), true, 'the packaged skill is installed into the isolated DSH home')
+  assert.equal(existsSync(installedManifest), true, 'and the sync finished before the fixture was torn down')
 })
 
 test('apply hands one DSH_HOME-derived data root to the transaction engine and the index', async (t) => {

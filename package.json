@@ -31,6 +31,8 @@
   },
   "files": [
     "lib",
+    "skills",
+    "skills/obsidian-mem/SKILL.md",
     "cordis.patch.yml",
     "dsh.plugin.json",
     "README.md",
