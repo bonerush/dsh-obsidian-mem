@@ -4,7 +4,10 @@ This file is for anyone (human or agent) changing this repository. It is *not*
 part of the published package: `package.json`'s `files` allowlist ships `lib/`,
 the portable skill, the two manifests, `README.md`, `CHANGELOG.md` and
 `LICENSE`, and deliberately excludes this file, `docs/`, `test/`, `scripts/`,
-`research/` and `scratch/`.
+`research/` and `scratch/`. Two files ride along without being listed, because
+npm always packs a `README*` at the package root: measured on npm 11.12.1, the
+tarball is 32 files and carries `package/README.zh.md`. `README.i18n.yaml` is
+**not** packed — it is a repository-maintenance record, not package content.
 
 ## What this repository is
 
@@ -20,6 +23,10 @@ could read.
 - `dsh.plugin.json` — ecosystem/registry metadata. **Nothing in DSH core reads
   it**; it is a published convention (see `research/dsh-plugin-api-reference.md`
   §1.3). It ships anyway because registry tooling expects it.
+- `README.md` + `README.zh.md` — the bilingual documentation pair. Both sides
+  carry equal authority; see rule 7.
+- `README.i18n.yaml` — the blob-hash record that says which two revisions of that
+  pair were last confirmed consistent.
 - `docs/p0-compatibility.md` — the measured host facts every design decision
   rests on. Read it before changing anything that touches sessions, events or
   `ctx.llm`.
@@ -72,6 +79,16 @@ Never point a test, a probe or a manual run at `~/Documents/knowledge`, at
    written as unverified, not as passing. `README.md` has a "Not verified"
    section and `CHANGELOG.md` carries the same list; keep both honest when you
    land work, and move an item out only with a command and its output.
+7. **The README pair moves together.** `README.md` and `README.zh.md` carry equal
+   authority, so one commit edits both or neither. `README.i18n.yaml` records the
+   git blob hash of each side as of the last confirmed-consistent state; after
+   touching either side, run `git hash-object README.md README.zh.md` and put the
+   two values back into that file. The first-party verifier for this convention
+   (`verify-translation-pairing`) belongs to the harness monorepo, not to this
+   plugin, so that one command is the whole check here. A heading that a link
+   targets carries an explicit `<a id="…">` in the Chinese side, spelled with the
+   English slug, so that one anchor resolves from either language — add one
+   whenever you add such a link.
 
 ## House style
 

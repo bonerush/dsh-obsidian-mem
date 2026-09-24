@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for this repository: the git blob hash of each
+# side of the README pair as of the last confirmed-consistent state. Both languages
+# carry equal authority; after editing either side, bring the other along in the same
+# change and re-record both hashes with:
+#
+#   git hash-object README.md README.zh.md
+#
+# The first-party tool for this convention (`verify-translation-pairing`) lives in the
+# DeepSeek Harness monorepo and is not shipped with this plugin, so comparing the two
+# values `git hash-object` prints against the two lines below is the whole check here.
+#
+# Two deliberate departures from the first-party shape, both because this repository
+# has no documentation site: no `description`/`kind` frontmatter on either README (it
+# is docs-site metadata, and GitHub renders it as a table), and explicit
+# `<a id="…">` anchors only on the headings a link targets rather than on all of them.
+# Both anchors that exist are spelled with the English slug, so one anchor resolves
+# from either language.
+README.md: 3fa7e612c0b1aa8e8b20e31d8fec51babcfe2bed
+README.zh.md: c956b1bf23c4fbf4fb9bbe2cf9d7808c3bd0a177

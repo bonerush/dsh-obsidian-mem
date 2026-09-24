@@ -6,9 +6,36 @@ All notable changes to this plugin are recorded here. The format follows
 
 The package is not published to a registry and carries no tag yet, so `0.1.0`
 below is the version recorded in `package.json` and `dsh.plugin.json` during
-development rather than a release artifact.
+development rather than a release artifact. The source is public on GitHub; that
+is a repository, not a release.
 
 ## Unreleased
+
+### Added
+
+- **The package now declares itself the way the ecosystem does, and the
+  conventions are documented rather than assumed.** `package.json` gains
+  `keywords`, `repository`, `homepage`, `bugs` and `engines.dsh` — the position
+  the plugin market reads. The GitHub repository carries the `dsh-plugin` topic
+  that the harness's own plugin search queries. The install instructions lead
+  with the ecosystem's `github:bonerush/dsh-obsidian-mem` spec instead of a local
+  checkout, and `README.md` has a new "DSH plugin conventions" section listing the
+  eight conventions this package follows with the evidence for each. Nothing
+  about the plugin's runtime behaviour changed; `engines.node` is untouched.
+- **`README.zh.md`, a Chinese README that carries equal authority with the
+  English one.** It follows the convention the first-party packages use:
+  the `[English](README.md) | 中文` switcher, an explicit `<a id="…">` for every
+  heading a link targets so one anchor resolves from either language, and
+  `README.i18n.yaml` recording the git blob hash of each side as of the last
+  confirmed-consistent state. Measured in one installed harness: of 240 packages
+  under `@deepseek-ai/`, the 231 that ship a README ship all three files, and the
+  eight English-only ones are vendored upstream packages (`cordis`,
+  `schemastery`, `cosmokit`, `cordis-plugin-*`). The translation is not reviewed
+  by a native reader; that is listed in the README's "Not verified" section and in
+  the list at the end of this file.
+- **The repository is public at
+  <https://github.com/bonerush/dsh-obsidian-mem>.** This is the project's remote;
+  `main` is the published history. It remains unpublished to npm and untagged.
 
 ### Fixed
 
@@ -259,3 +286,7 @@ one is a boundary that was measured, or explicitly not measured.
 - **`dsh.plugin.json` is inert.** Nothing in DSH core reads it, so a stale
   version there has no runtime effect — which is exactly why `prepack` fails when
   it disagrees with `package.json`.
+- **The Chinese README has not been reviewed by a native reader.**
+  `README.i18n.yaml` records the two blob hashes as consistent, which proves the
+  pair is the revision that was intended, not that the Chinese reads well. A
+  wording fix on that side is a welcome pull request.

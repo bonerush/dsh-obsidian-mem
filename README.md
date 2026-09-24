@@ -1,5 +1,11 @@
 # dsh-obsidian-mem
 
+English | [中文](README.zh.md)
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Node >= 22.22.2](https://img.shields.io/badge/node-%3E%3D22.22.2-brightgreen.svg)](#requirements)
+[![DSH plugin](https://img.shields.io/badge/DSH-plugin-blueviolet.svg)](https://github.com/topics/dsh-plugin)
+
 A **DeepSeek Harness host plugin** that keeps a project's documents and long-term
 memory as plain Markdown in a dedicated [Obsidian](https://obsidian.md) vault.
 
@@ -46,6 +52,12 @@ Runtime dependencies are deliberately tiny: `@deepseek-ai/schemastery` for confi
 validation and `yaml` for frontmatter. `node:sqlite` is built into Node, so there
 is no native module to compile.
 
+The DSH floor is declared where the ecosystem declares it — `engines.dsh` in
+`package.json`, with the same range in `dsh.plugin.json`. Measured: nothing in an
+installed harness reads that key (a search for `engines.dsh` across every installed
+`@deepseek-ai/*` package returns nothing), so it is a declaration for registry and
+market tooling, not a gate DSH enforces.
+
 ---
 
 ## Install in five minutes
@@ -64,18 +76,14 @@ does not own, a dedicated vault keeps the two from ever meeting.
 
 ### 2. Verify on a throwaway profile first
 
-This is the exact sequence that was tested:
+This is the exact sequence that was tested, and it needs no checkout — `github:` is
+the ecosystem's shorthand for a GitHub repository:
 
 ```sh
-cd /path/to/dsh-obsidian-mem           # the checkout of this plugin
-
 # A clean DSH home for the trial run: nothing here touches your real ~/.dsh.
 export DSH_HOME="$(mktemp -d)"
 
-dsh plugin --profile memcheck add "link:$PWD"
-#   dsh: initialized profile memcheck at /tmp/…/profiles/memcheck
-#   dependencies:
-#   + dsh-obsidian-mem link:/…/dsh-obsidian-mem
+dsh plugin --profile memcheck add github:bonerush/dsh-obsidian-mem
 
 dsh --profile memcheck --dump-config | grep -n obsidian-mem
 #   # == dsh-obsidian-mem
@@ -85,19 +93,27 @@ dsh --profile memcheck --dump-config | grep -n obsidian-mem
 unset DSH_HOME
 ```
 
-`dsh plugin --profile <name> add "link:<abs path>"` creates the profile if it does
-not exist, installs the checkout as a link (so your edits are live), and layers
-this package's `cordis.patch.yml`, which is what mounts the `obsidian-mem` row.
-If `--dump-config` shows no such row, stop here.
+`dsh plugin --profile <name> add <spec>` creates the profile if it does not exist,
+installs the package and layers its `cordis.patch.yml`, which is what mounts the
+`obsidian-mem` row. If `--dump-config` shows no such row, stop here.
+
+Pin a revision when you want a fixed one: `github:bonerush/dsh-obsidian-mem#<commit>`.
+The harness's own plugin search prints the same command shape and gives the same
+advice — a third-party plugin is code you run, so review it and pin it.
 
 ### 3. Install into the profile you actually use
 
 ```sh
-dsh plugin --profile web add "link:$PWD"
+dsh plugin --profile web add github:bonerush/dsh-obsidian-mem
 dsh --profile web --dump-config | grep -n obsidian-mem
 ```
 
 Replace `web` with your profile name.
+
+Working from a local checkout instead? Every `github:…` above becomes `"link:$PWD"`
+run from the checkout: the package is linked rather than copied, so your edits are
+live. That is how this repository is developed, and it is the form the smoke and
+dogfood runs used.
 
 ### 4. Restart DSH and open a new session
 
@@ -546,6 +562,11 @@ decide what to trust:
    render.
 6. **`fork` and `retain` are untested on a worktree-sibling layout.** Both modes
    have tests, but not on the multi-worktree arrangement they exist to handle.
+7. **The Chinese README has not been reviewed by a native reader.**
+   `README.zh.md` is a translation of this file, and `README.i18n.yaml` records the
+   blob hash of each side as consistent — but that record proves the two files are
+   the intended ones, not that the Chinese reads well. No Chinese-reading reviewer
+   has checked it; a wording fix on that side is a welcome pull request.
 
 ---
 
@@ -566,6 +587,26 @@ decide what to trust:
 | A repository refuses to write | A remote-URL mismatch, a different `projectId` for the same directory, a sibling worktree with conflicting metadata, or an unreadable sibling. The refusal names the reason and leaves the pointer exactly as it was — it never repairs or replaces one. | `mem_admin(action="bind", mode="show")` reports the situation; `mode="retain"` or `mode="fork"` is the explicit fix. A stale worktree needs `git worktree prune`. |
 | A plain directory stays read-only | It is not inside a Git repository, so the plugin will not add it to long-term memory on its own — an implicit first write binds Git repositories only. | `mem_admin(action="bind", mode="local")` to bind it explicitly; the binding is live for the same session. |
 | Memory is silently absent for a session | Any non-`bound` resolution means "no memory for this session" — by design, it never throws and never guesses. Reads never bind a repository, and a Git repository with no pointer is bound by its first write; a repository whose pointer or registry the plugin refuses to trust stays unbound until that is resolved. | Check `mem_admin(action="projects")` and the pointer file, then write once (a Git repository) or run `mem_admin(action="bind", mode="local")` (any directory) — both take effect in the same session. |
+
+---
+
+## DSH plugin conventions
+
+There is no central DSH plugin schema. What exists is a set of conventions that
+first-party packages and other third-party plugins already follow. This is the set
+this package chose to follow, with the evidence named so you can re-check it rather
+than trust this file.
+
+| Convention | How this package follows it | Who reads it |
+|---|---|---|
+| Bundle patch | `package.json` → `"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }`. The patch inserts one row, `{ id: obsidian-mem, name: dsh-obsidian-mem }`, naming the package bare | DSH boot and `--dump-config`, through one shared patch algorithm. A listed bundle that declares no patch is a hard boot failure (`dsh-app-boot`: *declares no dsh.bundle in its package.json*), and a dependency without one installs as a plain package instead of a profile layer. |
+| ESM entry | `"type": "module"`, a resolvable `main`, and a non-empty `version` | The Cordis plugin loader. A missing `version` throws (*must declare a non-empty version*). |
+| Install spec | `dsh plugin --profile <p> add github:bonerush/dsh-obsidian-mem` — or `link:$PWD` while working from a checkout | `dsh plugin`. The harness's own plugin search prints exactly this `github:` shape and ranks candidates by stars on the topic below. |
+| Discovery topic | the GitHub repository carries the `dsh-plugin` topic | The harness's plugin search — it describes itself as a *live GitHub `dsh-plugin` topic search, ranked by stars*. The curated list behind [awesome-dsh-plugin.com](https://awesome-dsh-plugin.com) is a pull request against that list, not a manifest field. |
+| Compatibility | `engines.node` (a measured floor), `engines.dsh`, and optional `@deepseek-ai/*` peers | Registry and market tooling; the market reads `engines.dsh` from `package.json`. DSH core reads none of it, as [Requirements](#requirements) records. |
+| Registry metadata | `dsh.plugin.json` (`id`, `version`, `main`, `description`, `engines.dsh`, `contributes`) | Nothing in DSH core, and nothing validates it: it is a published convention, shipped because registry tooling expects the file. Here `prepack` is what keeps it honest — it fails when the manifest disagrees with `package.json` on version, identity or entry point. |
+| Portable skill | `skills/obsidian-mem/SKILL.md`, in the Agent Skills format, synced into `$DSH_HOME/skills/` at activation | Any harness that reads Agent Skills. Nothing in the skill is DSH-specific. |
+| Bilingual docs | `README.md` (English) and `README.zh.md` (Chinese) carry equal authority; `README.i18n.yaml` records the git blob hash of each side as of the last confirmed-consistent state | GitHub and npm readers. Measured in one installed harness: of 240 packages under `@deepseek-ai/`, 231 ship all three files, and the eight that are English-only are vendored upstream packages (`cordis`, `schemastery`, `cosmokit`, `cordis-plugin-*`). |
 
 ---
 
@@ -595,6 +636,14 @@ never launches Obsidian.
 `npm pack` itself runs `prepack`, so a plain `npm pack --dry-run` runs the whole
 suite before printing the manifest — pass `--ignore-scripts` when you only want
 the file list, and run `npm run prepack` explicitly when you want the gate.
+
+Editing `README.md` means editing `README.zh.md` in the same change: the two sides
+carry equal authority, and `README.i18n.yaml` records the git blob hash of each as
+of the last confirmed-consistent state. Re-record both hashes with
+`git hash-object README.md README.zh.md` and compare each value against the file
+before you commit. The first-party verifier for this convention
+(`verify-translation-pairing`) ships with the harness monorepo, not with this
+plugin, so here that one command *is* the check.
 
 Contribution rules, house style and the non-negotiable constraints are in
 [`AGENTS.md`](./AGENTS.md). The measured host facts live in
