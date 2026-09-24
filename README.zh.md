@@ -32,8 +32,8 @@ repository                          vault (~/Documents/dsh-memory)
   一个放在仓库之外的 `node:sqlite` 搜索索引，以及对已完成回合的自动蒸馏。
 
 > **在开启自动写入之前，先读[诚实边界](#honest-limits)。**
-> 本插件对自己拒绝什么很谨慎，但它还很年轻，有若干行为完全没有被验证过。它们被列
-> 出来，而不是被埋起来。
+> 本插件对自己拒绝什么很谨慎，但它还很年轻。下面写的是本版本愿意写下来的边界，不声
+> 称穷尽；`CHANGELOG.md` 里是"验证过什么、还没验证什么"的持续记录。
 
 ---
 
@@ -375,8 +375,8 @@ frontmatter 缺失、过期笔记、文件↔索引不一致和队列积压。`p
 <a id="honest-limits"></a>
 ## 诚实边界
 
-这里每一条都是本版本真实的边界。大多数是刻意做出的拒绝；标注为*未验证*的那些只是
-从未被实际跑过，你不该对它们做任何假设。
+这里每一条都是本版本真实的边界，大多数是刻意做出的拒绝。它是写下来的部分，不声称穷
+尽：`CHANGELOG.md` 里持续记录着哪些被验证过、哪些还没有。
 
 ### 索引只是缓存，从不是事实来源
 
@@ -457,33 +457,6 @@ Obsidian 里冲突。要补上这个缺口，要么在仓库侧读 `types.json`�
 - **会话日志属于 DSH，不属于本插件。** DSH 自己写
   `$DSH_HOME/sessions/…/session.v3.jsonl.zstd`。本插件从不编辑它们。
 
-### 未验证
-
-这些不是含糊其辞。这些是没被测试过的事，列出来是为了让你自己判断能信什么：
-
-1. **真实的模型调用只在一台主机、一条路由上测量过。** `docs/smoke-results.md` 记
-   录了一次真实的隔离 profile 运行（DSH `0.1.5-rc.2`，路由
-   `deepseek-official`/`deepseek-flash`），其中队列 worker 蒸馏了一个真实完成的回
-   合并落地了笔记，带有真实的 `usage` 和 `attempts: 0`。没有试过任何其他供应商或
-   模型，请求形态锁定在 `docs/p0-compatibility.md` §8 测得的契约上。
-2. **自动写入需要一个在 job 到期时仍然活着的进程。** 当无头运行的会话结束时，DSH
-   会处置整棵插件树（`docs/p0-compatibility.md` §9），所以在一次性的 `dsh "…"`
-   运行里，刚被捕获的回合通常由*下一次*运行落地：job 保持 `pending`，在启动时恢
-   复。长期存活的宿主（GUI 服务器）会在同一进程里落地它。无论哪种情况，保证都是
-   “job 被 fsync 之后至少一次”，绝不是“立即”。
-3. **没有断电测试。** 崩溃恢复是用 `SIGKILL` 在特定屏障处演练的，不是靠切断电源
-   或制造内核 flush 失败。
-4. **跨进程锁竞争未测试。** 仓库锁在单进程内、以及对一个已死亡的子进程做过测试。
-   两个活着的进程争抢同一个仓库还没有测过。
-5. **Obsidian GUI 渲染和带类型的属性未验证。** 这些文件按可读的标准写出，
-   frontmatter 也按设计里的词汇表校验过，但没有人把本插件的输出在运行中的
-   Obsidian 里打开，确认过 tags、日期属性和带路径限定的链接渲染成什么样。
-6. **`fork` 和 `retain` 在 worktree 同级布局上未测试。** 两种模式都有测试，但不
-   是针对它们本要处理的多 worktree 布局。
-7. **中文 README 没有经过母语读者审校。** `README.zh.md` 是本文件的翻译，
-   `README.i18n.yaml` 把两侧的 blob 哈希记为一致——但那个记录只证明这两个文件是预
-   期的那两份，不证明中文读起来通顺。还没有中文读者审校过；发现措辞问题欢迎提 PR。
-
 ---
 
 ## 故障恢复
@@ -503,24 +476,6 @@ Obsidian 里冲突。要补上这个缺口，要么在仓库侧读 `types.json`�
 | 一个代码库拒绝写入 | remote URL 不匹配、同一个目录对应了不同的 `projectId`、同级 worktree 元数据冲突，或者同级不可读。拒绝信息会说明原因，并让指针文件保持原样——它从不修复或替换指针文件。 | `mem_admin(action="bind", mode="show")` 报告现状；`mode="retain"` 或 `mode="fork"` 是显式的修正手段。过期的 worktree 需要 `git worktree prune`。 |
 | 一个普通目录保持只读 | 它不在 Git 仓库里，所以插件不会自行把它纳入长期记忆——隐式的第一次写入只绑定 Git 仓库。 | 用 `mem_admin(action="bind", mode="local")` 显式绑定它；绑定在同一会话里立即生效。 |
 | 某个会话的记忆悄悄缺席 | 任何非 `bound` 的解析结果都意味着“这个会话没有记忆”——这是设计使然，它从不抛错，也从不猜。读取永不绑定代码库；没有指针文件的 Git 仓库由它的第一次写入完成绑定；指针文件或注册表不被插件信任的代码库会保持未绑定，直到问题解决。 | 检查 `mem_admin(action="projects")` 和指针文件，然后写一次（Git 仓库）或跑 `mem_admin(action="bind", mode="local")`（任何目录）——两者都在同一会话内生效。 |
-
----
-
-## DSH 插件约定
-
-DSH 没有统一的插件 schema。存在的是若干约定：官方包和其他第三方插件都在用。下面是本
-包选择遵循的那一套，每条都写明了证据，方便你自己复核，而不是相信这份文件。
-
-| 约定 | 本包怎么遵循 | 谁在读它 |
-|---|---|---|
-| Bundle patch | `package.json` → `"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }`。该 patch 插入一行 `{ id: obsidian-mem, name: dsh-obsidian-mem }`，用裸包名 | DSH 启动和 `--dump-config`，走同一个 patch 算法。被列为 bundle 却不声明 patch 是启动硬失败（`dsh-app-boot`：*declares no dsh.bundle in its package.json*）；没有它则作为普通依赖安装，而不是 profile 层。 |
-| ESM 入口 | `"type": "module"`、可解析的 `main`、非空的 `version` | Cordis 插件 loader。缺 `version` 会直接抛错（*must declare a non-empty version*）。 |
-| 安装形式 | `dsh plugin --profile <p> add github:bonerush/dsh-obsidian-mem`；在 checkout 里开发时用 `link:$PWD` | `dsh plugin`。harness 自带的插件搜索打印的正是这个 `github:` 形状，并按下面那个 topic 的 star 数排序。 |
-| 发现入口 | GitHub 仓库带 `dsh-plugin` topic | harness 的插件搜索——它自述为*对 GitHub `dsh-plugin` topic 的实时搜索，按 star 排序*。[awesome-dsh-plugin.com](https://awesome-dsh-plugin.com) 背后的精选列表是一个 PR，而不是某个 manifest 字段。 |
-| 兼容性声明 | `engines.node`（实测下限）、`engines.dsh`、可选的 `@deepseek-ai/*` peer | 注册表和市场工具；市场从 `package.json` 读 `engines.dsh`。DSH 核心一个都不读，[环境要求](#requirements) 里记了这一点。 |
-| 注册表元数据 | `dsh.plugin.json`（`id`、`version`、`main`、`description`、`engines.dsh`、`contributes`） | DSH 核心里没有人读它，也没有任何东西校验它：它是一个已发布的约定，因为注册表工具期待这个文件才随包发布。在本仓库里是 `prepack` 保证它不撒谎——它与 `package.json` 在版本、身份或入口上不一致就直接失败。 |
-| 可移植技能 | `skills/obsidian-mem/SKILL.md`，Agent Skills 格式，激活时同步进 `$DSH_HOME/skills/` | 任何读 Agent Skills 的 harness。技能里没有 DSH 专属内容。 |
-| 双语文档 | `README.md`（英文）和 `README.zh.md`（中文）权威对等；`README.i18n.yaml` 记录两侧在上一次确认一致时的 git blob 哈希 | GitHub 和 npm 的读者。在一个已安装的 harness 里实测：`@deepseek-ai/` 下 240 个包里 231 个三个文件齐全，剩下 8 个只有英文的都是 vendored 上游包（`cordis`、`schemastery`、`cosmokit`、`cordis-plugin-*`）。 |
 
 ---
 

@@ -35,8 +35,9 @@ Two layers, on purpose:
   vault, and automatic distillation of completed turns.
 
 > **Read [Honest limits](#honest-limits) before you enable automatic writes.**
-> This plugin is careful about what it refuses, but it is young, and several
-> behaviours have not been verified at all. They are listed, not buried.
+> This plugin is careful about what it refuses, but it is young. What follows is
+> what this release writes down, not a claim to be exhaustive; `CHANGELOG.md`
+> keeps the running record of what has been verified and what has not.
 
 ---
 
@@ -406,9 +407,9 @@ repository and stay there; the vault holds the long-form documents people read.
 
 ## Honest limits
 
-Each item here is a real boundary of this release. Most are deliberate refusals;
-the ones marked *not verified* have simply never been exercised, and you should
-assume nothing about them.
+Each item here is a real boundary of this release. Most are deliberate refusals.
+This is what is written down, not a claim to be exhaustive: `CHANGELOG.md` carries
+the running record of what has been verified and what has not.
 
 ### The index is a cache, never the source of truth
 
@@ -507,43 +508,6 @@ sandbox.
   `$DSH_HOME/sessions/…/session.v3.jsonl.zstd` itself. This plugin never edits
   them.
 
-### Not verified
-
-These are not hedges. They are things that were not tested, listed so you can
-decide what to trust:
-
-1. **The live model call has been measured on exactly one host and one route.**
-   `docs/smoke-results.md` records a real isolated-profile run (DSH
-   `0.1.5-rc.2`, route `deepseek-official`/`deepseek-flash`) in which the queue
-   worker distilled a real completed turn and applied the note, with a real
-   `usage` and `attempts: 0`. No other provider or model has been exercised, and
-   the request shape is pinned to the contract measured in
-   `docs/p0-compatibility.md` §8.
-2. **The automatic write needs a process that is still alive when the job comes
-   due.** DSH disposes the plugin tree when a headless run's session completes
-   (`docs/p0-compatibility.md` §9), so in a one-shot `dsh "…"` run a freshly
-   captured turn is normally applied by the *next* run: the job stays `pending`
-   and is resumed at startup. A long-lived host (the GUI server) applies it in
-   the same process. Either way the guarantee is "at least once after the job is
-   fsynced", never "immediately".
-3. **No power-loss test.** Crash recovery is exercised by `SIGKILL` at specific
-   barriers, not by cutting power or inducing a kernel flush failure.
-4. **Cross-process lock contention is untested.** The vault lock is tested within
-   one process and against a dead child process. Two live processes contending for
-   the same vault have not been tested.
-5. **Obsidian GUI rendering and typed properties are unverified.** The files are
-   written to be readable and the frontmatter is validated against the vocabulary
-   in the design, but nobody has opened this plugin's output in a running
-   Obsidian and confirmed how tags, date properties and path-qualified links
-   render.
-6. **`fork` and `retain` are untested on a worktree-sibling layout.** Both modes
-   have tests, but not on the multi-worktree arrangement they exist to handle.
-7. **The Chinese README has not been reviewed by a native reader.**
-   `README.zh.md` is a translation of this file, and `README.i18n.yaml` records the
-   blob hash of each side as consistent — but that record proves the two files are
-   the intended ones, not that the Chinese reads well. No Chinese-reading reviewer
-   has checked it; a wording fix on that side is a welcome pull request.
-
 ---
 
 ## Failure recovery
@@ -563,26 +527,6 @@ decide what to trust:
 | A repository refuses to write | A remote-URL mismatch, a different `projectId` for the same directory, a sibling worktree with conflicting metadata, or an unreadable sibling. The refusal names the reason and leaves the pointer exactly as it was — it never repairs or replaces one. | `mem_admin(action="bind", mode="show")` reports the situation; `mode="retain"` or `mode="fork"` is the explicit fix. A stale worktree needs `git worktree prune`. |
 | A plain directory stays read-only | It is not inside a Git repository, so the plugin will not add it to long-term memory on its own — an implicit first write binds Git repositories only. | `mem_admin(action="bind", mode="local")` to bind it explicitly; the binding is live for the same session. |
 | Memory is silently absent for a session | Any non-`bound` resolution means "no memory for this session" — by design, it never throws and never guesses. Reads never bind a repository, and a Git repository with no pointer is bound by its first write; a repository whose pointer or registry the plugin refuses to trust stays unbound until that is resolved. | Check `mem_admin(action="projects")` and the pointer file, then write once (a Git repository) or run `mem_admin(action="bind", mode="local")` (any directory) — both take effect in the same session. |
-
----
-
-## DSH plugin conventions
-
-There is no central DSH plugin schema. What exists is a set of conventions that
-first-party packages and other third-party plugins already follow. This is the set
-this package chose to follow, with the evidence named so you can re-check it rather
-than trust this file.
-
-| Convention | How this package follows it | Who reads it |
-|---|---|---|
-| Bundle patch | `package.json` → `"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }`. The patch inserts one row, `{ id: obsidian-mem, name: dsh-obsidian-mem }`, naming the package bare | DSH boot and `--dump-config`, through one shared patch algorithm. A listed bundle that declares no patch is a hard boot failure (`dsh-app-boot`: *declares no dsh.bundle in its package.json*), and a dependency without one installs as a plain package instead of a profile layer. |
-| ESM entry | `"type": "module"`, a resolvable `main`, and a non-empty `version` | The Cordis plugin loader. A missing `version` throws (*must declare a non-empty version*). |
-| Install spec | `dsh plugin --profile <p> add github:bonerush/dsh-obsidian-mem` — or `link:$PWD` while working from a checkout | `dsh plugin`. The harness's own plugin search prints exactly this `github:` shape and ranks candidates by stars on the topic below. |
-| Discovery topic | the GitHub repository carries the `dsh-plugin` topic | The harness's plugin search — it describes itself as a *live GitHub `dsh-plugin` topic search, ranked by stars*. The curated list behind [awesome-dsh-plugin.com](https://awesome-dsh-plugin.com) is a pull request against that list, not a manifest field. |
-| Compatibility | `engines.node` (a measured floor), `engines.dsh`, and optional `@deepseek-ai/*` peers | Registry and market tooling; the market reads `engines.dsh` from `package.json`. DSH core reads none of it, as [Requirements](#requirements) records. |
-| Registry metadata | `dsh.plugin.json` (`id`, `version`, `main`, `description`, `engines.dsh`, `contributes`) | Nothing in DSH core, and nothing validates it: it is a published convention, shipped because registry tooling expects the file. Here `prepack` is what keeps it honest — it fails when the manifest disagrees with `package.json` on version, identity or entry point. |
-| Portable skill | `skills/obsidian-mem/SKILL.md`, in the Agent Skills format, synced into `$DSH_HOME/skills/` at activation | Any harness that reads Agent Skills. Nothing in the skill is DSH-specific. |
-| Bilingual docs | `README.md` (English) and `README.zh.md` (Chinese) carry equal authority; `README.i18n.yaml` records the git blob hash of each side as of the last confirmed-consistent state | GitHub and npm readers. Measured in one installed harness: of 240 packages under `@deepseek-ai/`, 231 ship all three files, and the eight that are English-only are vendored upstream packages (`cordis`, `schemastery`, `cosmokit`, `cordis-plugin-*`). |
 
 ---
 

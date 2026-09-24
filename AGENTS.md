@@ -85,9 +85,12 @@ Never point a test, a probe or a manual run at `~/Documents/knowledge`, at
    untested. If you want to move the floor, measure it first and say what you
    measured — do not round a guess into a guarantee.
 6. **A claim needs evidence in this repository.** If something was not run, it is
-   written as unverified, not as passing. `README.md` has a "Not verified"
-   section and `CHANGELOG.md` carries the same list; keep both honest when you
-   land work, and move an item out only with a command and its output.
+   written as unverified, not as passing, and an item moves out of the untested
+   list only with a command and its output. That list lives in `CHANGELOG.md` —
+   `0.1.0`'s *Known limitations and remaining risks*, plus every Unreleased entry
+   — and no longer in the README, which carries the boundaries a reader needs
+   before enabling writes and says plainly that it is not exhaustive. Keep the
+   changelog honest when you land work.
 7. **The README pair moves together.** `README.md` and `README.zh.md` carry equal
    authority, so one commit edits both or neither. `README.i18n.yaml` records the
    git blob hash of each side as of the last confirmed-consistent state; after

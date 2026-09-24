@@ -13,15 +13,13 @@ is a repository, not a release.
 
 ### Added
 
-- **The package now declares itself the way the ecosystem does, and the
-  conventions are documented rather than assumed.** `package.json` gains
-  `keywords`, `repository`, `homepage`, `bugs` and `engines.dsh` — the position
-  the plugin market reads. The GitHub repository carries the `dsh-plugin` topic
-  that the harness's own plugin search queries. The install instructions lead
-  with the ecosystem's `github:bonerush/dsh-obsidian-mem` spec instead of a local
-  checkout, and `README.md` has a new "DSH plugin conventions" section listing the
-  eight conventions this package follows with the evidence for each. Nothing
-  about the plugin's runtime behaviour changed; `engines.node` is untouched.
+- **The package now declares itself the way the ecosystem does.** `package.json`
+  gains `keywords`, `repository`, `homepage`, `bugs` and `engines.dsh` — the
+  position the plugin market reads. The GitHub repository carries the
+  `dsh-plugin` topic that the harness's own plugin search queries. The install
+  instructions lead with the ecosystem's `github:bonerush/dsh-obsidian-mem` spec
+  instead of a local checkout. Nothing about the plugin's runtime behaviour
+  changed; `engines.node` is untouched.
   Measured end to end against the published repository: in a throwaway
   `DSH_HOME`, `dsh plugin --profile memcheck add
   github:bonerush/dsh-obsidian-mem` resolves to
@@ -36,8 +34,8 @@ is a repository, not a release.
   under `@deepseek-ai/`, the 231 that ship a README ship all three files, and the
   eight English-only ones are vendored upstream packages (`cordis`,
   `schemastery`, `cosmokit`, `cordis-plugin-*`). The translation is not reviewed
-  by a native reader; that is listed in the README's "Not verified" section and in
-  the list at the end of this file.
+  by a native reader; that stays listed in the untested inventory at the end of
+  this file.
 - **The repository is public at
   <https://github.com/bonerush/dsh-obsidian-mem>.** This is the project's remote;
   `main` is the published history. It remains unpublished to npm and untagged.
@@ -54,6 +52,20 @@ is a repository, not a release.
   illustrating is unchanged and still enforced — no script in this repository
   edits a user's configuration, and `prepack` stays a read-only verifier
   (`AGENTS.md` rule 1).
+- **The README no longer carries the "DSH plugin conventions" table.** The eight
+  conventions are unchanged and still followed — the bundle patch, the ESM entry,
+  the `github:` install spec, the `dsh-plugin` topic, `engines.dsh`, the registry
+  manifest, the portable skill and the bilingual pair. What is gone is the table
+  that named them in one place, so the measurements it cited are kept here rather
+  than lost: nothing in an installed harness reads `engines.dsh`, and 231 of the
+  240 packages under `@deepseek-ai/` ship the three-file bilingual README set.
+- **The README no longer carries a "Not verified" list.** The list was cut to keep
+  the landing page short; no item on it stopped being true. The untested inventory
+  now lives only in this changelog — the `Not verified:` bullets under `0.1.0`'s
+  *Known limitations and remaining risks*, plus every Unreleased entry — and the
+  README now says plainly that its boundaries are what it writes down rather than
+  a complete set. `AGENTS.md` rule 6 keeps the requirement and names this file as
+  the list's home.
 
 ### Fixed
 
