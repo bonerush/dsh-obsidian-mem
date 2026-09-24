@@ -238,34 +238,6 @@ with an error that says the field was dropped by design.
 
 ---
 
-## Disabling Hindsight (a manual step)
-
-This plugin and Hindsight both want to be the memory layer, and having two of
-them is confusing. Switching Hindsight off is **your** edit, applied by hand.
-Nothing in this repository will do it for you, and `npm run prepack` never writes
-to a config file.
-
-Append to `$DSH_HOME/cordis.patch.yml` (usually `~/.dsh/cordis.patch.yml`),
-**keeping every row that is already in the file** — it is a patch layer, and
-replacing it disables things you did not mean to touch:
-
-```yaml
-- id: hindsight
-  disabled: true
-```
-
-Then confirm and restart:
-
-```sh
-dsh --profile web --dump-config | grep -n hindsight      # expect "disabled: true"
-```
-
-Restart `dsh web` afterwards and start a new session, so no old session keeps a
-live Hindsight instance while the new one runs without it. To go back, delete
-those two lines and restart again.
-
----
-
 ## Using it
 
 ### The six tools

@@ -42,6 +42,19 @@ is a repository, not a release.
   <https://github.com/bonerush/dsh-obsidian-mem>.** This is the project's remote;
   `main` is the published history. It remains unpublished to npm and untagged.
 
+### Removed
+
+- **The README no longer explains how to disable another memory plugin.** The
+  step-by-step walkthrough that named one specific third-party plugin — and told
+  readers to append a row to their own `$DSH_HOME/cordis.patch.yml` — is gone from
+  both language sides, and no shipped document names that plugin any more. It read
+  as though this plugin needed that done before it would work. It does not: this
+  plugin mounts one row, requires nothing of what else is mounted, and does not
+  care which other memory layer is present. The constraint the section was
+  illustrating is unchanged and still enforced — no script in this repository
+  edits a user's configuration, and `prepack` stays a read-only verifier
+  (`AGENTS.md` rule 1).
+
 ### Fixed
 
 - **The queue worker no longer reports the host's shutdown as a caller

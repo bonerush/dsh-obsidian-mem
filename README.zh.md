@@ -224,32 +224,6 @@ dsh --profile web --dump-config | grep -n obsidian-mem
 
 ---
 
-## 禁用 Hindsight（一个手动步骤）
-
-本插件和 Hindsight 都想当记忆层，两个同时存在只会让人困惑。关掉 Hindsight 是
-**你自己**的改动，需要手工应用。本仓库里没有任何东西会替你做这件事，
-`npm run prepack` 也从不写配置文件。
-
-往 `$DSH_HOME/cordis.patch.yml`（通常是 `~/.dsh/cordis.patch.yml`）里追加，
-**保留文件里已有的每一行**——它是一个 patch 层，替换掉它就会禁用你本不想碰的东
-西：
-
-```yaml
-- id: hindsight
-  disabled: true
-```
-
-然后确认并重启：
-
-```sh
-dsh --profile web --dump-config | grep -n hindsight      # expect "disabled: true"
-```
-
-之后重启 `dsh web` 并新建会话，免得旧会话还持有一个活着的 Hindsight 实例，而新会
-话已经不带它运行。要回退就删掉那两行，再重启一次。
-
----
-
 ## 使用
 
 ### 六个工具

@@ -4,10 +4,16 @@ This file is for anyone (human or agent) changing this repository. It is *not*
 part of the published package: `package.json`'s `files` allowlist ships `lib/`,
 the portable skill, the two manifests, `README.md`, `CHANGELOG.md` and
 `LICENSE`, and deliberately excludes this file, `docs/`, `test/`, `scripts/`,
-`research/` and `scratch/`. Two files ride along without being listed, because
-npm always packs a `README*` at the package root: measured on npm 11.12.1, the
-tarball is 32 files and carries `package/README.zh.md`. `README.i18n.yaml` is
-**not** packed — it is a repository-maintenance record, not package content.
+`research/` and `scratch/`. Two files ride along without being listed, because npm
+packs a root `README*` regardless of `files`: measured on npm 11.12.1 with
+`npm pack --ignore-scripts`, the tarball is 33 files and carries
+`package/README.zh.md` and `package/README.i18n.yaml`.
+
+> An earlier revision of this paragraph said 32 files and that
+> `README.i18n.yaml` was **not** packed. That was wrong: it was inferred from a
+> run made before the file existed. The counts above come from running the pack
+> with both files on disk, and the commit message that introduced the wrong
+> figure is left as it stands rather than rewritten.
 
 ## What this repository is
 
@@ -60,8 +66,11 @@ Never point a test, a probe or a manual run at `~/Documents/knowledge`, at
 
 1. **Never edit a user's configuration.** No script here may add, remove or
    rewrite a row in a real `$DSH_HOME/cordis.patch.yml`, and `prepack` in
-   particular must stay a read-only verifier. The Hindsight change is documented
-   for the user to apply by hand in `README.md`.
+   particular must stay a read-only verifier. Disabling or removing another
+   plugin is the user's edit and not this repository's business: the README
+   deliberately names no other plugin, because doing so was read as a
+   requirement. This plugin requires nothing of the sort — it does not care what
+   else is mounted.
 2. **`prepack` verifies; it does not build.** It runs the suite and
    `scripts/verify-pack.mjs`. It must not launch Obsidian, must not write inside
    a vault, and must not run `npm pack` (that re-enters `prepack`).
