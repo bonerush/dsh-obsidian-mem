@@ -22,6 +22,11 @@ is a repository, not a release.
   checkout, and `README.md` has a new "DSH plugin conventions" section listing the
   eight conventions this package follows with the evidence for each. Nothing
   about the plugin's runtime behaviour changed; `engines.node` is untouched.
+  Measured end to end against the published repository: in a throwaway
+  `DSH_HOME`, `dsh plugin --profile memcheck add
+  github:bonerush/dsh-obsidian-mem` resolves to
+  `dsh-obsidian-mem github:bonerush/dsh-obsidian-mem` and `--dump-config` then
+  prints the `obsidian-mem` row.
 - **`README.zh.md`, a Chinese README that carries equal authority with the
   English one.** It follows the convention the first-party packages use:
   the `[English](README.md) | 中文` switcher, an explicit `<a id="…">` for every

@@ -92,6 +92,10 @@ unset DSH_HOME
 并叠加它的 `cordis.patch.yml`——正是它挂载了 `obsidian-mem` 这一行。如果
 `--dump-config` 里看不到这一行，就到此为止。
 
+上面的输出是实测结果，不是示意：在已发布的仓库上，这条命令解析成
+`dsh-obsidian-mem github:bonerush/dsh-obsidian-mem`，`--dump-config` 打印的就是那
+三行。
+
 想固定到某个版本就用 `github:bonerush/dsh-obsidian-mem#<commit>`。harness 自带的
 插件搜索打印的是同样的命令形状，给的建议也一样——第三方插件就是你要运行的代码，所以
 先读源码、再固定版本。

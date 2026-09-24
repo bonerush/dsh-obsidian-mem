@@ -97,6 +97,10 @@ unset DSH_HOME
 installs the package and layers its `cordis.patch.yml`, which is what mounts the
 `obsidian-mem` row. If `--dump-config` shows no such row, stop here.
 
+The output above is measured, not illustrative: against the published repository
+the command resolves to `dsh-obsidian-mem github:bonerush/dsh-obsidian-mem` and
+`--dump-config` prints the three lines shown.
+
 Pin a revision when you want a fixed one: `github:bonerush/dsh-obsidian-mem#<commit>`.
 The harness's own plugin search prints the same command shape and gives the same
 advice — a third-party plugin is code you run, so review it and pin it.
