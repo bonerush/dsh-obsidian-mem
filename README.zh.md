@@ -27,7 +27,9 @@ repository                                vault (~/Documents/dsh-memory)
 
 - **协议层**（仓库布局、`.obsidian-mem` 指针文件、笔记 frontmatter、蒸馏输出契
   约）是纯 Markdown，与 DSH 无关。随包发布的技能 `skills/obsidian-mem/SKILL.md`
-  遵循 Agent Skills 格式，所以在别的 harness 里也能用。
+  遵循 Agent Skills 格式，所以在别的 harness 里也能用——[`codex/`](./codex/README.md)
+  把这份协议**连同同样那六个操作**装进 Codex CLI，走的是一个复用 `lib/`（而不是复
+  制一份）的 MCP server。
 - **适配层**是 DSH 专属的：六个 `mem_*` 工具、会话第一步的一次带预算的召回注入、
   一个放在仓库之外的 `node:sqlite` 搜索索引，以及对已完成回合的自动蒸馏。
 

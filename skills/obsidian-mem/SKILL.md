@@ -210,14 +210,15 @@ original result instead of a duplicate note.
 | `mem_write` | `type`, `title`, `body` (all required), `tags`, `status`, `confidence`, `assertion`, `supersedes`, `id`, `idempotencyKey` | Creates a note at the routed destination and updates the MOC, receipts and index transactionally. **Without `id` it always creates a new note; to update, you must pass the existing `id`.** `supersedes` is validated against the old note's id. |
 | `mem_log` | `text` (required), `session`, `section`, `idempotencyKey` | Appends one entry to today's log, idempotently per session. `section: hot` (or 强约束/进行中/已完成) updates that controlled hot zone instead; if it would exceed the hot capacity it archives first or refuses. |
 | `mem_brief` | — | Returns the current hot brief — the same text injected at session start — so you can re-read or check the budget. |
-| `mem_admin` | `action` (required: `lint`\|`index`\|`bind`\|`projects`\|`promote`\|`jobs`), `path`, `rebuild`, `mode`, `jobId`, `retry` | Low-frequency maintenance. `lint` is read-only unless a report is explicitly requested; `index` rebuilds the search index; `bind mode=show` reports the binding without writing; `projects` lists registered projects; `promote` copies a note into `Methods/` keeping its source link; `jobs` inspects and explicitly retries failed background jobs. |
+| `mem_admin` | `action` (required: `lint`\|`index`\|`bind`\|`projects`\|`promote`\|`jobs`), `path`, `rebuild`, `mode`, `jobId`, `retry`, `report`, `prune` | Low-frequency maintenance. All six actions are implemented. `lint` is read-only unless a report is explicitly requested (`report: true`); `index` rebuilds the search index; `bind mode=show` reports the binding without writing; `projects` lists registered projects; `promote` copies a note into `Methods/` keeping its source link; `jobs` inspects and explicitly retries failed background jobs. |
 
 Working rules:
 
-- A maintenance action that this build has not implemented answers with an
-  explicit `not-ready-in-p1` status instead of a faked result. Read that as "not
-  implemented here", never as "nothing to do"; do not substitute a hand edit for
-  a missing maintenance action.
+- An action that cannot answer yet says so instead of faking a result: `mem_brief`
+  returns `status: 'unbound'` for a repository with no binding, and an index-backed
+  search raises `index-not-ready` until the first scan finishes. Read those as
+  "there is nothing to report from here", never as "there is nothing to remember";
+  do not substitute a hand edit for a maintenance action.
 - **Prefer `mem_search` → `mem_read` over guessing.** The vault is the source of
   truth for project decisions, conventions and gotchas; the conversation is not.
 - When a plugin tool refuses a write (human-owned file, no ownership record, a

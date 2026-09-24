@@ -13,6 +13,25 @@ is a repository, not a release.
 
 ### Added
 
+- **The memory layer now runs under Codex CLI, through an MCP server that reuses
+  `lib/` instead of copying it.** `codex/server.mjs` speaks MCP on stdio and
+  dispatches the same six operations the DSH tools expose —
+  `mem_search`/`mem_read`/`mem_write`/`mem_log`/`mem_brief`/`mem_admin` — to the
+  same `createMemoryServices()`; the argument schemas are derived from
+  `TOOL_PARAMETERS` and the names from `TOOL_NAMES`, so the two surfaces cannot
+  drift apart. A local marketplace (`codex/marketplace/`) ships a Codex edition of
+  the skill plus the generated `.mcp.json`, installed with
+  `codex plugin marketplace add` and `codex plugin add`; `codex/README.md`
+  documents the lighter `codex mcp add` variant. **What does not carry over is
+  stated rather than implied**: there is no distillation of finished turns and no
+  recall injection, because MCP offers tools and not turn boundaries. Measured end
+  to end in `test/codex-mcp.test.js` (6 cases): a real stdio handshake, a write and
+  a search against a throwaway vault, plus the one seam that would otherwise bind
+  the wrong project — the working directory comes from the client's `roots/list`,
+  not from the plugin directory Codex launches the server in. That seam also
+  produced the bug the test now pins: awaiting the `roots/list` answer inside the
+  `initialize` handler deadlocks the serialised message queue, because the answer
+  is itself a queued message.
 - **The package now declares itself the way the ecosystem does.** `package.json`
   gains `keywords`, `repository`, `homepage`, `bugs` and `engines.dsh` — the
   position the plugin market reads. The GitHub repository carries the
@@ -104,6 +123,15 @@ is a repository, not a release.
 
 ### Fixed
 
+- **The shipped skill no longer claims a `not-ready-in-p1` status the code cannot
+  produce.** All six `mem_admin` actions were implemented in Task 17 and
+  `test/tools.test.js` asserts the marker is absent from a result; the sentence
+  survived in `skills/obsidian-mem/SKILL.md` and was copied into the new Codex
+  edition before anyone re-read it. Both now name the two real "cannot answer yet"
+  shapes — `mem_brief` answers `status: 'unbound'` for an unbound repository, and
+  an index-backed search raises `index-not-ready` until the first scan finishes —
+  and both list `report`/`prune` among `mem_admin`'s arguments, which they had also
+  omitted.
 - **The queue worker no longer reports the host's shutdown as a caller
   cancellation.** DSH disposes the whole plugin tree when a headless run's
   session completes; the worker's fiber disposer ran `controller.abort()` inside

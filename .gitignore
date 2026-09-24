@@ -6,5 +6,10 @@ scratch/
 node_modules/
 *.tgz
 
+# Codex 侧生成的 MCP 声明：内容是本机的绝对路径（Codex 会把插件复制进
+# ~/.codex/plugins/cache/，相对路径在复制后就失效了）。由
+# `node codex/prepare.mjs` 生成，不进版本库，也不该手工编辑。
+codex/marketplace/plugins/dsh-obsidian-mem/.mcp.json
+
 # 系统噪声
 .DS_Store

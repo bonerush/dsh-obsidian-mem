@@ -4,9 +4,9 @@ This file is for anyone (human or agent) changing this repository. It is *not*
 part of the published package: `package.json`'s `files` allowlist ships `lib/`,
 the portable skill, the two manifests, `README.md`, `CHANGELOG.md` and
 `LICENSE`, and deliberately excludes this file, `docs/`, `test/`, `scripts/`,
-`research/` and `scratch/`. Two files ride along without being listed, because npm
-packs a root `README*` regardless of `files`: measured on npm 11.12.1 with
-`npm pack --ignore-scripts`, the tarball is 33 files and carries
+`codex/`, `research/` and `scratch/`. Two files ride along without being listed,
+because npm packs a root `README*` regardless of `files`: measured on npm 11.12.1
+with `npm pack --ignore-scripts`, the tarball is 33 files and carries
 `package/README.zh.md` and `package/README.i18n.yaml`.
 
 > An earlier revision of this paragraph said 32 files and that
@@ -38,6 +38,11 @@ could read.
   `ctx.llm`.
 - `docs/superpowers/{specs,plans}/` — the frozen design and the task plan.
 - `test/` — `node --test` only, no test framework.
+- `codex/` — the Codex CLI adapter. An MCP server that imports `lib/` rather than
+  copying it, a Codex edition of the portable skill, and a local marketplace so
+  `codex plugin add` installs both. It is the *second* entry point into `lib/`,
+  which is why `test/codex-mcp.test.js` pins the tool surface against
+  `TOOL_NAMES`/`TOOL_PARAMETERS`. Not shipped.
 - `scripts/verify-pack.mjs` — the pack verifier `prepack` runs.
 - `research/`, `scratch/` — investigation output. Not shipped, not authoritative.
 

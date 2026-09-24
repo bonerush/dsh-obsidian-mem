@@ -29,7 +29,9 @@ Two layers, on purpose:
 - **Protocol** (vault layout, the `.obsidian-mem` pointer, note frontmatter, the
   distillation output contract) is plain Markdown and is not DSH-specific. The
   shipped skill `skills/obsidian-mem/SKILL.md` follows the Agent Skills format,
-  so it works in another harness too.
+  so it works in another harness too — [`codex/`](./codex/README.md) installs that
+  protocol *and* the same six operations into Codex CLI, through an MCP server that
+  reuses `lib/` rather than copying it.
 - **Adapter** is DSH-specific: six `mem_*` tools, one budgeted recall injection at
   the first step of a session, a `node:sqlite` search index kept outside the
   vault, and automatic distillation of completed turns.
