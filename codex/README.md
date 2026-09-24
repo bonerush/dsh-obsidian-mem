@@ -58,6 +58,17 @@ The test file drives the server as a subprocess with a throwaway `DSH_HOME`,
 vault, home directory and git repository, so it never touches your vault, your
 `~/.dsh` or `~/.codex`.
 
+**What is verified, and what is not.** Verified on this machine: the marketplace
+and the plugin install (`codex plugin list` reports `installed, enabled`), the
+plugin materialises with its skill and `.mcp.json` intact, `codex mcp list` shows
+the `obsidian-mem` server `enabled` with the generated command and environment,
+and the server's protocol, tool surface and a real write-then-search round-trip
+pass over stdio (`npm test` → 572 cases). **Not verified: that a live Codex turn
+actually calls one of these tools.** A turn needs a model the account can run, and
+this machine's Codex CLI rejects both the configured `gpt-6-sol` and `gpt-5-codex`
+with `not supported when using Codex with a ChatGPT account` before a tool is ever
+reached. Registration and protocol are proven; the model call is not.
+
 ## Where the data goes
 
 | What | Default | Override |
