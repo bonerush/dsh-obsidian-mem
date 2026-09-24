@@ -45,7 +45,7 @@ const REQUIRED = Object.freeze({
 })
 
 const SAMPLE_ID = 'doc-11111111-1111-4111-8111-111111111111'
-const SAMPLE_PATH = '项目/demo--1c392abb/文档/样例.md'
+const SAMPLE_PATH = 'Projects/demo--1c392abb/Docs/样例.md'
 
 /** A receipt-shaped value the `write`/`log` stubs can return without a vault. */
 function sampleReceipt(action) {
@@ -83,7 +83,7 @@ const adminResult = (action) => {
       action,
       result: {
         projectId: '1c392abb-7b08-42f7-871d-2a379caf9448',
-        relativeDir: '项目/demo--1c392abb',
+        relativeDir: 'Projects/demo--1c392abb',
         generatedAt: '2026-09-24T00:00:00.000Z',
         readOnly: true,
         total: 0,
@@ -103,7 +103,7 @@ const adminResult = (action) => {
   return {
     action,
     result: action === 'promote'
-      ? { source: SAMPLE_PATH, moved: false, id: SAMPLE_ID, path: '方法/样例.md', receipt: sampleReceipt('write') }
+      ? { source: SAMPLE_PATH, moved: false, id: SAMPLE_ID, path: 'Methods/样例.md', receipt: sampleReceipt('write') }
       : { status: 'listed', jobs: [], failed: 0, message: null },
   }
 }

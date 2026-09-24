@@ -29,7 +29,7 @@ const BUDGET = 6000
 const HOT_CAPACITY = 9000
 /** Fixed, valid UUIDv4 identity (version nibble `4`, variant nibble `8`). */
 const PROJECT_ID = '1c392abb-7b08-42f7-871d-2a379caf9448'
-const RELATIVE_DIR = `项目/demo--${PROJECT_ID.slice(0, 8)}`
+const RELATIVE_DIR = `Projects/demo--${PROJECT_ID.slice(0, 8)}`
 /** The shape a §6.1 hot entry id must have to be stable identity. */
 const HOT_ID_PATTERN = /^hot-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
@@ -318,10 +318,10 @@ test('under truncation the budget goes to higher-priority blocks first', async (
   // section, so "section included" and "marker present" mean the same thing.
   const hubLines = Array.from(
     { length: 10 },
-    (_x, index) => `- [[${RELATIVE_DIR}/文档/${'很长的链接目标'.repeat(3)}-${index}|补齐-hub-${String(index).padStart(2, '0')}-${'细节'.repeat(20)}]]`,
+    (_x, index) => `- [[${RELATIVE_DIR}/Docs/${'很长的链接目标'.repeat(3)}-${index}|补齐-hub-${String(index).padStart(2, '0')}-${'细节'.repeat(20)}]]`,
   )
-  await writeVaultNote(env, `${RELATIVE_DIR}/index.md`, `# Demo Project\n\n## 优先级测试\n\n- [[${RELATIVE_DIR}/文档/优先级测试|优先级-hub]]\n${hubLines.join('\n')}\n`)
-  await writeVaultNote(env, `${RELATIVE_DIR}/约定/index.md`, `# 约定\n\n## 条目\n\n- [[${RELATIVE_DIR}/约定/优先级-约定|优先级-约定]]\n- [[${RELATIVE_DIR}/约定/补齐-约定|补齐-约定]]\n`)
+  await writeVaultNote(env, `${RELATIVE_DIR}/index.md`, `# Demo Project\n\n## 优先级测试\n\n- [[${RELATIVE_DIR}/Docs/优先级测试|优先级-hub]]\n${hubLines.join('\n')}\n`)
+  await writeVaultNote(env, `${RELATIVE_DIR}/Conventions/index.md`, `# 约定\n\n## 条目\n\n- [[${RELATIVE_DIR}/Conventions/优先级-约定|优先级-约定]]\n- [[${RELATIVE_DIR}/Conventions/补齐-约定|补齐-约定]]\n`)
   await addNote(env, 'decision', '优先级-决策', '决策正文：只做一件小事。\n', { now: new Date('2026-09-20T09:00:00') })
   await writeUserMemory(env, `- 优先级-偏好-${'内容'.repeat(700)}\n`)
 
@@ -368,7 +368,7 @@ test('truncation drops whole blocks: no half link and no half fact ever reaches 
   const hub = await readFile(at(env.vault, `${RELATIVE_DIR}/index.md`), 'utf8')
   const longLines = Array.from(
     { length: 12 },
-    (_x, index) => `- [[${RELATIVE_DIR}/文档/${'很长的链接目标'.repeat(3)}-${index}|块边界-hub-${String(index).padStart(2, '0')}-${'细节'.repeat(20)}]]`,
+    (_x, index) => `- [[${RELATIVE_DIR}/Docs/${'很长的链接目标'.repeat(3)}-${index}|块边界-hub-${String(index).padStart(2, '0')}-${'细节'.repeat(20)}]]`,
   )
   await writeVaultNote(env, `${RELATIVE_DIR}/index.md`, `${hub}\n## 块边界\n\n${longLines.join('\n')}\n`)
   await writeUserMemory(env, `${Array.from({ length: 12 }, (_x, index) => `- 块边界-偏好-${String(index).padStart(2, '0')}-${'内容'.repeat(15)}`).join('\n')}\n`)
@@ -452,7 +452,7 @@ test('cold-log bodies and note bodies stay out of the brief', async (t) => {
   await addNote(env, 'convention', '一条事实一文件', '约定正文：约定正文不得展开。\n')
   await writeVaultNote(
     env,
-    `${RELATIVE_DIR}/日志/2026-09-23.md`,
+    `${RELATIVE_DIR}/Daily/2026-09-23.md`,
     '---\nid: "log-11111111-1111-4111-8111-111111111111"\ntype: "session-log"\ntitle: "2026-09-23"\n---\n\n# 2026-09-23\n\n## 会话\n\n日志全文：冷层绝不注入。\n',
   )
 
@@ -470,8 +470,8 @@ test('cold-log bodies and note bodies stay out of the brief', async (t) => {
   assert.ok(built.text.includes('调度器改为可插拔后端'))
   assert.ok(built.text.includes('FTS5 在旧 Node 上不可用'))
   assert.ok(built.text.includes('一条事实一文件'))
-  assert.ok(built.text.includes(`${RELATIVE_DIR}/决策/`))
-  assert.ok(built.text.includes(`${RELATIVE_DIR}/约定/一条事实一文件`))
+  assert.ok(built.text.includes(`${RELATIVE_DIR}/Decisions/`))
+  assert.ok(built.text.includes(`${RELATIVE_DIR}/Conventions/一条事实一文件`))
 })
 
 test('the convention index carries only the entries that are still in effect', async (t) => {
@@ -480,10 +480,10 @@ test('the convention index carries only the entries that are still in effect', a
   await addNote(env, 'convention', '已经作废的约定', '正文\n', { request: { status: 'superseded' } })
   // A hand-written short link the plugin cannot resolve as a vault-relative path
   // stays in the outline: it is still navigation, and nothing proves it stale.
-  const moc = await readFile(at(env.vault, `${RELATIVE_DIR}/约定/index.md`), 'utf8')
+  const moc = await readFile(at(env.vault, `${RELATIVE_DIR}/Conventions/index.md`), 'utf8')
   await writeVaultNote(
     env,
-    `${RELATIVE_DIR}/约定/index.md`,
+    `${RELATIVE_DIR}/Conventions/index.md`,
     moc.replace('<!-- obsidian-mem:generated end -->', '\n- [[短链约定]]\n<!-- obsidian-mem:generated end -->'),
   )
 

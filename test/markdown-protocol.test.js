@@ -38,7 +38,7 @@ const ID1 = '1c392abb-7b08-42f7-871d-2a379caf9448'
 /** sha256 hex — the optimistic-concurrency token `patchOwnedFields` enforces. */
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 /** A relative directory shaped like R4, used to place fixtures inside a vault. */
-const PROJECT_DIR = `项目/alpha--${ID1.slice(0, 8)}`
+const PROJECT_DIR = `Projects/alpha--${ID1.slice(0, 8)}`
 
 async function tempRoot(t) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t6-'))
@@ -253,7 +253,7 @@ test('parseNote refuses a fragment line as the closing marker when the caller sa
 test('a preflight head cut exactly at a would-be closing marker is refused, not parsed', async (t) => {
   const root = await tempRoot(t)
   const vault = join(root, 'vault')
-  await mkdir(at(vault, '方法'), { recursive: true })
+  await mkdir(at(vault, 'Methods'), { recursive: true })
 
   // The head ends exactly after `---`, but the real line continues with `xyz`:
   // re-deriving `truncated` from the buffer length would accept the fragment,
@@ -261,7 +261,7 @@ test('a preflight head cut exactly at a would-be closing marker is refused, not 
   const opening = '---\nid: "a"\n'
   const filler = `note: ${'x'.repeat(FRONTMATTER_SCAN_LIMIT - Buffer.byteLength(opening) - 'note: '.length - 1 - 3)}`
   assert.equal(Buffer.byteLength(`${opening}${filler}\n---`), FRONTMATTER_SCAN_LIMIT, 'the window must end inside the marker')
-  await writeFile(at(vault, '方法/片段.md'), `${opening}${filler}\n---xyz\nmore\n`)
+  await writeFile(at(vault, 'Methods/片段.md'), `${opening}${filler}\n---xyz\nmore\n`)
 
   const result = await validateKnownPropertyTypes(vault, { home: root })
   assert.equal(result.conflicts.length, 1, JSON.stringify(result.conflicts))
@@ -659,37 +659,37 @@ test('bootstrap refuses a vault note whose frontmatter cannot be trusted', async
 test('validateKnownPropertyTypes passes a clean vault and reports each conflict kind', async (t) => {
   const root = await tempRoot(t)
   const vault = join(root, 'vault')
-  await mkdir(at(vault, '方法'), { recursive: true })
-  await writeFile(at(vault, '方法/index.md'), '---\ntype: "hub"\ntags: ["dsh-mem/hub"]\nproject: null\ncreated: 2026-09-23\nconfidence: null\n---\nBody\n')
+  await mkdir(at(vault, 'Methods'), { recursive: true })
+  await writeFile(at(vault, 'Methods/index.md'), '---\ntype: "hub"\ntags: ["dsh-mem/hub"]\nproject: null\ncreated: 2026-09-23\nconfidence: null\n---\nBody\n')
   await writeFile(at(vault, '说明.txt'), 'tags: foo\n')
   const clean = await validateKnownPropertyTypes(vault, { home: root })
   assert.deepEqual(clean.conflicts, [])
   assert.equal(clean.scanned, 1)
 
-  await writeFile(at(vault, '方法/坏了.md'), '---\ntitle: 2026\n---\nBody\n')
+  await writeFile(at(vault, 'Methods/坏了.md'), '---\ntitle: 2026\n---\nBody\n')
   const broken = await validateKnownPropertyTypes(vault, { home: root })
   assert.equal(broken.conflicts.length, 1)
   assert.equal(broken.conflicts[0].reason, 'type-conflict')
   assert.equal(broken.conflicts[0].key, 'title')
   assert.equal(broken.conflicts[0].expected, 'text')
-  assert.equal(broken.conflicts[0].path, '方法/坏了.md')
+  assert.equal(broken.conflicts[0].path, 'Methods/坏了.md')
 })
 
 test('the preflight never reads past the 64 KiB frontmatter window', async (t) => {
   const root = await tempRoot(t)
   const vault = join(root, 'vault')
-  await mkdir(at(vault, '方法'), { recursive: true })
+  await mkdir(at(vault, 'Methods'), { recursive: true })
 
   // closing marker beyond the window: a full scan would find it and succeed
   const filler = '长'.repeat(Math.ceil((FRONTMATTER_SCAN_LIMIT + 4096) / 3))
-  await writeFile(at(vault, '方法/晚.md'), `---\nid: "x"\nnote: ${filler}\n---\nBody\n`)
+  await writeFile(at(vault, 'Methods/晚.md'), `---\nid: "x"\nnote: ${filler}\n---\nBody\n`)
   const late = await validateKnownPropertyTypes(vault, { home: root })
   assert.equal(late.conflicts.length, 1, JSON.stringify(late.conflicts))
   assert.equal(late.conflicts[0].reason, 'frontmatter-beyond-scan-limit')
 
-  await rm(at(vault, '方法/晚.md'))
+  await rm(at(vault, 'Methods/晚.md'))
   // a huge body after an early closing marker is fine and is never read whole
-  await writeFile(at(vault, '方法/大.md'), `---\nid: "x"\n---\n${'y'.repeat(200_000)}`)
+  await writeFile(at(vault, 'Methods/大.md'), `---\nid: "x"\n---\n${'y'.repeat(200_000)}`)
   const huge = await validateKnownPropertyTypes(vault, { home: root })
   assert.deepEqual(huge.conflicts, [])
   assert.equal(huge.scanned, 1)
@@ -700,14 +700,14 @@ test('the preflight reports a note it cannot read instead of guessing', async (t
   if (process.getuid?.() === 0) t.skip('root ignores file permissions')
   const root = await tempRoot(t)
   const vault = join(root, 'vault')
-  await mkdir(at(vault, '方法'), { recursive: true })
-  await writeFile(at(vault, '方法/私密.md'), '---\ntags: ["x"]\n---\nBody\n')
-  await chmod(at(vault, '方法/私密.md'), 0o000)
+  await mkdir(at(vault, 'Methods'), { recursive: true })
+  await writeFile(at(vault, 'Methods/私密.md'), '---\ntags: ["x"]\n---\nBody\n')
+  await chmod(at(vault, 'Methods/私密.md'), 0o000)
 
   const result = await validateKnownPropertyTypes(vault, { home: root })
   assert.equal(result.conflicts.length, 1)
   assert.equal(result.conflicts[0].reason, 'unreadable')
-  assert.equal(result.conflicts[0].path, '方法/私密.md')
+  assert.equal(result.conflicts[0].path, 'Methods/私密.md')
 })
 
 test('a bootstrapped vault stays preflight-clean on every later run', async (t) => {

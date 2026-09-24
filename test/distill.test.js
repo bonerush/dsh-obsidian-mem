@@ -198,7 +198,7 @@ test('the brief example: a doc item is refused with a message naming the type', 
 
 test('an item with an extra field is refused (no free-form smuggling)', () => {
   assert.throws(
-    () => validateDistillation(json([{ ...decisionItem(), path: '项目/other--deadbeef/决策/ADR-9.md' }]), JOB, CONFIG),
+    () => validateDistillation(json([{ ...decisionItem(), path: 'Projects/other--deadbeef/Decisions/ADR-9.md' }]), JOB, CONFIG),
     throwsCode('schema'),
   )
   assert.throws(
@@ -261,12 +261,12 @@ test('a supersedesId is null, a plugin-shaped note id, or a foreign target that 
   // A supersede target the plugin would act on but cannot resolve inside this
   // project refuses the ITEM, never the whole turn.
   for (const supersedesId of [
-    '项目/x--ffffffff/决策/ADR-1.md',
+    'Projects/x--ffffffff/Decisions/ADR-1.md',
     '/etc/passwd',
     '~/.dsh/x.md',
     '../secret/notes.md',
     '_meta/user.md',
-    '方法/调度器.md',
+    'Methods/调度器.md',
   ]) {
     assert.deepEqual(validateDistillation(json([decisionItem({ supersedesId })]), JOB, CONFIG), [], supersedesId)
   }
@@ -275,7 +275,7 @@ test('a supersedesId is null, a plugin-shaped note id, or a foreign target that 
   for (const supersedesId of [
     'dec-not-a-uuid',
     '见 ADR-1',
-    `项目/demo--${PROJECT_ID.slice(0, 8)}/决策/ADR-1.md`,
+    `Projects/demo--${PROJECT_ID.slice(0, 8)}/Decisions/ADR-1.md`,
     7,
     true,
     '',
@@ -311,15 +311,15 @@ test('every allowed seq is accepted, and repeated seqs are refused', () => {
 
 /** The path shapes that must never be acted on outside this project. */
 const FOREIGN_PATHS = [
-  '项目/other--deadbeef/决策/ADR-1.md',
-  '项目/x--ffffffff/约定/a.md',
+  'Projects/other--deadbeef/Decisions/ADR-1.md',
+  'Projects/x--ffffffff/Conventions/a.md',
   '/etc/passwd',
   '~/.dsh/data/obsidian-mem/pending/x.json',
   'C:\\Users\\me\\notes.md',
   '../secret/notes.md',
   '_meta/user.md',
-  '_meta/项目注册表.md',
-  '方法/调度器后端.md',
+  '_meta/registry.md',
+  'Methods/调度器后端.md',
 ]
 
 test('prose mentions of foreign or vault-level paths never cost a candidate', () => {
@@ -332,16 +332,16 @@ test('prose mentions of foreign or vault-level paths never cost a candidate', ()
     assert.equal(items.length, 1, mention)
     assert.equal(items[0].body, body)
   }
-  const wikilink = '见 [[项目/other--deadbeef/决策/ADR-1]]'
+  const wikilink = '见 [[Projects/other--deadbeef/Decisions/ADR-1]]'
   assert.equal(onlyItem(json([decisionItem({ body: wikilink })])).body, wikilink)
-  assert.equal(validateDistillation(json([decisionItem({ title: '见 项目/x--ffffffff/约定/a.md' })]), JOB, CONFIG).length, 1)
-  assert.equal(validateDistillation(json([decisionItem({ tags: ['项目/other--deadbeef/决策'] })]), JOB, CONFIG).length, 1)
+  assert.equal(validateDistillation(json([decisionItem({ title: '见 Projects/x--ffffffff/Conventions/a.md' })]), JOB, CONFIG).length, 1)
+  assert.equal(validateDistillation(json([decisionItem({ tags: ['Projects/other--deadbeef/Decisions'] })]), JOB, CONFIG).length, 1)
 })
 
 test('a body that mentions _meta/log.md survives alongside its siblings', () => {
   const raw = json([
     decisionItem({ title: 'a', body: '结论一，记录在 _meta/log.md。' }),
-    decisionItem({ title: 'b', body: '结论二，见 项目/other--deadbeef/决策/ADR-1.md。' }),
+    decisionItem({ title: 'b', body: '结论二，见 Projects/other--deadbeef/Decisions/ADR-1.md。' }),
     decisionItem({ title: 'c', body: '结论三，无路径。' }),
   ])
   assert.deepEqual(validateDistillation(raw, JOB, CONFIG).map((item) => item.title), ['a', 'b', 'c'])
@@ -350,7 +350,7 @@ test('a body that mentions _meta/log.md survives alongside its siblings', () => 
 test('a foreign supersede target drops that item and leaves its siblings', () => {
   const raw = json([
     decisionItem({ title: 'a' }),
-    decisionItem({ title: 'b', supersedesId: '项目/other--deadbeef/决策/ADR-1.md' }),
+    decisionItem({ title: 'b', supersedesId: 'Projects/other--deadbeef/Decisions/ADR-1.md' }),
     decisionItem({ title: 'c' }),
   ])
   assert.deepEqual(validateDistillation(raw, JOB, CONFIG).map((item) => item.title), ['a', 'c'])
@@ -359,7 +359,7 @@ test('a foreign supersede target drops that item and leaves its siblings', () =>
     index: 1,
     reason: 'foreign-target',
     field: 'supersedesId',
-    value: '项目/other--deadbeef/决策/ADR-1.md',
+    value: 'Projects/other--deadbeef/Decisions/ADR-1.md',
   }])
 })
 
@@ -374,7 +374,7 @@ test('every foreign target class drops only its own item', () => {
 })
 
 test('a malformed output is never salvaged by dropping a foreign-target sibling', () => {
-  const dropped = decisionItem({ supersedesId: '项目/x--ffffffff/决策/a.md' })
+  const dropped = decisionItem({ supersedesId: 'Projects/x--ffffffff/Decisions/a.md' })
   assert.throws(() => validateDistillation('not json', JOB, CONFIG), throwsCode('not-json'))
   assert.throws(() => validateDistillation(json([dropped, { type: 'doc' }]), JOB, CONFIG), throwsCode('type'))
   assert.throws(() => validateDistillation(json([dropped, decisionItem({ title: 'bad', evidenceSeqs: [999] })]), JOB, CONFIG), throwsCode('evidence'))
@@ -383,7 +383,7 @@ test('a malformed output is never salvaged by dropping a foreign-target sibling'
 })
 
 test("the job's own project path, a bare tag namespace and a URL are not paths out", () => {
-  const body = `见 项目/demo--${PROJECT_ID.slice(0, 8)}/决策/ADR-1.md 与 https://example.com/docs#x，另见 决策/ADR-2.md`
+  const body = `见 Projects/demo--${PROJECT_ID.slice(0, 8)}/Decisions/ADR-1.md 与 https://example.com/docs#x，另见 Decisions/ADR-2.md`
   const item = onlyItem(json([decisionItem({ body, tags: ['dsh-mem/decision', 'obsidian-mem'] })]))
   assert.equal(item.body, body)
 })
@@ -695,7 +695,7 @@ test('a dropped foreign-target item is reported, and only survivors reach the va
   await writeJobAtomic(queueRoot, jobFixture())
   const raw = json([
     decisionItem({ title: 'a' }),
-    decisionItem({ title: 'b', supersedesId: '项目/other--deadbeef/决策/ADR-1.md' }),
+    decisionItem({ title: 'b', supersedesId: 'Projects/other--deadbeef/Decisions/ADR-1.md' }),
   ])
   const llm = recordingLlm(() => textStream(raw))
   const result = await runPendingJob(jobFixture(), { llm, config: CONFIG, persistOutput })
@@ -705,7 +705,7 @@ test('a dropped foreign-target item is reported, and only survivors reach the va
     index: 1,
     reason: 'foreign-target',
     field: 'supersedesId',
-    value: '项目/other--deadbeef/决策/ADR-1.md',
+    value: 'Projects/other--deadbeef/Decisions/ADR-1.md',
   }])
   const [stored] = await loadPending(queueRoot)
   assert.deepEqual(stored.output.items.map((item) => item.title), ['a'])

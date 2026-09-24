@@ -122,7 +122,7 @@ function registryMarkdown(rows, { link = true } = {}) {
 async function writeRegistry(vault, rows, options) {
   const meta = join(vault, '_meta')
   await mkdir(meta, { recursive: true })
-  await writeFile(join(meta, '项目注册表.md'), registryMarkdown(rows, options))
+  await writeFile(join(meta, 'registry.md'), registryMarkdown(rows, options))
 }
 
 /** Create the project directory a registry row promises, with stable content. */
@@ -157,8 +157,8 @@ test('resolveVaultFile returns an absolute path inside the vault for a nested re
 
 test('resolveVaultFile keeps Unicode path segments intact', async (t) => {
   const { vault, vaultReal } = await fixture(t)
-  const file = await resolveVaultFile(vault, `${PROJECTS_DIR}/演示--1c392abb/决策/第一个决定.md`)
-  assert.equal(file, join(vaultReal, PROJECTS_DIR, '演示--1c392abb', '决策', '第一个决定.md'))
+  const file = await resolveVaultFile(vault, `${PROJECTS_DIR}/演示--1c392abb/Decisions/第一个决定.md`)
+  assert.equal(file, join(vaultReal, PROJECTS_DIR, '演示--1c392abb', 'Decisions', '第一个决定.md'))
 })
 
 test('resolveVaultFile rejects a path that is blank, non-string or empty after normalization', async (t) => {
@@ -727,7 +727,7 @@ test('an unreadable registry pauses binding instead of being treated as empty', 
   await initRepo(repo)
   await writePointer(repo, pointerFor(ID1, { slug: 'alpha', displayName: 'Alpha' }))
   await writeRegistry(vault, [{ projectId: ID1, hub: `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}` }])
-  const registryPath = join(vault, '_meta', '项目注册表.md')
+  const registryPath = join(vault, '_meta', 'registry.md')
 
   await chmod(registryPath, 0o000)
   try {
@@ -747,7 +747,7 @@ test('a symlinked registry path is refused instead of read from outside the vaul
   // A perfectly valid registry living outside the vault: it must never be read.
   const outside = join(root, 'outside-meta')
   await mkdir(outside, { recursive: true })
-  await writeFile(join(outside, '项目注册表.md'), registryMarkdown([{ projectId: ID1, hub }]))
+  await writeFile(join(outside, 'registry.md'), registryMarkdown([{ projectId: ID1, hub }]))
 
   // 1. a symlinked `_meta` directory
   await symlink(outside, join(vault, '_meta'))
@@ -758,7 +758,7 @@ test('a symlinked registry path is refused instead of read from outside the vaul
   // 2. a symlinked registry file inside a real `_meta` directory
   await rm(join(vault, '_meta'))
   await mkdir(join(vault, '_meta'), { recursive: true })
-  await symlink(join(outside, '项目注册表.md'), join(vault, '_meta', '项目注册表.md'))
+  await symlink(join(outside, 'registry.md'), join(vault, '_meta', 'registry.md'))
   const symlinkedFile = await resolveBinding({ cwd: repo, vaultRoot: vault })
   assert.equal(symlinkedFile.kind, 'conflict')
   assert.equal(symlinkedFile.reason, 'registry-symlink')
@@ -769,7 +769,7 @@ const MALFORMED_REGISTRY_ROWS = [
   ['a non-uuid project id', { projectId: 'not-a-uuid', hub: `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}` }],
   ['a traversal hub path', { projectId: ID1, hub: '../../etc' }],
   ['a hub path escaping through ..', { projectId: ID1, hub: `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}/../../..` }],
-  ['a hub path outside 项目/', { projectId: ID1, hub: `方法/alpha--${ID1.slice(0, 8)}` }],
+  ['a hub path outside Projects/', { projectId: ID1, hub: `Methods/alpha--${ID1.slice(0, 8)}` }],
 ]
 
 for (const [label, row] of MALFORMED_REGISTRY_ROWS) {

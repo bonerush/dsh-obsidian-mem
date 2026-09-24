@@ -33,7 +33,7 @@ const BINDING = Object.freeze({
   schema: 1,
   vaultRoot: '/vault',
   repoRoot: CWD,
-  relativeDir: `项目/demo--${PROJECT_ID.slice(0, 8)}`,
+  relativeDir: `Projects/demo--${PROJECT_ID.slice(0, 8)}`,
 })
 
 const CONFIG = Object.freeze({ captureIdleMs: 90000, distill: { maxInputChars: 24000 } })

@@ -3,6 +3,6 @@
 <!-- obsidian-mem:registry begin sha256:0000000000000000000000000000000000000000000000000000000000000000 -->
 | projectId | hub | displayName | remote |
 |---|---|---|---|
-| 1c392abb-7b08-42f7-871d-2a379caf9448 | 项目/alpha--1c392abb/index.md | alpha | |
-| 9f8e7d6c-1a2b-4c3d-8e4f-5a6b7c8d9e0f | 项目/beta--9f8e7d6c/index.md | beta | |
+| 1c392abb-7b08-42f7-871d-2a379caf9448 | Projects/alpha--1c392abb/index.md | alpha | |
+| 9f8e7d6c-1a2b-4c3d-8e4f-5a6b7c8d9e0f | Projects/beta--9f8e7d6c/index.md | beta | |
 <!-- obsidian-mem:registry end -->

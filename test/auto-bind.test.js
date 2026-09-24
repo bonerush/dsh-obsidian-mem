@@ -199,8 +199,8 @@ test('the first mem_write binds a pointerless Git repository and lands the note'
   assert.equal(raw.includes(f.repo), false)
 
   // The skeleton and the registry row are the rest of §5.2's first use.
-  const projectDir = `项目/${pointer.slug}--${pointer.projectId.slice(0, 8)}`
-  assert.match(written.path, new RegExp(`^${projectDir}/文档/`))
+  const projectDir = `Projects/${pointer.slug}--${pointer.projectId.slice(0, 8)}`
+  assert.match(written.path, new RegExp(`^${projectDir}/Docs/`))
   const registry = await readFile(join(f.vault, REGISTRY_RELATIVE_PATH), 'utf8')
   assert.match(registry, new RegExp(pointer.projectId))
   const hub = await readFile(join(f.vault, ...projectDir.split('/'), 'index.md'), 'utf8')
@@ -226,7 +226,7 @@ test('the first mem_log binds a pointerless Git repository too', async (t) => {
   assert.equal(receipt.action, 'log')
   const pointer = JSON.parse((await readPointerBytes(f.repo)).toString('utf8'))
   assert.deepEqual(Object.keys(pointer).sort(), POINTER_KEYS)
-  assert.ok(receipt.paths.some((path) => path.startsWith(`项目/${pointer.slug}--${pointer.projectId.slice(0, 8)}/日志/`)),
+  assert.ok(receipt.paths.some((path) => path.startsWith(`Projects/${pointer.slug}--${pointer.projectId.slice(0, 8)}/Daily/`)),
     `the log landed under the new project: ${JSON.stringify(receipt.paths)}`)
 })
 
@@ -390,9 +390,9 @@ test('a property preflight refusal hands the minted pointer back', async (t) => 
   const f = await fixture(t)
   // An existing vault note whose `tags` is text where §6.4 requires a list: the
   // bootstrap preflight refuses before the first vault write.
-  await mkdir(join(f.vault, '项目', 'x--deadbeef'), { recursive: true })
+  await mkdir(join(f.vault, 'Projects', 'x--deadbeef'), { recursive: true })
   await writeFile(
-    join(f.vault, '项目', 'x--deadbeef', '坏笔记.md'),
+    join(f.vault, 'Projects', 'x--deadbeef', '坏笔记.md'),
     '---\nid: "dec-1"\ntags: foo\n---\nBody\n',
   )
   const { ctx } = await memoryBed(t, f)
@@ -445,7 +445,7 @@ test('a failure after the skeleton is written keeps the identity, and an explici
   // registry row is missing. An explicit bind is the documented repair.
   const bytes = await readPointerBytes(f.repo)
   const pointer = JSON.parse(bytes.toString('utf8'))
-  const projectDir = `项目/${pointer.slug}--${pointer.projectId.slice(0, 8)}`
+  const projectDir = `Projects/${pointer.slug}--${pointer.projectId.slice(0, 8)}`
   await readFile(join(f.vault, ...projectDir.split('/'), '_meta', 'hot.md'), 'utf8')
   await assert.rejects(readFile(join(f.vault, REGISTRY_RELATIVE_PATH)), { code: 'ENOENT' })
 
@@ -479,7 +479,7 @@ test('a pointer minted by another writer since the memoized miss is adopted, not
   const written = value(await call(mine.ctx, 'mem_write', {
     type: 'doc', title: '竞争中的写入', body: '另一进程已经铸出指针。',
   }, { cwd: f.repo }), 'write after the race')
-  assert.match(written.path, /^项目\//)
+  assert.match(written.path, /^Projects\//)
   const pointer = JSON.parse((await readPointerBytes(f.repo)).toString('utf8'))
   assert.equal(pointer.projectId, bound.result.resolution.projectId, 'the adopted identity is the one on disk')
 
@@ -496,8 +496,8 @@ test('an explicit bind that refuses before its first write hands the pointer and
   const f = await fixture(t)
   // The §6.4 property preflight refuses inside `bootstrapVault`, before any vault
   // write: exactly the class of refusal `autoBindProject` releases on.
-  await mkdir(join(f.vault, '项目', 'x--deadbeef'), { recursive: true })
-  await writeFile(join(f.vault, '项目', 'x--deadbeef', '坏笔记.md'), '---\nid: "dec-1"\ntags: foo\n---\nBody\n')
+  await mkdir(join(f.vault, 'Projects', 'x--deadbeef'), { recursive: true })
+  await writeFile(join(f.vault, 'Projects', 'x--deadbeef', '坏笔记.md'), '---\nid: "dec-1"\ntags: foo\n---\nBody\n')
   const { ctx } = await memoryBed(t, f)
 
   const message = refused(await call(ctx, 'mem_admin', { action: 'bind', mode: 'local' }, { cwd: f.repo }), 'explicit bind')

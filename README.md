@@ -15,13 +15,13 @@ the result. Obsidian does not need to be running, and no part of the vault
 depends on DSH.
 
 ```
-repository                          vault (~/Documents/dsh-memory)
-├── .obsidian-mem   ───────────►    └── 项目/<slug>--<projectId 前8位>/
-│     projectId, slug,                    ├── index.md          hub / MOC
-│     displayName, schema: 1              ├── 文档/  决策/  约定/  踩坑/
-└── src/ …                                ├── 日志/YYYY-MM-DD.md
-                                          ├── 收件箱/           待分类
-                                          └── _meta/hot.md      热记忆
+repository                                vault (~/Documents/dsh-memory)
+├── .obsidian-mem   ───────────►          └── Projects/<slug>--<projectId 前8位>/
+│     projectId, slug,                    ├── index.md                hub / MOC
+│     displayName, schema: 1              ├── Docs/  Decisions/  Conventions/  Pitfalls/
+└── src/ …                                ├── Daily/YYYY-MM-DD.md
+                                          ├── Inbox/                  待分类
+                                          └── _meta/hot.md            热记忆
 ```
 
 Two layers, on purpose:
@@ -154,7 +154,7 @@ Start a session in any Git repository and ask, or just check the tools are there
 | Project bound | `mem_admin(action="projects")` reports the resolution. A Git repository with **no** `.obsidian-mem` is bound by its **first write**: `mem_write` or `mem_log` generates the slug, creates the pointer exclusively, bootstraps the skeleton and registers the project, then proceeds — and the binding is visible to the next call in the same session. An existing pointer is never overwritten or repaired, and a refusal (a corrupt or unknown-schema pointer, an unreadable sibling worktree, an unreadable registry, a cloud-managed vault) is reported with its reason instead of minting. Reads never bind: `mem_search` and `mem_read` stay read-only on a pointerless repository, and a directory that is **not** in Git stays read-only until `mem_admin(action="bind", mode="local")`. |
 | Recall injected once | the first request of a session carries one `obsidian-mem` recall message (≤ `briefBudgetChars`) |
 | CJK search works | write a note, then `mem_search` a two-character Chinese word |
-| Vault files are real | `ls "$vault/项目/"` — plain Markdown, readable with the plugin uninstalled |
+| Vault files are real | `ls "$vault/Projects/"` — plain Markdown, readable with the plugin uninstalled |
 
 ---
 
@@ -220,7 +220,7 @@ explanation instead of doing nothing.
 | `distill.provider` | `""` | string | Model route. Must be set together with `model`, or both left empty (empty = reuse the session's last recorded route). |
 | `distill.model` | `""` | string | See above. |
 | `distill.maxItems` | `12` | integer 1–50 | Maximum candidates accepted from one distillation. |
-| `distill.minConfidence` | `0.75` | number 0–1 | Below this, a candidate goes to `收件箱/` instead of a memory note. |
+| `distill.minConfidence` | `0.75` | number 0–1 | Below this, a candidate goes to `Inbox/` instead of a memory note. |
 | `distill.maxInputChars` | `24000` | integer 256–100000 | Input ceiling for the single model call. |
 | `distill.maxOutputTokens` | `4000` | integer 128–32000 | Output ceiling for that call. |
 | `distill.timeoutMs` | `60000` | integer 1000–300000 | Per-call timeout. |
@@ -245,7 +245,7 @@ with an error that says the field was dropped by design.
 
 | Tool | Arguments | What it does |
 |---|---|---|
-| `mem_search` | `query` (required), `scope` (`project`\|`global`\|`all`, default `project`), `type`, `projectId`, `includeHistory`, `limit` (default 8) | Searches titles, bodies and frontmatter. `project` is the bound project only and refuses a different `projectId` rather than quietly going cross-project; `global` covers `方法/` and the read-only `_meta/user.md`; `all` is required for cross-project. |
+| `mem_search` | `query` (required), `scope` (`project`\|`global`\|`all`, default `project`), `type`, `projectId`, `includeHistory`, `limit` (default 8) | Searches titles, bodies and frontmatter. `project` is the bound project only and refuses a different `projectId` rather than quietly going cross-project; `global` covers `Methods/` and the read-only `_meta/user.md`; `all` is required for cross-project. |
 | `mem_read` | `path` (required, vault-relative), `section` | Returns body, parsed frontmatter and a content hash after re-verifying the file. Refuses internal directories such as `_meta/.history/`. |
 | `mem_write` | `type`, `title`, `body` (required); `tags`, `status`, `confidence`, `assertion`, `supersedes`, `id`, `idempotencyKey` | The authoritative way to write project documents and memories. Without `id` it **creates** a note with a fresh id; with an existing `id` it updates. Superseding verifies the old id and writes both sides of the link. |
 | `mem_log` | `text` (required); `session`, `section`, `idempotencyKey` | Appends one idempotent entry to today's log; `section: "hot"` targets the hot file's 进行中 zone instead. |
@@ -256,13 +256,13 @@ with an error that says the field was dropped by design.
 
 | `type` | Lands in | Notes |
 |---|---|---|
-| `doc` | `文档/<title>.md` + MOC update | Design docs, reports, guides. |
-| `decision` | `决策/ADR-<n>-<slug>.md` | Context / Decision / Alternatives / Consequences. The number is allocated inside the vault lock and is for humans; the `id` is the identity. |
-| `gotcha` | `踩坑/<slug>.md` | Symptom / cause / fix / evidence. |
-| `convention` (alias `invariant`) | `约定/<slug>.md` | One fact per file. |
-| `session-log` | `日志/YYYY-MM-DD.md` | Append-only, idempotent per session id. |
-| `hub`, `glossary` | `index.md`, `文档/术语表.md` | MOCs and terminology. |
-| low confidence / unclassified | `收件箱/<slug>.md` | Waiting for a human to sort it. |
+| `doc` | `Docs/<title>.md` + MOC update | Design docs, reports, guides. |
+| `decision` | `Decisions/ADR-<n>-<slug>.md` | Context / Decision / Alternatives / Consequences. The number is allocated inside the vault lock and is for humans; the `id` is the identity. |
+| `gotcha` | `Pitfalls/<slug>.md` | Symptom / cause / fix / evidence. |
+| `convention` (alias `invariant`) | `Conventions/<slug>.md` | One fact per file. |
+| `session-log` | `Daily/YYYY-MM-DD.md` | Append-only, idempotent per session id. |
+| `hub`, `glossary` | `index.md`, `Docs/glossary.md` | MOCs and terminology. |
+| low confidence / unclassified | `Inbox/<slug>.md` | Waiting for a human to sort it. |
 
 Supersede never overwrites: the old note stays where it is, marked
 `status: superseded` with `superseded_by`, and the new note links back. Two claims

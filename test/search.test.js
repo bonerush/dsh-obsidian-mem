@@ -110,15 +110,15 @@ async function ready(index, timeoutMs = 10_000) {
 
 /** A second project used by the bound/paging regressions; its vault is built in-test. */
 const PAGED_ID = '2b3c4d5e-6f70-4182-9a3b-4c5d6e7f8091'
-const PAGED_DIR = `项目/paged--${PAGED_ID.slice(0, 8)}`
+const PAGED_DIR = `Projects/paged--${PAGED_ID.slice(0, 8)}`
 /**
- * The path-order prefix of the paging vault. `文档/sub/*` sorts before
- * `文档/zzz-shallow.md`, while the *scan* inserts the shallow file first — so a
+ * The path-order prefix of the paging vault. `Docs/sub/*` sorts before
+ * `Docs/zzz-shallow.md`, while the *scan* inserts the shallow file first — so a
  * rowid/unordered read and a path-ordered read return different first rows.
  */
-const PAGED_DEEP_FIRST = `${PAGED_DIR}/文档/sub/aaa-deep.md`
-const PAGED_DEEP_LAST = `${PAGED_DIR}/文档/sub/ddd-deep.md`
-const PAGED_SHALLOW = `${PAGED_DIR}/文档/zzz-shallow.md`
+const PAGED_DEEP_FIRST = `${PAGED_DIR}/Docs/sub/aaa-deep.md`
+const PAGED_DEEP_LAST = `${PAGED_DIR}/Docs/sub/ddd-deep.md`
+const PAGED_SHALLOW = `${PAGED_DIR}/Docs/zzz-shallow.md`
 
 /**
  * Build the paging vault: five active notes, `器` in the path-first and
@@ -128,7 +128,7 @@ async function pagedHarness(t, indexOptions = {}) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t9-paged-'))
   const vault = join(root, 'vault')
   const dataRoot = join(root, 'data')
-  await mkdir(join(vault, PAGED_DIR, '文档', 'sub'), { recursive: true })
+  await mkdir(join(vault, PAGED_DIR, 'Docs', 'sub'), { recursive: true })
   const note = (title, body) => `---
 type: "doc"
 title: "${title}"
@@ -141,8 +141,8 @@ ${body}
 `
   await writeFile(at(vault, PAGED_SHALLOW), note('浅层', '浅层的普通说明。'))
   await writeFile(at(vault, PAGED_DEEP_FIRST), note('首个', '第一个深层的说明，含 器 字。'))
-  await writeFile(at(vault, `${PAGED_DIR}/文档/sub/bbb-deep.md`), note('第二', '第二个深层的说明。'))
-  await writeFile(at(vault, `${PAGED_DIR}/文档/sub/ccc-deep.md`), note('第三', '第三个深层的说明。'))
+  await writeFile(at(vault, `${PAGED_DIR}/Docs/sub/bbb-deep.md`), note('第二', '第二个深层的说明。'))
+  await writeFile(at(vault, `${PAGED_DIR}/Docs/sub/ccc-deep.md`), note('第三', '第三个深层的说明。'))
   await writeFile(at(vault, PAGED_DEEP_LAST), note('第四', '第四个深层的说明，亦含 器 字。'))
   const index = await openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: PAGED_ID, ...indexOptions })
   t.after(async () => {
@@ -154,8 +154,8 @@ ${body}
 
 /** A third project whose match set is wider than the default candidate window. */
 const WINDOW_ID = '3c4d5e6f-7081-4293-8a4b-5c6d7e8f9012'
-const WINDOW_DIR = `项目/win--${WINDOW_ID.slice(0, 8)}`
-const WINDOW_EXACT = `${WINDOW_DIR}/文档/n39.md`
+const WINDOW_DIR = `Projects/win--${WINDOW_ID.slice(0, 8)}`
+const WINDOW_EXACT = `${WINDOW_DIR}/Docs/n39.md`
 
 /**
  * Build a vault with 40 in-scope notes containing `器`, where the path-last note
@@ -165,12 +165,12 @@ async function windowHarness(t) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t9-window-'))
   const vault = join(root, 'vault')
   const dataRoot = join(root, 'data')
-  await mkdir(join(vault, WINDOW_DIR, '文档'), { recursive: true })
+  await mkdir(join(vault, WINDOW_DIR, 'Docs'), { recursive: true })
   for (let i = 0; i < 40; i += 1) {
     const name = `n${String(i).padStart(2, '0')}`
     const title = i === 39 ? '器' : name
     await writeFile(
-      at(vault, `${WINDOW_DIR}/文档/${name}.md`),
+      at(vault, `${WINDOW_DIR}/Docs/${name}.md`),
       `---\ntype: "doc"\ntitle: "${title}"\nstatus: "active"\nproject: "${WINDOW_ID}"\n---\n# ${title}\n\n第 ${name} 条，含 器 字。\n`,
     )
   }
@@ -185,15 +185,15 @@ async function windowHarness(t) {
 
 /** A fourth project whose path order differs between UTF-16 and code-point order. */
 const WIDECHAR_ID = '4d5e6f70-8192-43a4-9b5c-6d7e8f901a23'
-const WIDECHAR_DIR = `项目/wide--${WIDECHAR_ID.slice(0, 8)}`
+const WIDECHAR_DIR = `Projects/wide--${WIDECHAR_ID.slice(0, 8)}`
 /**
  * Code-point (and therefore SQLite BINARY) first: U+FF01 sorts below U+1F3B5.
  * A UTF-16 comparison instead sees the surrogate 0xD83C, which sorts *below*
  * U+FF01, so it would take the other path first.
  */
-const WIDECHAR_FIRST = `${WIDECHAR_DIR}/文档/！.md`
+const WIDECHAR_FIRST = `${WIDECHAR_DIR}/Docs/！.md`
 /** UTF-16 first (surrogate 0xD83C < 0xFF01), which is the wrong prefix. */
-const WIDECHAR_UTF16_FIRST = `${WIDECHAR_DIR}/文档/🎵.md`
+const WIDECHAR_UTF16_FIRST = `${WIDECHAR_DIR}/Docs/🎵.md`
 
 /**
  * Build a vault whose two notes order differently under UTF-16 code units and
@@ -204,7 +204,7 @@ async function widecharHarness(t, indexOptions = {}) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t9-wide-'))
   const vault = join(root, 'vault')
   const dataRoot = join(root, 'data')
-  await mkdir(join(vault, WIDECHAR_DIR, '文档'), { recursive: true })
+  await mkdir(join(vault, WIDECHAR_DIR, 'Docs'), { recursive: true })
   const note = (title) => `---\ntype: "doc"\ntitle: "${title}"\nstatus: "active"\nproject: "${WIDECHAR_ID}"\n---\n# ${title}\n\n正文含 器 字。\n`
   await writeFile(at(vault, WIDECHAR_FIRST), note('！'))
   await writeFile(at(vault, WIDECHAR_UTF16_FIRST), note('🎵'))
@@ -379,13 +379,13 @@ test('the scope matrix isolates projects, global memory and the read-only user f
     (error) => error instanceof IndexError && error.code === 'project-mismatch',
   )
 
-  // global: 方法/ plus the read-only `_meta/user.md`, nothing else
+  // global: Methods/ plus the read-only `_meta/user.md`, nothing else
   const method = await searchNotes(index, { query: Q.methodWord, scope: 'global', limit: 20 })
   assert.deepEqual(paths(method), E.globalScopeMethodWord)
   const user = await searchNotes(index, { query: Q.userWord, scope: 'global', limit: 20 })
   assert.deepEqual(paths(user), E.globalScopeUserWord)
   const globalAll = await searchNotes(index, { query: Q.threeCharCjk, scope: 'global', limit: 20 })
-  assert.ok(globalAll.every((hit) => hit.path.startsWith('方法/') || hit.path === '_meta/user.md'))
+  assert.ok(globalAll.every((hit) => hit.path.startsWith('Methods/') || hit.path === '_meta/user.md'))
   // a projectId carries no meaning in the global scope, so it is ignored rather than refused
   const ignored = await searchNotes(index, { query: Q.methodWord, scope: 'global', projectId: BETA, limit: 20 })
   assert.deepEqual(paths(ignored), E.globalScopeMethodWord)
@@ -585,19 +585,19 @@ test('readNote re-reads the source, refuses internal and oversized paths, and ca
   }
   await assert.rejects(() => readNote(h.vault, '../outside.md'), (error) => error.name === 'PathSafetyError')
 
-  const link = at(h.vault, `${ALPHA_DIR}/文档/链接.md`)
+  const link = at(h.vault, `${ALPHA_DIR}/Docs/链接.md`)
   await symlink(at(h.vault, N.user), link)
-  await assert.rejects(() => readNote(h.vault, `${ALPHA_DIR}/文档/链接.md`), (error) => error.name === 'PathSafetyError')
+  await assert.rejects(() => readNote(h.vault, `${ALPHA_DIR}/Docs/链接.md`), (error) => error.name === 'PathSafetyError')
 
-  const huge = at(h.vault, `${ALPHA_DIR}/文档/超大.md`)
+  const huge = at(h.vault, `${ALPHA_DIR}/Docs/超大.md`)
   await writeFile(huge, `---\ntitle: "超大"\n---\n# 超大\n\n${'x'.repeat(MAX_NOTE_BYTES + 1)}\n`)
   await assert.rejects(
-    () => readNote(h.vault, `${ALPHA_DIR}/文档/超大.md`),
+    () => readNote(h.vault, `${ALPHA_DIR}/Docs/超大.md`),
     (error) => error instanceof IndexError && error.code === 'note-too-large',
   )
   const summary = await index.refresh()
   assert.ok(summary.skippedLarge >= 1)
-  assert.equal(paths(await searchNotes(index, { query: '超大', scope: 'project', projectId: ALPHA })).includes(`${ALPHA_DIR}/文档/超大.md`), false)
+  assert.equal(paths(await searchNotes(index, { query: '超大', scope: 'project', projectId: ALPHA })).includes(`${ALPHA_DIR}/Docs/超大.md`), false)
 })
 
 // ---------------------------------------------------------------------------
@@ -725,7 +725,7 @@ test('an index failure is reported as stale and never fails the vault transactio
   assert.equal(index.status().stale, true)
   assert.match(String(index.status().reason), /EACCES/)
 
-  const relative = `${ALPHA_DIR}/文档/写入成功.md`
+  const relative = `${ALPHA_DIR}/Docs/写入成功.md`
   const contents = `---\ntitle: "写入成功"\nproject: "${ALPHA}"\n---\n# 写入成功\n\n即使索引更新失败，写入也必须成功。\n`
   const receipt = await runTransaction(
     { kind: 'bound', projectId: ALPHA, slug: 'alpha', displayName: 'alpha', vaultRoot: h.vault, relativeDir: ALPHA_DIR },
@@ -808,12 +808,12 @@ test('the query builder quotes and caps every token, and the path rule is a pure
   assert.deepEqual(planQuery('调度器').tokens, ['调度', '度器'])
 
   assert.equal(isIndexableRelativePath('_meta/user.md'), true)
-  assert.equal(isIndexableRelativePath('收件箱/待定条目.md'), true, 'the inbox is searchable, only `pending/` is not')
-  assert.equal(isIndexableRelativePath('项目/alpha--1c392abb/收件箱/待定条目.md'), true)
+  assert.equal(isIndexableRelativePath('Inbox/待定条目.md'), true, 'the inbox is searchable, only `pending/` is not')
+  assert.equal(isIndexableRelativePath('Projects/alpha--1c392abb/Inbox/待定条目.md'), true)
   for (const bad of [
-    '_meta/log.md', '_meta/项目注册表.md', '_meta/Lint Report 2026-09-23.md', '_meta/.history/x.md',
-    '.obsidian/workspace.json', '.gitignore', 'pending/x.md', '项目/a--1c392abb/pending/x.md',
-    '项目/a--1c392abb/文档/x.txt', '项目/a--1c392abb/文档/.hidden.md', '../x.md', '/abs/x.md',
+    '_meta/log.md', '_meta/registry.md', '_meta/Lint Report 2026-09-23.md', '_meta/.history/x.md',
+    '.obsidian/workspace.json', '.gitignore', 'pending/x.md', 'Projects/a--1c392abb/pending/x.md',
+    'Projects/a--1c392abb/Docs/x.txt', 'Projects/a--1c392abb/Docs/.hidden.md', '../x.md', '/abs/x.md',
   ]) {
     assert.equal(isIndexableRelativePath(bad), false, `${bad} must not be indexable`)
   }
@@ -856,7 +856,7 @@ test('the scan backend keeps working after the vault changes, without ever touch
   assert.equal(index.status().notes > 0, true)
 
   await rm(at(h.vault, N.alphaDeleted))
-  const relative = `${ALPHA_DIR}/文档/新增.md`
+  const relative = `${ALPHA_DIR}/Docs/新增.md`
   await writeFile(at(h.vault, relative), `---\ntitle: "新增"\nproject: "${ALPHA}"\n---\n# 新增\n\n新的调度器备注。\n`)
   const summary = await index.refresh()
   assert.equal(summary.added, 1)
@@ -950,11 +950,11 @@ test('a wide bound on the real corpus is not flagged as truncated', async (t) =>
 
 test('the composite score promotes a title match that bm25 ranks below the limit', async (t) => {
   const h = await harness(t)
-  const exact = `${ALPHA_DIR}/文档/zebra-exact.md`
+  const exact = `${ALPHA_DIR}/Docs/zebra-exact.md`
   for (let i = 0; i < 12; i += 1) {
     const name = `zebra-filler-${String(i).padStart(2, '0')}.md`
     await writeFile(
-      at(h.vault, `${ALPHA_DIR}/文档/${name}`),
+      at(h.vault, `${ALPHA_DIR}/Docs/${name}`),
       `---\ntype: "doc"\ntitle: "filler ${i}"\nstatus: "active"\nproject: "${ALPHA}"\n---\n# filler ${i}\n\n${'zebra '.repeat(60)}\n`,
     )
   }

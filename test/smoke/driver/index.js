@@ -310,13 +310,13 @@ async function runScenario(ctx, agent) {
   // --- 6. a human-owned note is never rewritten -----------------------------
   let humanOwned = { ok: false, reason: 'no-project-dir' }
   if (projectDir !== null && VAULT_ROOT !== '') {
-    const humanRelative = `${projectDir}/约定/人写的约定.md`
+    const humanRelative = `${projectDir}/Conventions/人写的约定.md`
     const humanId = `con-${randomUUID()}`
     const humanBytes = Buffer.from(
       `---\nid: "${humanId}"\ntype: "convention"\ntitle: "人写的约定"\ntrust: "owner"\nharness: "obsidian"\n---\n\n人类手写的约定正文。\n`,
       'utf8',
     )
-    mkdirSync(join(VAULT_ROOT, projectDir, '约定'), { recursive: true })
+    mkdirSync(join(VAULT_ROOT, projectDir, 'Conventions'), { recursive: true })
     const humanAbsolute = join(VAULT_ROOT, humanRelative)
     writeFileSync(humanAbsolute, humanBytes)
     const hashBefore = sha256(readFileSync(humanAbsolute))

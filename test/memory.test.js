@@ -24,7 +24,7 @@ import { bootstrapVault, findReceipt, parseNote, safeBasename } from '../lib/vau
 
 /** A fixed identity (valid UUIDv4), and the machine's local date as the clock. */
 const PROJECT_ID = '1c392abb-7b08-42f7-871d-2a379caf9448'
-const PROJECT = `项目/alpha--${PROJECT_ID.slice(0, 8)}`
+const PROJECT = `Projects/alpha--${PROJECT_ID.slice(0, 8)}`
 /**
  * The fixture clock is the machine's own local date, because `bootstrapVault`
  * stamps `created`/`updated` with the real one: pinning an invented date would
@@ -33,13 +33,13 @@ const PROJECT = `项目/alpha--${PROJECT_ID.slice(0, 8)}`
 const NOW = new Date()
 const TODAY = `${NOW.getFullYear()}-${String(NOW.getMonth() + 1).padStart(2, '0')}-${String(NOW.getDate()).padStart(2, '0')}`
 
-const DOCS = `${PROJECT}/文档`
-const DECISIONS = `${PROJECT}/决策`
-const CONVENTIONS = `${PROJECT}/约定`
-const INBOX = `${PROJECT}/收件箱`
-const LOGS = `${PROJECT}/日志`
+const DOCS = `${PROJECT}/Docs`
+const DECISIONS = `${PROJECT}/Decisions`
+const CONVENTIONS = `${PROJECT}/Conventions`
+const INBOX = `${PROJECT}/Inbox`
+const LOGS = `${PROJECT}/Daily`
 const HOT = `${PROJECT}/_meta/hot.md`
-const ARCHIVE = `${DOCS}/热记忆归档.md`
+const ARCHIVE = `${DOCS}/hot-archive.md`
 const USER_MD = '---\npreferences: 中文优先\n---\n# 用户偏好\n\n保持原样。\n'
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex')
@@ -80,7 +80,7 @@ function bindingFor(vaultRoot, projectId, slug) {
     displayName: slug,
     schema: 1,
     vaultRoot,
-    relativeDir: `项目/${slug}--${projectId.slice(0, 8)}`,
+    relativeDir: `Projects/${slug}--${projectId.slice(0, 8)}`,
   }
 }
 
@@ -168,13 +168,13 @@ test('routeNote maps every memory type to its §6.2 landing place', () => {
   assert.equal(routeNote(binding, 'doc', '设计稿'), `${DOCS}/设计稿.md`)
   assert.equal(routeNote(binding, 'decision', '调度器', { adrNumber: 7 }), `${DECISIONS}/ADR-7-调度器.md`)
   assert.equal(routeNote(binding, 'decision', '调度器'), `${DECISIONS}/ADR-1-调度器.md`)
-  assert.equal(routeNote(binding, 'gotcha', '缓存不失效'), `${PROJECT}/踩坑/缓存不失效.md`)
+  assert.equal(routeNote(binding, 'gotcha', '缓存不失效'), `${PROJECT}/Pitfalls/缓存不失效.md`)
   assert.equal(routeNote(binding, 'convention', '只用 ESM'), `${CONVENTIONS}/只用 ESM.md`)
   assert.equal(routeNote(binding, 'invariant', '只用 ESM'), `${CONVENTIONS}/只用 ESM.md`, 'invariant is the input alias')
-  assert.equal(routeNote(binding, 'glossary', '术语'), `${DOCS}/术语表.md`)
+  assert.equal(routeNote(binding, 'glossary', '术语'), `${DOCS}/glossary.md`)
   assert.equal(routeNote(binding, 'session-log', 'x', { today: TODAY }), `${LOGS}/${TODAY}.md`)
   assert.equal(routeNote(binding, 'hub', 'x'), `${PROJECT}/index.md`)
-  assert.equal(routeNote(binding, 'method', '复盘'), '方法/复盘.md')
+  assert.equal(routeNote(binding, 'method', '复盘'), 'Methods/复盘.md')
   // a name that collides inside the directory gets a deterministic suffix
   const collided = routeNote(binding, 'doc', '设计稿', { existingNames: ['设计稿.md'] })
   assert.match(collided, new RegExp(`^${DOCS}/设计稿-[0-9a-f]{8}\\.md$`))
@@ -195,7 +195,7 @@ test('routeNote maps every memory type to its §6.2 landing place', () => {
 // Step 1: create -> route, MOC and receipt
 // ---------------------------------------------------------------------------
 
-test('writeMemory routes a doc into 文档 and registers it in the MOC generated block', async (t) => {
+test('writeMemory routes a doc into Docs and registers it in the MOC generated block', async (t) => {
   const { vault, binding, deps } = await fixture(t)
   const result = await writeMemory(binding, { type: 'doc', title: '写入协议', body: '正文一。' }, deps)
 
@@ -318,7 +318,7 @@ test('createMemoryWithId creates exclusively and refuses an existing id', async 
     body: '症状：旧值。',
   }, deps)
   assert.equal(created.id, preassignedId)
-  assert.equal(created.path, `${PROJECT}/踩坑/缓存不失效.md`)
+  assert.equal(created.path, `${PROJECT}/Pitfalls/缓存不失效.md`)
   assert.equal((await readNoteById(binding, preassignedId, deps)).frontmatter.id, preassignedId)
 
   // the same persisted id + key replays the original receipt and writes nothing
@@ -331,7 +331,7 @@ test('createMemoryWithId creates exclusively and refuses an existing id', async 
   }, deps)
   assert.equal(replay.receipt.txId, created.receipt.txId)
   assert.equal(replay.path, created.path)
-  assert.equal((await listMarkdown(at(vault, `${PROJECT}/踩坑`))).length, 2)
+  assert.equal((await listMarkdown(at(vault, `${PROJECT}/Pitfalls`))).length, 2)
 
   // a *new* key with an already-used id is a refusal, never an update
   await assert.rejects(createMemoryWithId(binding, {
@@ -341,7 +341,7 @@ test('createMemoryWithId creates exclusively and refuses an existing id', async 
     title: '缓存不失效',
     body: '想覆盖。',
   }, deps), failsWith('id-taken'))
-  assert.equal((await listMarkdown(at(vault, `${PROJECT}/踩坑`))).length, 2)
+  assert.equal((await listMarkdown(at(vault, `${PROJECT}/Pitfalls`))).length, 2)
   assert.equal((await read(vault, created.path)).includes('想覆盖'), false)
 })
 
@@ -424,7 +424,7 @@ test('the §6.4 optional properties round-trip and a no-op update writes no byte
   assert.equal((await readNoteById(binding, created.id, deps)).frontmatter.status, 'proposed')
 })
 
-test('a low-confidence candidate lands in 收件箱 with its real type preserved', async (t) => {
+test('a low-confidence candidate lands in Inbox with its real type preserved', async (t) => {
   const { vault, binding, deps } = await fixture(t)
   const candidate = await writeMemory(binding, {
     type: 'decision',

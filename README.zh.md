@@ -14,13 +14,13 @@
 状态，仓库的任何部分也不依赖 DSH。
 
 ```
-repository                          vault (~/Documents/dsh-memory)
-├── .obsidian-mem   ───────────►    └── 项目/<slug>--<projectId 前8位>/
-│     projectId, slug,                    ├── index.md          hub / MOC
-│     displayName, schema: 1              ├── 文档/  决策/  约定/  踩坑/
-└── src/ …                                ├── 日志/YYYY-MM-DD.md
-                                          ├── 收件箱/           待分类
-                                          └── _meta/hot.md      热记忆
+repository                                vault (~/Documents/dsh-memory)
+├── .obsidian-mem   ───────────►          └── Projects/<slug>--<projectId 前8位>/
+│     projectId, slug,                    ├── index.md                hub / MOC
+│     displayName, schema: 1              ├── Docs/  Decisions/  Conventions/  Pitfalls/
+└── src/ …                                ├── Daily/YYYY-MM-DD.md
+                                          ├── Inbox/                  待分类
+                                          └── _meta/hot.md            热记忆
 ```
 
 分成两层，这是刻意的：
@@ -145,7 +145,7 @@ dsh --profile web --dump-config | grep -n obsidian-mem
 | 项目已绑定 | `mem_admin(action="projects")` 会报告解析结果。一个**没有** `.obsidian-mem` 的 Git 仓库由它的**第一次写入**完成绑定：`mem_write` 或 `mem_log` 会生成 slug、以独占方式创建指针文件、引导生成骨架并注册项目，然后继续执行——而且这次绑定对同一会话里的下一次调用就可见。已存在的指针文件从不会被覆盖或修复；任何拒绝（指针文件损坏或 schema 未知、同级 worktree 不可读、注册表不可读、云托管仓库）都会连原因一起报告，而不是硬造一个绑定。读取永不触发绑定：在没有指针文件的仓库上，`mem_search` 和 `mem_read` 始终只读；一个**不在** Git 里的目录在 `mem_admin(action="bind", mode="local")` 之前也保持只读。 |
 | 召回注入一次 | 会话的第一次请求会带一条 `obsidian-mem` 召回消息（≤ `briefBudgetChars`） |
 | 中文搜索可用 | 写一条笔记，然后用 `mem_search` 搜一个两字中文词 |
-| 仓库文件是真的 | `ls "$vault/项目/"`——纯 Markdown，卸载插件后照样能读 |
+| 仓库文件是真的 | `ls "$vault/Projects/"`——纯 Markdown，卸载插件后照样能读 |
 
 ---
 
@@ -207,7 +207,7 @@ dsh --profile web --dump-config | grep -n obsidian-mem
 | `distill.provider` | `""` | string | 模型路由。必须和 `model` 一起设置，或者两个都留空（留空 = 复用会话最近记录的路由）。 |
 | `distill.model` | `""` | string | 见上。 |
 | `distill.maxItems` | `12` | 整数 1–50 | 一次蒸馏最多接受多少个候选。 |
-| `distill.minConfidence` | `0.75` | number 0–1 | 低于此值的候选进入 `收件箱/`，而不是成为记忆笔记。 |
+| `distill.minConfidence` | `0.75` | number 0–1 | 低于此值的候选进入 `Inbox/`，而不是成为记忆笔记。 |
 | `distill.maxInputChars` | `24000` | 整数 256–100000 | 那次模型调用的输入上限。 |
 | `distill.maxOutputTokens` | `4000` | 整数 128–32000 | 那次调用的输出上限。 |
 | `distill.timeoutMs` | `60000` | 整数 1000–300000 | 单次调用超时。 |
@@ -230,7 +230,7 @@ dsh --profile web --dump-config | grep -n obsidian-mem
 
 | 工具 | 参数 | 作用 |
 |---|---|---|
-| `mem_search` | `query`（必填）、`scope`（`project`\|`global`\|`all`，默认 `project`）、`type`、`projectId`、`includeHistory`、`limit`（默认 8） | 搜索标题、正文和 frontmatter。`project` 只搜已绑定的项目，遇到不同的 `projectId` 会直接拒绝，而不是悄悄跨项目；`global` 覆盖 `方法/` 和只读的 `_meta/user.md`；跨项目必须显式用 `all`。 |
+| `mem_search` | `query`（必填）、`scope`（`project`\|`global`\|`all`，默认 `project`）、`type`、`projectId`、`includeHistory`、`limit`（默认 8） | 搜索标题、正文和 frontmatter。`project` 只搜已绑定的项目，遇到不同的 `projectId` 会直接拒绝，而不是悄悄跨项目；`global` 覆盖 `Methods/` 和只读的 `_meta/user.md`；跨项目必须显式用 `all`。 |
 | `mem_read` | `path`（必填，仓库相对路径）、`section` | 重新校验文件后返回正文、解析出的 frontmatter 和内容哈希。拒绝 `_meta/.history/` 这类内部目录。 |
 | `mem_write` | `type`、`title`、`body`（必填）；`tags`、`status`、`confidence`、`assertion`、`supersedes`、`id`、`idempotencyKey` | 写项目文档和记忆的权威途径。不带 `id` 时**创建**一条带新 id 的笔记；带已存在的 `id` 时更新。取代会校验旧 id，并把链接的两端都写上。 |
 | `mem_log` | `text`（必填）；`session`、`section`、`idempotencyKey` | 往今天的日志追加一条幂等条目；`section: "hot"` 则改为写热记忆文件的进行中区域。 |
@@ -241,13 +241,13 @@ dsh --profile web --dump-config | grep -n obsidian-mem
 
 | `type` | 落在 | 说明 |
 |---|---|---|
-| `doc` | `文档/<title>.md` + 更新 MOC | 设计文档、报告、指南。 |
-| `decision` | `决策/ADR-<n>-<slug>.md` | Context / Decision / Alternatives / Consequences。编号在仓库锁内分配，是给人看的；`id` 才是身份。 |
-| `gotcha` | `踩坑/<slug>.md` | 症状 / 原因 / 修复 / 证据。 |
-| `convention`（别名 `invariant`） | `约定/<slug>.md` | 一个文件一件事。 |
-| `session-log` | `日志/YYYY-MM-DD.md` | 只追加，按 session id 幂等。 |
-| `hub`、`glossary` | `index.md`、`文档/术语表.md` | MOC 和术语。 |
-| 低置信度 / 未分类 | `收件箱/<slug>.md` | 等人来分类。 |
+| `doc` | `Docs/<title>.md` + 更新 MOC | 设计文档、报告、指南。 |
+| `decision` | `Decisions/ADR-<n>-<slug>.md` | Context / Decision / Alternatives / Consequences。编号在仓库锁内分配，是给人看的；`id` 才是身份。 |
+| `gotcha` | `Pitfalls/<slug>.md` | 症状 / 原因 / 修复 / 证据。 |
+| `convention`（别名 `invariant`） | `Conventions/<slug>.md` | 一个文件一件事。 |
+| `session-log` | `Daily/YYYY-MM-DD.md` | 只追加，按 session id 幂等。 |
+| `hub`、`glossary` | `index.md`、`Docs/glossary.md` | MOC 和术语。 |
+| 低置信度 / 未分类 | `Inbox/<slug>.md` | 等人来分类。 |
 
 取代从不覆盖：旧笔记留在原位，标上 `status: superseded` 和 `superseded_by`，新笔
 记反向链接它。两条无法排序的结论会变成 `status: contested`——不允许有隐形的赢家。

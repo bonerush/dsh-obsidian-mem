@@ -168,7 +168,7 @@ test('mem_write → mem_search → mem_read round-trips one note id', async (t) 
   }, { cwd: f.repo }), 'mem_write')
 
   assert.match(written.id, /^doc-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
-  assert.match(written.path, /^项目\/[^/]+--[0-9a-f]{8}\/文档\//)
+  assert.match(written.path, /^Projects\/[^/]+--[0-9a-f]{8}\/Docs\//)
   assert.equal(written.receipt.action, 'write')
   assert.equal(written.receipt.result.status, 'applied')
   assert.equal(written.receipt.afterHashes[written.path].length, 64)
@@ -232,7 +232,7 @@ test('a repeated idempotencyKey replays the original receipt instead of writing 
   assert.equal(replay.path, first.path)
   assert.equal(replay.receipt.txId, first.receipt.txId)
 
-  const notes = await readdir(at(f.vault, `${f.binding.relativeDir}/踩坑`))
+  const notes = await readdir(at(f.vault, `${f.binding.relativeDir}/Pitfalls`))
   assert.deepEqual(notes.filter((name) => name.endsWith('.md') && name !== 'index.md'), ['重试幂等.md'])
 })
 
@@ -273,13 +273,13 @@ test('mem_read keeps every path inside the vault jail', async (t) => {
   // An existing non-Markdown file, so the not-a-note branch is exercised on a
   // path that really exists: `readNote` resolves the path first, so a missing
   // internal path is reported as missing rather than as internal plumbing.
-  const plainText = `${f.binding.relativeDir}/文档/样例.txt`
+  const plainText = `${f.binding.relativeDir}/Docs/样例.txt`
   await writeFile(at(f.vault, plainText), '不是笔记\n')
   const cases = [
     ['/etc/passwd', /absolute path is not allowed/],
     ['../../secrets.md', /path traversal is not allowed/],
-    [`${f.binding.relativeDir}/文档/../约定/x.md`, /path traversal is not allowed/],
-    ['_meta/项目注册表.md', /internal vault plumbing/],
+    [`${f.binding.relativeDir}/Docs/../Conventions/x.md`, /path traversal is not allowed/],
+    ['_meta/registry.md', /internal vault plumbing/],
     ['_meta/.history', /internal vault plumbing/],
     [plainText, /not a retrievable Markdown note/],
     ['_meta/log.md', /does not exist|internal vault plumbing/],
@@ -364,7 +364,7 @@ test('mem_log appends exactly one idempotent day-log block', async (t) => {
   assert.equal(first.action, 'log')
   assert.equal(replay.txId, first.txId)
 
-  const logPath = at(f.vault, `${f.binding.relativeDir}/日志/${DATE}.md`)
+  const logPath = at(f.vault, `${f.binding.relativeDir}/Daily/${DATE}.md`)
   const text = await readFile(logPath, 'utf8')
   assert.equal(text.split('本轮修好了索引刷新。').length - 1, 1, 'the block is written once')
   assert.match(text, /## 20260923-120000-abcd · 会话/)
@@ -489,7 +489,7 @@ test('mem_admin(lint, report=true) writes only the report; pruning is its own re
   assert.equal(plain.result.report.status, 'none')
 })
 
-test('mem_admin(promote) creates a 方法 note and leaves the source untouched', async (t) => {
+test('mem_admin(promote) creates a Methods note and leaves the source untouched', async (t) => {
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
   const source = value(await call(ctx, 'mem_write', {
@@ -501,7 +501,7 @@ test('mem_admin(promote) creates a 方法 note and leaves the source untouched',
   assert.equal(promoted.action, 'promote')
   assert.equal(promoted.result.moved, false)
   assert.equal(promoted.result.source, source.path)
-  assert.match(promoted.result.path, /^方法\//)
+  assert.match(promoted.result.path, /^Methods\//)
   const method = await readFile(at(f.vault, promoted.result.path), 'utf8')
   assert.ok(method.includes('来源：'))
   assert.deepEqual(await readFile(at(f.vault, source.path)), before)
@@ -612,7 +612,7 @@ test('apply hands one DSH_HOME-derived data root to the transaction engine and t
   const written = value(await call(ctx, 'mem_write', {
     type: 'doc', title: '装配说明', body: '数据根由 DSH_HOME 推导。',
   }, { cwd: f.repo }), 'mem_write through apply')
-  assert.match(written.path, /^项目\//)
+  assert.match(written.path, /^Projects\//)
 
   const dataRoot = join(dshHome, 'data', 'obsidian-mem')
   assert.equal(existsSync(join(dataRoot, 'locks')), true, 'the transaction lock lives under the derived data root')

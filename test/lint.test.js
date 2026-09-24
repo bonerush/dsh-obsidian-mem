@@ -222,16 +222,16 @@ test('orphan files and orphan index rows are named from the index rows and the v
   // Settle the index against the bootstrap skeleton, then create one file the
   // index has never seen and delete one file the index already knows.
   await f.index.refresh()
-  const removed = projectPath(f, '文档/删除目标.md')
+  const removed = projectPath(f, 'Docs/删除目标.md')
   await writeNote(f, removed, pluginNote({ id: 'doc-11111111-1111-4111-8111-111111111111', title: '删除目标' }))
   await f.index.refresh()
   await rm(join(f.vault, ...removed.split('/')))
-  await writeNote(f, projectPath(f, '文档/新增孤儿.md'), pluginNote({ id: 'doc-22222222-2222-4222-8222-222222222222', title: '新增孤儿' }))
+  await writeNote(f, projectPath(f, 'Docs/新增孤儿.md'), pluginNote({ id: 'doc-22222222-2222-4222-8222-222222222222', title: '新增孤儿' }))
 
   const report = await lintOf(f)
   const orphanFiles = report.findings.filter((finding) => finding.kind === 'orphan-file')
   const orphanRows = report.findings.filter((finding) => finding.kind === 'orphan-index-row')
-  assert.deepEqual(orphanFiles.map((finding) => finding.path), [projectPath(f, '文档/新增孤儿.md')])
+  assert.deepEqual(orphanFiles.map((finding) => finding.path), [projectPath(f, 'Docs/新增孤儿.md')])
   assert.deepEqual(orphanRows.map((finding) => finding.path), [removed])
   assert.equal(report.index.notes, report.index.rows)
   assert.equal(report.index.compared, true)
@@ -240,22 +240,22 @@ test('orphan files and orphan index rows are named from the index rows and the v
 
 test('a dead wikilink is reported and a resolvable one is not', async (t) => {
   const f = await fixture(t)
-  const target = projectPath(f, '文档/目标.md')
+  const target = projectPath(f, 'Docs/目标.md')
   await writeNote(f, target, pluginNote({ id: 'doc-33333333-3333-4333-8333-333333333333', title: '目标' }))
   await writeNote(
     f,
-    projectPath(f, '文档/引用者.md'),
+    projectPath(f, 'Docs/引用者.md'),
     pluginNote({
       id: 'doc-44444444-4444-4444-8444-444444444444',
       title: '引用者',
-      body: '见 [[项目/demo--1c392abb/文档/目标|目标]] 与 [[不存在的东西]] 以及 https://example.invalid/x\n',
+      body: '见 [[Projects/demo--1c392abb/Docs/目标|目标]] 与 [[不存在的东西]] 以及 https://example.invalid/x\n',
     }),
   )
 
   const report = await lintOf(f)
   const dead = report.findings.filter((finding) => finding.kind === 'dead-wikilink')
   assert.equal(dead.length, 1, JSON.stringify(dead))
-  assert.equal(dead[0].path, projectPath(f, '文档/引用者.md'))
+  assert.equal(dead[0].path, projectPath(f, 'Docs/引用者.md'))
   assert.match(dead[0].message, /不存在的东西/)
   await f.index.close()
 })
@@ -265,13 +265,13 @@ test('case-folded duplicate note names are reported, exact duplicates are not', 
   // Two directories on purpose: a case-insensitive filesystem cannot hold both
   // names side by side, but Obsidian's link resolver still sees one ambiguous
   // target across the project.
-  await writeNote(f, projectPath(f, '文档/Readme.md'), pluginNote({ id: 'doc-55555555-5555-4555-8555-555555555555', title: 'Readme' }))
-  await writeNote(f, projectPath(f, '决策/README.md'), pluginNote({ id: 'doc-66666666-6666-4666-8666-666666666666', title: 'README' }))
+  await writeNote(f, projectPath(f, 'Docs/Readme.md'), pluginNote({ id: 'doc-55555555-5555-4555-8555-555555555555', title: 'Readme' }))
+  await writeNote(f, projectPath(f, 'Decisions/README.md'), pluginNote({ id: 'doc-66666666-6666-4666-8666-666666666666', title: 'README' }))
 
   const report = await lintOf(f)
   const duplicates = report.findings.filter((finding) => finding.kind === 'duplicate-name')
   assert.equal(duplicates.length, 1, JSON.stringify(duplicates))
-  assert.deepEqual(duplicates[0].paths.slice().sort(), [projectPath(f, '决策/README.md'), projectPath(f, '文档/Readme.md')].sort())
+  assert.deepEqual(duplicates[0].paths.slice().sort(), [projectPath(f, 'Decisions/README.md'), projectPath(f, 'Docs/Readme.md')].sort())
   // The bootstrap skeleton names every hub `index.md`; identical names are by
   // design and must never be reported as a case-folded duplicate.
   assert.equal(duplicates.some((finding) => /index\.md$/.test(finding.message)), false)
@@ -280,10 +280,10 @@ test('case-folded duplicate note names are reported, exact duplicates are not', 
 
 test('broken frontmatter, a frontmatter gap and an expired review_after are reported', async (t) => {
   const f = await fixture(t)
-  await writeNote(f, projectPath(f, '文档/损坏.md'), '---\ntitle: 未闭合\n正文\n')
+  await writeNote(f, projectPath(f, 'Docs/损坏.md'), '---\ntitle: 未闭合\n正文\n')
   await writeNote(
     f,
-    projectPath(f, '文档/缺口.md'),
+    projectPath(f, 'Docs/缺口.md'),
     '---\ntype: doc\ntitle: "缺口"\nstatus: active\ncreated: 2026-01-01\nupdated: 2026-01-01\ntrust: agent\nharness: dsh\n---\n正文\n',
   )
   await writeMemory(
@@ -338,7 +338,7 @@ test('a repository Markdown file with no vault link is reported and never moved'
   // A repository file a vault note links to by its stem is not reported.
   await writeNote(
     f,
-    projectPath(f, '文档/已链接.md'),
+    projectPath(f, 'Docs/已链接.md'),
     pluginNote({ id: 'doc-77777777-7777-4777-8777-777777777777', title: '已链接', body: '见 [[NOTES]]。\n' }),
   )
   const second = await lintOf(f)
@@ -371,7 +371,7 @@ test('the default lint leaves every vault and repository byte untouched', async 
 test('the safety exclusions cannot be cancelled by user globs', async (t) => {
   const f = await fixture(t)
   // A note a user glob names, and a safety path no glob may unname.
-  await writeNote(f, projectPath(f, '文档/忽略我.md'), pluginNote({ id: 'doc-88888888-8888-4888-8888-888888888888', title: '忽略我' }))
+  await writeNote(f, projectPath(f, 'Docs/忽略我.md'), pluginNote({ id: 'doc-88888888-8888-4888-8888-888888888888', title: '忽略我' }))
   await writeNote(f, '_meta/.history/tx-1/0__泄露.md', pluginNote({ id: 'doc-99999999-9999-4999-8999-999999999999', title: '历史' }))
 
   const ignored = await lintOf(f, { ignoreGlobs: ['**/忽略我.md'] })
@@ -381,12 +381,12 @@ test('the safety exclusions cannot be cancelled by user globs', async (t) => {
 
   // A negation (or any other unsupported syntax) is refused at config validation
   // instead of silently mis-matching.
-  for (const glob of ['!项目/**', '[a]b.md', '{a,b}.md', '**/x@.md', 'a\\b.md', '/absolute/**', '../escape/**', '']) {
+  for (const glob of ['!Projects/**', '[a]b.md', '{a,b}.md', '**/x@.md', 'a\\b.md', '/absolute/**', '../escape/**', '']) {
     assert.throws(() => validateConfig({ ignoreGlobs: [glob] }), RangeError, `must refuse ${JSON.stringify(glob)}`)
   }
   // The supported subset compiles, and a `.` stays a literal dot rather than
   // becoming a regular-expression wildcard.
-  const matchers = compileIgnoreGlobs(['*.md', '**/scratch/**', 'a?c.md', '文档/忽略我.md'])
+  const matchers = compileIgnoreGlobs(['*.md', '**/scratch/**', 'a?c.md', 'Docs/忽略我.md'])
   assert.equal(matchers.length, 4)
   assert.equal(matchers[0].test('notes.md'), true)
   assert.equal(matchers[0].test('notesXmd'), false)
@@ -669,7 +669,7 @@ test('bind mode fork mints a new id, swaps the pointer and never moves the old p
   assert.notEqual(forked.projectId, oldId)
   assert.equal(forked.previousProjectId, oldId)
   assert.equal(forked.pointerReplaced, true)
-  assert.equal(forked.relativeDir, `项目/repo--${forked.projectId.slice(0, 8)}`)
+  assert.equal(forked.relativeDir, `Projects/repo--${forked.projectId.slice(0, 8)}`)
   const pointer = JSON.parse(await readFile(join(f.repo, '.obsidian-mem'), 'utf8'))
   assert.equal(pointer.projectId, forked.projectId)
 
@@ -705,16 +705,16 @@ test('bind mode retain updates only the confirmed remote hint', async (t) => {
   assert.equal(retained.kind, 'bound', JSON.stringify(retained))
   assert.equal(retained.retained, true)
   assert.equal(retained.remote, 'https://example.invalid/demo')
-  const registry = await readFile(join(f.vault, '_meta', '项目注册表.md'), 'utf8')
+  const registry = await readFile(join(f.vault, '_meta', 'registry.md'), 'utf8')
   assert.match(registry, /https:\/\/example\.invalid\/demo/)
   const declared = /sha256:([0-9a-f]{64})/.exec(registry)[1]
   const body = registry.slice(registry.indexOf('-->\n') + 4, registry.indexOf('<!-- obsidian-mem:registry end -->'))
   assert.equal(declared, sha256(body))
 
-  const stat = await lstat(join(f.vault, '_meta', '项目注册表.md'))
+  const stat = await lstat(join(f.vault, '_meta', 'registry.md'))
   const again = await resolveBinding({ cwd: f.repo, vaultRoot: f.vault, mode: 'retain', home: f.home, dataRoot: f.dataRoot })
   assert.equal(again.retained, false)
-  assert.equal((await lstat(join(f.vault, '_meta', '项目注册表.md'))).mtimeMs, stat.mtimeMs)
+  assert.equal((await lstat(join(f.vault, '_meta', 'registry.md'))).mtimeMs, stat.mtimeMs)
 
   // `retain` writes the shared registry, so it must be told where the vault lock lives.
   await assert.rejects(
@@ -724,7 +724,7 @@ test('bind mode retain updates only the confirmed remote hint', async (t) => {
 
   // A registry whose generated region no longer matches its declared hash is a
   // refusal, never a rewrite: the R24 guard is what keeps a human edit safe.
-  const registryPath = join(f.vault, '_meta', '项目注册表.md')
+  const registryPath = join(f.vault, '_meta', 'registry.md')
   const original = await readFile(registryPath, 'utf8')
   // Edit a cell *inside* the generated region: the table still parses, but its
   // declared sha256 no longer describes its body.
@@ -739,9 +739,9 @@ test('bind mode retain updates only the confirmed remote hint', async (t) => {
   await f.index.close()
 })
 
-test('promote creates a 方法 note that links its source and never moves the source', async (t) => {
+test('promote creates a Methods note that links its source and never moves the source', async (t) => {
   const f = await fixture(t)
-  const source = projectPath(f, '约定/本地约定.md')
+  const source = projectPath(f, 'Conventions/本地约定.md')
   await writeNote(
     f,
     source,
@@ -752,7 +752,7 @@ test('promote creates a 方法 note that links its source and never moves the so
   const promoted = await promoteNote(f.binding, { path: source }, { dataRoot: f.dataRoot, home: f.home })
   assert.equal(promoted.source, source)
   assert.equal(promoted.moved, false)
-  assert.match(promoted.path, /^方法\//)
+  assert.match(promoted.path, /^Methods\//)
   const method = await readFile(join(f.vault, ...promoted.path.split('/')), 'utf8')
   assert.match(method, /type: "method"|type: method/)
   assert.ok(method.includes(`[[${source.replace(/\.md$/, '')}|本地约定]]`), method)
@@ -766,14 +766,14 @@ test('promote creates a 方法 note that links its source and never moves the so
 
   // A source that is not there is the documented `note-not-found`, not a generic
   // error from somewhere inside the reader.
-  const missing = await promoteNote(f.binding, { path: projectPath(f, '文档/不存在.md') }, { dataRoot: f.dataRoot, home: f.home })
+  const missing = await promoteNote(f.binding, { path: projectPath(f, 'Docs/不存在.md') }, { dataRoot: f.dataRoot, home: f.home })
     .then(() => null, (error) => error)
   assert.equal(missing?.name, 'MemoryError', String(missing))
   assert.equal(missing?.code, 'note-not-found')
 
   // A path outside the vault is refused by the jail, and nothing is created.
   await assert.rejects(promoteNote(f.binding, { path: '../outside.md' }, { dataRoot: f.dataRoot, home: f.home }), /vault|path/i)
-  // A source already in `方法/` is refused rather than promoted again.
+  // A source already in `Methods/` is refused rather than promoted again.
   await assert.rejects(
     promoteNote(f.binding, { path: promoted.path }, { dataRoot: f.dataRoot, home: f.home }),
     (error) => error?.code === 'already-method',
@@ -883,7 +883,7 @@ test('the weekly hint rides the first pre-step of a session, exactly once', asyn
   const briefText = 'B'.repeat(40)
   const hintText = 'H'.repeat(40)
   const sharedDisposers = registerHooks(shared, {
-    resolveBinding: async () => ({ kind: 'bound', projectId: ID1, slug: 'demo', displayName: 'demo', relativeDir: '项目/demo--1c392abb' }),
+    resolveBinding: async () => ({ kind: 'bound', projectId: ID1, slug: 'demo', displayName: 'demo', relativeDir: 'Projects/demo--1c392abb' }),
     index: async () => ({ waitReady: async () => ({ ready: true }) }),
     buildBrief: async () => ({
       text: briefText, charCount: briefText.length, hotHash: null, hotItems: [],
@@ -967,7 +967,7 @@ test('lint ignores symlinked notes instead of following them out of the vault', 
   const f = await fixture(t)
   const outside = join(f.root, 'outside.md')
   await writeFile(outside, pluginNote({ id: 'doc-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', title: '外面' }))
-  await symlink(outside, join(f.vault, ...projectPath(f, '文档/链接.md').split('/')))
+  await symlink(outside, join(f.vault, ...projectPath(f, 'Docs/链接.md').split('/')))
   const report = await lintOf(f)
   assert.equal(report.findings.some((finding) => finding.path.endsWith('链接.md')), false)
   assert.equal(await readFile(outside, 'utf8'), pluginNote({ id: 'doc-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', title: '外面' }))

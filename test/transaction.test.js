@@ -47,21 +47,21 @@ const execFileAsync = promisify(execFile)
 /** Fixed identities. Both are valid UUIDv4 values (version nibble `4`). */
 const ID_A = '1c392abb-7b08-42f7-871d-2a379caf9448'
 const ID_B = '5f0e6d1c-9a4b-4c2d-8e3f-0b7a6c5d4e3f'
-const PROJECT_A = `项目/alpha--${ID_A.slice(0, 8)}`
-const PROJECT_B = `项目/beta--${ID_B.slice(0, 8)}`
+const PROJECT_A = `Projects/alpha--${ID_A.slice(0, 8)}`
+const PROJECT_B = `Projects/beta--${ID_B.slice(0, 8)}`
 
 /** Vault-relative paths used by nearly every case. */
-const REGISTRY = '_meta/项目注册表.md'
+const REGISTRY = '_meta/registry.md'
 const HISTORY_ROOT = '_meta/.history'
-const NEW_NOTE = `${PROJECT_A}/决策/ADR-1-调度器.md`
-const STATUS_NOTE = `${PROJECT_A}/决策/ADR-0-旧决策.md`
-const MOC = `${PROJECT_A}/决策/index.md`
+const NEW_NOTE = `${PROJECT_A}/Decisions/ADR-1-调度器.md`
+const STATUS_NOTE = `${PROJECT_A}/Decisions/ADR-0-旧决策.md`
+const MOC = `${PROJECT_A}/Decisions/index.md`
 
 const NEW_NOTE_TEXT = '---\nid: "dec-11111111-1111-4111-8111-111111111111"\ntype: "decision"\ntitle: "调度器改为可插拔后端"\nstatus: "accepted"\nupdated: 2026-09-23\n---\n采用 A，理由见正文。\n'
 const STATUS_BEFORE = '---\nid: "dec-00000000-0000-4000-8000-000000000001"\ntype: "decision"\ntitle: "旧决策"\nstatus: "accepted"\nupdated: 2026-09-23\n---\n旧正文\n'
 const STATUS_AFTER = STATUS_BEFORE.replace('"accepted"', '"superseded"')
-const MOC_BEFORE = '---\nid: "hub-00000000-0000-4000-8000-000000000002"\ntype: "hub"\ntitle: "决策"\nupdated: 2026-09-23\n---\n# 决策\n\n<!-- obsidian-mem:generated begin sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 -->\n<!-- obsidian-mem:generated end -->\n'
-const MOC_AFTER = `${MOC_BEFORE}\n- [[${PROJECT_A}/决策/ADR-1-调度器|调度器改为可插拔后端]]\n`
+const MOC_BEFORE = '---\nid: "hub-00000000-0000-4000-8000-000000000002"\ntype: "hub"\ntitle: "Decisions"\nupdated: 2026-09-23\n---\n# 决策\n\n<!-- obsidian-mem:generated begin sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 -->\n<!-- obsidian-mem:generated end -->\n'
+const MOC_AFTER = `${MOC_BEFORE}\n- [[${PROJECT_A}/Decisions/ADR-1-调度器|调度器改为可插拔后端]]\n`
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex')
 const at = (vault, relative) => join(vault, ...relative.split('/'))
@@ -79,9 +79,9 @@ async function fixture(t) {
   ]))
   const vault = join(root, 'vault')
   await mkdir(join(vault, '_meta'), { recursive: true })
-  await mkdir(join(vault, PROJECT_A, '决策'), { recursive: true })
+  await mkdir(join(vault, PROJECT_A, 'Decisions'), { recursive: true })
   await mkdir(join(vault, PROJECT_A, '_meta'), { recursive: true })
-  await mkdir(join(vault, PROJECT_B, '决策'), { recursive: true })
+  await mkdir(join(vault, PROJECT_B, 'Decisions'), { recursive: true })
   await writeFile(at(vault, STATUS_NOTE), STATUS_BEFORE)
   await writeFile(at(vault, MOC), MOC_BEFORE)
   await writeFile(at(vault, REGISTRY), renderRegistryDocument([]))
@@ -103,7 +103,7 @@ function binding(vaultRoot, projectId, slug) {
     displayName: slug,
     schema: 1,
     vaultRoot,
-    relativeDir: `项目/${slug}--${projectId.slice(0, 8)}`,
+    relativeDir: `Projects/${slug}--${projectId.slice(0, 8)}`,
   }
 }
 
@@ -1054,7 +1054,7 @@ test('a transaction leaks no file descriptor and leaves no lock behind', async (
   for (let index = 0; index < 5; index += 1) {
     await runTransaction(bindingA, {
       txId: newTransactionId(),
-      creates: [{ path: `${PROJECT_A}/决策/笔记-${index}.md`, contents: `笔记 ${index}\n` }],
+      creates: [{ path: `${PROJECT_A}/Decisions/笔记-${index}.md`, contents: `笔记 ${index}\n` }],
       receipt: { action: 'write' },
     }, { dataRoot })
     counts.push((await readdir('/dev/fd')).length)
@@ -1219,7 +1219,7 @@ test('no temporary file survives a refused transaction', async (t) => {
     { code: 'injected-failure' },
   )
   await recoverTransactions(bindingA, { dataRoot })
-  const stray = (await readdir(at(vault, `${PROJECT_A}/决策`))).filter((name) => name.startsWith('.'))
+  const stray = (await readdir(at(vault, `${PROJECT_A}/Decisions`))).filter((name) => name.startsWith('.'))
   assert.deepEqual(stray, [], 'staging files must be cleaned up by recovery')
   assert.deepEqual(
     (await readdir(join(dataRoot, 'transactions', sha256(await realpath(vault))))).filter((name) => name.endsWith('.json')),

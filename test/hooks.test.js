@@ -40,7 +40,7 @@ import { bootstrapVault } from '../lib/vault.js'
 const PROJECT_ID = '1c392abb-7b08-42f7-871d-2a379caf9448'
 const SESSION_ID = 'session-9d4a4c1e-2f1a-4f4e-8b3a-000000000001'
 const CWD = '/work/demo'
-const RELATIVE_DIR = `项目/demo--${PROJECT_ID.slice(0, 8)}`
+const RELATIVE_DIR = `Projects/demo--${PROJECT_ID.slice(0, 8)}`
 const BUDGET = 6000
 
 /** The six tools this plugin registers, sorted for set comparison. */

@@ -33,7 +33,7 @@ const ID2 = '5f0e6d1c-9a4b-4c2d-8e3f-0b7a6c5d4e3f'
 const ID1_TWIN = '1c392abb-1111-4aaa-8bbb-222222222222'
 
 /** The per-project content directories, each of which owns an `index.md` MOC. */
-const MOC_DIRS = Object.freeze(['文档', '决策', '约定', '踩坑', '日志', '收件箱'])
+const MOC_DIRS = Object.freeze(['Docs', 'Decisions', 'Conventions', 'Pitfalls', 'Daily', 'Inbox'])
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -124,7 +124,7 @@ function vaultTargets(relativeDir) {
     dirs: [
       '_meta',
       '_meta/.history',
-      '方法',
+      'Methods',
       PROJECTS_DIR,
       relativeDir,
       `${relativeDir}/_meta`,
@@ -132,7 +132,7 @@ function vaultTargets(relativeDir) {
     ],
     files: [
       '.gitignore',
-      '方法/index.md',
+      'Methods/index.md',
       `${relativeDir}/index.md`,
       `${relativeDir}/_meta/hot.md`,
       ...MOC_DIRS.map((dir) => `${relativeDir}/${dir}/index.md`),
@@ -276,8 +276,8 @@ test('the first run creates every §5.1 directory and MOC and registers the proj
     assert.match(frontmatter.created, /^\d{4}-\d{2}-\d{2}$/)
     assert.equal(frontmatter.id.startsWith('hub-'), true)
   }
-  const method = note(await readFile(join(vault, '方法/index.md'), 'utf8'))
-  assert.equal(method.frontmatter.project, null, '方法/ is cross-project')
+  const method = note(await readFile(join(vault, 'Methods/index.md'), 'utf8'))
+  assert.equal(method.frontmatter.project, null, 'Methods/ is cross-project')
 
   // the hub links to each type directory with a vault-root-relative wikilink
   const hub = await readFile(join(binding.projectDir, 'index.md'), 'utf8')
@@ -329,7 +329,7 @@ test('a hand-written index.md is preserved and only missing items are added', as
   assert.equal(result.createdPaths.includes(`${binding.relativeDir}/index.md`), false)
   assert.equal(result.existingPaths.includes(`${binding.relativeDir}/index.md`), true)
   // the missing MOC and hot.md were added around it
-  for (const added of ['踩坑/index.md', '_meta/hot.md']) {
+  for (const added of ['Pitfalls/index.md', '_meta/hot.md']) {
     assert.equal(result.createdPaths.includes(`${binding.relativeDir}/${added}`), true, `${added} must be created`)
   }
   const expected = vaultTargets(binding.relativeDir)
@@ -581,7 +581,7 @@ test('an invalid binding is refused before anything is written', async (t) => {
     [handBinding(vault, { slug: 'Not A Slug' }), 'binding-invalid'],
     [{ ...handBinding(vault), displayName: 'bad\u0000name' }, 'binding-invalid'],
     [{ ...handBinding(vault), relativeDir: `${PROJECTS_DIR}/alpha--deadbeef` }, 'binding-invalid'],
-    [{ ...handBinding(vault), relativeDir: `方法/alpha--${ID1.slice(0, 8)}` }, 'binding-invalid'],
+    [{ ...handBinding(vault), relativeDir: `Methods/alpha--${ID1.slice(0, 8)}` }, 'binding-invalid'],
     [{ ...handBinding(vault), vaultRoot: '' }, 'binding-invalid'],
   ]
   for (const [binding, code] of cases) {

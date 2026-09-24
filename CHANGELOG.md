@@ -40,6 +40,41 @@ is a repository, not a release.
   <https://github.com/bonerush/dsh-obsidian-mem>.** This is the project's remote;
   `main` is the published history. It remains unpublished to npm and untagged.
 
+### Changed
+
+- **Every vault path is ASCII now: the directory names, and the file names the
+  plugin fixes itself.** `项目/`→`Projects/`, `文档/`→`Docs/`, `决策/`→`Decisions/`,
+  `约定/`→`Conventions/`, `踩坑/`→`Pitfalls/`, `日志/`→`Daily/`, `收件箱/`→`Inbox/`,
+  `方法/`→`Methods/`; the project registry moved to `_meta/registry.md` (was
+  `_meta/项目注册表.md`), the glossary to `Docs/glossary.md` and the hot archive to
+  `Docs/hot-archive.md`. A vault path now survives a shell that is not UTF-8, an
+  archive round-trip, a URL, and any tool that mangles CJK — which is the whole
+  reason it changed. **A note's own file name is unchanged in kind**: it is still
+  derived from the title in whatever language the writer used, because the name is
+  a rendering and frontmatter `id` is the identity. That distinction is now written
+  down in `README.md`/`README.zh.md`, in the shipped skill
+  (`skills/obsidian-mem/SKILL.md`, "Every directory name is ASCII…") and in
+  `AGENTS.md`. The suite was updated with it: 566/566 pass, and the fixtures'
+  directories were renamed while their *note* file names stayed Chinese, which is
+  exactly the rule.
+- **A breaking change with no automatic migration.** The plugin does not convert an
+  existing vault: notes stay where they are, but the project directory, the
+  registry path and every MOC wikilink still name the old directories, so
+  `mem_admin(action="projects")` will not resolve the project and `nextAdrNumber`
+  will not see existing ADRs. The vault this repository dogfoods was migrated by
+  hand instead: directories renamed, path-qualified wikilinks and the
+  generated-region declared hashes rewritten, the registry rewritten, and the
+  receipt path keys in `$DSH_HOME/data/obsidian-mem/receipts/` remapped so that
+  "this plugin owns this file" still checks out. A running harness must be
+  restarted afterwards — plugin code is loaded once per process.
+- **The frozen design document still shows the old names.**
+  `docs/superpowers/specs/2026-09-23-dsh-obsidian-mem-design.md` (D5, §5.1, §6.1)
+  records the decision as it was taken; the code, the shipped skill, the tests and
+  the README pair describe the current tree. Likewise `docs/dogfood-results.md`,
+  `docs/smoke-results.md` and `test/smoke/records/smoke-record.json` are records of
+  runs that really happened under the old names, and rewriting them would claim
+  something that never occurred.
+
 ### Removed
 
 - **The README no longer explains how to disable another memory plugin.** The

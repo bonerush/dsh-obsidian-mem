@@ -45,7 +45,7 @@ Rules:
 - Never edit the pointer to change identity, and never invent a `projectId`.
   Creating a pointer for a repository that has none is a user decision, not a
   side effect of reading memory.
-- The vault directory for a project is `项目/<slug>--<projectId first 8 hex>/`.
+- The vault directory for a project is `Projects/<slug>--<projectId first 8 hex>/`.
   It is fixed at first binding; renaming a repository or a `displayName` never
   moves it, and a directory that has been renamed by hand is reported, not
   repaired.
@@ -53,28 +53,38 @@ Rules:
   the pointer.
 
 If the working directory has no pointer, you have no project memory: say so.
-Cross-project knowledge (`方法/`, `_meta/user.md`) is still readable.
+Cross-project knowledge (`Methods/`, `_meta/user.md`) is still readable.
 
 ## 2. Vault layout
 
 ```
 <vault>/
 ├── _meta/
-│   ├── user.md            # user-maintained global preferences — READ ONLY
-│   ├── 项目注册表.md       # index of every project hub (plugin-managed region)
-│   ├── log.md             # append-only write receipts
-│   └── .history/          # pre-write snapshots; never indexed, never cited
-├── 方法/<slug>.md          # cross-project methods (promotion target)
-└── 项目/<slug>--<id8>/
-    ├── index.md           # project hub / MOC — the recall entry point
-    ├── 约定/              # one convention per file
-    ├── _meta/hot.md       # hot memory, ≤9000 chars, three controlled zones
-    ├── 文档/              # project documents + 术语表.md
-    ├── 决策/              # ADR-style decisions
-    ├── 踩坑/              # gotchas: symptom / root cause / fix / evidence
-    ├── 日志/YYYY-MM-DD.md # append-only session log (cold layer)
-    └── 收件箱/            # unclassified or low-confidence candidates
+│   ├── user.md             # user-maintained global preferences — READ ONLY
+│   ├── registry.md         # index of every project hub (plugin-managed region)
+│   ├── log.md              # append-only write receipts
+│   └── .history/           # pre-write snapshots; never indexed, never cited
+├── Methods/<slug>.md       # cross-project methods (promotion target)
+└── Projects/<slug>--<id8>/
+    ├── index.md            # project hub / MOC — the recall entry point
+    ├── Docs/               # project documents + glossary.md
+    ├── Decisions/          # ADR-style decisions
+    ├── Conventions/        # one convention per file
+    ├── Pitfalls/           # gotchas: symptom / root cause / fix / evidence
+    ├── Daily/YYYY-MM-DD.md # append-only session log (cold layer)
+    ├── Inbox/              # unclassified or low-confidence candidates
+    └── _meta/hot.md        # hot memory, ≤9000 chars, three controlled zones
 ```
+
+**Every directory name is ASCII, and so is every file name the plugin fixes
+itself** — `index.md`, `glossary.md`, `registry.md`, `hot.md`, `hot-archive.md`,
+`Lint Report <date>.md`, `YYYY-MM-DD.md`. That is what keeps a vault readable
+from a shell, an archive, a URL or a tool that is unhappy with CJK paths.
+
+A **note's own file name is the writer's choice**: it is derived from the title,
+so it is normally in the language the writer used. `Decisions/ADR-4-发布到 GitHub`
+is a correct path. The name is a rendering — frontmatter `id` is the identity, so
+renaming a note never creates a new fact.
 
 Directory depth stays ≤3 levels: **topic relatedness is expressed by
 `[[wikilinks]]` and `tags`, never by inventing a deeper directory tree.**
@@ -91,19 +101,19 @@ Pick `type` first; it decides the destination. This is the whole routing table:
 
 | type | Destination | Notes |
 |---|---|---|
-| `doc` | `文档/<title>.md` (+ `文档/index.md`) | designs, reports, guides, plans |
-| `decision` | `决策/ADR-<n>-<slug>.md` | Context / Decision / Alternatives / Consequences; `status: proposed \| accepted \| superseded` |
-| `gotcha` | `踩坑/<slug>.md` | symptom / root cause / fix / evidence — the highest-value, smallest notes |
-| `convention` (input alias `invariant`) | `约定/<slug>.md` (+ registry in `约定/index.md`) | **one fact per file**, so each can be given evidence, expired or superseded independently |
-| `session-log` | `日志/YYYY-MM-DD.md` | append-only, one section per session, idempotent per session id |
-| `hub` | `项目/<dir>/index.md` | MOC, the injection entry point |
-| `glossary` | `文档/术语表.md` | domain vocabulary |
-| unclassified / low confidence | `收件箱/<slug>.md` | awaiting human classification |
-| cross-project method | `方法/<slug>.md` | only via an explicit `promote` action |
+| `doc` | `Docs/<title>.md` (+ `Docs/index.md`) | designs, reports, guides, plans |
+| `decision` | `Decisions/ADR-<n>-<slug>.md` | Context / Decision / Alternatives / Consequences; `status: proposed \| accepted \| superseded` |
+| `gotcha` | `Pitfalls/<slug>.md` | symptom / root cause / fix / evidence — the highest-value, smallest notes |
+| `convention` (input alias `invariant`) | `Conventions/<slug>.md` (+ registry in `Conventions/index.md`) | **one fact per file**, so each can be given evidence, expired or superseded independently |
+| `session-log` | `Daily/YYYY-MM-DD.md` | append-only, one section per session, idempotent per session id |
+| `hub` | `Projects/<dir>/index.md` | MOC, the injection entry point |
+| `glossary` | `Docs/glossary.md` | domain vocabulary |
+| unclassified / low confidence | `Inbox/<slug>.md` | awaiting human classification |
+| cross-project method | `Methods/<slug>.md` | only via an explicit `promote` action |
 | user / environment | `_meta/user.md` | **user-maintained; never written by the agent** |
 
 Never put a long convention into `hot.md` just because it grew: a convention
-that needs evidence, expiry or a successor must be its own file in `约定/`,
+that needs evidence, expiry or a successor must be its own file in `Conventions/`,
 with at most a short pointer in the hot layer.
 
 ## 4. Note frontmatter (closed vocabulary)
@@ -154,7 +164,7 @@ they are.
 **Evidence before assertion.** Every note that states a fact should be able to
 say where it came from: `source`, `session`, and for `observed` the concrete
 command or file the claim rests on. A candidate that cannot point at evidence
-goes to `收件箱/` with low `confidence` — or is not written at all.
+goes to `Inbox/` with low `confidence` — or is not written at all.
 
 **Supersede, never overwrite.** When a conclusion changes, write a *new* note:
 
@@ -178,7 +188,7 @@ original result instead of a duplicate note.
 
 ## 6. Document authority: where long documents live
 
-- `mem_write(type=doc)` (or, without tools, a new file under `文档/`) is the
+- `mem_write(type=doc)` (or, without tools, a new file under `Docs/`) is the
   **authority** for project designs, reports, guides and plans. It returns the
   vault-relative path; an Obsidian link is only ever reported for a directory the
   user has actually registered as a vault, because a fabricated `obsidian://`
@@ -195,12 +205,12 @@ original result instead of a duplicate note.
 
 | Tool | Arguments | What it does |
 |---|---|---|
-| `mem_search` | `query` (required), `scope` (`project`\|`global`\|`all`, default `project`), `type`, `projectId`, `includeHistory` (default false), `limit` (default 8) | Searches the vault. `scope=project` only ever searches the bound project — passing another `projectId` is refused, never silently crossed. `global` covers `方法/` and `_meta/user.md`. `all` crosses projects. Superseded/archived notes are excluded unless `includeHistory` is set. |
+| `mem_search` | `query` (required), `scope` (`project`\|`global`\|`all`, default `project`), `type`, `projectId`, `includeHistory` (default false), `limit` (default 8) | Searches the vault. `scope=project` only ever searches the bound project — passing another `projectId` is refused, never silently crossed. `global` covers `Methods/` and `_meta/user.md`. `all` crosses projects. Superseded/archived notes are excluded unless `includeHistory` is set. |
 | `mem_read` | `path` (required, vault-relative), `section` (optional ATX heading) | Reads a retrievable `.md` note and returns body, frontmatter and content hash. Absolute paths, `..`, symlinks and internal paths (`_meta/.history/`, generated reports) are refused. |
 | `mem_write` | `type`, `title`, `body` (all required), `tags`, `status`, `confidence`, `assertion`, `supersedes`, `id`, `idempotencyKey` | Creates a note at the routed destination and updates the MOC, receipts and index transactionally. **Without `id` it always creates a new note; to update, you must pass the existing `id`.** `supersedes` is validated against the old note's id. |
 | `mem_log` | `text` (required), `session`, `section`, `idempotencyKey` | Appends one entry to today's log, idempotently per session. `section: hot` (or 强约束/进行中/已完成) updates that controlled hot zone instead; if it would exceed the hot capacity it archives first or refuses. |
 | `mem_brief` | — | Returns the current hot brief — the same text injected at session start — so you can re-read or check the budget. |
-| `mem_admin` | `action` (required: `lint`\|`index`\|`bind`\|`projects`\|`promote`\|`jobs`), `path`, `rebuild`, `mode`, `jobId`, `retry` | Low-frequency maintenance. `lint` is read-only unless a report is explicitly requested; `index` rebuilds the search index; `bind mode=show` reports the binding without writing; `projects` lists registered projects; `promote` copies a note into `方法/` keeping its source link; `jobs` inspects and explicitly retries failed background jobs. |
+| `mem_admin` | `action` (required: `lint`\|`index`\|`bind`\|`projects`\|`promote`\|`jobs`), `path`, `rebuild`, `mode`, `jobId`, `retry` | Low-frequency maintenance. `lint` is read-only unless a report is explicitly requested; `index` rebuilds the search index; `bind mode=show` reports the binding without writing; `projects` lists registered projects; `promote` copies a note into `Methods/` keeping its source link; `jobs` inspects and explicitly retries failed background jobs. |
 
 Working rules:
 
@@ -212,7 +222,7 @@ Working rules:
   truth for project decisions, conventions and gotchas; the conversation is not.
 - When a plugin tool refuses a write (human-owned file, no ownership record, a
   file changed since the last plugin write), do **not** work around it with a
-  direct file edit or a shell command. Write the finding to `收件箱/` instead and
+  direct file edit or a shell command. Write the finding to `Inbox/` instead and
   tell the user which file refused and why.
 - Without `mem_*` tools, perform the equivalent edit by hand: pick the routed
   path, write the full frontmatter from §4, update the directory `index.md` if
@@ -227,11 +237,11 @@ These are not preferences. A violation can destroy the user's personal notes.
 2. **Never modify a note whose `trust: owner`.** A file declaring `trust: owner`
    is human-owned. Do not rewrite it, reformat it, "fix" its frontmatter, or
    append to it — not even a courtesy link. Create a separate note in the
-   relevant directory (or `收件箱/`) and link to it from there.
+   relevant directory (or `Inbox/`) and link to it from there.
 3. **Never delete anything** — no notes, no directories, no vault files. The
    only sanctioned transitions are marking `status: superseded`, `archived` or
    `contested`.
-4. **Never move or rename a user directory.** `项目/<slug>--<id8>/` and its
+4. **Never move or rename a user directory.** `Projects/<slug>--<id8>/` and its
    `displayName` are fixed at first binding; a rename is reported, never
    "repaired" by moving files.
 5. **Never modify a file the plugin did not write.** Ownership needs a record:
@@ -250,4 +260,4 @@ These are not preferences. A violation can destroy the user's personal notes.
    reconfigure another memory plugin, and do not copy this vault into one.
 
 When any of these blocks a write you believe is valuable, say so plainly and
-leave the candidate in `收件箱/` with its evidence. Silence is the failure mode.
+leave the candidate in `Inbox/` with its evidence. Silence is the failure mode.

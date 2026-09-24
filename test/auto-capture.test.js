@@ -55,12 +55,12 @@ import { bootstrapVault, parseNote } from '../lib/vault.js'
 /** Fixed, valid UUIDv4 identity (version nibble `4`, variant nibble `8`). */
 const PROJECT_ID = '1c392abb-7b08-42f7-871d-2a379caf9448'
 const ID8 = PROJECT_ID.slice(0, 8)
-const PROJECT = `项目/alpha--${ID8}`
+const PROJECT = `Projects/alpha--${ID8}`
 const SESSION_ID = 'session-9d4a4c1e-2f1a-4f4e-8b3a-000000000001'
 const TO_SEQ = 7
 const JOB_ID = 'job-0123456789abcdef0123456789abcdef'
-const DECISIONS = `${PROJECT}/决策`
-const INBOX = `${PROJECT}/收件箱`
+const DECISIONS = `${PROJECT}/Decisions`
+const INBOX = `${PROJECT}/Inbox`
 const LOG = '_meta/log.md'
 
 /** The §6.4 prefix of each type admissible to automatic distillation. */
@@ -446,7 +446,7 @@ test('a validated job applies through createMemoryWithId: one note, one MOC line
   assert.equal(notes[0].note.data.type, 'decision')
   assert.equal(notes[0].note.data.trust, 'agent')
   assert.equal(notes[0].note.data.session, SESSION_ID)
-  assert.match(notes[0].path, /决策\/ADR-1-/)
+  assert.match(notes[0].path, /Decisions\/ADR-1-/)
 
   // The MOC's generated region lists the note; the log carries exactly one block.
   const moc = await readVault(f, `${DECISIONS}/index.md`)
@@ -971,7 +971,7 @@ test('a refused candidate is persisted beside the validated items and survives a
   const raw = JSON.stringify({
     items: [
       itemFixture({ title: '保留的结论' }),
-      itemFixture({ title: '被拒的结论', supersedesId: `项目/other--deadbeef/决策/ADR-1.md` }),
+      itemFixture({ title: '被拒的结论', supersedesId: `Projects/other--deadbeef/Decisions/ADR-1.md` }),
     ],
   })
   await writeJobAtomic(f.queueRoot, jobFixture())
@@ -1008,7 +1008,7 @@ test('a refused candidate alone is a no-memory turn that still explains the drop
   const f = await fixture(t)
   await writeJobAtomic(f.queueRoot, jobFixture())
   const llm = stubLlm(JSON.stringify({
-    items: [itemFixture({ supersedesId: `方法/跨项目方法.md` })],
+    items: [itemFixture({ supersedesId: `Methods/跨项目方法.md` })],
   }))
 
   const summary = await processQueue(queueOptions(f, { llm }))
@@ -1027,7 +1027,7 @@ test('the receipt keeps the real refusal count while the listed reasons stay bou
     index,
     reason: 'foreign-target',
     field: 'supersedesId',
-    value: `项目/other--deadbeef/决策/ADR-${index}.md`,
+    value: `Projects/other--deadbeef/Decisions/ADR-${index}.md`,
   }))
   const items = validatedJob([itemFixture()]).output.items
   await writeJobAtomic(f.queueRoot, validatedJob([itemFixture()], {
@@ -1046,7 +1046,7 @@ test('a process killed between the validated barrier and the audit still reports
   const raw = JSON.stringify({
     items: [
       itemFixture({ title: '保留的结论' }),
-      itemFixture({ title: '被拒的结论', supersedesId: `项目/other--deadbeef/决策/ADR-1.md` }),
+      itemFixture({ title: '被拒的结论', supersedesId: `Projects/other--deadbeef/Decisions/ADR-1.md` }),
     ],
   })
   await writeJobAtomic(f.queueRoot, jobFixture())
@@ -1144,7 +1144,7 @@ test('an output whose audit cannot be re-derived fails the job instead of comple
   const raw = JSON.stringify({
     items: [
       itemFixture({ title: '保留的结论' }),
-      itemFixture({ title: '被拒的结论', supersedesId: `项目/other--deadbeef/决策/ADR-1.md` }),
+      itemFixture({ title: '被拒的结论', supersedesId: `Projects/other--deadbeef/Decisions/ADR-1.md` }),
     ],
   })
   const items = withIdentity([itemFixture({ title: '保留的结论' })])
