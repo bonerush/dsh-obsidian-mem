@@ -73,6 +73,8 @@
     "lint": "eslint .",
     "types": "tsc --noEmit",
     "pack:check": "node scripts/verify-tarball.mjs",
+    "check:fast": "node scripts/check-staged.mjs",
+    "hooks:install": "node scripts/install-hooks.mjs",
     "check": "npm run lint && npm run format:check && npm run types && npm run prepack && npm run pack:check",
     "format": "prettier --write \"lib/**/*.js\" \"test/**/*.js\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"codex/**/*.mjs\" \"eslint.config.mjs\"",
     "format:check": "prettier --check \"lib/**/*.js\" \"test/**/*.js\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"codex/**/*.mjs\" \"eslint.config.mjs\"",

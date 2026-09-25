@@ -1,0 +1,5 @@
+#!/bin/sh
+# Fast, staged-only gate. Installed by `npm run hooks:install`, which is the only
+# command that changes git config; see scripts/check-staged.mjs for what it checks
+# and why it reads the index rather than the working tree.
+exec npm run --silent check:fast

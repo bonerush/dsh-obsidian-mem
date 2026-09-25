@@ -13,6 +13,31 @@ is a repository, not a release.
 
 ### Added
 
+- **Three rules that were prose now run before a commit.** `npm run check:fast`,
+  wired into `.githooks/pre-commit` by the opt-in `npm run hooks:install`, checks
+  the *index* rather than the working tree: sources come from `git show :<path>`
+  and go into `eslint --stdin` and `prettier --check --stdin-filepath`, both
+  pointed at this repository's configs explicitly so a checkout without its own
+  config is judged by the same rules. That distinction is the point — with a
+  worktree check, `git add -p` lets a commit carry a file whose staged copy fails
+  while the check reports green. The two fitness tests still read the worktree, so
+  the script refuses rather than guess when any of their inputs has both a staged
+  and an unstaged edit. Measured: 1.02 s to reject a staged `lib/` change with no
+  changelog entry, 1.47 s to accept one with it, both well inside the five-second
+  target the design set.
+  `scripts/verify-changelog.mjs` is the Unreleased gate in two modes —
+  `--staged` against `HEAD`, `--base <ref>` for CI — and it deliberately stays out
+  of `npm run check`, because a check with no comparison base passes vacuously and
+  a green that means nothing is worse than no check. A change under `lib/` needs an
+  added or amended `## Unreleased` body; an edit to an already-released section does
+  not count, and a fix left in the working tree cannot satisfy a staged check.
+  A missing ref is an error (exit 2), never an empty success.
+  `scripts/install-hooks.mjs` is the only thing in this repository that changes git
+  configuration, it must be asked for by name, and it prints `core.hooksPath`
+  before and after. `test/repo-gates.test.js` exercises all of it in disposable
+  repositories — nine cases, including both directions of the staged-versus-worktree
+  distinction — and never touches this checkout's git config.
+
 - **The release gate checks the archive npm really builds, not a frozen count.**
   `scripts/verify-tarball.mjs` (`npm run pack:check`) packs this checkout into a
   temporary directory with `npm pack --json --ignore-scripts` — the flag is
