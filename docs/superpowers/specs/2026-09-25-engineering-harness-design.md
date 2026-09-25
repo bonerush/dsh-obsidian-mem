@@ -1,10 +1,14 @@
 # dsh-obsidian-mem 工程框架设计文档
 
 - **日期**：2026-09-25
-- **状态**：设计已获用户逐段确认（骨架、debug 读者、格式化宽度、发行工具、结构拆分边界），待实施计划
+- **状态**：用户确认的设计已完成独立复审；本次修正执行边界，待实施
 - **路径**：`docs/superpowers/specs/2026-09-25-engineering-harness-design.md`
 - **前置提交**：`e31fa13`（Phase 0 的真缺陷修复，见 §12）
-- **一句话**：给这个仓库装上一套**可执行的**工程骨架——门禁自动化、运行时可见、结构约束可度量——让 agent 开发者与独立开发者不必先读 200KB 散文才知道"改这里会不会踩雷"。
+- **一句话**：给这个仓库装上一套**可执行的**工程骨架——门禁自动化、运行时可见、结构约束可度量——让 agent 开发者与独立开发者能快速判断改动的影响与验证方法。
+
+### 复审修正（2026-09-25）
+
+复审保留 D1–D6 的用户决策，并修正原稿中会使实施失败或检查给出假结论的细节：`tsconfig.include` 不隔离被 import 的 JS；固定 33 个 tarball 条目与新增模块矛盾；Prettier 的 `.` 扫描范围大于基线测量范围；格式化后的 LOC 和拆分后的层级必须重新测量；诊断动作必须贯穿 DSH 与 Codex 两个入口及封闭的输出 schema；内存环只覆盖当前进程。以下各节已按这些结论修改。
 
 ---
 
@@ -37,9 +41,9 @@
 
 | # | 目标 | 验收方式 |
 |---|---|---|
-| G1 | 一条命令等价于"整套门禁"，本地与 CI 跑的是同一条 | `npm run check` 在干净树与 CI 上都绿；CI 不引入本地没有的步骤 |
-| G2 | 提交前 5 秒内挡住明显错误 | `.githooks/pre-commit` 只对改动文件跑 lint/format，加两个适应度测试；实测耗时须 < 5s |
-| G3 | 运行时失败可在**不重跑宿主**的前提下被 agent 取到 | `mem_admin(action="diagnostics")` 返回结构化事件环；隐私哨兵测试证明正文不泄漏 |
+| G1 | 一条命令等价于整套不依赖 Git 比较基线的门禁，本地与 CI 共用 | `npm run check` 在本地与 CI 都执行 lint、format、types、prepack 和真实 tarball 校验；CI 另执行需要 Git 基线的 CHANGELOG 检查 |
+| G2 | 提交前快速挡住明显错误 | `.githooks/pre-commit` 检查暂存的 JS 与 CHANGELOG，再跑两个适应度测试；实测耗时并记录，5 秒是目标，不是未经测量的通过条件 |
+| G3 | 当前进程中的运行时失败可被 agent 取到 | `mem_admin(action="diagnostics")` 返回有界结构化事件环；正文隐私哨兵测试通过；重启后的历史由既有收据与 pending 队列查看 |
 | G4 | 结构不会在无人察觉时继续膨胀 | `test/architecture.test.js` 对 10 层分层表 + LOC 预算失败即红；实测当前状态为绿 |
 | G5 | agent 冷启动只需读 `AGENTS.md` 的两张表 | `npm run` 命令表与"真相在哪"表；`test/repo-hygiene.test.js` 断言 `AGENTS.md` 与两份 README 里出现的每个 `npm run <name>` 都在 `package.json` 的 `scripts` 里存在 |
 | G6 | 双语文档与 CHANGELOG 的既有约定由机器守 | blob hash 检查进入 `npm test`；`lib/` 改动而 Unreleased 未动则在 pre-commit/CI 失败 |
@@ -50,8 +54,8 @@
 
 | # | 决策 | 值 | 决策者 |
 |---|---|---|---|
-| D1 | 骨架 | **标准技术栈**（ESLint + Prettier + `tsc --checkJs` + GitHub Actions），而非"仓库内 harness"或"seam 探针台" | 用户 |
-| D2 | debug 读者 | **两者都要**：默认走 `ctx.logger` 分级日志，另存会话内诊断环供 `mem_admin` 导出 | 用户 |
+| D1 | 骨架 | **标准技术栈**（ESLint + Prettier + TypeScript 逐文件 JS 检查 + GitHub Actions），而非"仓库内 harness"或"seam 探针台" | 用户 |
+| D2 | debug 读者 | **两者都要**：保留 `ctx.logger` 的失败告警，另存实例内诊断环供 `mem_admin` 导出；Codex 用 stderr 作可选日志出口 | 用户 |
 | D3 | `printWidth` | **100**（实测 58 文件 / +9,739 / −2,939 行） | 用户 |
 | D4 | 发行工具 | **不用 changesets**，换成"lib/ 改了但 CHANGELOG 的 Unreleased 没动就失败"的检查 | 用户 |
 | D5 | 结构 | **本轮就拆 `tools.js`**（schema / registerTools / createMemoryServices） | 用户 |
@@ -103,11 +107,13 @@
 
 按目录拆（width=100）：`lib` 24 文件 +3,205/−1,053；`test` 30 文件 +6,403/−1,842；`scripts` 2 文件 +74/−22；`codex` 2 文件 +57/−22。
 
+这些数字来自显式 JS/MJS glob；格式化并新增配置后须重测实际文件集合。此处只说明原始基线，不作为后续 LOC 预算。
+
 辅助事实：作用域内 38,730 行，均值 43.0 字符，最长 564 字符（注释）；**2,014 行超过 100 字符**、803 行超过 120。Prettier **不重排注释**，所以长注释不会被切开，实际改动集中在代码行。现有代码与候选配置**没有冲突**：单参箭头函数不带括号的写法出现 **0** 次（`arrowParens: always` 无副作用），行尾逗号已是既有风格（2,177 行以逗号结尾）。
 
 ### 3.5 `tsc --checkJs` 基线
 
-非严格模式、`allowJs + checkJs + nodenext`、`@types/node` 就位：**2,446 个 error / 27 个文件**。
+原轮探测记录为 `allowJs + checkJs + nodenext`、`@types/node` 就位时 **2,446 个 error / 27 个文件**。该探测没有把最终 `tsconfig.json` 与 TypeScript 版本留在仓库，所以下表只用于估算工作量；实施时需在锁定版本和准确选项下复测，不能把这些数字当作可重复的验收值。
 
 | 错误码 | 数量 | 含义 |
 |---|---|---|
@@ -147,35 +153,38 @@
 "scripts": {
   "test":          "node scripts/run-tests.mjs",
   "lint":          "eslint .",
-  "format":        "prettier --write .",
-  "format:check":  "prettier --check .",
+  "format":        "prettier --write \"lib/**/*.js\" \"test/**/*.js\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"codex/**/*.mjs\" \"eslint.config.mjs\"",
+  "format:check":  "prettier --check \"lib/**/*.js\" \"test/**/*.js\" \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"codex/**/*.mjs\" \"eslint.config.mjs\"",
   "types":         "tsc --noEmit",
-  "check":         "npm run lint && npm run format:check && npm run types && npm run prepack",
+  "pack:check":    "node scripts/verify-tarball.mjs",
+  "check":         "npm run lint && npm run format:check && npm run types && npm run prepack && npm run pack:check",
   "check:fast":    "node scripts/check-staged.mjs",
   "hooks:install": "node scripts/install-hooks.mjs",
   "prepack":       "npm test && node scripts/verify-pack.mjs"
 }
 ```
 
-`check` 通过 `npm run prepack` 复用发布闸门，**不复制**它的内容：发布时跑的与提交前跑的是同一条链。`check` 包含 `prepack` 是结构性的，不是约定。
+`check` 通过 `npm run prepack` 复用发布闸门，**不复制**它的内容；`pack:check` 在 `prepack` 之后运行，故不会递归。格式化的显式 glob 覆盖 §3.4 测量的 JS/MJS 范围与新配置文件；Markdown、夹具、JSON/YAML 元数据不在格式化入口内。
 
 ### 4.2 时机与范围
 
 | 时机 | 命令 | 内容 | 目标耗时 |
 |---|---|---|---|
-| 提交前 | `.githooks/pre-commit` → `npm run check:fast` | 对 `git diff --cached` 的 `.js/.mjs` 跑 eslint + `prettier --check`；再跑两个适应度测试；再跑 CHANGELOG 门 | < 5s |
-| 手动 / CI / 发布 | `npm run check` | lint → format:check → types → prepack(test + verify-pack) | ~45s |
-| CI 附加 | `.github/workflows/ci.yml` | `npm run check` + tarball 文件数核对 + Node 矩阵 | ~2min |
+| 提交前 | `.githooks/pre-commit` → `npm run check:fast` | 对暂存的 `.js/.mjs` blob 跑 eslint + Prettier；再跑两个适应度测试与暂存 CHANGELOG 门 | 目标 < 5s，实测报告 |
+| 手动 / CI / 发布 | `npm run check` | lint → format:check → types → prepack(test + verify-pack) → 真实 tarball 校验 | 运行后记录实测 |
+| CI 附加 | `.github/workflows/ci.yml` | `npm run check` + 按 Git 基线校验 CHANGELOG + Node 矩阵 | 运行后记录实测 |
 
-`check:fast` 有一条**已知且写明的**限制：它对工作区文件运行，不区分"暂存内容"与"工作区内容"，所以部分暂存（`git add -p`）时它检查的是工作区版本。
+`check:fast` 从 `git diff --cached --name-only -z --diff-filter=ACMR` 取路径，再以 `git show :<path>` 读取**暂存 blob**送给 ESLint 的 `--stdin --stdin-filename` 和 Prettier 的 `--check --stdin-filepath`。适应度测试仍读取工作区；若适应度测试的输入文件同时存在暂存与未暂存改动，脚本须明确拒绝并提示先完成暂存或跑完整 `npm run check`，不得悄悄把工作区测试结果说成暂存内容通过。无暂存 JS 时跳过对应格式检查。
 
 ### 4.3 CI
 
 `.github/workflows/ci.yml`，触发 `push` 与 `pull_request`：
 
+[GitHub 官方 Node 工作流示例](https://docs.github.com/en/actions/tutorials/build-and-test-code/nodejs)支持 `setup-node` 指定版本、npm 缓存与 `npm ci`；Action 主版本在实施时核对当时的官方示例并在工作流中固定。
+
 - `strategy.matrix.node: ['22.22.2', '24.x', 'node']`——`22.22.2` 是 `engines.node` 的下界（AGENTS.md 第 5 条：那是**测出来**的最低带 FTS5 的版本，不是估计值），必须实测它，否则下界只是一个声明。
-- 步骤：`npm ci` → `npm run check` → 核对 tarball（把 AGENTS.md 里靠人肉的那一步变成机器检查；当前期望 **33** 个条目）。核对用
-  `npm pack --ignore-scripts --pack-destination "$(mktemp -d)"`：**`--ignore-scripts` 不是可选项**——裸 `npm pack` 会重入 `prepack`，而 `prepack` 会再跑一遍整套测试。AGENTS.md 已经在 dry-run 那条注里写明这件事，但把检查搬进 CI 时最容易漏掉它。
+- 步骤：`npm ci` → `npm run check` → `node scripts/verify-changelog.mjs --base <SHA>`。`pack:check` 在 `check` 内创建临时目录并调用 `npm pack --ignore-scripts --pack-destination <dir>`，列真实 tarball 条目；确认 `package.json`、`lib/` 每个现存 JS、六个必需资产与两份 README 均在包内，且无 `test/`、`docs/`、`research/`、`scratch/`、pending 或本机记录。条目数仅作报告，**不得写死为 33**，因为 §10 会新增三个 shipped 模块。`--ignore-scripts` 必须保留，以免 `npm pack` 重入 `prepack`。临时目录由脚本清理。
+- Git 基线：PR 用 base SHA；push 用事件的 before SHA。checkout 使用 `fetch-depth: 0`，以保证比较对象可读。首次 push 的 before 为全零时，以默认分支的 merge-base 为基线；若基线不存在或等于 `HEAD`，明确失败并打印原因，不以空 diff 通过。
 - **无 secrets**：`npm test` 不需要任何密钥（§3.1），所以工作流没有密钥面。smoke（需要 `DEEPSEEK_API_KEY`）**不进 CI**，它仍是手动、带独立 profile 的验证。
 - 缓存 `~/.npm`；不使用需要写权限的 action。
 
@@ -189,9 +198,9 @@ AGENTS.md 第 1 条的措辞是"任何脚本都不得增删改用户的 `cordis.
 
 ### 4.5 CHANGELOG 门（替代 changesets，D4）
 
-`scripts/verify-changelog.mjs --base <ref>`：若 `lib/` 下有文件改动而 `CHANGELOG.md` 未在同一次 diff 里改动，则失败，并打印"该往 `## Unreleased` 的哪一节写"。
+`scripts/verify-changelog.mjs --staged|--base <ref>`：若 `lib/` 下有文件改动，而比较两端的 `CHANGELOG.md` **`## Unreleased` 内容**未增加或修改，则失败，并指向该节。`--staged` 比较 `HEAD` 与暂存 blob；`--base` 比较给定提交与 `HEAD`。互斥，缺基线不得静默通过。只改已发布段落不能满足检查。
 
-- 它**不在** `npm run check` 里，因为它需要一个基线引用，否则在干净树上是空洞的通过。位置：pre-commit（base=`HEAD`）+ CI（base=PR base SHA 或 push 的 before SHA）。
+- 它**不在** `npm run check` 里，因为它需要一个基线引用，否则在干净树上是空洞的通过。位置：pre-commit（`--staged`）+ CI（`--base`）。纯格式化提交安排在该门禁安装之前；其余改动 `lib/` 的提交须同步更新 Unreleased。
 - 它**不进** `prepack`：`prepack` 必须保持只读，且不依赖 git 上下文（AGENTS.md 第 2 条）。
 - 与第 6 条的关系：这条检查只保证"有人写了"，不保证"写得诚实"——诚实仍是人的责任，检查只消除"忘了写"这一种失败。
 
@@ -264,11 +273,11 @@ AGENTS.md 第 1 条的措辞是"任何脚本都不得增删改用户的 `cordis.
 
 ### 7.3 棘轮分档
 
-`tsconfig.json` 的 `include` **只列已经干净的文件**。棘轮只许变严。
+**复审纠错**：`tsconfig.json` 的 `include`/`files` 是根文件列表，被根文件 import 的 JS 仍会进入程序；在 `checkJs: true` 下也会报错。用九个 `include` 条目隔离检查范围的原方案不可执行。改为 `allowJs: true`、`checkJs: false`，在选定源文件头部逐一加 `// @ts-check`；[TypeScript 官方文档](https://www.typescriptlang.org/tsconfig/checkJs.html)将此作为逐文件启用 JavaScript 诊断的方式。`files` 可列这批根文件，但它本身**不是**棘轮边界。复审时用 TypeScript 5.9.3 的两文件临时夹具确认：`checkJs:true` 对被 import 的错误文件和根文件都报 TS2345；`checkJs:false` 且仅根文件 `@ts-check` 时只报根文件的 TS2345。实施须在真实仓库复测。
 
 | 档 | 文件（当前 error 数） | 小计 |
 |---|---|---|
-| **一档（本轮）** | `lib/paths.js` 2、`lib/git.js` 6、`lib/search.js` 6、`lib/routing.js` 6、`lib/index.js` 9、`lib/config.js` 10、`scripts/run-tests.mjs` 9、`scripts/verify-pack.mjs` 13、`codex/prepare.mjs` 2 | **63** |
+| **一档（本轮候选）** | `lib/paths.js` 2、`lib/git.js` 6、`lib/search.js` 6、`lib/routing.js` 6、`lib/index.js` 9、`lib/config.js` 10、`scripts/run-tests.mjs` 9、`scripts/verify-pack.mjs` 13、`codex/prepare.mjs` 2 | 原探测合计 **63**，须按最终配置复测 |
 | 二档（后续按需） | `lib/registry.js` 14、`lib/assets.js` 15、`lib/pointer.js` 18、`lib/hot.js` 24、`lib/receipts.js` 30 | 101 |
 | 明确不进 | `index-db` 394、`capture` 349、`transaction` 270、`tools` 256 | 1,269 |
 
@@ -276,22 +285,21 @@ AGENTS.md 第 1 条的措辞是"任何脚本都不得增删改用户的 `cordis.
 
 ### 7.4 棘轮的规则
 
-- 只允许**往 `include` 里加**文件（且加进去必须当场干净），或**减少**已列文件里的 error。二者都让门禁更严。
-- 想从 `include` 里移除一个文件，必须在提交信息里说明，并由 CHANGELOG 记录——因为那是**放宽**门禁。
-- `tsconfig.json` 用 `noEmit: true`、`allowJs: true`、`checkJs: true`、`strict: false`（与当前错误数一致，不装作严格模式）。
-- **`npm run types` 的作用域就是这个棘轮**：它读 `tsconfig.json` 的 `include`，所以"`npm run types` → 0 error"指的是**已登记的文件**为 0，不是全仓为 0。这一点必须写在 `AGENTS.md` 的命令表里，否则下一个人会把棘轮误读成"全仓类型干净"。
+- 只允许给新的文件增加 `// @ts-check`，或提高现有检查强度。把该标记从已纳管文件移除是放宽门禁，须由仓库测试以明确名单拦住；确需移除时，同一提交修改名单并在 CHANGELOG 写明理由。
+- `tsconfig.json` 用 `noEmit: true`、`allowJs: true`、`checkJs: false`、`strict: false`、`module/moduleResolution: nodenext`、`types: ["node"]`。真实运行后以 `tsc --listFilesOnly` 确认其程序范围；不用 `skipLibCheck` 或 `exclude` 假装隔离被导入的 JS。
+- `npm run types` 的承诺是 **opt-in 文件的诊断为零**，不是全仓 JS 类型干净。AGENTS.md 命令表要写明这个边界。若某候选文件在最终配置下清零代价过高，先缩小一档集合并记实测理由，不在计划里硬承诺原探测的九个文件全部通过。
 
 ---
 
 ## 8. 适应度函数（放进测试套件）
 
-两个**零依赖**的测试文件。放进 `test/*.test.js` 是刻意的：`npm test` 会跑它们 → `prepack` 会跑它们 → CI 会跑它们，**它们不可能被忘掉**。
+两个测试文件不增加**运行时**依赖；结构测试复用 Phase 1 已加入的 TypeScript 开发依赖解析 ESM AST。放进 `test/*.test.js` 是刻意的：`npm test` 会跑它们 → `prepack` 会跑它们 → CI 会跑它们。
 
 ### 8.1 `test/architecture.test.js`
 
-**规则 A：零 import 环。** 解析 `lib/*.js` 的 `from './x.js'`，做环检测。现状实测为零。
+**规则 A：零内部模块环。** 用 TypeScript `createSourceFile` 的 AST，从 `lib/*.js` 的静态相对 `import`、副作用 `import` 与 `export ... from` 建图，做环检测；缺失目标也失败。现状的普通 `from './x.js'` 图实测为零，新增两种语法要有红灯测试。动态 `import()` 若出现，需在同一提交明确登记边与原因；不能默默跳过。
 
-**规则 B：分层方向。** 下表是 §3.2 用"最长路径分层"算法**实测**出来的，不是手写估计。规则是：任何模块的 import 目标层号必须小于等于自身层号；表里没有的模块直接失败（新增模块必须在此表登记，即"必须有人做一次决定"）。
+**规则 B：分层方向。** 下表是原始 24 个模块用"最长路径分层"算法实测出来的**拆分前基线**，不是拆分后的目标表。任何模块的内部依赖目标层号必须小于自身层号；新模块未经登记失败。§10 拆分完成的同一提交里重新测量、审阅并登记新层级，不允许为了让测试绿而自动接受它推出来的所有新边。
 
 | 层 | 模块 |
 |---|---|
@@ -306,7 +314,7 @@ AGENTS.md 第 1 条的措辞是"任何脚本都不得增删改用户的 `cordis.
 | L8 | `hooks`、`tools` |
 | L9 | `index` |
 
-**规则 C：LOC 预算。** 每文件一个预算值，超了即失败。规则是可计算的：**预算 =（当前行数 + 30）向上取到 50 的整数倍**，留出约 3%–15% 的余量；四个大文件按同一规则登记为**已批准债务**，没有额外宽限。
+**规则 C：LOC 预算。** 每文件一个预算值，超了即失败。下表是**格式化前**的参考数据，不得直接复制为 Phase 2 的门禁；Phase 1 的纯格式化提交后，以实际行数按 **预算 =（行数 + 30）向上取到 50 的整数倍** 重新生成并人工核对。四个大文件按同一规则登记为已批准债务，不能让门禁一安装就因格式化而红。
 
 | 文件 | 现值 | 预算 |
 |---|---|---|
@@ -335,16 +343,17 @@ AGENTS.md 第 1 条的措辞是"任何脚本都不得增删改用户的 `cordis.
 | `lib/search.js` | 130 | 200 |
 | `lib/index.js` | 116 | 150 |
 
-未列出的新文件默认预算 **600**。超预算时的正确动作是**拆文件**，或者在同一个提交里抬高预算并在 CHANGELOG 说明——预算是"必须有人做一次显式决定"的机制，不是不可逾越的墙。这一点必须写明，否则下一个人会以为预算是硬的，然后去删注释来凑数。
+未列出的新文件默认预算 **600**，但新文件仍必须先登记层级。超预算时拆文件，或在同一个提交里抬高预算并在 CHANGELOG 说明；不能删解释性注释来凑数。Phase 4 拆分后同步收紧 `tools.js` façade 预算并为三个新文件登记预算。
 
 ### 8.2 `test/repo-hygiene.test.js`
 
-- **README 双语对哈希**：用 `node:crypto` 自己算 git blob 的 sha1（`sha1('blob ' + len + '\0' + content)`，**不依赖 git 二进制**，因此 CI 与本地同解），与 `README.i18n.yaml` 里记录的两个值比对。这把第 7 条从"记得跑 `git hash-object`"变成"忘了就红"。
+- **README 双语对哈希**：按**文件字节**计算 git blob SHA-1：`sha1(Buffer.concat([Buffer.from('blob ' + bytes.length + '\0'), bytes]))`，与 `README.i18n.yaml` 的两个值比对；用 `git hash-object README.md README.zh.md` 交叉验证一次。不得把 Unicode 字符数当作字节数。
 - **命令表不漂移**：扫描 `AGENTS.md` 与两份 README 里出现的每个 `npm run <name>`，断言 `package.json` 的 `scripts` 里确有同名项。§11 的两张表因此不会在半年后指向一个已删除的命令。
+- **类型 opt-in 名单**：断言 §7 中受检文件保留 `// @ts-check`；新增受检文件须在同一名单登记，避免删一行注释就悄悄退出门禁。
 
 ### 8.3 为什么不是 ESLint 插件
 
-这三条都是**模块图与仓库约定**层面的性质，ESLint 的规则模型（AST 节点）表达不了模块图。用 80 行零依赖脚本解决，与 `scripts/verify-pack.mjs` 的既有做法同源，也比引入一个自定义插件少一层维护面。
+这些是**模块图与仓库约定**层面的性质，ESLint 的逐文件规则不适合作为整仓模块图的唯一来源。测试直接复用类型检查已需要的 `typescript` 开发依赖，不另加解析器或运行时依赖；README 哈希和命令表仍用 Node 标准库。
 
 ---
 
@@ -353,17 +362,19 @@ AGENTS.md 第 1 条的措辞是"任何脚本都不得增删改用户的 `cordis.
 ### 9.1 `lib/debug.js` 的契约
 
 ```js
-createDiagnostics({ logger, capacity = 200 }) -> {
+createDiagnostics({ logger, capacity = 200, now = () => new Date() }) -> {
   event(name, fields),   // 记一条结构化事件；永不抛、永不同步 IO
-  snapshot(),            // 返回事件数组（副本），供 mem_admin 导出
+  snapshot(),            // 返回 { window, events } 的独立副本，供 mem_admin 导出
   size(),
 }
+recordDiagnostic(diagnostics, name, fields) -> void  // 包住可注入的诊断实例，调用方也不因它抛错
 ```
 
-- **通道 A（人）**：`ctx.logger('obsidian-mem')`。级别按 cordis 语义使用；**单个真实失败仍走 `warn`**（与今天 `logWarning` 的行为一致，不改变用户已经依赖的可见性）。
-- **通道 B（agent）**：进程内**有界环形缓冲**，默认容量 200 条，**永远采集**（有界、结构化、无正文，成本可忽略），由 `mem_admin(action="diagnostics")` 读取。
-- **`DSH_OBSIDIAN_MEM_DEBUG=1`**：把每条 trace 额外以 **`info`** 级发射一次。**为什么是 info 而不是 debug**：§3.3 实测宿主唯一 exporter 的阈值是 `default: 2`，而 `targetLevel < level` 就丢弃——`debug`(3) 必被丢弃，`info`(1) 不会。这是一个**基于测量**的选择；若宿主将来改变阈值，这条注释要跟着改。
-- **默认完全静默**：env 未设时，日志发射面与今天**完全一致**（即只有既有的 9 处 `warn`）。环里的采集不产生任何输出、不写文件、不改行为。
+- **通道 A（人）**：DSH 侧使用实测可调用的 `ctx.logger('obsidian-mem')`，Codex MCP 侧使用其现有 stderr sink；单个真实失败仍走既有 `warn` 路径（`hooks.js` 的 `ctx.logger.warn`），不把既有失败降级。
+- **通道 B（agent）**：每个插件/服务实例一个进程内有界环形缓冲，默认容量 200 条，由 `mem_admin(action="diagnostics")` 读取。DSH 的 `apply` 与 Codex 的 `openMemory` 都创建并传入同一契约的实例；后者没有 `ctx`。事件环在宿主重启后归零，历史故障应查看持久 pending jobs、receipt 与 vault 历史。
+- **`DSH_OBSIDIAN_MEM_DEBUG=1`**：把每条净化后的 trace 额外以 **`info`** 级发射一次。§3.3 在已安装宿主中找到两个 exporter，均接收 `info` 而丢弃 `debug`；这是基于该版本的测量，不能推断其他宿主或后续版本的 exporter 全集。Codex MCP 侧只有在同一开关打开时才写 stderr，绝不写协议 stdout。
+- **默认完全静默**：env 未设时，新事件不产生任何日志输出；既有 warn 原样保留。环里的采集不写文件、不改变调用结果。
+- **字段收敛**：`event` 只接受固定事件名和 `projectId / txId / jobId / outcome / attempts / ms / code` 的标量 allowlist；`code` 为受限机器码，拒绝自由文本、异常 `message`、路径、title、body、prompt、模型输出及嵌套对象。先净化并复制，再写环与可选 info 日志。`event`、日志失败都不得打断主流程；`snapshot` 返回独立副本。每条含 ISO `at` 与单调 `seq`，用以判断覆盖窗口。
 
 ### 9.2 提级点（现在静默的那几处）
 
@@ -375,26 +386,26 @@ createDiagnostics({ logger, capacity = 200 }) -> {
 | distill 跳过或产出空结果的原因 | 同上 |
 | index 打开或就绪失败 | 只有 `hooks.js:402` 一处 `warn`，无上下文 |
 | bind 拒绝的 reason/code | 只作为返回值，不落任何轨迹 |
-| 队列 job 结局（applied / deferred / refused / 重试次数） | 跨进程重启后无从追溯 |
-| 事务恢复（rolled back / rolled forward / unresolved） | 只在 vault 的 `_history` 里留痕，插件侧无轨迹 |
+| 当前进程中的队列 job 结局（applied / deferred / refused / 重试次数） | 现有工具可读持久 job/receipt，但没有按时间排列的当前进程事件 |
+| 事务恢复导致的写入拒绝（unresolved / `recovery-required`） | 现有 service 只把异常传回工具调用；详细的前滚/回滚仍由持久事务记录证明，不在本轮跨多层传递观察回调 |
 | 简报注入的决策（注入了没有、多长、为何没注入） | 直接影响用户看到的行为，却零痕迹 |
 | skill 同步结局 | 同上 |
 
 ### 9.3 `mem_admin` 的新 action
 
-`action: "diagnostics"` → `{ window: { capacity, size, since }, events: [...] }`。**只返回结构化字段**：`at / event / projectId / txId / jobId / outcome / ms / code`，不含笔记正文、不含提示词、不含模型输出。
+`action: "diagnostics"` → `{ window: { capacity, size, oldestSeq, newestSeq, dropped }, events: [...] }`。空环时 `oldestSeq/newestSeq` 为 `null`，`dropped` 为自实例创建以来被覆盖的条数。每条只含 `seq / at / event / projectId / txId / jobId / outcome / attempts / ms / code` 中适用字段。该动作无参数、不读 vault、不写文件；绑定失败的开发者也能取到当前进程诊断。它与现有 `jobs` 一样属于该插件实例的管理视图，可能含多个项目的机器标识；README 须说明这个信任范围。
 
 ### 9.4 隐私红线与哨兵测试
 
-沿用 `test/smoke/README.md` 已经写明的口径（"记录里不含提示词、模型输出正文与笔记正文"）。**哨兵测试**：喂一个可识别的正文（如 `SENTINEL-BODY-<random>`）走完整条写入与提炼路径，然后断言 `snapshot()` 序列化后**不含**该串，也不含任何 `title`/`body` 字段名。这条测试的意义是：将来有人为了"更好排障"往事件里塞正文时，测试会红。
+沿用 `test/smoke/README.md` 已经写明的口径（"记录里不含提示词、模型输出正文与笔记正文"）。**哨兵测试**：喂可识别的正文（如 `SENTINEL-BODY-<random>`）走写入与提炼的无密钥测试路径，再故意以 `body/title/message/path/prompt` 字段调用 `event`，断言 `snapshot()` 与 DEBUG 日志序列化后均不含哨兵或这些字段名。先证明把正文写入环的变异会让测试失败。
 
 ### 9.5 工具面不变，但动作枚举变了
 
 `mem_admin` 的动作从 6 个变 7 个——这是一次**用户可见的接口变化**，因此：
 
 - `README.md` 与 `README.zh.md` **都要改**（第 7 条），改完重登记 `README.i18n.yaml` 的两个 blob hash；
-- `test/tools.test.js` 里断言动作枚举的那条要同步；
-- `codex/server.mjs` 的参数 schema 由 `TOOL_PARAMETERS` 派生（`test/codex-mcp.test.js` 会盯住），所以 Codex 侧自动跟随——这正是当初让两侧共用同一份 schema 的收益。
+- `TOOL_PARAMETERS.mem_admin.action`、`ADMIN_ACTION_PARAMETERS`、封闭的 `ADMIN_OUTPUT.oneOf`、`createMemoryServices.admin` 四处同步；`test/tools.test.js` 要用真实 DSH tool seam 验证输出，不能只直调 service；
+- `codex/server.mjs` 的输入 schema 由 `TOOL_PARAMETERS` 派生，但它直接调用 service，**不经过** `forwardAdminArguments` 或 DSH 的输出校验。更新 Codex 侧描述，并在 `test/codex-mcp.test.js` 做真实 `tools/call` 验证；无额外参数的动作必须在 service 入口也拒绝无关参数，不能只靠 DSH 适配层。
 
 ---
 
@@ -413,18 +424,18 @@ createDiagnostics({ logger, capacity = 200 }) -> {
 
 ### 10.2 façade + 再导出
 
-拆成 `lib/tool-schema.js`（`TOOL_NAMES`/`TOOL_PARAMETERS`）、`lib/tool-registry.js`（`registerTools`）、`lib/services.js`（`createMemoryServices`），**`lib/tools.js` 保留为 façade 并再导出这四个名字**。
+拆成 `lib/tool-schema.js`（名称、参数 DSL、输出 schema 与动作参数规则）、`lib/tool-registry.js`（六个 DSH 工具定义和参数转发）、`lib/services.js`（六个服务、绑定、索引与投影），**`lib/tools.js` 保留为只再导出 `TOOL_NAMES`、`TOOL_PARAMETERS`、`registerTools`、`createMemoryServices` 的 façade**。跨文件共享的选项常量只在 schema 模块定义一份；不得为了拆分复制参数表或输出 schema。
 
 这个模式在本仓库已有先例且写明了理由：`lib/vault.js` 的 "Task 7: the transaction engine and the receipt store are re-exported here too, so every importer keeps going through this module." 采用它意味着：`codex/server.mjs` 的导入、8 个测试文件的导入、`dsh.plugin.json` 的入口**全都不动**。
 
-**并附带一条刚学到的教训**：`e31fa13` 修的缺陷正是"只再导出、没 import"。所以 `lib/tools.js` 作为 façade **必须 import 它要再导出的名字**（而不是只写 `export { … } from …`）——否则下一个人会再踩一次同一个坑。新 façade 的注释要写明这一点。
+**`e31fa13` 的准确教训**：`export { X } from './x.js'` 只建立导出，**不**在当前模块建立局部绑定；仅当 façade 自己使用 `X` 时才另行 `import`。本轮 façade 没有本地使用，故只再导出即可。拆分测试须覆盖这个绑定语义，避免把无必要 import 当成安全措施。
 
 ### 10.3 必须一起改的两处门禁（提前点名）
 
 | 位置 | 为什么会被这次拆分打破 | 改法 |
 |---|---|---|
-| `scripts/verify-pack.mjs` 的 `REGISTRATION_SITE` 扫描（读 `lib/tools.js` 找六个 `name: 'mem_x'`） | 注册点会搬到 `lib/tool-registry.js`，façade 里不再有它们 | 扫新文件 |
-| `test/pack.test.js`（把 `name: 'mem_x',` 写进合成的 `lib/tools.js`，第 70/172/196/209 行附近） | 同上 | 写到 `lib/tool-registry.js` |
+| `scripts/verify-pack.mjs` 的 `REGISTRATION_SITE` 扫描（读 `lib/tools.js` 找六个 `name: 'mem_x'`） | 注册点会搬到 `lib/tool-registry.js`，façade 里不再有它们 | 扫新文件，并核对 façade 四个再导出 |
+| `test/pack.test.js` 的合成注册文件 | 同上 | 写到 `lib/tool-registry.js`，加缺一个 façade 再导出的反例 |
 
 这两处**是门禁自身**，所以拆分提交的验收就是"门禁在改动后依然绿"，没有第三条路。
 
@@ -459,11 +470,11 @@ createDiagnostics({ logger, capacity = 200 }) -> {
 | Phase | 内容 | 验收（命令 → 期望） |
 |---|---|---|
 | **0** ✅ 已完成 | 修 `lib/vault.js:504` 的 `TransactionError` 未绑定缺陷 + 回归测试 | 提交 `e31fa13`；`npm test` → **574 / 0 fail**；`npm run prepack` → `verify-pack: OK`；tarball 仍 33 文件。修复前该测试以 `ReferenceError: TransactionError is not defined`（`lib/vault.js:504`）失败 |
-| **1** | Prettier（一个纯格式化提交）→ ESLint 分诊 → 13 处 JSDoc 方言 → tsc 一档 → npm scripts → CI → `.githooks` | 格式化后 `npm run prepack` 仍 `OK` 且 574 全绿（已在副本实测，§14-C）；`verify-pack` 的注册点正则仍匹配 6 个；`npm run lint` → 0 error；`npm run types` → 0 error；`npm run check` → 全绿；`check:fast` 实测 < 5s |
-| **2** | 两个适应度测试 + `verify-changelog.mjs` | `npm test` 全绿（新测试在**当前**树上必须绿，否则预算表就是错的）；故意加一条 L1→L3 的 import，确认它变红，再撤回 |
-| **3** | `lib/debug.js` + 8 类提级点 + `mem_admin(action="diagnostics")` + 哨兵测试 + README 双语对 + `README.i18n.yaml` 重登记 | 哨兵测试在"故意往事件里塞正文"时变红（先证明它会红）；哈希检查绿；默认静默：env 未设时既有的 9 处 `warn` 之外无新输出 |
-| **4** | 拆 `tools.js` → `tool-schema` / `tool-registry` / `services`，façade 保留；同步改 `verify-pack.mjs` 与 `pack.test.js`；更新预算表 | `npm run check` 全绿；`verify-pack` 仍报 "6 tools registered"；`tools.js` 降到 façade 量级，`test/architecture.test.js` 的预算随之收紧 |
-| **5** | `AGENTS.md` 两张表 + house style 更新 + CHANGELOG 条目 | 命令表检查绿；CHANGELOG 的 Unreleased 有对应条目 |
+| **1** | 锁定开发依赖与格式范围 → 纯格式化独立提交 → ESLint/JSDoc 分诊 → 逐文件类型检查 → npm scripts、真实 tarball 校验和 CI | 格式化后 `npm run prepack` 仍 `OK`；注册点仍为 6；`npm run lint`、`npm run types`、`npm run check` 全绿；类型反例证明 import 的非 opt-in 文件不报诊断 |
+| **2** | 按格式化后树建立结构/文档适应度测试 → `verify-changelog.mjs` → 暂存 blob hook | `npm test` 全绿；故意增加反向边与 README hash 漂移时变红；部分暂存不产生假绿；记录 `check:fast` 实测时间 |
+| **3** | `lib/debug.js` + §9.2 八类服务/宿主边界事件 + `mem_admin(action="diagnostics")` + DSH/Codex 真实工具测试 + 哨兵测试 + README 双语对 | 故意把正文写进事件时测试变红；双语 hash 检查绿；默认没有新的日志；重启后的环为空这一边界写进文档 |
+| **4** | 拆 `tools.js` → `tool-schema` / `tool-registry` / `services`，façade 保留；同步打包验证与结构基线 | `npm run check` 全绿；真实包内含三个新模块；六工具仍可注册；facade 四个导出保持；预算与层级按新图登记 |
+| **5** | `AGENTS.md` 两张表 + house style + CHANGELOG 与证据更新 | 命令表检查绿；Unreleased 记载实际验证范围和 CI 最低 Node 的结果 |
 
 **顺序的不可交换性**：Phase 1 必须在 Phase 2–4 之前（后面的每一刀都要由前面的门禁验证）；Phase 4 必须在 Phase 1 之后（否则格式化的 diff 与结构的 diff 叠在一起，无法审阅）。
 
@@ -475,7 +486,7 @@ createDiagnostics({ logger, capacity = 200 }) -> {
 |---|---|---|---|
 | R1 | 格式化提交与进行中的分支冲突 | 一次 rebase | 单人开发，接受；该提交必须**孤立**，不与逻辑改动混合 |
 | R2 | `verify-pack` 的注册点正则对格式敏感 | 门禁自己变红 | 已实测格式化后仍 `OK`（§14-C）；拆分时按 §10.3 同步改 |
-| R3 | tsc 一档要先把 63 个类型错误清零才见绿 | 一次性的前期投入 | 已按"错误最少 + 被依赖最多"排序（§7.3）；二档与四大文件明确不进棘轮 |
+| R3 | 原探测的一档 63 个错误数不能在最终配置下复现 | 错误估算可能失真 | 用 `checkJs:false` + `@ts-check` 逐文件复测；清零成本过高时缩小首档并写明实测范围 |
 | R4 | 43 条 ESLint 里有 8 条是"关掉并写明理由" | 有可能掩盖真问题 | 关闭只允许行内 + 必写理由；`no-undef` 这类**不允许关闭** |
 | R5 | 预算表可能被当作硬墙，于是有人删注释来凑数 | 伤害注释质量（本仓库注释是资产） | §8.1 末段写明"抬预算 + CHANGELOG 说明"是合法动作 |
 | R6 | 诊断环有泄漏正文的风险 | 隐私 | 哨兵测试 + 只允许结构化字段 + 沿用 smoke 的既有口径（§9.4） |
@@ -483,7 +494,8 @@ createDiagnostics({ logger, capacity = 200 }) -> {
 | R8 | CI 在 Node 22.22.2 上可能因 `node:sqlite`/FTS5 行为与 25.x 不同而失败 | 下界声明被证伪（这其实是**好事**） | 若失败，按第 5 条：改 `engines.node` 前必须**实测**新下界并说明测了什么 |
 | **U1** | 未验证：本机没有 `22.22.2` 可执行文件，所以"CI 在 22.22.2 上绿"**尚未测过** | 下界声明在 CI 首次运行前仍是未验证的 | 明确写进 CHANGELOG 的未验证清单，直到 CI 首次在 22.22.2 上跑绿 |
 | **U2** | 未验证：Prettier 对 58 个文件的改动是否**逐字节**只动格式 | 理论上可能改到语义（实际不会，但这是推理不是测量） | 以"格式化后 574 全绿 + verify-pack OK"作为**抽样证据**，并按第 6 条写成抽样而不是证明 |
-| **U3** | 未解：`check:fast` 对部分暂存（`git add -p`）的行为 | 可能检查到工作区版本而非暂存版本 | 已写明为已知限制（§4.2）；若实际困扰，再考虑读 `git show :file` |
+| **U3** | 适应度测试仍读取工作区，部分暂存会产生错位 | 可能把工作区通过误报成暂存通过 | 受影响输入同时有暂存与未暂存改动时明确拒绝；lint/format 始终读取暂存 blob；以夹具测试证明 |
+| **U5** | 诊断环是内存态 | 重启后事件窗口消失 | README 写明边界；使用现有 `jobs`、receipt 与 vault 历史核对持久状态，不将诊断环作为恢复来源 |
 | **U4** | 未解：`chmod` 类测试（`receipt-store-unavailable`、read-only 目录）在 GitHub Actions 的 runner 上是否可复现 | 那几条会被 `t.skip`（它们已对 `getuid() === 0` 做了跳过） | CI 首次运行后按实际输出记录；若被跳过，在 CHANGELOG 写明"CI 上未覆盖" |
 
 ---
@@ -497,7 +509,9 @@ createDiagnostics({ logger, capacity = 200 }) -> {
 **B. 格式化爆炸半径**（§3.4）
 
 ```sh
-cp -R . /tmp/probe && cd /tmp/probe
+probe_dir=$(mktemp -d)
+git archive HEAD | tar -x -C "$probe_dir"
+cd "$probe_dir"
 cat > .prettierrc.json <<'EOF'
 { "semi": false, "singleQuote": true, "printWidth": 100, "arrowParens": "always", "trailingComma": "all" }
 EOF
@@ -507,10 +521,10 @@ git diff --numstat | awk '{a+=$1; r+=$2; f++} END{print f, a, r}'
 ```
 
 **C. 格式化后的门禁**（§5.3 的证据）：在已格式化的副本里跑 `node scripts/verify-pack.mjs`（→ `verify-pack: OK`），再跑
-`home=$(mktemp -d); DSH_HOME="$home" node --test test/*.test.js; rm -rf "$home"`（→ 574 pass / 0 fail）。
+`test_dsh_home=$(mktemp -d); DSH_HOME="$test_dsh_home" node --test test/*.test.js`（→ 574 pass / 0 fail；临时目录按本机临时文件策略清理）。
 
 **D. 类型检查基线**（§3.5）：`npm i -D typescript @types/node` 后
-`npx tsc --noEmit --allowJs --checkJs --target esnext --module nodenext --moduleResolution nodenext --skipLibCheck --types node lib/*.js`（用 `--format json` 之类的方式聚合错误码计数）。
+`npx tsc --noEmit --allowJs --checkJs --target esnext --module nodenext --moduleResolution nodenext --skipLibCheck --types node --pretty false lib/*.js`（按文本诊断中的 `TSxxxx` 聚合错误码；TypeScript CLI 没有这里可用的 `--format json` 选项）。
 
 **E. ESLint 基线**（§3.6）：`npm i -D eslint @eslint/js globals` 后用 flat config 跑 `npx eslint lib scripts codex test --format json`，按 `ruleId` 聚合。
 
@@ -518,7 +532,3 @@ git diff --numstat | awk '{a+=$1; r+=$2; f++} END{print f, a, r}'
 `grep -rn "logger.exporter\|\.exporter(" <dsh>/node_modules/@deepseek-ai/*/lib/*.js`。
 
 **G. 新鲜 clone 等价性**（§3.7）：把仓库 rsync 到 `/tmp/fresh`，删掉 `codex/marketplace/plugins/dsh-obsidian-mem/.mcp.json`（生成物、含机器绝对路径），再跑整套测试 → 574 pass。
-
-
-
-
