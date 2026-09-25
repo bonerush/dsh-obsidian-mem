@@ -460,16 +460,26 @@ split into `tool-schema.js`, `tool-registry.js` and `services.js` behind an
 unchanged façade — **is done**, and is written up under *Changed*. What follows is
 what is still open.
 
-- **The GitHub workflow itself has never run.** Everything it *does* has now been
-  run by hand and passes, on the leg that matters: in a clean tree created by
-  `git archive` with no `node_modules`, `npm ci` under Node 22.22.2 installed the
-  lockfile (including the two optional peers, which the lock does record) with
-  `found 0 vulnerabilities`, and the identical command CI runs — `npm run check`
-  — then exited 0 with **627 tests, 0 fail**, `verify-pack: OK` and
-  `verify-tarball: OK`. So `engines.node` is no longer a floor measured on one
-  machine for the *gates*; what remains untested is GitHub's own runner, the
-  `24.x` and `node` matrix legs, and `scripts/ci-base.mjs` choosing a base from
-  real event JSON.
+- **The GitHub workflow has now run, and all three legs pass.** This was the last
+  item on this list that a local run could not close, and pushing closed it:
+  [run 36130730692](https://github.com/bonerush/dsh-obsidian-mem/actions/runs/36130730692)
+  on `f6adb46` reports `conclusion: success` for `check (22.22.2)`,
+  `check (24.x)` (Node v24.21.0) and `check (node)` (Node v26.10.0). Each leg ran
+  the same `npm ci` → `npm run check` — **634 tests, 634 pass, 0 fail** plus
+  `verify-pack: OK` and `verify-tarball: OK` — with `found 0 vulnerabilities` from
+  the install, and each finished the Unreleased gate with
+  `verify-changelog: OK — lib/ changed and ## Unreleased moved with it`. The job
+  times were 38 s, 37 s and 41 s.
+  That also settles what the previous revision of this entry left open: GitHub's own
+  runner, both non-floor matrix legs, and `scripts/ci-base.mjs` choosing a base from
+  a real push event — the gate's own output is the evidence that it was handed one.
+  What is still untested is `ci-base.mjs` against a `pull_request` event and against
+  an all-zero `before`; the push path is the one this repository's work actually
+  takes, and it is now measured rather than assumed. The earlier hand-run baseline
+  stands behind it for the floor specifically: in a clean `git archive` tree with no
+  `node_modules`, `npm ci` under Node 22.22.2 installed the lockfile (including the
+  two optional peers) with `found 0 vulnerabilities`, and `npm run check` exited 0
+  with 627 tests at the time.
 - **The type ratchet covers twelve files of twenty-eight candidates.** The full
   per-file counts are in the design at
   `docs/superpowers/specs/2026-09-25-engineering-harness-design.md` §7.3;
