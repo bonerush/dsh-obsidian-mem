@@ -55,7 +55,6 @@ const CORPUS = JSON.parse(await readFile(join(FIXTURES, 'corpus.json'), 'utf8'))
 const ALPHA = CORPUS.projects.alpha.projectId
 const BETA = CORPUS.projects.beta.projectId
 const ALPHA_DIR = CORPUS.projects.alpha.dir
-const BETA_DIR = CORPUS.projects.beta.dir
 const N = CORPUS.notes
 const Q = CORPUS.queries
 const E = CORPUS.expected

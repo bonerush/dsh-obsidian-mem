@@ -18,7 +18,6 @@
 // note or credential text. The real `~/.dsh` is fingerprinted before and after.
 //
 // Usage: node test/p0/run-teardown-probe.mjs [--keep] [--task "<one short task>"]
-import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {

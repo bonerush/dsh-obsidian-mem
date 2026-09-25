@@ -1086,7 +1086,6 @@ test('a legitimate supersede relinks the old note and never overwrites its body'
   assert.deepEqual(receipt.items[0].conflicts, [])
 
   const relinked = await readFile(at(f.vault, old.path), 'utf8')
-  const original = oldBytes.toString('utf8')
   const originalBody = parseNote(oldBytes).body
   assert.match(relinked, /status: "?superseded"?/)
   assert.ok(relinked.includes(originalBody.trim()), 'the old evidence is preserved')

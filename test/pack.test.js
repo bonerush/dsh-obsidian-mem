@@ -89,7 +89,7 @@ function verify(t, options = {}) {
   return { status: run.status, stdout: run.stdout ?? '', stderr: run.stderr ?? '', root }
 }
 
-test('the shipped manifest passes the pack verifier', (t) => {
+test('the shipped manifest passes the pack verifier', () => {
   const run = spawnSync(process.execPath, [VERIFIER], { encoding: 'utf8' })
   assert.equal(run.status, 0, `expected the real manifest to pass:\n${run.stdout}${run.stderr}`)
   assert.match(run.stdout, /verify-pack: OK/)

@@ -450,7 +450,7 @@ test('a timed-out index injects a not-ready state, then re-sends exactly once wh
   )
   const h = bed(t, {
     handle,
-    buildBrief: async (_binding, briefOptions) =>
+    buildBrief: async () =>
       ready
         ? briefValue({
             text: 'READY BRIEF',

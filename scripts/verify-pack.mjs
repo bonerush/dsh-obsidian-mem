@@ -131,12 +131,12 @@ function readJson(path) {
   try {
     text = readFileSync(path, 'utf8')
   } catch (error) {
-    throw new Error(`cannot read ${path}: ${error.message}`)
+    throw new Error(`cannot read ${path}: ${error.message}`, { cause: error })
   }
   try {
     return JSON.parse(text)
   } catch (error) {
-    throw new Error(`cannot parse ${path}: ${error.message}`)
+    throw new Error(`cannot parse ${path}: ${error.message}`, { cause: error })
   }
 }
 

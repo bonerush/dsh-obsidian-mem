@@ -138,15 +138,6 @@ function request(txId, overrides = {}) {
   }
 }
 
-async function readOrNull(path) {
-  try {
-    return await readFile(path)
-  } catch (error) {
-    if (error.code === 'ENOENT') return null
-    throw error
-  }
-}
-
 async function exists(path) {
   try {
     await stat(path)
@@ -1390,8 +1381,7 @@ test('a lock record that cannot be read is reported, never stolen', async (t) =>
 })
 
 test('staged lock records are swept only when their owner is gone', async (t) => {
-  const { vault, dataRoot, bindingA } = await fixture(t)
-  const vaultHash = sha256(await realpath(vault))
+  const { dataRoot, bindingA } = await fixture(t)
   const locks = join(dataRoot, 'locks')
   await mkdir(locks, { recursive: true })
   const dead = join(locks, '.dead.0.lock.tmp')

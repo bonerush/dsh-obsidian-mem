@@ -27,19 +27,16 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
-  chmodSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
@@ -399,22 +396,6 @@ async function main() {
     autoCapture: false,
   })
 
-  const seedSpecs = {
-    dryRunSeed: {
-      key: 'dryRunSeed',
-      holdMs: 20_000,
-      env: { SCENARIO: '1', WAIT_RECEIPT: '0', KILL: '1' },
-      config: seedConfig(true),
-      task: SCENARIO_TASK,
-    },
-    liveSeed: {
-      key: 'liveSeed',
-      holdMs: 20_000,
-      env: { SCENARIO: '0', WAIT_RECEIPT: '0', KILL: '1' },
-      config: seedConfig(false),
-      task: LIVE_TASK,
-    },
-  }
   const passes = {}
   const runPass = async (spec) => {
     const recordPath = join(recordsDir, `${spec.key}.jsonl`)
@@ -793,7 +774,6 @@ async function main() {
   const liveJobId = resumeLiveLane.jobId
 
   const duplicateNoteIds = duplicateIds(memoryNotes)
-  const receiptsForLive = receipts.filter((receipt) => receipt.jobId === liveJobId)
 
   // The in-process observation the smoke must not overstate: did the worker apply
   // the captured job during the session that captured it, or only on a restart?
@@ -1072,7 +1052,7 @@ function writeProfilePatch(dshHome, config) {
  * @returns {string[]} the removed job file names.
  */
 function clearQueue(queueRoot) {
-  let names = []
+  let names
   try {
     names = readdirSync(queueRoot).filter((name) => name.endsWith('.json'))
   } catch {
@@ -1123,7 +1103,7 @@ function readRecords(recordPath) {
 
 /** Every pending job in the temp queue, with a record-safe view of each. */
 function readPendingJobs(queueRoot) {
-  let names = []
+  let names
   try {
     names = readdirSync(queueRoot).filter((name) => name.endsWith('.json'))
   } catch {
@@ -1166,7 +1146,7 @@ function jobView(job) {
 /** The single pending job left in the temp queue, or `null`. */
 function readPendingJob(dshHome) {
   const queueRoot = join(dshHome, 'data', 'obsidian-mem', 'pending')
-  let names = []
+  let names
   try {
     names = readdirSync(queueRoot).filter((name) => name.endsWith('.json'))
   } catch {

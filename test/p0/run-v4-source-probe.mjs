@@ -29,7 +29,7 @@
 // Nothing here reads a vault, writes a DSH home, or prints a credential.
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'

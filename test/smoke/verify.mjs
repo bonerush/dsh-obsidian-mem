@@ -25,9 +25,9 @@
 // Usage:
 //   node test/smoke/verify.mjs <record.json> [--vault <dir>] [--json]
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve, sep } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import process from 'node:process'
 import YAML from 'yaml'
 

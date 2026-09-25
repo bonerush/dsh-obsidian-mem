@@ -123,6 +123,23 @@ is a repository, not a release.
 
 ### Fixed
 
+- **ESLint's first honest run over this tree found 43 problems; all 43 are now
+  either fixed or disabled at the site with the reason.** The repository had no
+  linter, so nothing had ever looked. Twelve dead stores (`let corrupt = false`,
+  `let record = null`, `let age = 0`, `let gitInitialized = false` and eight
+  more) were overwritten before any read and are now bare declarations; twenty
+  unused bindings and imports are gone, including a whole `seedSpecs` object in
+  the smoke runner that nothing had read since a refactor; `lib/paths.js` and
+  both `scripts/verify-pack.mjs` rethrows now attach `{ cause }` instead of
+  discarding the failure underneath the wrapper. The eight that remain are
+  deliberate and stay visible: six `no-control-regex` sites and two
+  `no-misleading-character-class` sites strip control characters and match emoji
+  code points one at a time, so each carries an inline
+  `eslint-disable-next-line` naming that reason. `no-undef` is never disabled —
+  it is the rule that found the `TransactionError` defect fixed in `e31fa13`.
+  Behaviour is unchanged: 574 tests pass before and after, and the pack verifier
+  still reports `OK`.
+
 - **A `retain` whose registry transaction failed threw `ReferenceError:
   TransactionError is not defined` instead of the refusal it documents.**
   `lib/vault.js` re-exports `TransactionError` — "every importer keeps going
