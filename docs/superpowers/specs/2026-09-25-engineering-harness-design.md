@@ -10,6 +10,17 @@
 
 复审保留 D1–D6 的用户决策，并修正原稿中会使实施失败或检查给出假结论的细节：`tsconfig.include` 不隔离被 import 的 JS；固定 33 个 tarball 条目与新增模块矛盾；Prettier 的 `.` 扫描范围大于基线测量范围；格式化后的 LOC 和拆分后的层级必须重新测量；诊断动作必须贯穿 DSH 与 Codex 两个入口及封闭的输出 schema；内存环只覆盖当前进程。以下各节已按这些结论修改。
 
+### 复审补测（2026-09-25，第二轮，全部在锁定版本上复跑）
+
+第一轮复审的结论**经复跑确认有效**（`include` 不隔离：`checkJs: true` + `files: ['root.js']` 时被 import 的 `child.js` 同样报错，`checkJs:false` + 标记时只报标记文件）。补测同时改掉了三处仍然失真或过度保守的结论：
+
+1. **类型基线的数字必须带版本。** 同一范围：TypeScript 7.0.2 → 2,446 个 error；**锁定的 5.9.3 → 193 个**（§3.5）。原表只保留为历史记录。
+2. **棘轮的实际代价比"先做 4 个文件"小得多。** opt-in 模型下逐文件实测：**9 个文件 0 错误**、3 个文件各 1 处，共 **12 个文件、3 处修复**（§7.3）。本轮改为纳入这 12 个。
+3. **`skipLibCheck: true` 从"不许用"改为"必需"。** 实测不带它时，`lib/index.js`/`lib/tools.js`/`codex/server.mjs` 会在 `@deepseek-ai/dsh-llm` 的 `.d.ts` 内部报 TS2307/TS6200——第三方类型的冲突，不是本仓库源码问题（§7.4）。
+4. **ESLint 的版本差要写明**：43 条是 10.11.0 的数，9.39.5 下只有 28 条，差额全部来自 10.x 新增的两条规则，因此**锁定 10 而不是 9**（§6.2）。
+
+另外两项经复跑确认可用，无需改动：prettier `--check --stdin-filepath`（未格式化 → exit 1，已格式化 → exit 0）与 eslint `--stdin --stdin-filename`；以及 `npm pack --json` 会给出 `files[]` 与 `entryCount`，足以支撑不写死文件数的包校验。
+
 ---
 
 ## 1. 背景与目标
@@ -113,7 +124,9 @@
 
 ### 3.5 `tsc --checkJs` 基线
 
-原轮探测记录为 `allowJs + checkJs + nodenext`、`@types/node` 就位时 **2,446 个 error / 27 个文件**。该探测没有把最终 `tsconfig.json` 与 TypeScript 版本留在仓库，所以下表只用于估算工作量；实施时需在锁定版本和准确选项下复测，不能把这些数字当作可重复的验收值。
+**版本决定数字，所以数字必须带版本。** 原轮探测（TypeScript **7.0.2**）得 **2,446 个 error / 27 个文件**；本轮在计划锁定的 **TypeScript 5.9.3** 上复测同一范围（`checkJs: true`、`lib/**/*.js`、`skipLibCheck: true`）得 **193 个 error**：TS2339 165、TS2741 11、TS2739 4、TS2353 4、TS2322 4、TS2345 3、TS4104 1、TS2367 1。两者相差一个数量级，**所以 2,446 与下表都只作为历史记录**：下表的用途是说明"这些错误长什么样"，不是验收值。
+
+**并且：`include`/`files` 不是检查范围的边界。** 本轮用两文件夹具在 TS 5.9.3 上实测：`checkJs: true` + `files: ['root.js']` 时，被 `root.js` import 的 `child.js` **同样报错**；`checkJs: false` 且只有 `root.js` 带 `// @ts-check` 时只报 `root.js`；把标记改放进 `child.js`，就只报 `child.js`。`--listFilesOnly` 显示两个文件都在程序里——**标记才是开关**。§7.3 的棘轮据此重写。
 
 | 错误码 | 数量 | 含义 |
 |---|---|---|
@@ -242,6 +255,8 @@ AGENTS.md 第 1 条的措辞是"任何脚本都不得增删改用户的 `cordis.
 
 `eslint.config.mjs`（flat config）：推荐规则集 + Node ESM globals；`ignores` 与 `.prettierignore` 同源，另加 `node_modules`、`coverage`、`test/fixtures`。
 
+**版本同样决定数字。** 本节 43 条来自 **ESLint 10.11.0** 的推荐集（22 个文件）；同一棵树在 **ESLint 9.39.5** 下只有 **28 条 / 15 个文件**，差异全部来自 10.x 新增进推荐集的两条规则——`no-useless-assignment`（12 条）与 `preserve-caught-error`（3 条）。两条都是有价值的信号（死存储、丢失的 `cause`），所以**计划锁定 ESLint 10 而不是 9**：低一个主版本等于少两条规则，而这两类发现已经逐条分诊完毕（两条都已在下面的表里）。
+
 ### 6.2 43 条的分诊（每条要么修，要么写明理由关闭）
 
 | 规则 | 数量 | 处置 |
@@ -275,18 +290,26 @@ AGENTS.md 第 1 条的措辞是"任何脚本都不得增删改用户的 `cordis.
 
 **复审纠错**：`tsconfig.json` 的 `include`/`files` 是根文件列表，被根文件 import 的 JS 仍会进入程序；在 `checkJs: true` 下也会报错。用九个 `include` 条目隔离检查范围的原方案不可执行。改为 `allowJs: true`、`checkJs: false`，在选定源文件头部逐一加 `// @ts-check`；[TypeScript 官方文档](https://www.typescriptlang.org/tsconfig/checkJs.html)将此作为逐文件启用 JavaScript 诊断的方式。`files` 可列这批根文件，但它本身**不是**棘轮边界。复审时用 TypeScript 5.9.3 的两文件临时夹具确认：`checkJs:true` 对被 import 的错误文件和根文件都报 TS2345；`checkJs:false` 且仅根文件 `@ts-check` 时只报根文件的 TS2345。实施须在真实仓库复测。
 
-| 档 | 文件（当前 error 数） | 小计 |
-|---|---|---|
-| **一档（本轮候选）** | `lib/paths.js` 2、`lib/git.js` 6、`lib/search.js` 6、`lib/routing.js` 6、`lib/index.js` 9、`lib/config.js` 10、`scripts/run-tests.mjs` 9、`scripts/verify-pack.mjs` 13、`codex/prepare.mjs` 2 | 原探测合计 **63**，须按最终配置复测 |
-| 二档（后续按需） | `lib/registry.js` 14、`lib/assets.js` 15、`lib/pointer.js` 18、`lib/hot.js` 24、`lib/receipts.js` 30 | 101 |
-| 明确不进 | `index-db` 394、`capture` 349、`transaction` 270、`tools` 256 | 1,269 |
+**逐文件实测**（TS 5.9.3、`checkJs: false`、单文件 `@ts-check`、`skipLibCheck: true`，覆盖 28 个候选文件）。opt-in 模型下的代价**远低于**全量 `checkJs` 的错误数，因为未被标记的 import 目标不再把自己的推断噪声倒进被标记的文件里：
 
-一档的选取标准是"被依赖最多 + 错误最少"：`paths.js` 被 11 个模块依赖、只有 2 个 error，先让它干净带回的收益最大。`lib/index.js` 是入口，9 个 error 里多数来自它对松散 JSDoc 的传递依赖，修完顺带让入口的类型变准。
+| 档 | 文件 | 每文件 error |
+|---|---|---|
+| **零成本（9 个）** | `lib/git.js`、`lib/index.js`、`lib/naming.js`、`lib/paths.js`、`lib/pointer.js`、`lib/receipts.js`、`lib/registry.js`、`lib/routing.js`、`scripts/verify-pack.mjs` | **0** |
+| **一档（3 个，共 3 处）** | `codex/server.mjs`（TS18047 `memory` possibly null）、`lib/search.js`（TS2741）、`scripts/run-tests.mjs`（TS2345） | 1 / 1 / 1 |
+| 二档（后续按需） | `codex/prepare.mjs` 0、`lib/assets.js` 2、`lib/hot.js` 2、`lib/frontmatter.js` 3、`lib/tools.js` 3、`lib/index-db.js` 4、`lib/config.js` 5、`lib/memory.js` 5、`lib/transaction.js` 5 | 0–5 |
+| 明确不进 | `lib/hooks.js` 10、`lib/brief.js` 11、`lib/lint.js` 12、`lib/capture.js` 15、`lib/vault.js` 17、`lib/distill.js` 20、`lib/pending.js` 78 | 163 |
+
+**本轮纳入零成本的 9 个与一档的 3 个 = 12 个文件、3 处修复**（`lib/index.js` 是入口，白拿）。这比"先做 4 个"更强而成本几乎相同。
+
+`codex/prepare.mjs` 实测 0 错，但它**第 1 行是 shebang**：标记写在 shebang 之前是硬错误（TS18026 + TS1005，本轮已实测复现）。所以"标记落在 shebang 之后"必须由测试守住，而不是写在注释里。
 
 ### 7.4 棘轮的规则
 
 - 只允许给新的文件增加 `// @ts-check`，或提高现有检查强度。把该标记从已纳管文件移除是放宽门禁，须由仓库测试以明确名单拦住；确需移除时，同一提交修改名单并在 CHANGELOG 写明理由。
-- `tsconfig.json` 用 `noEmit: true`、`allowJs: true`、`checkJs: false`、`strict: false`、`module/moduleResolution: nodenext`、`types: ["node"]`。真实运行后以 `tsc --listFilesOnly` 确认其程序范围；不用 `skipLibCheck` 或 `exclude` 假装隔离被导入的 JS。
+- `tsconfig.json` 用 `noEmit: true`、`allowJs: true`、`checkJs: false`、`strict: false`、`module/moduleResolution: nodenext`、`types: ["node"]`、**`skipLibCheck: true`**。
+- **`skipLibCheck: true` 是必需的，不是偷懒。** 实测：不带它时 `lib/index.js`、`lib/tools.js`、`codex/server.mjs` 会在 **`node_modules/@deepseek-ai/dsh-llm/lib/types/content.d.ts` 内部**报 TS2307（找不到 module）与 TS6200（定义冲突）——那是第三方类型之间的冲突，不是本仓库的源码问题。它只跳过 `.d.ts`；**禁止**的是用它掩盖源码诊断。
+- **标记集合与 `files` 集合必须一致，两个方向都要测。** `checkJs: false` 下，一个带 `// @ts-check` 但既不在 `files` 里、也不被 `files` 中任何文件 import 的文件是**静默不受检**的。这是 opt-in 模型唯一的真空洞，所以 `test/repo-hygiene.test.js` 同时断言：`files` 里每一项都带标记，且磁盘上每个带标记的 `lib/`、`scripts/`、`codex/` 文件都在 `files` 里。
+- 标记必须落在 shebang **之后**（实测：写在前面是 TS18026 + TS1005 硬错误）。测试要能识破这个位置错误。
 - `npm run types` 的承诺是 **opt-in 文件的诊断为零**，不是全仓 JS 类型干净。AGENTS.md 命令表要写明这个边界。若某候选文件在最终配置下清零代价过高，先缩小一档集合并记实测理由，不在计划里硬承诺原探测的九个文件全部通过。
 
 ---
@@ -300,6 +323,8 @@ AGENTS.md 第 1 条的措辞是"任何脚本都不得增删改用户的 `cordis.
 **规则 A：零内部模块环。** 用 TypeScript `createSourceFile` 的 AST，从 `lib/*.js` 的静态相对 `import`、副作用 `import` 与 `export ... from` 建图，做环检测；缺失目标也失败。现状的普通 `from './x.js'` 图实测为零，新增两种语法要有红灯测试。动态 `import()` 若出现，需在同一提交明确登记边与原因；不能默默跳过。
 
 **规则 B：分层方向。** 下表是原始 24 个模块用"最长路径分层"算法实测出来的**拆分前基线**，不是拆分后的目标表。任何模块的内部依赖目标层号必须小于自身层号；新模块未经登记失败。§10 拆分完成的同一提交里重新测量、审阅并登记新层级，不允许为了让测试绿而自动接受它推出来的所有新边。
+
+**这条基线的测量口径要说清**（否则测试一落地就会和实测对不上）：本轮按**全部边种**建图——`import ... from` **62 条**、`export ... from` **10 条**，**没有**副作用 `import './x.js'`，也**没有**动态 `import()`。在这个完整图上：**零环**，且**每一条边都严格向下**（目标的层号小于自身层号，没有同层边）。所以"严格小于"这条规则今天成立、可以被钉住；它比"最长路径算法"的输出更严，是有意为之——横向耦合同样应当是一次需要显式登记的决定。
 
 | 层 | 模块 |
 |---|---|
@@ -495,8 +520,8 @@ recordDiagnostic(diagnostics, name, fields) -> void  // 包住可注入的诊断
 | **U1** | 未验证：本机没有 `22.22.2` 可执行文件，所以"CI 在 22.22.2 上绿"**尚未测过** | 下界声明在 CI 首次运行前仍是未验证的 | 明确写进 CHANGELOG 的未验证清单，直到 CI 首次在 22.22.2 上跑绿 |
 | **U2** | 未验证：Prettier 对 58 个文件的改动是否**逐字节**只动格式 | 理论上可能改到语义（实际不会，但这是推理不是测量） | 以"格式化后 574 全绿 + verify-pack OK"作为**抽样证据**，并按第 6 条写成抽样而不是证明 |
 | **U3** | 适应度测试仍读取工作区，部分暂存会产生错位 | 可能把工作区通过误报成暂存通过 | 受影响输入同时有暂存与未暂存改动时明确拒绝；lint/format 始终读取暂存 blob；以夹具测试证明 |
-| **U5** | 诊断环是内存态 | 重启后事件窗口消失 | README 写明边界；使用现有 `jobs`、receipt 与 vault 历史核对持久状态，不将诊断环作为恢复来源 |
-| **U4** | 未解：`chmod` 类测试（`receipt-store-unavailable`、read-only 目录）在 GitHub Actions 的 runner 上是否可复现 | 那几条会被 `t.skip`（它们已对 `getuid() === 0` 做了跳过） | CI 首次运行后按实际输出记录；若被跳过，在 CHANGELOG 写明"CI 上未覆盖" |
+| **U4** | 诊断环是内存态，重启后窗口消失 | 排障时可能找不到上一进程的事件 | README 写明边界；持久状态仍以 `jobs`、收据与 vault 历史为准（§9.3） |
+| **U5** | 未解：`chmod` 类测试（`receipt-store-unavailable`、read-only 目录）在 GitHub Actions 的 runner 上是否可复现 | 那几条会被 `t.skip`（它们已对 `getuid() === 0` 做了跳过） | CI 首次运行后按实际输出记录；若被跳过，在 CHANGELOG 写明"CI 上未覆盖" |
 
 ---
 
