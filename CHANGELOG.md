@@ -13,6 +13,22 @@ is a repository, not a release.
 
 ### Added
 
+- **The release gate checks the archive npm really builds, not a frozen count.**
+  `scripts/verify-tarball.mjs` (`npm run pack:check`) packs this checkout into a
+  temporary directory with `npm pack --json --ignore-scripts` — the flag is
+  mandatory, since a bare `npm pack` re-enters `prepack` and would run the suite
+  from inside a pack — lists the real `.tgz` and cross-checks the listing against
+  npm's own file list. It requires every extant `lib/**/*.js`, the ten mandatory
+  assets including both READMEs and `README.i18n.yaml`, and refuses anything from
+  `test/`, `docs/`, `research/`, `scratch/` or a vault's `_meta/`, plus any
+  `pending/`, `locks/`, `transactions/`, `.jsonl`, `.lock` or probe artefact.
+  The design's earlier "33 files" assertion is gone on purpose: it would have
+  turned the `tools.js` split into a red build for a change that is supposed to
+  add modules. `test/pack.test.js` pins the failure modes against synthetic
+  listings — a missing asset, a module on disk that did not ship, a packed
+  development tree, a packed vault path — and runs the verifier against this
+  checkout once, so the report cannot rot into a comment.
+
 - **The module graph and the repository's own conventions are now tests.** `test/architecture.test.js`
   builds the `lib/` import graph from the TypeScript AST — not a regular
   expression, which is how the first measurement of this graph missed

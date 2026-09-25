@@ -16,8 +16,11 @@ import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+import { REQUIRED_ENTRIES, verifyTarballEntries } from '../scripts/verify-tarball.mjs'
+
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const VERIFIER = resolve(REPO_ROOT, 'scripts/verify-pack.mjs')
+const TARBALL_VERIFIER = resolve(REPO_ROOT, 'scripts/verify-tarball.mjs')
 
 /** The six tool names `lib/tools.js` registers; the verifier checks the entry ships them. */
 const TOOL_NAMES = ['mem_search', 'mem_read', 'mem_write', 'mem_log', 'mem_brief', 'mem_admin']
@@ -241,4 +244,71 @@ test('a seventh registration fails, because the surface is capped at six', (t) =
   const extra = spawnSync(process.execPath, [VERIFIER, '--root', run.root], { encoding: 'utf8' })
   assert.notEqual(extra.status, 0)
   assert.match(extra.stdout + extra.stderr, /mem_extra/)
+})
+
+// ---------------------------------------------------------------------------
+// Task 6: the real archive, checked as a set rather than a count.
+// ---------------------------------------------------------------------------
+
+/**
+ * A complete, synthetic archive listing.
+ *
+ * @param {object} [overrides] - `drop` removes entries, `add` appends them.
+ * @returns {string[]} archive paths.
+ */
+function archiveListing({ drop = [], add = [] } = {}) {
+  const base = [
+    ...REQUIRED_ENTRIES.map(([path]) => path),
+    ...LISTED_LIB.map((path) => `package/${path}`),
+  ]
+  return [...base.filter((path) => !drop.includes(path)), ...add]
+}
+
+/** The lib modules the synthetic listing claims to carry. */
+const LISTED_LIB = ['lib/index.js', 'lib/tools.js']
+
+test('a complete archive listing passes the tarball contract', () => {
+  assert.deepEqual(verifyTarballEntries(archiveListing(), LISTED_LIB), [])
+})
+
+test('a missing required asset is named, and its reason with it', () => {
+  const problems = verifyTarballEntries(
+    archiveListing({ drop: ['package/README.zh.md'] }),
+    LISTED_LIB,
+  )
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /package\/README\.zh\.md/)
+  assert.match(problems[0], /Chinese half/)
+})
+
+test('the contract is a set of lib modules, not a frozen count', () => {
+  // A new module that ships is fine — this is what a fixed "33 files" would break.
+  const grown = archiveListing({ add: ['package/lib/new-module.js'] })
+  assert.deepEqual(verifyTarballEntries(grown, [...LISTED_LIB, 'lib/new-module.js']), [])
+  // A module on disk that did not ship is the failure that matters.
+  const problems = verifyTarballEntries(archiveListing(), [...LISTED_LIB, 'lib/new-module.js'])
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /missing lib\/new-module\.js/)
+})
+
+test('a packed development tree or vault artefact fails', () => {
+  const cases = [
+    ['package/test/pack.test.js', /development or runtime state/],
+    ['package/docs/superpowers/specs/x.md', /development or runtime state/],
+    ['package/lib/pending/queue.json', /vault or data-root state/],
+    ['package/lib/foo.lock', /evidence rather than package content/],
+  ]
+  for (const [entry, pattern] of cases) {
+    const problems = verifyTarballEntries(archiveListing({ add: [entry] }), LISTED_LIB)
+    assert.equal(problems.length, 1, `${entry} should be refused`)
+    assert.match(problems[0], pattern)
+  }
+})
+
+test('the archive this checkout really produces satisfies the contract', () => {
+  const run = spawnSync(process.execPath, [TARBALL_VERIFIER], { encoding: 'utf8' })
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+  assert.match(run.stdout, /verify-tarball: OK/)
+  // The report has to stay informative without freezing a number.
+  assert.match(run.stdout, /lib modules, every required asset present/)
 })
