@@ -340,6 +340,47 @@ is a repository, not a release.
   a complete set. `AGENTS.md` rule 6 keeps the requirement and names this file as
   the list's home.
 
+### Verified end to end
+
+- **The plugin still works as a *mounted DSH host plugin*, not just as a library
+  under `node --test`.** The isolated-profile smoke suite was re-run at
+  `ca286a7` — after both the `tools.js` split and the diagnostics call sites —
+  and it is the only check in this repository that says so. `run-smoke.mjs`
+  installs this checkout into a throwaway `DSH_HOME`, drives real headless
+  sessions against a throwaway vault, and **SIGKILLs the process at the durability
+  boundary** so the next process has to recover the job; `verify.mjs` then
+  re-derives every fact from the temp vault. Measured: **25 checks, 0 failures,
+  1 honest UNVERIFIED** (the Obsidian GUI half), and `negative-controls.mjs`
+  **11 negative controls + 1 positive control, all as expected** — so the checker
+  is known to fail for each condition it claims to detect rather than merely
+  having passed once.
+
+  What the run actually established, in its own numbers: the plugin row was
+  present in `--dump-config`; exactly one recall brief reached the first step
+  (109 code points, inside the 6,000 budget) and none later; a Chinese document
+  written through `mem_write` was found again by a four-character Chinese query;
+  the supersede chain left the old note with `status: superseded` and its
+  `superseded_by`, dropped from default search and present under
+  `includeHistory: true`; both model lanes were real distils (dry-run: 234 output
+  tokens, vault unchanged; live: 278 output tokens, vault changed) with exactly
+  one result receipt for the killed job and **no duplicate note id anywhere**;
+  an edit made outside the plugin survived, and a `trust: owner` file the plugin
+  tried to update *and* supersede was byte-identical afterwards; a read-only lint
+  changed nothing; 21 notes re-parsed under `yaml`, with the tag lists, ISO day
+  fields and wikilinks checked; and the real `~/.dsh` fingerprint was identical
+  before and after.
+
+  **The run's record is deliberately not committed**, for the reason
+  `docs/smoke-results.md` §1 and §7 already give: a passing model lane writes a
+  note whose title the model wrote, so the transcript now contains model output,
+  and this repository does not commit that. The tracked
+  `test/smoke/records/smoke-record.json` therefore stays what it is — the
+  Task 18 pre-fix transcript, which describes a run whose model lane produced no
+  receipt — and it is *not* evidence for the numbers above. The evidence for
+  those is this entry plus the commands it names; the record was rewritten,
+  inspected, and reverted rather than left in the tree, and `git log` on that
+  path shows no commit here.
+
 ### Remaining from the engineering-harness plan
 
 Stated here rather than left to be discovered, because rule 6 puts the untested
@@ -348,18 +389,23 @@ split into `tool-schema.js`, `tool-registry.js` and `services.js` behind an
 unchanged façade — **is done**, and is written up under *Changed*. What follows is
 what is still open.
 
-- **CI has never run.** The workflow is committed and its shape is tested locally,
-  but nothing has been pushed, so the `22.22.2` leg of the matrix is unmeasured —
-  and that is the leg that decides whether `engines.node` stays honest. Until
-  GitHub reports it green, the floor is measured on one machine only.
+- **The GitHub workflow itself has never run.** Everything it *does* has now been
+  run by hand and passes, on the leg that matters: in a clean tree created by
+  `git archive` with no `node_modules`, `npm ci` under Node 22.22.2 installed the
+  lockfile (including the two optional peers, which the lock does record) with
+  `found 0 vulnerabilities`, and the identical command CI runs — `npm run check`
+  — then exited 0 with **627 tests, 0 fail**, `verify-pack: OK` and
+  `verify-tarball: OK`. So `engines.node` is no longer a floor measured on one
+  machine for the *gates*; what remains untested is GitHub's own runner, the
+  `24.x` and `node` matrix legs, and `scripts/ci-base.mjs` choosing a base from
+  real event JSON.
 - **The type ratchet covers twelve files of twenty-eight candidates.** The full
   per-file counts are in the design at
   `docs/superpowers/specs/2026-09-25-engineering-harness-design.md` §7.3;
   `lib/pending.js` alone reports 78 and is why the first tier stopped where it did.
-- **The smoke suite was not re-run.** It needs a model credential and an isolated
-  profile, so nothing in this release has exercised a real DSH session end to end.
-  The repository checks passing says nothing about that, and this entry is the
-  only claim either way.
+- **Obsidian GUI behaviour is still unverified.** The smoke run below is a
+  filesystem result; nothing in it says a tag renders as a property list or that a
+  wikilink is clickable, because the vault was never opened in Obsidian.
 
 ### Fixed
 

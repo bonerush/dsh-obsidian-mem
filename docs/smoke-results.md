@@ -182,3 +182,20 @@ node test/smoke/verify.mjs /tmp/smoke-017rc2.json
 - **未验证项不变**：§5 的三项（Obsidian GUI、一次性进程内的自动 apply、跨进程即时补扫）在 0.1.7 上同样未测，不因本次复跑而收紧。
 - **记录不提交**：`/tmp/smoke-017rc2.json` 与 §1 同因——它含模型自己生成的笔记标题与派生路径。`test/smoke/records/smoke-record.json` 仍只有那份 Task 18 的修正前冻结记录。
 - **本次改动的提交面**：`lib/hooks.js`（`RECALL_SOURCE`）、`lib/capture.js`（仅一条注释：示例 kind 由 `plugin` 改为 `plugin:<name>`）、`test/hooks.test.js`、`test/lint.test.js`、`test/smoke/driver/index.js`（驱动侧把期望写成字面量 `plugin:obsidian-mem`）、`test/p0/run-v4-source-probe.mjs`（新增，证据探针，`files` 白名单不含 `test/`，不进包）、`docs/{p0-compatibility,smoke-results}.md`、`CHANGELOG.md`。全部测试 **573 通过 / 0 失败**；`npm run prepack`（含 `verify-pack`）与 `npm pack --dry-run --ignore-scripts`（33 个文件，零 `test/` 条目）均通过。
+
+## 8. 在 `tools.js` 拆分与诊断通道之后复跑（2026-09-25，`ca286a7`）
+
+- **被测环境**：DSH `0.1.7-rc.2`；Node `v25.9.0`；`darwin arm64`；同一条蒸馏路由。
+- **为什么跑**：本仓库唯一能回答"它作为**挂载的 DSH 宿主插件**还能用吗"的检查就是这一套。本轮改了 `lib/tools.js` 的模块边界（拆成 `tool-schema` / `tool-registry` / `services` 加一个门面）和捕获/蒸馏/索引/事务的写入点，两处都不在 `node --test` 的覆盖范围内：前者由两个入口的 import 决定，后者由真实 worker 决定。
+- **命令与结果**：
+
+```sh
+node test/smoke/run-smoke.mjs --out /tmp/smoke-record-2026.json
+node test/smoke/verify.mjs /tmp/smoke-record-2026.json          # verify: OK (25 checks, 21 vault notes)
+node test/smoke/negative-controls.mjs /tmp/smoke-record-2026.json  # OK (11 negative controls, 1 positive control)
+```
+
+  三条退出码均为 0。逐项与 §2/§7 同一套断言，无一条因本轮改动而变；`UNVERIFIED` 仍只有 Obsidian GUI 一项。
+- **本轮特有的关键事实**：简报 109 码点、恰好一次；中文文档写入后四字中文查询命中；`SIGKILL` 边界后 `restart-recovered-exactly-once`（该 job 恰好 1 条 receipt）、`no-duplicate-note-ids` 为空；两条模型通道都是真实蒸馏（dry-run 234 output tokens / live 278，`attempts=0`，dry-run 零写入、live 有写入）；外部编辑与 `trust: owner` 文件均逐字节存活；只读 lint 未动树；真实 `~/.dsh` 指纹前后一致。
+- **记录不提交**，理由与 §1/§7 相同（含模型自拟标题与派生路径）。因此 `test/smoke/records/smoke-record.json` **仍**是 Task 18 的修正前冻结记录——它**不是**本节数字的证据。本节的证据是本节的命令与输出，以及 `CHANGELOG.md` 的 *Verified end to end* 条目。
+- **顺带实测的 CI 等价项**：在 `git archive` 出来的干净树里、Node `22.22.2` 下执行 `npm ci`（lockfile 连两个可选 peer 一并装上，0 vulnerabilities）后跑 `npm run check`，退出码 0（627 tests / 0 fail，`verify-pack: OK`、`verify-tarball: OK`）。CI 工作流本身仍未在 GitHub 上跑过。
