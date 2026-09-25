@@ -123,6 +123,17 @@ is a repository, not a release.
 
 ### Fixed
 
+- **The callback JSDoc in `lib/hooks.js` and `lib/transaction.js` now parses
+  under TypeScript 7 as well as 5.9.** Five `@param {function(string): T}` type
+  expressions used the Closure dialect, which TypeScript 7.0.2 — today's
+  `latest` on npm — rejects with `TS1005`, and the rejection cost the eight
+  `@param deps.*` entries below them their binding (`TS8032`). Measured on the
+  same two files with `checkJs: true`: **5 + 8 diagnostics under 7.0.2, 0 + 0
+  under the pinned 5.9.3**, and 0 + 0 under both after this change. The pinned
+  compiler never reported it, so this is portability rather than a repair: the
+  arrow form is accepted by both, and it can name its parameter, which the
+  Closure form cannot. `test/jsdoc.test.js` freezes the form and its failure
+  message states the measurement, so the next person sees why the rule exists.
 - **ESLint's first honest run over this tree found 43 problems; all 43 are now
   either fixed or disabled at the site with the reason.** The repository had no
   linter, so nothing had ever looked. Twelve dead stores (`let corrupt = false`,
