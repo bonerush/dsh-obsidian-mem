@@ -39,8 +39,9 @@ could read.
 - `docs/superpowers/{specs,plans}/` — the frozen design and the task plan.
 - `test/` — `node --test` only, no test framework.
 - `codex/` — the Codex CLI adapter. An MCP server that imports `lib/` rather than
-  copying it, a Codex edition of the portable skill, and a local marketplace so
-  `codex plugin add` installs both. It is the *second* entry point into `lib/`,
+  copying it, a `SessionStart` hook that injects the same brief DSH injects, a
+  Codex edition of the portable skill, and a local marketplace so `codex plugin
+  add` installs all of it. It is the *second* entry point into `lib/`,
   which is why `test/codex-mcp.test.js` pins the tool surface against
   `TOOL_NAMES`/`TOOL_PARAMETERS`. Not shipped.
 - `scripts/verify-pack.mjs` — the pack verifier `prepack` runs.
@@ -82,7 +83,8 @@ and — where one exists — the command that answers it.
 | The queue stopped moving | `lib/pending.js` and `mem_admin(action="jobs")` |
 | The skill did not sync | the `skill` event, then `lib/assets.js` |
 | The package is wrong | `scripts/verify-pack.mjs` (manifest contract) and `scripts/verify-tarball.mjs` (the real archive). `npm run pack:check` |
-| A `codex-mcp` test fails after copying the checkout | `.mcp.json` is generated and holds absolute paths — run `node codex/prepare.mjs` |
+| A `codex-mcp` test fails after copying the checkout | `.mcp.json` and `hooks/hooks.json` are generated and hold absolute paths — run `node codex/prepare.mjs` |
+| A Codex session recalled nothing, and the hook looks fine | `codex/README.md` → *The `SessionStart` hook*. `hooks/list` reports `trustStatus`, and an **untrusted hook is skipped in silence** — approve it once, or run with `--dangerously-bypass-hook-trust`. `test/codex-hooks.test.js` covers the script half |
 | Anything touching sessions, events, `ctx.llm` or injection timing | `docs/p0-compatibility.md` **first**. It holds the measured host facts; a comment in `lib/` does not |
 | The module layout, or a file that grew | `test/architecture.test.js`. The layer table and the size budgets are there, and growing past one is meant to be a decision |
 

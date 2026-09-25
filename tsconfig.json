@@ -22,6 +22,7 @@
     "lib/search.js",
     "scripts/run-tests.mjs",
     "scripts/verify-pack.mjs",
-    "codex/server.mjs"
+    "codex/server.mjs",
+    "codex/session-start.mjs"
   ]
 }

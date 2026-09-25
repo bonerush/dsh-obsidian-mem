@@ -13,6 +13,77 @@ is a repository, not a release.
 
 ### Added
 
+- **The Codex side injects the recall brief at session start now, exactly as DSH
+  does.** `codex/session-start.mjs` is a `SessionStart` hook: Codex hands it the
+  session as JSON on stdin and adds what it answers with —
+  `hookSpecificOutput.additionalContext` — to the conversation before the first
+  model call. It composes no text of its own: what it injects is `brief.text` from
+  `lib/brief.js`, the same field the DSH pre-step injects, so the two harnesses
+  still share one memory layer and one brief. This closes the hole a tool cannot
+  fill — a session where nothing calls `mem_brief` used to recall nothing — and it
+  is the reason `codex/README.md` no longer says "nothing is automatic". It does
+  not make distillation portable; MCP still has no turn boundary, so a note is
+  still written when the agent decides to write one.
+
+  The one decision the hook owns is which session starts are worth paying for, and
+  it lives in `decide()` where a test can read it: `startup` and `clear` inject,
+  `resume` and `compact` do not, because both continue a conversation that already
+  carries the earlier injection or its summary. A directory with no `.obsidian-mem`
+  pointer injects nothing, and that is not a refusal — it is most directories on any
+  machine, and the session starts as if the plugin were not installed.
+
+  Five facts about the contract were measured against codex-cli 0.146.0 rather than
+  read off a specification, and three of them changed the implementation:
+  a plugin's hooks live at `<plugin>/hooks/hooks.json`, while a manifest may **not**
+  declare them — the plugin-authoring spec the same binary carries says validation
+  "rejects unsupported manifest fields such as `hooks`"; this event's `matcher`
+  matches the session's `source`, not a tool name, so a matcher would be a second
+  place to state the rule above and is left as `"*"`; `timeout` is in seconds and is
+  15 of them, so a vault that hangs costs a session fifteen seconds and then is
+  dropped, never its start; the output is schema-validated, and anything but one
+  `session-start.command.output` document is discarded with "hook returned invalid
+  session start JSON output"; and a hook is **untrusted until the client records a
+  trust hash for it** — an untrusted hook is skipped in silence, with no error and
+  no context.
+
+  That last one is the install step a reader would otherwise miss, so it is a
+  numbered step in `codex/README.md` rather than a footnote, and both directions
+  are measured instead of described: with the hook trusted, a session start under a
+  fresh `DSH_HOME` leaves behind the index the hook built; without it, the same
+  directory stays empty. The injected brief then appears in the session's own
+  rollout as a `developer` message — Codex's role for hook context, where DSH uses
+  a `user` message with a plugin source. Same text, each harness's own convention.
+  `codex --dangerously-bypass-hook-trust` skips the review for automation that
+  already vets what it runs, and Codex says so in a visible item when it is used.
+
+  **The hook cannot break a session.** Every path writes one JSON object and exits
+  0 — unreadable stdin, junk that is not JSON, an unbound directory, a vault that
+  refuses to open — and reasons go to stderr, where they cannot be mistaken for
+  protocol, under `OBSIDIAN_MEM_HOOK_DEBUG=1` or on an actual failure.
+  `test/codex-hooks.test.js` drives the real script as a process through a real
+  `SessionStart` payload and a throwaway home, data root, vault and repository:
+  seven cases, including a negative control that only means something because the
+  repository is bound *before* it — against an unbound directory every source looks
+  identical and the control proves nothing. Two deliberate regressions were run to
+  see the tests fail: adding `resume` to `INJECT_SOURCES` fails the decision case
+  and the vault-opening control, and one stray write to stdout fails three
+  process-level cases.
+
+  `codex/prepare.mjs` generates `hooks/hooks.json` beside `.mcp.json`, with this
+  checkout's absolute path for the same reason: Codex copies the plugin into
+  `~/.codex/plugins/cache/…`, so a relative path would resolve inside that copy.
+  Both generated files are git-ignored, both are checked by `prepare.mjs --check`,
+  and `codex/session-start.mjs` joins `codex/server.mjs` in the opt-in type ratchet.
+
+  **What is still not verified: that a live Codex turn acts on the injected
+  context.** Every link up to it is proven with the real binary — discovery, the
+  trust gate, execution, and the brief's arrival in the session — but a turn needs
+  a model this account can run, and this machine's Codex CLI rejects both the
+  configured `gpt-6-sol` and `gpt-5-codex` with `not supported when using Codex
+  with a ChatGPT account` before a tool is ever reached. That is the same wall the
+  MCP tools have been behind since they shipped, and it is why this entry claims
+  injection and not usefulness.
+
 - **`AGENTS.md` now opens with two tables instead of a list of commands to
   remember.** The first says when to run what — `check:fast` before a commit,
   `check` before a push, `prepack` for a release, `hooks:install` once and only

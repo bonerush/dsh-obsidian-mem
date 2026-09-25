@@ -6,10 +6,13 @@ scratch/
 node_modules/
 *.tgz
 
-# Codex 侧生成的 MCP 声明：内容是本机的绝对路径（Codex 会把插件复制进
+# Codex 侧生成的两份声明：内容是本机的绝对路径（Codex 会把插件复制进
 # ~/.codex/plugins/cache/，相对路径在复制后就失效了）。由
 # `node codex/prepare.mjs` 生成，不进版本库，也不该手工编辑。
+# hooks/hooks.json 是 Codex 发现插件钩子的固定路径——插件清单里的 `hooks`
+# 字段会被校验拒绝，所以钩子只能放在这里。
 codex/marketplace/plugins/dsh-obsidian-mem/.mcp.json
+codex/marketplace/plugins/dsh-obsidian-mem/hooks/hooks.json
 
 # 系统噪声
 .DS_Store

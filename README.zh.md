@@ -29,9 +29,11 @@ repository                                vault (~/Documents/dsh-memory)
   约）是纯 Markdown，与 DSH 无关。随包发布的技能 `skills/obsidian-mem/SKILL.md`
   遵循 Agent Skills 格式，所以在别的 harness 里也能用——[`codex/`](./codex/README.md)
   把这份协议**连同同样那六个操作**装进 Codex CLI，走的是一个复用 `lib/`（而不是复
-  制一份）的 MCP server。
-- **适配层**是 DSH 专属的：六个 `mem_*` 工具、会话第一步的一次带预算的召回注入、
-  一个放在仓库之外的 `node:sqlite` 搜索索引，以及对已完成回合的自动蒸馏。
+  制一份）的 MCP server，另加一个在首次模型调用前注入同一份简报的 `SessionStart`
+  钩子。
+- **适配层**是 DSH 专属的：六个 `mem_*` 工具、一个放在仓库之外的 `node:sqlite`
+  搜索索引，以及对已完成回合的自动蒸馏。召回注入已经不在这一层：两个 harness 现在
+  用同一个 `buildBrief` 合成它，各自用自己 harness 的扩展点投递。
 
 > **在开启自动写入之前，先读[诚实边界](#honest-limits)。**
 > 本插件对自己拒绝什么很谨慎，但它还很年轻。下面写的是本版本愿意写下来的边界，不声

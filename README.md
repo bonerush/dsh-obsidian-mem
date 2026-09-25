@@ -31,10 +31,12 @@ Two layers, on purpose:
   shipped skill `skills/obsidian-mem/SKILL.md` follows the Agent Skills format,
   so it works in another harness too — [`codex/`](./codex/README.md) installs that
   protocol *and* the same six operations into Codex CLI, through an MCP server that
-  reuses `lib/` rather than copying it.
-- **Adapter** is DSH-specific: six `mem_*` tools, one budgeted recall injection at
-  the first step of a session, a `node:sqlite` search index kept outside the
-  vault, and automatic distillation of completed turns.
+  reuses `lib/` rather than copying it, plus a `SessionStart` hook that injects
+  the same brief before the first model call.
+- **Adapter** is DSH-specific: six `mem_*` tools, a `node:sqlite` search index kept
+  outside the vault, and automatic distillation of completed turns. The recall
+  injection left that list: both harnesses compose it from the same `buildBrief`,
+  and each delivers it through its own extension point.
 
 > **Read [Honest limits](#honest-limits) before you enable automatic writes.**
 > This plugin is careful about what it refuses, but it is young. What follows is
