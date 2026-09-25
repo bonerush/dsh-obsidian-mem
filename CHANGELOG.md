@@ -13,6 +13,26 @@ is a repository, not a release.
 
 ### Added
 
+- **CI runs the same gate a contributor runs, on three Node versions.** A check
+  that exists only in CI is one that passes locally and fails on push, so
+  `.github/workflows/ci.yml` runs `npm ci` and then `npm run check` — the identical
+  command — across `22.22.2`, `24.x` and `node`. The floor is listed first on
+  purpose: `engines.node` claims 22.22.2 is the lowest version with `node:sqlite`
+  and FTS5, and an unmeasured floor is a claim rather than a fact. The only steps
+  CI adds are the two things a local run cannot supply: the Unreleased gate's
+  comparison base and the matrix. There are no secrets, because `npm test` needs
+  none, and `permissions: contents: read` is the whole token surface.
+  The base is chosen by `scripts/ci-base.mjs` rather than by shell inside the
+  workflow, so the one piece of interesting logic is also the one piece with tests:
+  a pull request's base commit wins, then a push's previous head, then the merge
+  base against the default branch. An all-zero `before` — GitHub's way of saying
+  the ref is new — is skipped rather than compared against; a base that is not a
+  commit in the clone, or that *is* `HEAD`, exits 1 with the reason instead of
+  handing the gate an empty diff to pass. `test/repo-gates.test.js` pins the
+  workflow's shape too: the matrix entries, `npm ci` before `npm run check`,
+  `fetch-depth: 0` (without it the base commit is not in the clone), and the
+  read-only permission.
+
 - **Three rules that were prose now run before a commit.** `npm run check:fast`,
   wired into `.githooks/pre-commit` by the opt-in `npm run hooks:install`, checks
   the *index* rather than the working tree: sources come from `git show :<path>`

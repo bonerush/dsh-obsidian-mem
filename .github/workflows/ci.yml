@@ -1,0 +1,47 @@
+# The same gates a contributor runs, run again where nobody can skip them.
+#
+# `npm run check` is the whole local gate and this workflow does not add steps to
+# it — a CI-only check is one that passes locally and fails on push. The two extra
+# steps are the ones that need something the local gate deliberately does not have:
+# a comparison base for the Unreleased gate, and the Node matrix.
+name: checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.22.2 is the engines floor — the lowest version measured to ship
+        # node:sqlite with FTS5 — and it is listed first because an unmeasured
+        # floor is just a claim. 'node' tracks current so a break shows up here
+        # rather than in a user's session.
+        node: ['22.22.2', '24.x', 'node']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The Unreleased gate diffs against an earlier commit, so the history
+          # has to be present rather than a single-commit clone.
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Resolve the comparison base
+        id: base
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: echo "sha=$(node scripts/ci-base.mjs)" >> "$GITHUB_OUTPUT"
+      - name: Unreleased gate
+        run: node scripts/verify-changelog.mjs --base "${{ steps.base.outputs.sha }}"

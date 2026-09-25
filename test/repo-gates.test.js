@@ -12,7 +12,9 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import YAML from 'yaml'
 
+import { resolveBase } from '../scripts/ci-base.mjs'
 import { checkStagedSources } from '../scripts/check-staged.mjs'
 import { currentHooksPath, HOOKS_PATH, main as installHooks } from '../scripts/install-hooks.mjs'
 import { judge, main as verifyChangelog, unreleasedSection } from '../scripts/verify-changelog.mjs'
@@ -184,4 +186,81 @@ test('install-hooks sets core.hooksPath in the checkout it is pointed at', (t) =
   const plain = mkdtempSync(join(tmpdir(), 'obsidian-mem-nothooks-'))
   t.after(() => rmSync(plain, { recursive: true, force: true }))
   assert.equal(installHooks(plain), 2)
+})
+
+// ---------------------------------------------------------------------------
+// CI: the same gate, plus the two things only CI can supply
+// ---------------------------------------------------------------------------
+
+test('the workflow runs npm run check across the supported Node versions', () => {
+  const text = readFileSync(join(REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8')
+  const workflow = YAML.parse(text)
+  assert.deepEqual(workflow.jobs.check.strategy.matrix.node, ['22.22.2', '24.x', 'node'])
+  const steps = workflow.jobs.check.steps
+  const commands = steps.map((step) => step.run ?? '').filter(Boolean)
+  assert.equal(
+    commands.some((command) => command.startsWith('npm ci')),
+    true,
+    'npm ci must run',
+  )
+  assert.equal(
+    commands.some((command) => command === 'npm run check'),
+    true,
+  )
+  assert.ok(
+    commands.findIndex((command) => command.startsWith('npm ci')) <
+      commands.findIndex((command) => command === 'npm run check'),
+    'dependencies have to be installed before the gate runs',
+  )
+  // The Unreleased gate needs history and an explicit base; without fetch-depth 0
+  // the base commit is simply not in the clone.
+  const checkout = steps.find((step) => String(step.uses ?? '').startsWith('actions/checkout'))
+  assert.equal(checkout.with['fetch-depth'], 0)
+  assert.equal(
+    commands.some((command) => command.includes('verify-changelog.mjs --base')),
+    true,
+    'CI must run the Unreleased gate with a base',
+  )
+  assert.equal(text.includes('pull_request.base.sha'), true)
+  assert.equal(text.includes('github.event.before'), true)
+  // No step may ask for a token this repository does not need.
+  assert.equal(workflow.permissions?.contents, 'read')
+})
+
+test('ci-base prefers the event SHA and refuses to guess', (t) => {
+  const { root, lib } = fixture(t)
+  const first = git(root, ['rev-parse', 'HEAD']).trim()
+  writeFileSync(lib, 'export const x = 2\n')
+  git(root, ['add', '-A'])
+  git(root, ['commit', '-q', '-m', 'second'])
+  const second = git(root, ['rev-parse', 'HEAD']).trim()
+  assert.deepEqual(resolveBase({ PR_BASE: first }, root), {
+    sha: first,
+    reason: 'the pull request base from the event',
+  })
+  assert.deepEqual(resolveBase({ BEFORE: first }, root), {
+    sha: first,
+    reason: 'the previous head from the event',
+  })
+  assert.equal(
+    resolveBase({ PR_BASE: second, BEFORE: first }, root).sha,
+    second,
+    'the PR base wins',
+  )
+  // An all-zero 'before' is GitHub saying the ref did not exist; it must not be used.
+  const zeros = resolveBase({ BEFORE: '0'.repeat(40), DEFAULT_BRANCH: 'main' }, root)
+  assert.equal(zeros.sha, null, 'an all-zero before must fall through, not be compared against')
+  // A base that is not a commit here is an error, never an empty diff.
+  const bogus = resolveBase({ PR_BASE: 'f'.repeat(40) }, root)
+  assert.equal(bogus.sha, null)
+  assert.match(bogus.reason, /not a commit/)
+})
+
+test('ci-base refuses a base that equals HEAD', (t) => {
+  const { root } = fixture(t)
+  // On a branch named main with no origin, the merge base with main is HEAD itself.
+  git(root, ['branch', '-M', 'main'])
+  const verdict = resolveBase({ DEFAULT_BRANCH: 'main' }, root)
+  assert.equal(verdict.sha, null)
+  assert.match(verdict.reason, /nothing to compare|no event base/)
 })

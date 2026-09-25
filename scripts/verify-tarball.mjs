@@ -44,6 +44,7 @@ export const REQUIRED_ENTRIES = [
  */
 export const FORBIDDEN_PREFIXES = [
   'package/test/',
+  'package/.github/',
   'package/docs/',
   'package/research/',
   'package/scratch/',
