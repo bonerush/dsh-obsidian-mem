@@ -13,6 +13,25 @@ is a repository, not a release.
 
 ### Added
 
+- **The module graph and the repository's own conventions are now tests.** `test/architecture.test.js`
+  builds the `lib/` import graph from the TypeScript AST — not a regular
+  expression, which is how the first measurement of this graph missed
+  `export ... from` and side-effect imports — and fails on a cycle, on an edge
+  that points upward *or* sideways between the ten reviewed layers, on a module
+  with no declared layer, on a relative import that resolves to nothing, and on a
+  file past its approved size. The layer table and the size budgets are a
+  reviewed snapshot, so a new module or a grown file becomes a decision someone
+  makes rather than a drift nobody sees; `lib/tools.js` and the three files that
+  replace it in the split are the first entries to be re-registered under it.
+  `test/repo-hygiene.test.js` adds the two conventions that were prose until now:
+  `README.i18n.yaml`'s recorded blob hashes must match both READMEs, computed
+  from bytes with `node:crypto` so CI and a bare checkout agree, and every
+  `npm run` command named in `AGENTS.md` or either README must exist in
+  `package.json`. Both were shown to fail — a stale hash record and a documented
+  command that does not exist each turn exactly one assertion red — and the
+  structural checks were shown to fail four ways: an upward edge, a lateral edge,
+  a new module, and a file padded past its budget.
+
 - **Twelve source files are type-checked, and the set can only grow.** `npm run
   types` runs `tsc --noEmit` over an explicit `files` list with
   `checkJs: false`, so each file opts in with a `// @ts-check` marker. The
