@@ -24,12 +24,17 @@
 // a checkout whose `node_modules` was rebuilt without it cannot run this file,
 // exactly as a DSH process without the package could not register the tools.
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { Context } from '@deepseek-ai/cordis'
 import toolsPlugin, { defineTool } from '@deepseek-ai/dsh-tools'
 
-import { TOOL_NAMES, TOOL_PARAMETERS, registerTools } from '../lib/tools.js'
+import { validateConfig } from '../lib/config.js'
+import { createDiagnostics } from '../lib/debug.js'
+import { createMemoryServices, TOOL_NAMES, TOOL_PARAMETERS, registerTools } from '../lib/tools.js'
 
 /** The six names, sorted for set comparison. */
 const SIX = Object.freeze([
@@ -320,6 +325,9 @@ test('the documented enums and defaults are exactly spec §9', async (t) => {
     'projects',
     'promote',
     'jobs',
+    // The one action that reads no vault and needs no binding, so it still answers
+    // when every other action refuses.
+    'diagnostics',
   ])
   assert.deepEqual(params('mem_admin').mode.enum, ['show', 'local', 'fork', 'retain'])
   assert.equal(params('mem_admin').mode.default, 'show')
@@ -347,7 +355,15 @@ test('mem_admin branches its result with a per-action const instead of an uncons
   const schema = ctx.tools.get('mem_admin').output.schema
   assert.equal(Array.isArray(schema.oneOf), true)
   const actions = schema.oneOf.map((arm) => arm.properties.action.const)
-  assert.deepEqual(actions.slice().sort(), ['bind', 'index', 'jobs', 'lint', 'projects', 'promote'])
+  assert.deepEqual(actions.slice().sort(), [
+    'bind',
+    'diagnostics',
+    'index',
+    'jobs',
+    'lint',
+    'projects',
+    'promote',
+  ])
 })
 
 test('a service that is missing is refused at registration time', async (t) => {
@@ -582,4 +598,38 @@ test('every mem_admin action answers its own real result shape, with no placehol
   const refused = await call(ctx, 'mem_admin', { action: 'lint', path: SAMPLE_PATH })
   assert.equal(refused.isError, true)
   assert.match(refused.error.message, /path/)
+})
+
+test('mem_admin(action="diagnostics") answers through the real seam without a vault', async (t) => {
+  const ctx = await toolbed(t)
+  const dataRoot = mkdtempSync(join(tmpdir(), 'obsidian-mem-diag-'))
+  t.after(() => rmSync(dataRoot, { recursive: true, force: true }))
+  // The ring is injected, which is the property under test: the tool must report
+  // the instance the plugin is actually using, not a fresh empty one.
+  const diagnostics = createDiagnostics({})
+  const services = createMemoryServices({ config: validateConfig({}), dataRoot, diagnostics })
+  t.after(() => services.close?.())
+  registerTools(ctx, services)
+  diagnostics.event('job', { outcome: 'applied', attempts: 1 })
+
+  const result = await call(ctx, 'mem_admin', { action: 'diagnostics' })
+  assert.equal(result.isError, false, result.error?.message)
+  assert.equal(result.value.action, 'diagnostics')
+  assert.deepEqual(Object.keys(result.value.result).sort(), ['events', 'window'])
+  assert.deepEqual(Object.keys(result.value.result.window).sort(), [
+    'capacity',
+    'dropped',
+    'newestSeq',
+    'oldestSeq',
+    'size',
+  ])
+  assert.equal(result.value.result.window.capacity, 200)
+  assert.equal(result.value.result.events.length, 1)
+  assert.equal(result.value.result.events[0].event, 'job')
+  assert.equal(result.value.result.events[0].outcome, 'applied')
+
+  // An irrelevant argument is refused exactly like every other action's.
+  const refused = await call(ctx, 'mem_admin', { action: 'diagnostics', path: 'x.md' })
+  assert.equal(refused.isError, true)
+  assert.match(refused.error.message, /does not accept/)
 })

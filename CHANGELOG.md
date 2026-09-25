@@ -13,6 +13,41 @@ is a repository, not a release.
 
 ### Added
 
+  The `tools.js` budget was raised from 1,950 to 2,050 lines to land the new
+  schema, which is the fitness function asking for a decision rather than a
+  failure: the raise is registered in the table with the reason and flagged as
+  temporary, because the split that follows is what replaces it with a façade.
+
+- **`mem_admin(action="diagnostics")` answers "why did that happen?" without a
+  reproduction.** `lib/debug.js` is a bounded ring — 200 events — that records
+  decisions from a closed set of categories and a closed set of scalar fields,
+  and `lib/index.js` hands one instance to both the services and the hooks so a
+  single call answers for the whole plugin. It reads no vault and needs no
+  binding, so it still answers when every other action refuses, which is usually
+  exactly when it is wanted; and it empties when the process exits, so `jobs` and
+  the receipts remain the only things to trust across a restart.
+  The privacy boundary is enforced at the door rather than documented and hoped
+  for: field names are an allowlist, values are shape-checked, and a note body, a
+  title, a path or a prompt is dropped before it can be stored. The test feeds a
+  sentinel body through a real call site and requires it to be absent from the
+  serialised snapshot, so a future "just one more field, it will help debugging"
+  change fails a test instead of shipping. Nothing in the channel can change an
+  outcome either — a throwing logger, a throwing clock and a broken injected seam
+  are all tested to leave the caller's result untouched.
+  Events are emitted today for three of the eight categories: `brief` (injected,
+  hint-only or none — the case a developer cannot see any other way), `bind`
+  refusals with their code, and the `skill` sync outcome. `capture`, `distill`,
+  `index`, `job` and `transaction` are accepted by the ring and by the closed
+  output schema but have no call sites yet, which the READMEs say plainly rather
+  than implying a completeness this change does not have.
+  `DSH_OBSIDIAN_MEM_DEBUG=1` also emits each event through the host logger, at
+  `info` rather than `debug` on measurement: the host's exporter uses
+  `levels: { default: 2 }` and drops anything above the threshold, so `debug` would
+  be asking for a channel that is known to be closed. Unset, the plugin's logging
+  surface is byte-for-byte what it was. The DSH side and the Codex MCP server each
+  hold their own instance, so the tool always describes the process the caller is
+  talking to; the Codex sink writes to stderr and only under the same flag.
+
 - **CI runs the same gate a contributor runs, on three Node versions.** A check
   that exists only in CI is one that passes locally and fails on push, so
   `.github/workflows/ci.yml` runs `npm ci` and then `npm run check` — the identical

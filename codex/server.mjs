@@ -33,6 +33,7 @@ import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 
 import { validateConfig } from '../lib/config.js'
+import { createDiagnostics } from '../lib/debug.js'
 import { resolveDataRoot } from '../lib/paths.js'
 import { TOOL_NAMES, TOOL_PARAMETERS, createMemoryServices } from '../lib/tools.js'
 
@@ -56,7 +57,7 @@ const DESCRIPTION = Object.freeze({
   mem_brief:
     'The recall brief for the project bound to the current working directory: binding, hot memory, conventions and recent decisions. Call this once when you start work in a repository.',
   mem_admin:
-    'Vault maintenance: lint, index status/rebuild, bind (show/local/fork/retain), the project list, promote a note into Methods/, and the pending job queue.',
+    "Vault maintenance: lint, index status/rebuild, bind (show/local/fork/retain), the project list, promote a note into Methods/, the pending job queue, and diagnostics (a bounded, content-free ring of this process's decisions; it empties on restart).",
 })
 
 /**
@@ -105,7 +106,7 @@ export function listTools() {
  * or a second checkout — can point somewhere else without touching the real one.
  *
  * @param {{ cwd?: string, dshHome?: string, vaultPath?: string, home?: string }} [options] - overrides; every one of them defaults to what the DSH plugin would use.
- * @returns {{ services: object, config: object, dataRoot: string, cwd: string }} the opened layer.
+ * @returns {{ services: object, config: object, dataRoot: string, cwd: string, diagnostics: object }} the opened layer, with the ring its own `mem_admin` reads.
  */
 export function openMemory(options = {}) {
   const home = options.home ?? homedir()
@@ -113,7 +114,20 @@ export function openMemory(options = {}) {
   const vaultPath = options.vaultPath ?? process.env.OBSIDIAN_MEM_VAULT
   const config = validateConfig(vaultPath === undefined ? {} : { vaultPath })
   const dataRoot = resolveDataRoot(options.dshHome ?? process.env.DSH_HOME ?? undefined)
-  return { services: createMemoryServices({ config, dataRoot, cwd, home }), config, dataRoot, cwd }
+  // One ring per server, with its own sink: this process has no Cordis logger, so
+  // emission goes to stderr and only when the env flag is set. The DSH side keeps
+  // its own instance, which is why the tool's answer is always about the process
+  // the caller is actually talking to.
+  const diagnostics = createDiagnostics({
+    logger: { info: (line) => process.stderr.write(line + '\n') },
+  })
+  return {
+    services: createMemoryServices({ config, dataRoot, cwd, home, diagnostics }),
+    config,
+    dataRoot,
+    cwd,
+    diagnostics,
+  }
 }
 
 /**
