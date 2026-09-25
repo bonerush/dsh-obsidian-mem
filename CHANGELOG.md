@@ -13,6 +13,18 @@ is a repository, not a release.
 
 ### Added
 
+- **`AGENTS.md` now opens with two tables instead of a list of commands to
+  remember.** The first says when to run what — `check:fast` before a commit,
+  `check` before a push, `prepack` for a release, `hooks:install` once and only
+  if you want it — and what each one actually runs, so the five-command manual
+  sequence is gone. The second is "where the truth lives": ten symptoms mapped to
+  the file, test or tool call that answers them, including the two that cost the
+  most time to rediscover — a copied checkout failing `codex-mcp` because the
+  generated `.mcp.json` holds absolute paths, and anything touching sessions or
+  injection timing starting from `docs/p0-compatibility.md` rather than a comment
+  in `lib/`. The house style now states the dependency split explicitly: two
+  runtime dependencies, everything else a pinned devDependency.
+
   The `tools.js` budget was raised from 1,950 to 2,050 lines to land the new
   schema, which is the fitness function asking for a decision rather than a
   failure: the raise is registered in the table with the reason and flagged as

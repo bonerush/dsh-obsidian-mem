@@ -48,12 +48,13 @@ could read.
 
 ## Commands
 
-```sh
-npm ci                 # install exactly the lockfile
-npm test               # the whole suite, with DSH_HOME pointed at a temp dir
-npm run prepack        # npm test, then the pack verifier
-npm pack --dry-run --ignore-scripts   # inspect the tarball manifest only
-```
+| When | Command | What it actually runs |
+|---|---|---|
+| Once | `npm ci` | install exactly the lockfile |
+| Before every commit | `npm run check:fast` | eslint and prettier over the **staged blobs**, the two fitness tests, and the Unreleased gate. Measured at 1.0–1.5 s for a one-file change; wire it up with `npm run hooks:install` |
+| Before every push | `npm run check` | `lint` → `format:check` → `types` → `prepack` (the suite, then the pack verifier) → `pack:check` (packs for real and reads the archive) |
+| Release | `npm run prepack` | the suite and `scripts/verify-pack.mjs`. Still read-only, still no build step |
+| Opt in | `npm run hooks:install` | sets `core.hooksPath` to `.githooks` for this checkout, printing the value before and after. The **only** command here that writes git configuration, and it has to be asked for |
 
 `npm test` is `node scripts/run-tests.mjs`. That wrapper creates a throwaway
 directory, sets `DSH_HOME` to it, runs `node --test test/*.test.js`, and removes
@@ -66,6 +67,24 @@ wrapper protects the home, not the test's own assumptions.
 Never point a test, a probe or a manual run at `~/Documents/knowledge`, at
 `$DSH_HOME/data/obsidian-mem/` of a real home, or at any real vault. Use
 `mktemp -d`.
+
+## Where the truth lives
+
+Read this before searching the tree. Each row is a symptom, where to look first,
+and — where one exists — the command that answers it.
+
+| Symptom | Look here |
+|---|---|
+| A write did not land, or landed somewhere unexpected | `lib/transaction.js` and `test/transaction.test.js`. `mem_admin(action="jobs")` for the queue, `mem_admin(action="diagnostics")` for this process's decisions |
+| The brief did not arrive, or arrived wrong | `lib/brief.js` and `lib/hooks.js`; the `brief` event in the diagnostics window carries `injected`/`hint-only`/`none` |
+| Distillation produced nothing | `lib/distill.js`; the queue state is in `mem_admin(action="jobs")` |
+| A bind was refused | `lib/vault.js`; the `bind` event carries the refusal code |
+| The queue stopped moving | `lib/pending.js` and `mem_admin(action="jobs")` |
+| The skill did not sync | the `skill` event, then `lib/assets.js` |
+| The package is wrong | `scripts/verify-pack.mjs` (manifest contract) and `scripts/verify-tarball.mjs` (the real archive). `npm run pack:check` |
+| A `codex-mcp` test fails after copying the checkout | `.mcp.json` is generated and holds absolute paths — run `node codex/prepare.mjs` |
+| Anything touching sessions, events, `ctx.llm` or injection timing | `docs/p0-compatibility.md` **first**. It holds the measured host facts; a comment in `lib/` does not |
+| The module layout, or a file that grew | `test/architecture.test.js`. The layer table and the size budgets are there, and growing past one is meant to be a decision |
 
 ## Rules that are not negotiable
 
@@ -109,8 +128,11 @@ Never point a test, a probe or a manual run at `~/Documents/knowledge`, at
 
 ## House style
 
-- ES modules, `node:`-prefixed builtins, no dependency beyond `schemastery` and
-  `yaml` at runtime. Adding a runtime dependency needs a reason in the PR text.
+- ES modules, `node:`-prefixed builtins, and **two runtime dependencies**:
+  `schemastery` and `yaml`. Adding a third needs a reason in the PR text. The
+  devDependencies are a separate budget and a looser one — eslint, `@eslint/js`,
+  globals, prettier, typescript and `@types/node` are pinned exactly, and none of
+  them is loaded by the plugin at runtime.
 - Two-space indent, single quotes, **no semicolons**, JSDoc on exported
   functions. Comments explain *why* a decision was made and what it costs if it
   is wrong; they do not restate the code.
@@ -122,23 +144,22 @@ Never point a test, a probe or a manual run at `~/Documents/knowledge`, at
 ## Verifying a change before you commit
 
 ```sh
+npm run check                         # the whole gate: lint, format, types, suite, pack contract, real archive
 git diff --check                      # no whitespace damage
-npm test                              # full suite
-npm run prepack                       # suite + pack contract
-npm pack --dry-run --ignore-scripts   # eyeball the manifest
 ```
 
-(`npm pack` runs `prepack`, so a bare `--dry-run` runs the whole suite before it
-prints anything. `--ignore-scripts` keeps the two checks separate.)
+`npm run check` is the same command CI runs, deliberately: a check that exists only
+in CI is one that passes locally and fails on push.
 
-For anything that touches packaging, also build a real tarball and list it:
+`npm run types` is a **ratchet**, not a whole-tree claim: it checks the files
+listed in `tsconfig.json` and marked `// @ts-check`, and a file outside that list
+is unchecked no matter how it looks. `test/repo-hygiene.test.js` keeps the two
+lists equal in both directions so a marker cannot be silently inert.
 
-```sh
-pack_dir=$(mktemp -d)
-npm pack --ignore-scripts --pack-destination "$pack_dir"
-tar -tf "$pack_dir"/dsh-obsidian-mem-*.tgz
-```
-
+For packaging, `npm run pack:check` already builds a real tarball, lists it, and
+checks it against the contract, so there is no manual step left to remember.
+(`npm pack` on its own runs `prepack`, so a bare `--dry-run` runs the whole suite
+before it prints anything; `--ignore-scripts` keeps the two checks separate.)
 For anything that touches the host seam (events, `ctx.llm`, injection timing),
 re-read `docs/p0-compatibility.md` first and put the measurement back there
 rather than trusting the comment in `lib/`.
