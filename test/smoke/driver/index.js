@@ -47,6 +47,13 @@ const KILL_ON_TURN_END = process.env.DSH_OBSIDIAN_MEM_SMOKE_KILL === '1'
 const DSH_HOME = process.env.DSH_HOME ?? ''
 const QUEUE_ROOT = DSH_HOME === '' ? '' : join(DSH_HOME, 'data', 'obsidian-mem', 'pending')
 
+/**
+ * The producer-owned source kind the recall message carries, spelled out here on
+ * purpose: this driver observes the host rather than importing `lib/`, so the
+ * literal is the expectation being checked and not a mirror of the plugin.
+ */
+const RECALL_KIND = 'plugin:obsidian-mem'
+
 /** The Chinese search term the scenario writes a document for and then looks up. */
 const CN_DOC_TITLE = '冒烟文档：中文检索目标'
 const CN_DOC_BODY = '这是一段用于验证中文全文检索的正文，包含独特词元：蓝鲸协议。'
@@ -718,7 +725,7 @@ export function apply(ctx) {
     }
     if (event.type === 'user/message') {
       const source = event.data?.source
-      if (source?.plugin !== 'obsidian-mem') return
+      if (source?.kind !== RECALL_KIND) return
       const content = Array.isArray(event.data?.content) ? event.data.content : []
       const text = content.map((block) => (block?.type === 'text' ? String(block.text ?? '') : '')).join('')
       briefsTotal += 1
@@ -779,7 +786,7 @@ export function apply(ctx) {
       decisionKind: decision?.kind ?? null,
       decisionMessages: Array.isArray(decision?.messages) ? decision.messages.length : 0,
       pluginMessagesInDecision: Array.isArray(decision?.messages)
-        ? decision.messages.filter((message) => message?.source?.plugin === 'obsidian-mem').length
+        ? decision.messages.filter((message) => message?.source?.kind === RECALL_KIND).length
         : 0,
       aborted: signal?.aborted === true,
     })

@@ -1,7 +1,7 @@
 # 独立 profile 冒烟实测（Task 18 / Task 18b / 终修波）
 
 - **日期**：2026-09-24
-- **状态**：验收脚本 **25/25 通过**；负控 **11/11** + 正控 **1/1** 通过；**1 项未验证**（Obsidian GUI，见 §5）
+- **状态**：验收脚本 **25/25 通过**；负控 **11/11** + 正控 **1/1** 通过；**1 项未验证**（Obsidian GUI，见 §5）。**同样的 25/25 在 DSH `0.1.7-rc.2`（会话格式 v4）上复现**，见 §7
 - **被测环境**：DSH `0.1.5-rc.2`；Node `v25.9.0`；`darwin arm64`；蒸馏路由 `deepseek-official` / `deepseek-flash`
 - **产物**：`test/smoke/`（runner + checker + 负控 + 驱动插件）、`test/smoke/records/smoke-record.json`（Task 18 的**修正前**冻结记录）、`docs/p0-compatibility.md` §9（Task 18b 定位到的宿主事实）
 - **计划要求**：`docs/superpowers/plans/2026-09-23-dsh-obsidian-mem-implementation.md` Task 18
@@ -164,3 +164,21 @@ verify: 5 FAILED (25 checks, 19 vault notes)      # exit=1
 - `distill` 的调用契约（`docs/p0-compatibility.md` §8.3）与本次的卸载语义对**别家部署**是否同样成立，本文件不给跨环境结论，只给本机测量。
 - 提交的 `test/smoke/records/smoke-record.json` 是 Task 18 的**修正前**冻结记录：它在仓库里，所以 `verify.mjs` 直接以 exit 2 拒绝（"the run record must be a temporary path"）；复制到 `/tmp` 也会因临时 vault 已删除而以 exit 2 拒绝（"the temporary vault is gone"）。即使 vault 还在，它也会**故意失败**新的 `model-lane-*-real-distill` 两条断言——因为它正是"模型通道没有 receipt"的那份修正前证据。它的价值在于保存了"无模型 apply 半段"的原始树哈希与 receipt。
 - 外部编辑器不受锁约束、凭据扫描不能穷尽未知格式、未入队崩溃窗口——与设计文档一致，未因本次冒烟而收紧。
+
+## 7. 在 DSH `0.1.7-rc.2`（会话格式 v4）上复跑（Task 19）
+
+- **日期**：2026-09-25
+- **被测环境**：DSH `0.1.7-rc.2`；Node `v25.9.0`；`darwin arm64`；同一条蒸馏路由
+- **命令**：
+
+```sh
+node test/smoke/run-smoke.mjs --out /tmp/smoke-017rc2.json --timeout-ms 300000
+node test/smoke/verify.mjs /tmp/smoke-017rc2.json
+```
+
+- **结果**：`verify: OK (25 checks, 21 vault notes)`，退出码 0。与 §2 的 25/25 同一套断言，无一条因换宿主而变。
+- **本次要证的那一条**：`PASS brief-injected-exactly-once — firstStepBriefCount=1 (session total 1)`（配 `PASS brief-not-repeated-later — sessionBriefCount=1`）。这是会话格式 v4 的 **source 准入**在真实宿主上的端到端证据：注入消息现在带 `{kind:'plugin:obsidian-mem', form:'recall'}`，走的是 v4 里**写前那道 gate**——也就是升级后把每个回合打成 `format v4 message requires a producer-owned source kind` 的同一道 gate。0.1.7 宿主接受了它，回合跑完，驱动观测到 1 条简报且只有 1 条。定位与逐例实测见 `docs/p0-compatibility.md` §10。
+- **其余关键事实**：`plugin-row-in-dump-config` 通过（`dump-config` 12240 字符，0.1.5 线上是 11208——宿主自身变长，与插件无关）；模型通道两轮真实蒸馏 `outputTokens=204` / `234`、`durationMs=1639` / `1661`、`attempts=0`（`dry-run` 零写入 / `applied` 有写入）；`restart-recovered-exactly-once`、`interrupted-process-was-killed`（`injected=raw-durable`）、`read-only-lint-never-writes`、`real-dsh-home-unchanged=true` 全部照旧通过。
+- **未验证项不变**：§5 的三项（Obsidian GUI、一次性进程内的自动 apply、跨进程即时补扫）在 0.1.7 上同样未测，不因本次复跑而收紧。
+- **记录不提交**：`/tmp/smoke-017rc2.json` 与 §1 同因——它含模型自己生成的笔记标题与派生路径。`test/smoke/records/smoke-record.json` 仍只有那份 Task 18 的修正前冻结记录。
+- **本次改动的提交面**：`lib/hooks.js`（`RECALL_SOURCE`）、`lib/capture.js`（仅一条注释：示例 kind 由 `plugin` 改为 `plugin:<name>`）、`test/hooks.test.js`、`test/lint.test.js`、`test/smoke/driver/index.js`（驱动侧把期望写成字面量 `plugin:obsidian-mem`）、`test/p0/run-v4-source-probe.mjs`（新增，证据探针，`files` 白名单不含 `test/`，不进包）、`docs/{p0-compatibility,smoke-results}.md`、`CHANGELOG.md`。全部测试 **573 通过 / 0 失败**；`npm run prepack`（含 `verify-pack`）与 `npm pack --dry-run --ignore-scripts`（33 个文件，零 `test/` 条目）均通过。

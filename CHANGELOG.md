@@ -123,6 +123,42 @@ is a repository, not a release.
 
 ### Fixed
 
+- **Every turn in a bound project failed on DSH 0.1.7 with `format v4 message
+  requires a producer-owned source kind`.** Recall injection stamps a `source` on
+  the `user/message` it inserts, and `lib/hooks.js` stamped the retired
+  `{kind: 'plugin', plugin: 'obsidian-mem'}` wrapper. Session format v4 refuses
+  `kind === 'plugin'` outright — both on write, in the gate that runs before
+  `encodeEvent`, and on read — so the message could not be persisted and the turn
+  aborted (`本轮运行失败`), which is the failure a real user hit. The source is now
+  `{kind: 'plugin:obsidian-mem', form: 'recall'}`: the host's own producer-kind
+  convention for a third-party plugin, and the exact value the v3→v4 converter
+  derives from the old wrapper (`producerKind()` in
+  `dsh-session-format-v3-to-v4`), so a session converted from v3 and a session
+  written under v4 name the same producer. `engines.dsh: ">=0.1.5-rc.2"` stays
+  honest because the 0.1.5-line writer admits the new kind verbatim — a
+  `user/message` there only requires a nonempty string kind, and it is the
+  *v2→v3* migration's allow-list, not the current writer, that ever named
+  `plugin`. Measured with `test/p0/run-v4-source-probe.mjs`, which drives the
+  installed host's own gates rather than a reimplementation of them, and records
+  four cases in `docs/p0-compatibility.md` §10: (A) the retired wrapper is refused
+  by v4's `assertV4RowAdmission` with exactly the error above; (B) the new kind is
+  admitted; (C) the real catalog restore over a real v3 session
+  (`zstd -dc` — the files are concatenated frames, and Node's
+  `zstdDecompressSync` reads only the first) derives
+  `{"kind":"plugin:obsidian-mem","form":"recall"}` for this producer; (D) a
+  0.1.5-line `encodeCurrentEvent` stores the new kind verbatim. A corpus
+  cross-check of 258 of the user's session files found 14 messages carrying the
+  retired wrapper and none carrying the v4 kind, which is what makes the diagnosis
+  the only one consistent with the evidence. Regression tests:
+  `test/hooks.test.js` — the injected message's `source` asserted field by field,
+  plus a host-free pin of the v4 rule (`assert.notEqual(RECALL_SOURCE.kind,
+  'plugin')` and `assert.equal(RECALL_SOURCE.kind, \`plugin:${PLUGIN_ID}\`)`, both
+  hardcoded, so the value cannot move with the module). The two recall filters in
+  `test/lint.test.js` are not themselves regression tests — they find the
+  plugin's messages by importing `RECALL_SOURCE`, so they would follow the module
+  — but the second one is what caught the first, incomplete version of this fix,
+  because it still matched the retired `source.plugin`: only running the whole
+  suite reported it.
 - **The shipped skill no longer claims a `not-ready-in-p1` status the code cannot
   produce.** All six `mem_admin` actions were implemented in Task 17 and
   `test/tools.test.js` asserts the marker is absent from a result; the sentence
@@ -368,6 +404,12 @@ one is a boundary that was measured, or explicitly not measured.
   note bytes.
 - **Not verified: `fork` / `retain` across sibling worktrees.** Both modes have
   tests, but not on the worktree-sibling layout they exist for.
+- **Not verified: the 0.1.5 line's read/replay side for a `plugin:` kind.**
+  `docs/p0-compatibility.md` §10 measured that line's *writer* admits the kind the
+  recall source now carries, but no real session was replayed through it here, so
+  whether its reader adds any further kind filtering is not known. The 0.1.7 read
+  side *is* covered — the conversion in §10 case C runs the production catalog
+  restore over a real v3 session.
 - **Residual path-jail limits.** Hard links and bind mounts are indistinguishable
   from ordinary files, and there is a classic `lstat` → `open` TOCTOU window on
   the write path.

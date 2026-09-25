@@ -192,7 +192,7 @@ function bed(t, options = {}) {
 }
 
 /** The plugin-authored messages of one decision — the only ones this task adds. */
-const recalled = (decision) => (decision.messages ?? []).filter((message) => message?.source?.plugin === PLUGIN_ID)
+const recalled = (decision) => (decision.messages ?? []).filter((message) => message?.source?.kind === RECALL_SOURCE.kind)
 
 /** A `buildBrief` that always answers with the mutable `hot` view under test. */
 function hotDrivenBrief(hot, { deltaText = (hash) => `DELTA:${hash}`, truncated = () => false, omitField = false } = {}) {
@@ -267,20 +267,37 @@ test('the first pre-step injects exactly one recall message, the second none', a
   assert.equal(h.calls.buildBrief[0].options.index, h.calls.index[0].handle)
 })
 
-test('the injected message is a user-role plugin-source recall carrying the brief verbatim', async (t) => {
+test('the injected message is a user-role recall carrying the brief verbatim', async (t) => {
   const h = bed(t)
   const agent = h.start()
   const decision = await h.preStep(agent)
   const [message] = recalled(decision)
 
   assert.equal(message.role, 'user')
-  assert.deepEqual(message.source, { kind: 'plugin', plugin: 'obsidian-mem', form: 'recall' })
+  assert.deepEqual(message.source, { kind: 'plugin:obsidian-mem', form: 'recall' })
   assert.deepEqual(message.source, RECALL_SOURCE)
   assert.deepEqual(message.content, [{ type: 'text', text: 'BRIEF' }])
   assert.equal(typeof message.id, 'string')
   assert.ok(message.id.length > 0)
   // The plugin message is appended AFTER whatever next() produced.
   assert.equal(decision.messages.length, 1)
+})
+
+// Session format v4 admits a message source only when it is an object carrying a
+// nonempty string `kind` other than `plugin` — the condition at `source()` in
+// `dsh-session-format-v3-to-v4`, which runs over every declared message slot when
+// a complete V4 event is adopted. The first three assertions are that condition
+// verbatim, so a host-free test can pin what the host enforces.
+test('the recall source is admitted by the v4 producer-owned source rule', () => {
+  assert.equal(typeof RECALL_SOURCE.kind, 'string')
+  assert.ok(RECALL_SOURCE.kind.length > 0, 'v4 requires a nonempty kind')
+  assert.notEqual(RECALL_SOURCE.kind, 'plugin', 'v4 refuses the retired plugin wrapper')
+  // The two below are our conventions, not host rules — a stray `plugin` field
+  // alongside a valid kind is admitted. They pin that this shape is what the
+  // converter emits (`rewritePluginSource` drops that field and keeps the rest),
+  // so a converted session and a new write name the producer identically.
+  assert.equal(Object.hasOwn(RECALL_SOURCE, 'plugin'), false, 'matches the shape the v3→v4 converter emits')
+  assert.equal(RECALL_SOURCE.kind, `plugin:${PLUGIN_ID}`, 'the value producerKind() derives for this plugin')
 })
 
 test('the decision from next() is preserved in order and the recall comes last', async (t) => {

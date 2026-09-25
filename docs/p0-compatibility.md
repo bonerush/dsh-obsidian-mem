@@ -399,3 +399,74 @@ run-teardown-probe: OK (13 assertion(s))
 实测复现（真实 `createQueueWorker` + 真实 `processQueue`，只把"处置后的 handle"按 §9.2 的实测形状 stub）：队列里两个到期 job 时，旧形状 `stop()` → **2 次模型调用**、第二个 job 拿到 `{attempts:1, code:'no-adapter'}`；而旧的 `abort()` → 1 次调用、第二个 job `{attempts:0}`。也就是说"不许消耗 R43 上限"这条保证在旧形状下**只对第一个 job 成立**。
 
 因此宿主事实的完整形状是：**一旦插件树开始处置，这次 pass 只能收尾它已经开始的**那一个** job**；其余到期 job 必须**推迟**（`reason='unloaded'`）并且**不写 job 文件、不消耗尝试**，留给下一次进程。实现就是把 `isStopped: () => stopped` 交给 `processQueue`，并在 job 循环顶部检查（`lib/capture.js`）；回归用例 `test/auto-capture.test.js` 的 `a pass that outlives the plugin tree defers the rest of the queue instead of failing it (Task 18b)`（修正前 RED：`2 !== 1`）。
+
+## 10. Task 19 实测（宿主升到 DSH 0.1.7 的会话格式 v4）：注入消息的 source 准入
+
+- **日期**：2026-09-25
+- **被测环境**：DSH `0.1.7-rc.2`（格式 v4 写入端）；DSH `0.1.5-rc.2` 安装树副本（格式 v3 写入端）；Node `v25.9.0`；`Darwin 27.0.0 arm64`
+- **探针**：`test/p0/run-v4-source-probe.mjs`（本次新增，不随插件发布）
+
+**触发这件事的现象**：升级到 `0.1.7-rc.2` 后，任何在已绑定仓库里的会话都会以 `本轮运行失败 / format v4 message requires a producer-owned source kind` 中断。落盘痕迹是：`user/message`（用户自己的话）先被 `agent/inbox/spliced` 插入，`turn/start` 之后又被一条 `removedCount:1, inserted:[]` 的 splice 撤回——因为**失败那一行根本写不进去**。本插件自 `0.1.0` 起给每条注入消息盖的是 `source: { kind:'plugin', plugin:'obsidian-mem', form:'recall' }`（`lib/hooks.js` 的 `RECALL_SOURCE`，简报与 §Task 17 的周检提醒共用它）。
+
+### 10.1 方法
+
+三项（v4 侧两项 + 转换一项）加 v3 侧一项，全部**调用宿主自己的代码**，不重写它的规则：
+
+| 案例 | 调用的真实入口 | 断言 |
+|---|---|---|
+| A | `assertV4RowAdmission(row)`（`@deepseek-ai/dsh-session-format-v3-to-v4` 导出） | 退休的 `{kind:'plugin',plugin}` **被拒**，错误文本就是上面那句 |
+| B | 同上 | 当前的 `{kind:'plugin:obsidian-mem'}` **被准入** |
+| C | 真实 catalog 还原：`createSessionFormatCatalogWithChildren([]).createRestore(header,{recovery:'recoverable',validation:'transformed'})` 逐行 `decodeRow` 后 `finish()` | 宿主把一个真实的 V3 会话里的本插件消息**推导成**什么 kind |
+| D | `sessionFormatCatalog.encodeCurrentEvent(event)`（**0.1.5 线**的 catalog，`currentVersion:3`） | 当前 kind 在 v3 写入端**也被准入**——这才是 `engines.dsh: ">=0.1.5-rc.2"` 仍然诚实的原因 |
+
+`assertV4RowAdmission` 是 JSONL 写入端在 `encodeEvent` 前跑的那道闸，它**只在 `source.kind === 'plugin'` 时才调用**更严的 `source()`（包源码 `dsh-session-format-v3-to-v4/lib/index.js:150` 是触发点，抛错文本在第 126 行）——所以它在物理行这一层的有效拒绝条件就是"kind 为 `'plugin'`"。更严的那条 `source()`（第 126 行：source 必须是对象、`kind` 必须是非空字符串且不等于 `'plugin'`）由 `assertV4MessageSources` 在**完整 V4 事件被 Session 采纳时**对每个声明的消息槽跑。两条闸本次都过：本探针驱动的是前者（A/B），HOME 无关的单测钉的是后者的三个子句。C 需要一份真实 V3 会话文件（`--session`），D 需要一份 0.1.5 线安装树（`--v3-root`）；缺参数时对应案例**记为 skipped**，而不是默认通过。
+
+```sh
+node test/p0/run-v4-source-probe.mjs \
+  --session ~/.dsh/sessions/--Users-yukisala-subject-dsh-obsidian-mem--/session-d973c065-d20a-447d-acf0-4fe302aa3002/session.v3.jsonl.zstd \
+  --v3-root ~/.dsh/upgrade-backup-20260925-151613-pre-017rc2/npm-global/dsh-rc2-tree/node_modules/@deepseek-ai
+```
+
+### 10.2 原始记录
+
+```json
+{
+  "probe": "v4-message-source",
+  "pluginId": "obsidian-mem",
+  "root": "/Users/yukisala/.nvm/versions/node/v25.9.0/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai",
+  "retiredShape": {
+    "admitted": false,
+    "error": "SessionFormatError",
+    "message": "format v4 message requires a producer-owned source kind"
+  },
+  "currentShape": { "admitted": true },
+  "convertedKind": "plugin:obsidian-mem",
+  "restoredSourceCounts": {
+    "events": 4451,
+    "user/message {\"kind\":\"plugin:obsidian-mem\",\"form\":\"recall\"}": 4
+  },
+  "conversion": "converted to user/message {\"kind\":\"plugin:obsidian-mem\",\"form\":\"recall\"}",
+  "v3": {
+    "currentVersion": 3,
+    "retiredShape": { "admitted": true, "stored": { "kind": "plugin", "plugin": "obsidian-mem", "form": "recall" } },
+    "currentShape": { "admitted": true, "stored": { "kind": "plugin:obsidian-mem", "form": "recall" } }
+  }
+}
+```
+
+转换案例里那 4 条是**真实的**：该会话（`session-d973c065-…`，cwd 即本仓库）在 v3 时期被注入过 2 条项目简报 + 2 条周检提醒，全部 `form:'recall'`。同一批还原结果里另一个第三方插件（`hindsight`，本机已于 2026-09-24 卸下）的两条消息被推导成 `plugin:hindsight`，说明 `plugin:<原名>` 是通用规则、不是为本次改动特判的。
+
+全库交叉核对（`find ~/.dsh/sessions -name 'session.v*.jsonl.zstd'` 逐个 `zstd -dc` 后计数，258 个会话文件；通配符要写 `v*`——只写 `session.v3.jsonl.zstd` 会漏掉 4 个 `session.v4.jsonl.zstd`，得到 254）：`"kind":"plugin","plugin":"obsidian-mem"` 命中 **14** 条（v3 时期注入确实成功过），`plugin:obsidian-mem` 命中 **0** 条（v4 时期一条都没写进去——与"写入被拒"一致）。
+
+### 10.3 结论
+
+1. **`kind:'plugin'` 在 v4 是退役语法，不是被忽略的旧字段**：v4 的准入直接在写入端抛错。插件必须把生产者身份放进 `kind` 本身。
+2. **这个生产者的规范 kind 由宿主自己决定，答案是 `plugin:obsidian-mem`**（案例 C）——与 `plugin:<完整插件名>` 的通用规则一致，且 `form` 等其它自持字段原样保留。因此**新写入与历史转换会指向同一个生产者**，不需要额外的映射表。
+3. **不需要版本分支**：同一个 `{kind:'plugin:obsidian-mem', form:'recall'}` 在 v4 写入端被准入（B），在 v3 写入端也被准入并原样存储（D）。v3 对 `user/message` 的 source 只要求"非空字符串 kind"，这一点在 0.1.5 安装树的校验源码里可以直接读到（`dsh-session-persistence-jsonl/lib/worker.cjs` 的 `assertMessageEventShape`：`system/message` 才要求 `kind==='plugin'` + 字符串 `plugin`，`user/message` 没有这条）。**注意 D 只覆盖写入端**：本机没有在 0.1.5 线跑过真实会话，也没测 v3 的**读取/回放**端——它是否对未知 kind 另加过滤，本节不作结论。
+4. **这是"注入面"而不是"工具面"的问题**：六个 `mem_*` 工具、配置、索引在本机都是好的；坏的只有"向会话里塞一条消息"这一条路，而它正好是自动记忆的全部价值所在。回归用例：`test/hooks.test.js` 的 `the recall source is admitted by the v4 producer-owned source rule`（修正前 RED，`'plugin' !== 'plugin:obsidian-mem'`），以及另外两个按 `source.kind` 过滤注入消息的既有用例（`test/hooks.test.js`、`test/lint.test.js`）与冒烟驱动（`test/smoke/driver/index.js`）。
+
+### 10.4 安全与清理
+
+- 探针只读：不改 `~/.dsh` 的任何配置、不写 vault、不建 profile；`--session`/`--v3-root` 都是只读输入。
+- 输出不含 prompt、模型输出正文、笔记正文或凭据；`convertedKind` 只报生产者名字。
+- 用例 C 记录的会话是真实用户数据，正文未摘录，只统计 source 形状与条数。

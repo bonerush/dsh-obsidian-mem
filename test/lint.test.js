@@ -24,7 +24,7 @@ import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 
 import { compileIgnoreGlobs, validateConfig } from '../lib/config.js'
-import { registerHooks } from '../lib/hooks.js'
+import { RECALL_SOURCE, registerHooks } from '../lib/hooks.js'
 import { openIndex } from '../lib/index-db.js'
 import {
   HISTORY_POLICY,
@@ -869,7 +869,7 @@ test('the weekly hint rides the first pre-step of a session, exactly once', asyn
   )
 
   const first = await preStep()
-  const injected = (first.messages ?? []).filter((message) => message?.source?.plugin === 'obsidian-mem')
+  const injected = (first.messages ?? []).filter((message) => message?.source?.kind === RECALL_SOURCE.kind)
   assert.equal(injected.length, 1, JSON.stringify(first.messages))
   assert.match(injected[0].content[0].text, /体检提醒/)
   const second = await preStep()
@@ -905,7 +905,7 @@ test('the weekly hint rides the first pre-step of a session, exactly once', asyn
     async () => ({ kind: 'enter', messages: [] }),
   )
   assert.equal(sharedAsked, 1)
-  const sharedMessages = (sharedDecision.messages ?? []).filter((message) => message?.source?.plugin === 'obsidian-mem')
+  const sharedMessages = (sharedDecision.messages ?? []).filter((message) => message?.source?.kind === RECALL_SOURCE.kind)
   assert.deepEqual(sharedMessages.map((message) => message.content[0].text), [briefText], 'the brief keeps the budget; the hint is dropped')
 
   // A session whose hint is not due stays silent, and a throwing seam never

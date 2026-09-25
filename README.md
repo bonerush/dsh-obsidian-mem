@@ -48,7 +48,7 @@ Two layers, on purpose:
 | | Version | Why |
 |---|---|---|
 | Node | `>= 22.22.2` | The floor is a *measurement*. `node:sqlite` imports on Node 22.13.0, but that build has no FTS5; 22.22.2 and 25.9.0 do. Versions 22.14–22.21 were not tested, so the floor is the lowest version actually proven to work. |
-| DSH | `0.1.5-rc.2` | The version every measurement in `docs/p0-compatibility.md` was taken on. The plugin uses only row `config:` and documented Cordis seams, so newer versions are likely fine — but "likely" is not "tested", so this is what it was verified against. |
+| DSH | `0.1.5-rc.2`, `0.1.7-rc.2` | The two versions this plugin has been verified against; `docs/p0-compatibility.md` and `docs/smoke-results.md` record which measurement came from which. The plugin uses only row `config:` and documented Cordis seams, so other versions are likely fine — but "likely" is not "tested", so only measured versions are listed. |
 | Obsidian | any recent version | Optional. Only needed to *read* the vault comfortably. |
 
 Runtime dependencies are deliberately tiny: `@deepseek-ai/schemastery` for config
@@ -507,8 +507,8 @@ sandbox.
   convention, which is exactly why `prepack` fails when it disagrees with
   `package.json`.
 - **Session logs are DSH's, not this plugin's.** DSH writes
-  `$DSH_HOME/sessions/…/session.v3.jsonl.zstd` itself. This plugin never edits
-  them.
+  `$DSH_HOME/sessions/…/session.v3.jsonl.zstd`, or `session.v4.jsonl.zstd` on
+  the 0.1.7 line and later, itself. This plugin never edits them.
 
 ---
 

@@ -45,7 +45,7 @@ repository                                vault (~/Documents/dsh-memory)
 | | 版本 | 原因 |
 |---|---|---|
 | Node | `>= 22.22.2` | 这个下限是一次*实测*。`node:sqlite` 在 Node 22.13.0 上能 import，但那个构建没有 FTS5；22.22.2 和 25.9.0 有。22.14–22.21 未测试，所以这个下限是实际被证明可用的最低版本。 |
-| DSH | `0.1.5-rc.2` | `docs/p0-compatibility.md` 里所有测量都是在这个版本上做的。插件只用了行内 `config:` 和已有文档的 Cordis 接缝，所以更新的版本很可能没问题——但“很可能”不等于“已测试”，因此这里写的是它被验证过的版本。 |
+| DSH | `0.1.5-rc.2`、`0.1.7-rc.2` | 这是插件实际被验证过的两个版本；哪条测量出自哪个版本，`docs/p0-compatibility.md` 和 `docs/smoke-results.md` 各有记录。插件只用了行内 `config:` 和已有文档的 Cordis 接缝，所以别的版本很可能没问题——但“很可能”不等于“已测试”，因此这里只列被测量过的版本。 |
 | Obsidian | 任何较新版本 | 可选。只在你想舒服地*阅读*仓库时才需要。 |
 
 运行时依赖刻意做得极小：配置校验用 `@deepseek-ai/schemastery`，frontmatter 用
@@ -457,7 +457,8 @@ Obsidian 里冲突。要补上这个缺口，要么在仓库侧读 `types.json`�
 - **`dsh.plugin.json` 是惰性的。** DSH 核心里没有任何东西读它。它是一个注册表约
   定，正因如此，当它与 `package.json` 不一致时 `prepack` 会失败。
 - **会话日志属于 DSH，不属于本插件。** DSH 自己写
-  `$DSH_HOME/sessions/…/session.v3.jsonl.zstd`。本插件从不编辑它们。
+  `$DSH_HOME/sessions/…/session.v3.jsonl.zstd`（0.1.7 线及以后是
+  `session.v4.jsonl.zstd`）。本插件从不编辑它们。
 
 ---
 
