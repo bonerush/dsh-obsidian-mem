@@ -44,7 +44,11 @@ const DEFAULTS = {
 /** Validate through the schema the host itself uses, failing loudly on issues. */
 function schemaValidate(raw) {
   const result = Config['~standard'].validate(raw)
-  assert.equal(result.issues, undefined, `unexpected schema issues: ${JSON.stringify(result.issues)}`)
+  assert.equal(
+    result.issues,
+    undefined,
+    `unexpected schema issues: ${JSON.stringify(result.issues)}`,
+  )
   return result.value
 }
 
@@ -98,7 +102,9 @@ test('validateConfig is idempotent on an already-validated object', () => {
   // The host validates before `apply`, so `apply` re-running validation must be safe.
   const once = validateConfig({})
   assert.deepStrictEqual(validateConfig(once), once)
-  const routed = validateConfig({ distill: { provider: 'deepseek-official', model: 'deepseek-flash' } })
+  const routed = validateConfig({
+    distill: { provider: 'deepseek-official', model: 'deepseek-flash' },
+  })
   assert.deepStrictEqual(validateConfig(routed), routed)
 })
 
@@ -171,7 +177,9 @@ test('vaultPath must not be blank', () => {
 test('an explicit distill route needs provider and model together', () => {
   assertRejected(/distill\.route/, { distill: { provider: 'deepseek-official' } })
   assertRejected(/distill\.route/, { distill: { model: 'deepseek-flash' } })
-  const routed = validateConfig({ distill: { provider: 'deepseek-official', model: 'deepseek-flash' } })
+  const routed = validateConfig({
+    distill: { provider: 'deepseek-official', model: 'deepseek-flash' },
+  })
   assert.equal(routed.distill.provider, 'deepseek-official')
   assert.equal(routed.distill.model, 'deepseek-flash')
   assert.equal(validateConfig({ distill: { provider: '', model: '' } }).distill.provider, '')

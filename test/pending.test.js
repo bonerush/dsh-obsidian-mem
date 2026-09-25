@@ -64,7 +64,8 @@ function jobFixture(overrides = {}) {
       { kind: 'user', seq: 2, source: 'user' },
       { kind: 'assistant-final', seq: 6 },
     ],
-    safeInput: '[obsidian-mem] seq 1-7\n--- user (seq 2) ---\nping\n--- assistant-final (seq 6) ---\npong\n',
+    safeInput:
+      '[obsidian-mem] seq 1-7\n--- user (seq 2) ---\nping\n--- assistant-final (seq 6) ---\npong\n',
     credentialSkips: 0,
     omitted: null,
     attempts: 0,
@@ -141,7 +142,10 @@ test('loadPending returns every committed job in a stable order and ignores temp
   await writeFile(join(queueRoot, 'README'), 'x', { mode: 0o600 })
 
   const jobs = await loadPending(queueRoot)
-  assert.deepEqual(jobs.map((job) => job.jobId), [first.jobId, second.jobId])
+  assert.deepEqual(
+    jobs.map((job) => job.jobId),
+    [first.jobId, second.jobId],
+  )
   // Every field the queue contract names survives the round trip verbatim.
   assert.deepEqual(jobs[0], first)
 })
@@ -160,14 +164,23 @@ test('a corrupt job file is reported through readPendingJobs and skipped by load
 
   await writeFile(join(queueRoot, 'job-broken.json'), '{"schema":1,', { mode: 0o600 })
   await writeFile(join(queueRoot, 'job-notjson.json'), 'hello', { mode: 0o600 })
-  await writeFile(join(queueRoot, 'job-wrongshape.json'), '{"jobId":"job-wrongshape"}', { mode: 0o600 })
+  await writeFile(join(queueRoot, 'job-wrongshape.json'), '{"jobId":"job-wrongshape"}', {
+    mode: 0o600,
+  })
 
   // One bad file must not hide the recoverable work around it.
   const jobs = await loadPending(queueRoot)
-  assert.deepEqual(jobs.map((job) => job.jobId), [good.jobId])
+  assert.deepEqual(
+    jobs.map((job) => job.jobId),
+    [good.jobId],
+  )
 
   const { invalid } = await readPendingJobs(queueRoot)
-  assert.deepEqual(invalid.map((entry) => entry.file).sort(), ['job-broken.json', 'job-notjson.json', 'job-wrongshape.json'])
+  assert.deepEqual(invalid.map((entry) => entry.file).sort(), [
+    'job-broken.json',
+    'job-notjson.json',
+    'job-wrongshape.json',
+  ])
   for (const entry of invalid) assert.equal(typeof entry.reason, 'string')
 })
 
@@ -177,14 +190,18 @@ test('markJob patches one job atomically, preserves its identity, and refuses a 
   const job = jobFixture()
   await writeJobAtomic(queueRoot, job)
 
-  const marked = await markJob(job.jobId, {
-    state: 'raw-durable',
-    output: { raw: '{"items":[]}' },
-    attempts: 1,
-    // An identity field in the patch must never take effect.
-    jobId: 'job-ffffffffffffffffffffffffffffffff',
-    sessionId: 'session-rewritten',
-  }, { queueRoot })
+  const marked = await markJob(
+    job.jobId,
+    {
+      state: 'raw-durable',
+      output: { raw: '{"items":[]}' },
+      attempts: 1,
+      // An identity field in the patch must never take effect.
+      jobId: 'job-ffffffffffffffffffffffffffffffff',
+      sessionId: 'session-rewritten',
+    },
+    { queueRoot },
+  )
   assert.equal(marked.jobId, job.jobId)
   assert.equal(marked.sessionId, job.sessionId)
   assert.equal(marked.state, 'raw-durable')
@@ -239,7 +256,10 @@ test('a processed record is 0600 inside a 0700 sub-directory and is never read a
 
   // The processed record is state, not work: `loadPending` must not see it.
   const jobs = await loadPending(queueRoot)
-  assert.deepEqual(jobs.map((entry) => entry.jobId), [job.jobId])
+  assert.deepEqual(
+    jobs.map((entry) => entry.jobId),
+    [job.jobId],
+  )
 })
 
 test('a processed record only grows: ranges merge and never shrink', async (t) => {
@@ -250,15 +270,33 @@ test('a processed record only grows: ranges merge and never shrink', async (t) =
   await recordProcessedRange(queueRoot, { sessionId, fromSeq: 4, toSeq: 6 })
   await recordProcessedRange(queueRoot, { sessionId, fromSeq: 1, toSeq: 3 })
   const disjoint = await recordProcessedRange(queueRoot, { sessionId, fromSeq: 9, toSeq: 9 })
-  assert.deepEqual(disjoint.ranges, [[1, 6], [9, 9]])
+  assert.deepEqual(disjoint.ranges, [
+    [1, 6],
+    [9, 9],
+  ])
 
   // Re-recording a contained range is a no-op...
-  assert.deepEqual((await recordProcessedRange(queueRoot, { sessionId, fromSeq: 2, toSeq: 2 })).ranges, [[1, 6], [9, 9]])
+  assert.deepEqual(
+    (await recordProcessedRange(queueRoot, { sessionId, fromSeq: 2, toSeq: 2 })).ranges,
+    [
+      [1, 6],
+      [9, 9],
+    ],
+  )
   // ... and a new range only ever adds coverage.
-  assert.deepEqual((await recordProcessedRange(queueRoot, { sessionId, fromSeq: 0, toSeq: 0 })).ranges, [[0, 6], [9, 9]])
+  assert.deepEqual(
+    (await recordProcessedRange(queueRoot, { sessionId, fromSeq: 0, toSeq: 0 })).ranges,
+    [
+      [0, 6],
+      [9, 9],
+    ],
+  )
 
   const records = await loadProcessedRecords(queueRoot)
-  assert.deepEqual(records.get(sessionId).ranges, [[0, 6], [9, 9]])
+  assert.deepEqual(records.get(sessionId).ranges, [
+    [0, 6],
+    [9, 9],
+  ])
   assert.equal(records.size, 1)
 })
 
@@ -290,7 +328,11 @@ test('a corrupt processed record fails closed instead of being overwritten', asy
     () => recordProcessedRange(queueRoot, { sessionId, fromSeq: 0, toSeq: 5 }),
     (error) => error instanceof PendingError && error.code === 'processed-invalid',
   )
-  assert.equal(await readFile(path, 'utf8'), corrupt, 'the unusable record is reported, not repaired')
+  assert.equal(
+    await readFile(path, 'utf8'),
+    corrupt,
+    'the unusable record is reported, not repaired',
+  )
   assert.equal((await readProcessedRecords(queueRoot)).invalid.length, 1)
 })
 
@@ -301,7 +343,9 @@ test('a processed record refuses a range that is not a non-negative half-open pa
     () => recordProcessedRange(queueRoot, { sessionId: 's', fromSeq: 5, toSeq: 1 }),
     (error) => error instanceof PendingError && error.code === 'processed-invalid',
   )
-  await assert.rejects(() => recordProcessedRange(queueRoot, { sessionId: '', fromSeq: 0, toSeq: 1 }))
+  await assert.rejects(() =>
+    recordProcessedRange(queueRoot, { sessionId: '', fromSeq: 0, toSeq: 1 }),
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -365,7 +409,10 @@ test('a job killed after the fsync is visible to the next process', async (t) =>
   assert.equal(jobs[0].allowedEvents.map((entry) => entry.kind).join(','), 'user,assistant-final')
   assert.match(jobs[0].safeInput, /committed answer/)
   assert.equal((await stat(queueRoot)).mode & 0o777, QUEUE_DIR_MODE)
-  assert.equal((await stat(join(queueRoot, jobFileName(jobs[0].jobId)))).mode & 0o777, JOB_FILE_MODE)
+  assert.equal(
+    (await stat(join(queueRoot, jobFileName(jobs[0].jobId)))).mode & 0o777,
+    JOB_FILE_MODE,
+  )
 })
 
 test('a kill between the temporary write and the rename leaves no visible job (R12 boundary)', async (t) => {
@@ -377,8 +424,17 @@ test('a kill between the temporary write and the rename leaves no visible job (R
   // of the guarantee, not a bug.
   assert.deepEqual(await loadPending(queueRoot), [])
   const entries = await readdir(queueRoot)
-  assert.ok(entries.some((name) => name.endsWith('.tmp')), 'the pre-rename bytes exist')
+  assert.ok(
+    entries.some((name) => name.endsWith('.tmp')),
+    'the pre-rename bytes exist',
+  )
   assert.equal(entries.filter((name) => name.endsWith('.json')).length, 0)
-  const raw = await readFile(join(queueRoot, entries.find((name) => name.endsWith('.tmp'))), 'utf8')
+  const raw = await readFile(
+    join(
+      queueRoot,
+      entries.find((name) => name.endsWith('.tmp')),
+    ),
+    'utf8',
+  )
   assert.match(raw, /committed answer/)
 })

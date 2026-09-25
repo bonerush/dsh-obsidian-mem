@@ -27,8 +27,16 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
-  chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
-  rmSync, statSync, writeFileSync,
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
 } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -44,7 +52,10 @@ const ROW_ID = 'obsidian-mem'
 const DRIVER_PACKAGE = 'dsh-obsidian-mem-smoke-driver'
 
 const args = parseArgs(process.argv.slice(2))
-const outPath = args.out === undefined ? join(tmpdir(), `dsh-obsidian-mem-smoke-record-${Date.now()}.json`) : resolve(args.out)
+const outPath =
+  args.out === undefined
+    ? join(tmpdir(), `dsh-obsidian-mem-smoke-record-${Date.now()}.json`)
+    : resolve(args.out)
 
 /** Refuse an absolute path outside the temp root: this runner never writes a real vault. */
 function assertTempPath(candidate, label) {
@@ -70,11 +81,14 @@ function parseArgs(argv) {
 }
 
 if (args.help === true) {
-  process.stdout.write('usage: node test/smoke/run-smoke.mjs [--out <record.json>] [--base <dir>] [--timeout-ms <ms>]\n')
+  process.stdout.write(
+    'usage: node test/smoke/run-smoke.mjs [--out <record.json>] [--base <dir>] [--timeout-ms <ms>]\n',
+  )
   process.exit(0)
 }
 
-const RUN_TIMEOUT_MS = Number.isSafeInteger(args.timeoutMs) && args.timeoutMs > 0 ? args.timeoutMs : 300_000
+const RUN_TIMEOUT_MS =
+  Number.isSafeInteger(args.timeoutMs) && args.timeoutMs > 0 ? args.timeoutMs : 300_000
 /** How long the driver holds a run open waiting for the worker's result receipt. */
 const HOLD_MS = 60_000
 
@@ -96,11 +110,24 @@ function run(command, commandArgs, options = {}) {
     child.stderr.on('data', (chunk) => stderr.push(chunk))
     child.on('error', (error) => {
       clearTimeout(timer)
-      resolvePromise({ code: null, signal: null, timedOut, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), spawnError: error.message })
+      resolvePromise({
+        code: null,
+        signal: null,
+        timedOut,
+        stdout: Buffer.concat(stdout),
+        stderr: Buffer.concat(stderr),
+        spawnError: error.message,
+      })
     })
     child.on('close', (code, signal) => {
       clearTimeout(timer)
-      resolvePromise({ code, signal, timedOut, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) })
+      resolvePromise({
+        code,
+        signal,
+        timedOut,
+        stdout: Buffer.concat(stdout),
+        stderr: Buffer.concat(stderr),
+      })
     })
   })
 }
@@ -179,7 +206,10 @@ function hashTree(root) {
  * @returns {string} the sorted `path:hash` join.
  */
 function canonicalTree(map) {
-  return Object.keys(map ?? {}).sort().map((key) => `${key}:${map[key]}`).join('\n')
+  return Object.keys(map ?? {})
+    .sort()
+    .map((key) => `${key}:${map[key]}`)
+    .join('\n')
 }
 
 /** The real DSH home files that must stay byte-identical, as `{path: sha256}`. */
@@ -223,17 +253,23 @@ main().catch((error) => {
 async function main() {
   const credential = resolveCredential()
   if (credential === null) {
-    process.stderr.write('run-smoke: no DEEPSEEK_API_KEY in the environment and none in the credentials store; refusing to run without a model route\n')
+    process.stderr.write(
+      'run-smoke: no DEEPSEEK_API_KEY in the environment and none in the credentials store; refusing to run without a model route\n',
+    )
     process.exit(2)
   }
 
-  const baseDir = args.base === undefined ? mkdtempSync(join(tmpdir(), 'dsh-obsidian-mem-smoke-')) : assertTempPath(args.base, '--base')
+  const baseDir =
+    args.base === undefined
+      ? mkdtempSync(join(tmpdir(), 'dsh-obsidian-mem-smoke-'))
+      : assertTempPath(args.base, '--base')
   if (args.base !== undefined) rmSync(baseDir, { recursive: true, force: true })
   const dshHome = join(baseDir, 'home')
   const vault = join(baseDir, 'vault')
   const repo = join(baseDir, 'repo')
   const recordsDir = join(baseDir, 'records')
-  for (const directory of [dshHome, vault, repo, recordsDir]) mkdirSync(directory, { recursive: true })
+  for (const directory of [dshHome, vault, repo, recordsDir])
+    mkdirSync(directory, { recursive: true })
 
   const homeBefore = realHomeFingerprint()
 
@@ -245,10 +281,26 @@ async function main() {
   const obsidianBefore = hashTree(join(vault, '.obsidian'))
 
   // A repository the plugin can bind: a git root with one Markdown file.
-  writeFileSync(join(repo, 'README.md'), '# smoke repository\n\nA throwaway repository for the isolated-profile smoke.\n')
+  writeFileSync(
+    join(repo, 'README.md'),
+    '# smoke repository\n\nA throwaway repository for the isolated-profile smoke.\n',
+  )
   await run('git', ['init', '-q', '-b', 'main'], { cwd: repo })
   await run('git', ['add', 'README.md'], { cwd: repo })
-  await run('git', ['-c', 'user.name=smoke', '-c', 'user.email=smoke@example.invalid', 'commit', '-q', '-m', 'chore: seed smoke repository'], { cwd: repo })
+  await run(
+    'git',
+    [
+      '-c',
+      'user.name=smoke',
+      '-c',
+      'user.email=smoke@example.invalid',
+      'commit',
+      '-q',
+      '-m',
+      'chore: seed smoke repository',
+    ],
+    { cwd: repo },
+  )
 
   const childEnv = {
     ...process.env,
@@ -262,18 +314,48 @@ async function main() {
   // stderr, so a captured tail would put model output into the record — the one
   // thing the record must never contain.
   const note = async (label, result) => {
-    steps.push({ label, code: result.code, signal: result.signal, timedOut: result.timedOut, stderrBytes: result.stderr.length })
+    steps.push({
+      label,
+      code: result.code,
+      signal: result.signal,
+      timedOut: result.timedOut,
+      stderrBytes: result.stderr.length,
+    })
     return result
   }
 
   // --- profile -----------------------------------------------------------------
-  await note('profile:dump-default', await run(DSH_BIN, ['--profile', PROFILE, '--from-default-profile', 'headless', '--dump-config'], { cwd: REPO_ROOT, env: childEnv }))
-  await note('plugin:add', await run(DSH_BIN, ['plugin', '--profile', PROFILE, 'add', `link:${REPO_ROOT}`], { cwd: REPO_ROOT, env: childEnv }))
-  await note('driver:add', await run(DSH_BIN, ['plugin', '--profile', PROFILE, 'add', `link:${join(HERE, 'driver')}`], { cwd: REPO_ROOT, env: childEnv }))
+  await note(
+    'profile:dump-default',
+    await run(
+      DSH_BIN,
+      ['--profile', PROFILE, '--from-default-profile', 'headless', '--dump-config'],
+      { cwd: REPO_ROOT, env: childEnv },
+    ),
+  )
+  await note(
+    'plugin:add',
+    await run(DSH_BIN, ['plugin', '--profile', PROFILE, 'add', `link:${REPO_ROOT}`], {
+      cwd: REPO_ROOT,
+      env: childEnv,
+    }),
+  )
+  await note(
+    'driver:add',
+    await run(DSH_BIN, ['plugin', '--profile', PROFILE, 'add', `link:${join(HERE, 'driver')}`], {
+      cwd: REPO_ROOT,
+      env: childEnv,
+    }),
+  )
 
-  const dumpResult = await note('profile:dump-config', await run(DSH_BIN, ['--profile', PROFILE, '--dump-config'], { cwd: REPO_ROOT, env: childEnv }))
+  const dumpResult = await note(
+    'profile:dump-config',
+    await run(DSH_BIN, ['--profile', PROFILE, '--dump-config'], { cwd: REPO_ROOT, env: childEnv }),
+  )
   const dumpConfig = dumpResult.stdout.toString('utf8')
-  const profileManifest = JSON.parse(readFileSync(join(dshHome, 'profiles', PROFILE, 'package.json'), 'utf8'))
+  const profileManifest = JSON.parse(
+    readFileSync(join(dshHome, 'profiles', PROFILE, 'package.json'), 'utf8'),
+  )
 
   // The distill route is pinned from the profile's own default-model row rather
   // than assumed: P0 measured the empty route as NO_ADAPTER, so an explicit
@@ -298,8 +380,10 @@ async function main() {
   //   * an in-flight model call is NOT killed by that disposal, which is why the
   //     recover lane's freshly resumed job can still distil after the tree is
   //     gone (the worker no longer aborts its own call on unload).
-  const SCENARIO_TASK = '不要调用任何工具。请用一句话复述这个项目约定：本仓库的模块格式统一为 ESM，测试命令是 npm test。'
-  const LIVE_TASK = '不要调用任何工具。请用一句话确认这个项目决定：数据库迁移必须在同一个事务里完成，失败整体回滚。'
+  const SCENARIO_TASK =
+    '不要调用任何工具。请用一句话复述这个项目约定：本仓库的模块格式统一为 ESM，测试命令是 npm test。'
+  const LIVE_TASK =
+    '不要调用任何工具。请用一句话确认这个项目决定：数据库迁移必须在同一个事务里完成，失败整体回滚。'
   const IDLE_TASK = '不要调用任何工具。请只回答：已收到。'
   const seedConfig = (dryRun) => ({
     vaultPath: vault,
@@ -309,7 +393,11 @@ async function main() {
     indexBackend: 'sqlite',
     briefBudgetChars: 6000,
   })
-  const recoverConfig = (dryRun) => ({ ...seedConfig(dryRun), captureIdleMs: 1000, autoCapture: false })
+  const recoverConfig = (dryRun) => ({
+    ...seedConfig(dryRun),
+    captureIdleMs: 1000,
+    autoCapture: false,
+  })
 
   const seedSpecs = {
     dryRunSeed: {
@@ -335,21 +423,25 @@ async function main() {
     // Every seed pass starts from an empty queue, so the interruption lands on
     // the turn that pass just captured and never on an earlier cycle's leftover.
     // A recover pass must NOT clear: the killed job is exactly what it resumes.
-    const cleared = spec.clearQueue === false ? [] : clearQueue(join(dshHome, 'data', 'obsidian-mem', 'pending'))
+    const cleared =
+      spec.clearQueue === false ? [] : clearQueue(join(dshHome, 'data', 'obsidian-mem', 'pending'))
     writeProfilePatch(dshHome, config)
-    const result = await note(`run:${spec.key}`, await run(DSH_BIN, ['--profile', PROFILE, spec.task], {
-      cwd: repo,
-      env: {
-        ...childEnv,
-        DSH_OBSIDIAN_MEM_SMOKE_RECORD: recordPath,
-        DSH_OBSIDIAN_MEM_SMOKE_VAULT: vault,
-        DSH_OBSIDIAN_MEM_SMOKE_SCENARIO: spec.env.SCENARIO,
-        DSH_OBSIDIAN_MEM_SMOKE_WAIT_RECEIPT: spec.env.WAIT_RECEIPT,
-        DSH_OBSIDIAN_MEM_SMOKE_KILL: spec.env.KILL,
-        DSH_OBSIDIAN_MEM_SMOKE_HOLD_MS: String(spec.holdMs ?? HOLD_MS),
-        DSH_OBSIDIAN_MEM_SMOKE_LLM_PROBE: spec.llmProbe === true ? '1' : '0',
-      },
-    }))
+    const result = await note(
+      `run:${spec.key}`,
+      await run(DSH_BIN, ['--profile', PROFILE, spec.task], {
+        cwd: repo,
+        env: {
+          ...childEnv,
+          DSH_OBSIDIAN_MEM_SMOKE_RECORD: recordPath,
+          DSH_OBSIDIAN_MEM_SMOKE_VAULT: vault,
+          DSH_OBSIDIAN_MEM_SMOKE_SCENARIO: spec.env.SCENARIO,
+          DSH_OBSIDIAN_MEM_SMOKE_WAIT_RECEIPT: spec.env.WAIT_RECEIPT,
+          DSH_OBSIDIAN_MEM_SMOKE_KILL: spec.env.KILL,
+          DSH_OBSIDIAN_MEM_SMOKE_HOLD_MS: String(spec.holdMs ?? HOLD_MS),
+          DSH_OBSIDIAN_MEM_SMOKE_LLM_PROBE: spec.llmProbe === true ? '1' : '0',
+        },
+      }),
+    )
     const leftover = readPendingJobs(join(dshHome, 'data', 'obsidian-mem', 'pending'))
     passes[spec.key] = {
       config,
@@ -401,7 +493,11 @@ async function main() {
         key: seedKey,
         holdMs: 20_000,
         llmProbe: lane.llmProbe === true && cycle === 1,
-        env: { SCENARIO: lane.scenarioOnFirstCycle && cycle === 1 ? '1' : '0', WAIT_RECEIPT: '0', KILL: '1' },
+        env: {
+          SCENARIO: lane.scenarioOnFirstCycle && cycle === 1 ? '1' : '0',
+          WAIT_RECEIPT: '0',
+          KILL: '1',
+        },
         config: seedConfig(lane.dryRun),
         task: lane.task,
       })
@@ -419,7 +515,10 @@ async function main() {
         task: IDLE_TASK,
       })
       const treeAfter = hashTree(vault)
-      receipt = jobId === null ? null : (readReceipts(queueRoot).find((entry) => entry.jobId === jobId) ?? null)
+      receipt =
+        jobId === null
+          ? null
+          : (readReceipts(queueRoot).find((entry) => entry.jobId === jobId) ?? null)
       cycles.push({
         cycle,
         seedKey,
@@ -432,7 +531,9 @@ async function main() {
         receiptResult: receipt?.result ?? null,
         receiptDryRun: receipt?.dryRun ?? null,
         recoverExit: recover.exit,
-        holdReceipt: recover.records.some((entry) => entry.name === 'smoke/hold' && entry.action === 'receipt'),
+        holdReceipt: recover.records.some(
+          (entry) => entry.name === 'smoke/hold' && entry.action === 'receipt',
+        ),
       })
     }
     // One more restart with nothing left to resume: the completed job must be
@@ -479,7 +580,15 @@ async function main() {
       task: lane.task,
     })
     const job = readPendingJob(dshHome) ?? seed.leftoverJobs[0] ?? null
-    if (job === null) return { lane: `resume${lane.label}`, jobId: null, receipt: null, cycle: null, injection: null, verify: null }
+    if (job === null)
+      return {
+        lane: `resume${lane.label}`,
+        jobId: null,
+        receipt: null,
+        cycle: null,
+        injection: null,
+        verify: null,
+      }
     const injection = injectRawDurable(job, lane)
     await waitPastDue(job, seed.config.captureIdleMs)
     const treeBefore = hashTree(vault)
@@ -532,20 +641,23 @@ async function main() {
   function injectRawDurable(job, lane) {
     // `allowedEvents` entries are the committed event records themselves
     // (`{kind, seq, source}`), and `evidenceSeqs` accepts only their integers.
-    const firstAllowed = Array.isArray(job.allowedEvents) && job.allowedEvents.length > 0 ? job.allowedEvents[0] : null
+    const firstAllowed =
+      Array.isArray(job.allowedEvents) && job.allowedEvents.length > 0 ? job.allowedEvents[0] : null
     const evidenceSeq = Number.isSafeInteger(firstAllowed?.seq) ? firstAllowed.seq : null
     const raw = JSON.stringify({
-      items: [{
-        type: 'convention',
-        title: `恢复通道约定（${lane.label}）`,
-        body: '冒烟恢复通道：本仓库的模块格式统一为 ESM，测试命令是 npm test。',
-        tags: ['smoke', 'resume'],
-        confidence: 0.9,
-        assertion: 'stated',
-        status: 'active',
-        supersedesId: null,
-        evidenceSeqs: evidenceSeq === null ? [] : [evidenceSeq],
-      }],
+      items: [
+        {
+          type: 'convention',
+          title: `恢复通道约定（${lane.label}）`,
+          body: '冒烟恢复通道：本仓库的模块格式统一为 ESM，测试命令是 npm test。',
+          tags: ['smoke', 'resume'],
+          confidence: 0.9,
+          assertion: 'stated',
+          status: 'active',
+          supersedesId: null,
+          evidenceSeqs: evidenceSeq === null ? [] : [evidenceSeq],
+        },
+      ],
     })
     const path = join(queueRoot, `${job.jobId}.json`)
     const rewritten = {
@@ -559,9 +671,18 @@ async function main() {
     delete rewritten.lastError
     delete rewritten.nextAttemptAt
     delete rewritten.retriedAt
-    writeFileSync(path, `${JSON.stringify(rewritten, null, 2)}
-`)
-    return { jobId: job.jobId, outputState: 'raw-durable', rawChars: [...raw].length, evidenceSeq, itemCount: 1 }
+    writeFileSync(
+      path,
+      `${JSON.stringify(rewritten, null, 2)}
+`,
+    )
+    return {
+      jobId: job.jobId,
+      outputState: 'raw-durable',
+      rawChars: [...raw].length,
+      evidenceSeq,
+      itemCount: 1,
+    }
   }
 
   const queueRoot = join(dshHome, 'data', 'obsidian-mem', 'pending')
@@ -569,27 +690,81 @@ async function main() {
   // attempted (`--only`). A lane that ran but captured nothing leaves `jobId`
   // null WITHOUT this flag, and `verify.mjs` scores that as the failure it is —
   // otherwise the headline acceptance could pass on a total capture failure.
-  const dryRunLane = args.only === 'live'
-    ? { lane: 'dryRun', skipped: true, jobId: null, receipt: null, cycles: [], verify: null, scenarioPass: null }
-    : await runLane({ label: 'dryRun', dryRun: true, task: SCENARIO_TASK, scenarioOnFirstCycle: true, llmProbe: true, cycles: 1, recoverHoldMs: 30_000 })
-  const liveLane = args.only === 'dryRun'
-    ? { lane: 'live', skipped: true, jobId: null, receipt: null, cycles: [], verify: null, scenarioPass: null }
-    : await runLane({ label: 'live', dryRun: false, task: LIVE_TASK, scenarioOnFirstCycle: false, cycles: 1, recoverHoldMs: 30_000 })
-  const resumeDryRunLane = args.only === 'live'
-    ? { lane: 'resumedryRun', skipped: true, jobId: null, receipt: null, cycle: null, injection: null, verify: null }
-    : await runResumeLane({ label: 'dryRun', dryRun: true, task: SCENARIO_TASK })
-  const resumeLiveLane = args.only === 'dryRun'
-    ? { lane: 'resumelive', skipped: true, jobId: null, receipt: null, cycle: null, injection: null, verify: null }
-    : await runResumeLane({ label: 'live', dryRun: false, task: LIVE_TASK })
+  const dryRunLane =
+    args.only === 'live'
+      ? {
+          lane: 'dryRun',
+          skipped: true,
+          jobId: null,
+          receipt: null,
+          cycles: [],
+          verify: null,
+          scenarioPass: null,
+        }
+      : await runLane({
+          label: 'dryRun',
+          dryRun: true,
+          task: SCENARIO_TASK,
+          scenarioOnFirstCycle: true,
+          llmProbe: true,
+          cycles: 1,
+          recoverHoldMs: 30_000,
+        })
+  const liveLane =
+    args.only === 'dryRun'
+      ? {
+          lane: 'live',
+          skipped: true,
+          jobId: null,
+          receipt: null,
+          cycles: [],
+          verify: null,
+          scenarioPass: null,
+        }
+      : await runLane({
+          label: 'live',
+          dryRun: false,
+          task: LIVE_TASK,
+          scenarioOnFirstCycle: false,
+          cycles: 1,
+          recoverHoldMs: 30_000,
+        })
+  const resumeDryRunLane =
+    args.only === 'live'
+      ? {
+          lane: 'resumedryRun',
+          skipped: true,
+          jobId: null,
+          receipt: null,
+          cycle: null,
+          injection: null,
+          verify: null,
+        }
+      : await runResumeLane({ label: 'dryRun', dryRun: true, task: SCENARIO_TASK })
+  const resumeLiveLane =
+    args.only === 'dryRun'
+      ? {
+          lane: 'resumelive',
+          skipped: true,
+          jobId: null,
+          receipt: null,
+          cycle: null,
+          injection: null,
+          verify: null,
+        }
+      : await runResumeLane({ label: 'live', dryRun: false, task: LIVE_TASK })
 
   // --- observations ------------------------------------------------------------
   const receipts = readReceipts(queueRoot)
-  const vaultFiles = listFiles(vault).filter((path) => path.endsWith('.md') || path.startsWith('.obsidian/'))
+  const vaultFiles = listFiles(vault).filter(
+    (path) => path.endsWith('.md') || path.startsWith('.obsidian/'),
+  )
   const memoryNotes = readMemoryNotes(vault)
 
   const scenarioRecords = dryRunLane.scenarioPass?.records ?? []
   const dryRecords = scenarioRecords
-  const stage = (records, name) => records.find((entry) => entry.name === 'smoke/stage' && entry.stage === name) ?? null
+  const stage = (records, name) =>
+    records.find((entry) => entry.name === 'smoke/stage' && entry.stage === name) ?? null
   const scenario = {
     bind: stage(dryRecords, 'bind'),
     docWrite: stage(dryRecords, 'doc-write'),
@@ -626,12 +801,16 @@ async function main() {
     .filter(([key]) => key.includes('Seed'))
     .flatMap(([, value]) => value.records)
   const inProcessApplied = {
-    seedsObserved: seedRecords.filter((entry) => entry.name === 'smoke/hold' && entry.action === 'job-observed').length,
+    seedsObserved: seedRecords.filter(
+      (entry) => entry.name === 'smoke/hold' && entry.action === 'job-observed',
+    ).length,
     seedPolls: seedRecords.filter((entry) => entry.name === 'smoke/poll').length,
     seedAttempts: seedRecords
       .filter((entry) => entry.name === 'smoke/poll')
       .map((entry) => entry.job?.attempts ?? 0),
-    anySeedSawAnAttempt: seedRecords.some((entry) => entry.name === 'smoke/poll' && (entry.job?.attempts ?? 0) > 0),
+    anySeedSawAnAttempt: seedRecords.some(
+      (entry) => entry.name === 'smoke/poll' && (entry.job?.attempts ?? 0) > 0,
+    ),
   }
 
   const record = {
@@ -650,31 +829,51 @@ async function main() {
       name: PROFILE,
       bundles: profileManifest?.dsh?.profile?.bundles ?? null,
       driverInstalled: (profileManifest?.dependencies?.[DRIVER_PACKAGE] ?? null) !== null,
-      dumpConfigHasRow: dumpConfig.includes(`id: ${ROW_ID}`) || dumpConfig.includes(`- id: ${ROW_ID}`),
-      dumpConfigRowLine: dumpConfig.split('\n').find((line) => line.includes(`id: ${ROW_ID}`)) ?? null,
+      dumpConfigHasRow:
+        dumpConfig.includes(`id: ${ROW_ID}`) || dumpConfig.includes(`- id: ${ROW_ID}`),
+      dumpConfigRowLine:
+        dumpConfig.split('\n').find((line) => line.includes(`id: ${ROW_ID}`)) ?? null,
       dumpConfigChars: dumpConfig.length,
       dumpConfigPath: join(recordsDir, 'dump-config.yml'),
     },
     credentialRoute: credential.source,
-    passes: Object.fromEntries(Object.entries(passes).map(([key, value]) => [key, {
-      config: value.config,
-      exit: value.exit,
-      recordCount: value.records.length,
-      stdoutBytes: value.stdoutBytes,
-      stderrBytes: value.stderrBytes,
-      clearedJobs: value.clearedJobs ?? [],
-      leftoverJobs: value.leftoverJobs ?? [],
-      sessionIds: [...new Set(value.records.filter((entry) => typeof entry.id === 'string').map((entry) => entry.id))],
-      turnReasons: value.records.filter((entry) => entry.name === 'smoke/turn').map((entry) => entry.reason),
-    }])),
+    passes: Object.fromEntries(
+      Object.entries(passes).map(([key, value]) => [
+        key,
+        {
+          config: value.config,
+          exit: value.exit,
+          recordCount: value.records.length,
+          stdoutBytes: value.stdoutBytes,
+          stderrBytes: value.stderrBytes,
+          clearedJobs: value.clearedJobs ?? [],
+          leftoverJobs: value.leftoverJobs ?? [],
+          sessionIds: [
+            ...new Set(
+              value.records
+                .filter((entry) => typeof entry.id === 'string')
+                .map((entry) => entry.id),
+            ),
+          ],
+          turnReasons: value.records
+            .filter((entry) => entry.name === 'smoke/turn')
+            .map((entry) => entry.reason),
+        },
+      ]),
+    ),
     steps,
     checks: {
       pluginRowInDumpConfig: new RegExp(`^- id: ${ROW_ID}$`, 'm').test(dumpConfig),
       driverRowInDumpConfig: new RegExp('^- id: obsidian-mem-smoke-driver$', 'm').test(dumpConfig),
       briefBudgetChars: budget,
-      firstStepBriefCount: firstStepRecalls.length === 0 ? 0 : Math.max(...firstStepRecalls.map((entry) => entry.briefsBeforeFirstRequest ?? 1)),
-      firstStepBriefChars: firstStepRecalls.length === 0 ? null : firstStepRecalls[firstStepRecalls.length - 1].chars,
-      firstStepBriefSha256: firstStepRecalls.length === 0 ? null : firstStepRecalls[firstStepRecalls.length - 1].sha256,
+      firstStepBriefCount:
+        firstStepRecalls.length === 0
+          ? 0
+          : Math.max(...firstStepRecalls.map((entry) => entry.briefsBeforeFirstRequest ?? 1)),
+      firstStepBriefChars:
+        firstStepRecalls.length === 0 ? null : firstStepRecalls[firstStepRecalls.length - 1].chars,
+      firstStepBriefSha256:
+        firstStepRecalls.length === 0 ? null : firstStepRecalls[firstStepRecalls.length - 1].sha256,
       sessionBriefCount: recallRecords.length,
       firstRecallSeq: firstStepRecalls[0]?.seq ?? null,
       tools: scenario.tools,
@@ -687,14 +886,20 @@ async function main() {
       externalEdit: {
         ...scenario.externalEdit,
         existsOnDisk: externalPath !== null && existsSync(join(vault, externalPath)),
-        humanLineOnDiskAfterAllPasses: externalNow === null ? false : externalNow.toString('utf8').includes('人工外部编辑的一行：这一行必须存活。'),
-        obsidianUntouched: sha256(JSON.stringify(hashTree(join(vault, '.obsidian')))) === sha256(JSON.stringify(obsidianBefore)),
+        humanLineOnDiskAfterAllPasses:
+          externalNow === null
+            ? false
+            : externalNow.toString('utf8').includes('人工外部编辑的一行：这一行必须存活。'),
+        obsidianUntouched:
+          sha256(JSON.stringify(hashTree(join(vault, '.obsidian')))) ===
+          sha256(JSON.stringify(obsidianBefore)),
       },
       humanOwned: {
         ...scenario.humanOwned,
         existsOnDisk: humanPath !== null && existsSync(join(vault, humanPath)),
         hashOnDiskAfterAllPasses: humanNow === null ? null : sha256(humanNow),
-        byteIdenticalOnDisk: humanNow !== null && scenario.humanOwned?.hashBefore === sha256(humanNow),
+        byteIdenticalOnDisk:
+          humanNow !== null && scenario.humanOwned?.hashBefore === sha256(humanNow),
       },
       lintReadonly: scenario.lintReadonly,
       briefTool: scenario.briefTool,
@@ -722,7 +927,10 @@ async function main() {
             cycles: liveLane.cycles,
             receipt: liveLane.receipt,
           },
-          llmProbe: (dryRunLane.scenarioPass?.records ?? []).find((entry) => entry.name === 'smoke/llm-probe') ?? null,
+          llmProbe:
+            (dryRunLane.scenarioPass?.records ?? []).find(
+              (entry) => entry.name === 'smoke/llm-probe',
+            ) ?? null,
         },
         // The apply half observed WITHOUT a model call, on the resume lane.
         // `injection` records exactly what was placed on the job, so this half is
@@ -731,7 +939,11 @@ async function main() {
         dryRunReceipt: resumeDryRunLane.receipt,
         dryRunCycle: resumeDryRunLane.cycle,
         dryRunInjection: resumeDryRunLane.injection,
-        dryRunErrorAudit: dryRunLane.cycles.map((entry) => ({ cycle: entry.cycle, receiptResult: entry.receiptResult, jobState: entry.jobState })),
+        dryRunErrorAudit: dryRunLane.cycles.map((entry) => ({
+          cycle: entry.cycle,
+          receiptResult: entry.receiptResult,
+          jobState: entry.jobState,
+        })),
         liveJobId: resumeLiveLane.jobId,
         liveReceipt: resumeLiveLane.receipt,
         liveCycle: resumeLiveLane.cycle,
@@ -749,7 +961,10 @@ async function main() {
         receiptsTotal: receipts.length,
         duplicateNoteIds,
         memoryNoteCount: memoryNotes.length,
-        noteIds: memoryNotes.map((note) => note.id).filter((id) => typeof id === 'string').sort(),
+        noteIds: memoryNotes
+          .map((note) => note.id)
+          .filter((id) => typeof id === 'string')
+          .sort(),
         noPendingJobAfterRecovery: readPendingJobs(queueRoot).length === 0,
       },
       realHomeUnchanged: null,
@@ -758,43 +973,65 @@ async function main() {
       files: vaultFiles,
       obsidianBefore,
       obsidianAfter: hashTree(join(vault, '.obsidian')),
-      memoryNotes: memoryNotes.map((note) => ({ path: note.path, id: note.id, type: note.type, status: note.status, tags: note.tags })),
+      memoryNotes: memoryNotes.map((note) => ({
+        path: note.path,
+        id: note.id,
+        type: note.type,
+        status: note.status,
+        tags: note.tags,
+      })),
     },
     realHome: { before: homeBefore, after: realHomeFingerprint() },
   }
-  record.checks.realHomeUnchanged = sha256(JSON.stringify(homeBefore)) === sha256(JSON.stringify(record.realHome.after))
+  record.checks.realHomeUnchanged =
+    sha256(JSON.stringify(homeBefore)) === sha256(JSON.stringify(record.realHome.after))
 
   writeFileSync(join(recordsDir, 'dump-config.yml'), dumpConfig)
   writeFileSync(outPath, `${JSON.stringify(record, null, 2)}\n`)
-  process.stdout.write(`${JSON.stringify({
-    record: outPath,
-    baseDir,
-    vault,
-    profileRowPresent: record.checks.pluginRowInDumpConfig,
-    firstStepBriefCount: record.checks.firstStepBriefCount,
-    firstStepBriefChars: record.checks.firstStepBriefChars,
-    chineseHit: record.checks.chineseSearch?.ok === true,
-    supersedeOk: record.checks.supersede?.ok === true,
-    externalEditSurvived: record.checks.externalEdit?.ok === true,
-    humanOwnedSurvived: record.checks.humanOwned?.ok === true && record.checks.humanOwned?.byteIdenticalOnDisk === true,
-    lintReadOnly: record.checks.lintReadonly?.ok === true,
-    // The worker's own model-backed distill: a real receipt here is the headline
-    // acceptance (Task 18b), not an observation.
-    modelLaneDryRunReceipt: record.checks.capture.modelLane?.dryRun?.receipt?.result ?? null,
-    modelLaneLiveReceipt: record.checks.capture.modelLane?.live?.receipt?.result ?? null,
-    modelLaneLiveNotePath: record.checks.capture.modelLane?.live?.receipt?.items?.[0]?.path ?? null,
-    dryRunReceipt: record.checks.capture.dryRunReceipt?.result ?? null,
-    dryRunWroteNothing: record.checks.capture.dryRunReceipt?.result === 'dry-run' && record.checks.capture.dryRunCycle?.vaultChanged === false,
-    dryRunJobId,
-    liveJobId,
-    liveReceipt: record.checks.capture.liveReceipt?.result ?? null,
-    liveWroteSomething: record.checks.capture.liveReceipt?.result === 'applied' && record.checks.capture.liveCycle?.vaultChanged === true,
-    receiptsForLive: record.checks.restart.receiptCount,
-    duplicateNoteIds: record.checks.restart.duplicateNoteIds,
-    inProcessApplied,
-    realHomeUnchanged: record.checks.realHomeUnchanged,
-    exitCodes: Object.fromEntries(Object.entries(passes).map(([key, value]) => [key, value.exit.code ?? value.exit.signal])),
-  }, null, 2)}\n`)
+  process.stdout.write(
+    `${JSON.stringify(
+      {
+        record: outPath,
+        baseDir,
+        vault,
+        profileRowPresent: record.checks.pluginRowInDumpConfig,
+        firstStepBriefCount: record.checks.firstStepBriefCount,
+        firstStepBriefChars: record.checks.firstStepBriefChars,
+        chineseHit: record.checks.chineseSearch?.ok === true,
+        supersedeOk: record.checks.supersede?.ok === true,
+        externalEditSurvived: record.checks.externalEdit?.ok === true,
+        humanOwnedSurvived:
+          record.checks.humanOwned?.ok === true &&
+          record.checks.humanOwned?.byteIdenticalOnDisk === true,
+        lintReadOnly: record.checks.lintReadonly?.ok === true,
+        // The worker's own model-backed distill: a real receipt here is the headline
+        // acceptance (Task 18b), not an observation.
+        modelLaneDryRunReceipt: record.checks.capture.modelLane?.dryRun?.receipt?.result ?? null,
+        modelLaneLiveReceipt: record.checks.capture.modelLane?.live?.receipt?.result ?? null,
+        modelLaneLiveNotePath:
+          record.checks.capture.modelLane?.live?.receipt?.items?.[0]?.path ?? null,
+        dryRunReceipt: record.checks.capture.dryRunReceipt?.result ?? null,
+        dryRunWroteNothing:
+          record.checks.capture.dryRunReceipt?.result === 'dry-run' &&
+          record.checks.capture.dryRunCycle?.vaultChanged === false,
+        dryRunJobId,
+        liveJobId,
+        liveReceipt: record.checks.capture.liveReceipt?.result ?? null,
+        liveWroteSomething:
+          record.checks.capture.liveReceipt?.result === 'applied' &&
+          record.checks.capture.liveCycle?.vaultChanged === true,
+        receiptsForLive: record.checks.restart.receiptCount,
+        duplicateNoteIds: record.checks.restart.duplicateNoteIds,
+        inProcessApplied,
+        realHomeUnchanged: record.checks.realHomeUnchanged,
+        exitCodes: Object.fromEntries(
+          Object.entries(passes).map(([key, value]) => [key, value.exit.code ?? value.exit.signal]),
+        ),
+      },
+      null,
+      2,
+    )}\n`,
+  )
 }
 
 /** Write the profile patch that pins the plugin row's config for one pass. */
@@ -915,7 +1152,8 @@ function jobView(job) {
     outputState: job?.output?.state ?? null,
     lastErrorCode: job?.lastError?.code ?? null,
     lastErrorName: job?.lastError?.name ?? null,
-    lastErrorMessage: typeof job?.lastError?.message === 'string' ? job.lastError.message.slice(0, 200) : null,
+    lastErrorMessage:
+      typeof job?.lastError?.message === 'string' ? job.lastError.message.slice(0, 200) : null,
     lastErrorAt: job?.lastError?.at ?? null,
     createdAt: job?.createdAt ?? null,
     updatedAt: job?.updatedAt ?? null,
@@ -961,7 +1199,12 @@ function readReceipts(queueRoot) {
 function readMemoryNotes(vault) {
   const notes = []
   for (const path of listFiles(vault)) {
-    if (!path.endsWith('.md') || path.startsWith('.obsidian/') || path.startsWith('_meta/.history/')) continue
+    if (
+      !path.endsWith('.md') ||
+      path.startsWith('.obsidian/') ||
+      path.startsWith('_meta/.history/')
+    )
+      continue
     let text
     try {
       text = readFileSync(join(vault, path), 'utf8')
@@ -982,7 +1225,7 @@ function readMemoryNotes(vault) {
       id: typeof data?.id === 'string' ? data.id : null,
       type: typeof data?.type === 'string' ? data.type : null,
       status: typeof data?.status === 'string' ? data.status : null,
-      tags: Array.isArray(data?.tags) ? data.tags : (data?.tags === undefined ? null : 'not-a-list'),
+      tags: Array.isArray(data?.tags) ? data.tags : data?.tags === undefined ? null : 'not-a-list',
       trust: typeof data?.trust === 'string' ? data.trust : null,
       sha256: sha256(text),
     })

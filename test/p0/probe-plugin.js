@@ -76,7 +76,12 @@ function describeError(error) {
 
 /** One identified, hand-built user message (branded ids are plain strings at runtime). */
 function probeMessage(id) {
-  return { id, role: 'user', content: [{ type: 'text', text: PROBE_PROMPT }], source: { kind: 'user' } }
+  return {
+    id,
+    role: 'user',
+    content: [{ type: 'text', text: PROBE_PROMPT }],
+    source: { kind: 'user' },
+  }
 }
 
 /**
@@ -337,8 +342,10 @@ export function apply(ctx) {
       if (typeof reason === 'string') entry.reason = reason
       else if (reason !== null && typeof reason === 'object' && typeof reason.kind === 'string') {
         entry.reason = reason.kind
-        if (reason.kind === 'aborted' && typeof reason.reason?.kind === 'string') entry.abortCause = reason.reason.kind
-        if (reason.kind === 'error' && typeof reason.error?.code === 'string') entry.errorCode = reason.error.code
+        if (reason.kind === 'aborted' && typeof reason.reason?.kind === 'string')
+          entry.abortCause = reason.reason.kind
+        if (reason.kind === 'error' && typeof reason.error?.code === 'string')
+          entry.errorCode = reason.error.code
       }
     }
     record(entry)
@@ -351,7 +358,8 @@ export function apply(ctx) {
         record({ name: 'probe/flush-call', id })
         Promise.resolve(sessions.flush(session)).then(
           (participated) => record({ name: 'probe/flush-return', id, participated }),
-          (error) => record({ name: 'probe/flush-error', id, error: String(error?.message ?? error) }),
+          (error) =>
+            record({ name: 'probe/flush-error', id, error: String(error?.message ?? error) }),
         )
       }, 0)
     }

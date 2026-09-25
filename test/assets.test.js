@@ -17,7 +17,17 @@ import { Context } from '@deepseek-ai/cordis'
 import toolsPlugin from '@deepseek-ai/dsh-tools'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
@@ -44,7 +54,14 @@ description: Portable project-memory protocol for a dedicated Obsidian vault.
 `
 
 /** The six tools the plugin registers. */
-const SIX = Object.freeze(['mem_admin', 'mem_brief', 'mem_log', 'mem_read', 'mem_search', 'mem_write'])
+const SIX = Object.freeze([
+  'mem_admin',
+  'mem_brief',
+  'mem_log',
+  'mem_read',
+  'mem_search',
+  'mem_write',
+])
 
 // ---------------------------------------------------------------------------
 // Fixtures and helpers
@@ -169,7 +186,11 @@ test('a second sync of unchanged assets is a no-op', async (t) => {
   assert.deepEqual(result.conflicts, [])
   assert.deepEqual(statuses(result), { 'SKILL.md': 'unchanged', 'notes/extra.md': 'unchanged' })
   assert.equal(await hashFile(join(target, MANIFEST_FILENAME)), manifestBefore)
-  assert.equal((await stat(join(target, 'SKILL.md'))).mtimeMs, skillStat.mtimeMs, 'an unchanged file must not be rewritten')
+  assert.equal(
+    (await stat(join(target, 'SKILL.md'))).mtimeMs,
+    skillStat.mtimeMs,
+    'an unchanged file must not be rewritten',
+  )
 })
 
 test('a changed packaged asset updates exactly that file', async (t) => {
@@ -185,9 +206,20 @@ test('a changed packaged asset updates exactly that file', async (t) => {
   assert.equal(result.changed, true)
   assert.deepEqual(statuses(result), { 'SKILL.md': 'unchanged', 'notes/extra.md': 'updated' })
   assert.equal(await readFile(join(target, 'notes', 'extra.md'), 'utf8'), '# extra v2\n')
-  assert.deepEqual(await readFile(join(target, 'SKILL.md')), skillBytes, 'the untouched asset keeps its exact bytes')
-  assert.equal((await stat(join(target, 'SKILL.md'))).mtimeMs, skillStat.mtimeMs, 'only the changed asset is written')
-  assert.equal((await readManifest(target)).assets['notes/extra.md'], await hashFile(join(target, 'notes', 'extra.md')))
+  assert.deepEqual(
+    await readFile(join(target, 'SKILL.md')),
+    skillBytes,
+    'the untouched asset keeps its exact bytes',
+  )
+  assert.equal(
+    (await stat(join(target, 'SKILL.md'))).mtimeMs,
+    skillStat.mtimeMs,
+    'only the changed asset is written',
+  )
+  assert.equal(
+    (await readManifest(target)).assets['notes/extra.md'],
+    await hashFile(join(target, 'notes', 'extra.md')),
+  )
 })
 
 test('a packaged asset deleted from the target is restored', async (t) => {
@@ -260,12 +292,21 @@ test('a target that already holds valid assets is untouched when the source is i
   const before = await readFile(join(target, 'SKILL.md'))
 
   const noFrontmatter = await sourceFixture(t, { 'SKILL.md': '# no frontmatter here\n' })
-  await assert.rejects(() => syncSkill({ sourceDir: noFrontmatter, targetDir: target }), /frontmatter/i)
+  await assert.rejects(
+    () => syncSkill({ sourceDir: noFrontmatter, targetDir: target }),
+    /frontmatter/i,
+  )
 
-  const wrongName = await sourceFixture(t, { 'SKILL.md': '---\nname: other-skill\ndescription: nope\n---\n\n# x\n' })
+  const wrongName = await sourceFixture(t, {
+    'SKILL.md': '---\nname: other-skill\ndescription: nope\n---\n\n# x\n',
+  })
   await assert.rejects(() => syncSkill({ sourceDir: wrongName, targetDir: target }), /name/)
 
-  assert.deepEqual(await readFile(join(target, 'SKILL.md')), before, 'an invalid packaged skill must not touch the target')
+  assert.deepEqual(
+    await readFile(join(target, 'SKILL.md')),
+    before,
+    'an invalid packaged skill must not touch the target',
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -285,10 +326,21 @@ test('an externally edited target file is reported as a conflict and not overwri
 
   assert.equal(result.changed, false)
   assert.deepEqual(statuses(result), { 'SKILL.md': 'conflict', 'notes/extra.md': 'unchanged' })
-  assert.deepEqual(result.conflicts.map((conflict) => conflict.path), ['SKILL.md'])
+  assert.deepEqual(
+    result.conflicts.map((conflict) => conflict.path),
+    ['SKILL.md'],
+  )
   assert.match(result.conflicts[0].reason, /external|conflict|changed/i)
-  assert.equal(await readFile(join(target, 'SKILL.md'), 'utf8'), 'EXTERNAL EDIT\n', 'a foreign file is never clobbered')
-  assert.equal((await readManifest(target)).assets['SKILL.md'], recorded, 'the conflict keeps the old record, so it is reported again')
+  assert.equal(
+    await readFile(join(target, 'SKILL.md'), 'utf8'),
+    'EXTERNAL EDIT\n',
+    'a foreign file is never clobbered',
+  )
+  assert.equal(
+    (await readManifest(target)).assets['SKILL.md'],
+    recorded,
+    'the conflict keeps the old record, so it is reported again',
+  )
 })
 
 test('a foreign target file with no manifest record is reported as a conflict', async (t) => {
@@ -300,9 +352,16 @@ test('a foreign target file with no manifest record is reported as a conflict', 
   const result = await syncSkill({ sourceDir: source, targetDir: target })
 
   assert.equal(result.changed, false)
-  assert.deepEqual(result.conflicts.map((conflict) => conflict.path), ['SKILL.md'])
+  assert.deepEqual(
+    result.conflicts.map((conflict) => conflict.path),
+    ['SKILL.md'],
+  )
   assert.equal(await readFile(join(target, 'SKILL.md'), 'utf8'), 'written by someone else\n')
-  assert.equal(existsSync(join(target, MANIFEST_FILENAME)), false, 'a refused sync must not claim ownership')
+  assert.equal(
+    existsSync(join(target, MANIFEST_FILENAME)),
+    false,
+    'a refused sync must not claim ownership',
+  )
 })
 
 test('a target file identical to the packaged one is left alone and not adopted', async (t) => {
@@ -344,7 +403,10 @@ test('a corrupt manifest is rebuilt instead of trusted', async (t) => {
 // ---------------------------------------------------------------------------
 
 test('the default target is derived from DSH_HOME and nothing else', async (t) => {
-  assert.equal(resolveSkillTargetDir({ dshHome: '/tmp/dsh-home' }), join('/tmp/dsh-home', 'skills', SKILL_NAME))
+  assert.equal(
+    resolveSkillTargetDir({ dshHome: '/tmp/dsh-home' }),
+    join('/tmp/dsh-home', 'skills', SKILL_NAME),
+  )
   assert.throws(() => resolveSkillTargetDir({ dshHome: 'relative/path' }), RangeError)
   assert.throws(() => resolveSkillTargetDir({ dshHome: '   ' }), RangeError)
 
@@ -467,7 +529,10 @@ test('apply() ships the packaged skill into the DSH skill root', async (t) => {
     assert.equal(typeof frontmatter.description, 'string')
     assert.ok(frontmatter.description.trim().length > 0)
 
-    const again = await syncSkill({ sourceDir: bundledSkillSourceDir(), targetDir: join(root, 'skills', SKILL_NAME) })
+    const again = await syncSkill({
+      sourceDir: bundledSkillSourceDir(),
+      targetDir: join(root, 'skills', SKILL_NAME),
+    })
     assert.equal(again.changed, false, 'a repeat sync of what the plugin wrote is a no-op')
   })
 })
@@ -484,7 +549,10 @@ test('a failed skill sync is reported without stranding the plugin', async (t) =
     await symlink(elsewhere, join(root, 'skills', SKILL_NAME), 'dir')
 
     const captured = []
-    const disposeExporter = ctx.logger.exporter({ levels: { default: 9 }, export: (message) => captured.push(message) })
+    const disposeExporter = ctx.logger.exporter({
+      levels: { default: 9 },
+      export: (message) => captured.push(message),
+    })
     t.after(() => disposeExporter())
 
     const cwd = join(root, 'repo')
@@ -494,20 +562,44 @@ test('a failed skill sync is reported without stranding the plugin', async (t) =
 
     // Registered synchronously: a failed sync must not keep the tools or the
     // hooks from mounting (the fiber would stay PENDING).
-    assert.deepEqual(ctx.tools.schemas().map((schema) => schema.name).sort(), SIX)
+    assert.deepEqual(
+      ctx.tools
+        .schemas()
+        .map((schema) => schema.name)
+        .sort(),
+      SIX,
+    )
     const decision = await ctx.waterfall(
       'agent/pre-step',
-      { agent: agentFor(cwd), messages: [], turn: 1, step: 1, signal: new AbortController().signal },
+      {
+        agent: agentFor(cwd),
+        messages: [],
+        turn: 1,
+        step: 1,
+        signal: new AbortController().signal,
+      },
       async () => ({ kind: 'enter', messages: [] }),
     )
     assert.equal(decision.kind, 'enter')
 
     const reported = await waitFor(() =>
-      captured.some((message) => message.type === 'warn' && message.args.some((arg) => String(arg).includes('obsidian-mem'))))
+      captured.some(
+        (message) =>
+          message.type === 'warn' &&
+          message.args.some((arg) => String(arg).includes('obsidian-mem')),
+      ),
+    )
     assert.equal(reported, true, 'the failure must be reported, not swallowed')
     assert.deepEqual(await readdir(elsewhere), [], 'nothing may be written through the symlink')
     assert.equal(existsSync(join(elsewhere, 'SKILL.md')), false)
-    assert.deepEqual(ctx.tools.schemas().map((schema) => schema.name).sort(), SIX, 'the tools survive the failed sync')
+    assert.deepEqual(
+      ctx.tools
+        .schemas()
+        .map((schema) => schema.name)
+        .sort(),
+      SIX,
+      'the tools survive the failed sync',
+    )
   })
 })
 
@@ -525,6 +617,9 @@ test('unloading the plugin fiber waits for the in-flight skill sync', async (t) 
 
     const installed = join(root, 'skills', SKILL_NAME, 'SKILL.md')
     assert.equal(existsSync(installed), true, 'disposal waited for the sync to finish')
-    assert.deepEqual(await readFile(installed), await readFile(join(bundledSkillSourceDir(), 'SKILL.md')))
+    assert.deepEqual(
+      await readFile(installed),
+      await readFile(join(bundledSkillSourceDir(), 'SKILL.md')),
+    )
   })
 })

@@ -35,7 +35,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { createCapture, createQueueWorker, enqueueTurn, processQueue, retryJob } from '../lib/capture.js'
+import {
+  createCapture,
+  createQueueWorker,
+  enqueueTurn,
+  processQueue,
+  retryJob,
+} from '../lib/capture.js'
 import { registerHooks } from '../lib/hooks.js'
 import { applyCandidate, createMemoryWithId } from '../lib/memory.js'
 import {
@@ -146,7 +152,8 @@ function jobFixture(overrides = {}) {
     state: 'pending',
     route: { provider: 'deepseek-official', model: 'deepseek-flash' },
     allowedEvents: [...ALLOWED],
-    safeInput: '[obsidian-mem pending] session=… project=… turn=1 seq 1-7\n--- user (seq 2) ---\n把调度器改成可插拔后端\n',
+    safeInput:
+      '[obsidian-mem pending] session=… project=… turn=1 seq 1-7\n--- user (seq 2) ---\n把调度器改成可插拔后端\n',
     credentialSkips: 0,
     omitted: null,
     attempts: 0,
@@ -189,7 +196,9 @@ function validatedJob(items, overrides = {}) {
     state: 'validated',
     output: {
       state: 'validated',
-      raw: JSON.stringify({ items: identified.map(({ preassignedId, idempotencyKey, ...rest }) => rest) }),
+      raw: JSON.stringify({
+        items: identified.map(({ preassignedId, idempotencyKey, ...rest }) => rest),
+      }),
       items: identified,
       usage: null,
     },
@@ -223,7 +232,10 @@ function abortedLlm() {
     stream(options) {
       calls.push(options)
       return (async function* () {
-        yield { type: 'finish', reason: { kind: 'aborted', failure: { code: 'ABORTED', message: 'aborted by caller' } } }
+        yield {
+          type: 'finish',
+          reason: { kind: 'aborted', failure: { code: 'ABORTED', message: 'aborted by caller' } },
+        }
       })()
     },
   }
@@ -252,9 +264,13 @@ function abortedLlm() {
 function inFlightLlm(raw) {
   const calls = []
   let openedResolve
-  const opened = new Promise((resolve) => { openedResolve = resolve })
+  const opened = new Promise((resolve) => {
+    openedResolve = resolve
+  })
   let releaseResolve
-  const release = new Promise((resolve) => { releaseResolve = resolve })
+  const release = new Promise((resolve) => {
+    releaseResolve = resolve
+  })
   const stub = {
     calls,
     opened,
@@ -267,7 +283,16 @@ function inFlightLlm(raw) {
       calls.push(options)
       if (stub.disposed) {
         return (async function* () {
-          yield { type: 'finish', reason: { kind: 'error', failure: { code: 'NO_ADAPTER', message: 'no adapter registered for provider "deepseek-official"' } } }
+          yield {
+            type: 'finish',
+            reason: {
+              kind: 'error',
+              failure: {
+                code: 'NO_ADAPTER',
+                message: 'no adapter registered for provider "deepseek-official"',
+              },
+            },
+          }
         })()
       }
       return (async function* () {
@@ -286,7 +311,10 @@ function inFlightLlm(raw) {
         })
         await Promise.race([aborted, release])
         if (options.signal?.aborted === true) {
-          yield { type: 'finish', reason: { kind: 'aborted', failure: { code: 'ABORTED', message: 'aborted by caller' } } }
+          yield {
+            type: 'finish',
+            reason: { kind: 'aborted', failure: { code: 'ABORTED', message: 'aborted by caller' } },
+          }
           return
         }
         const text = typeof raw === 'function' ? raw(options) : raw
@@ -360,7 +388,12 @@ async function listProjectNotes(f) {
       }
       if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue
       const bytes = await readFile(join(directory, entry.name))
-      found.push({ path: `${PROJECT}/${relative}`, bytes, hash: sha256(bytes), note: parseNote(bytes) })
+      found.push({
+        path: `${PROJECT}/${relative}`,
+        bytes,
+        hash: sha256(bytes),
+        note: parseNote(bytes),
+      })
     }
   }
   await walk(root, '')
@@ -369,7 +402,9 @@ async function listProjectNotes(f) {
 
 /** The decision|gotcha|convention notes of a project (the only auto-writable types). */
 async function memoryNotes(f) {
-  return (await listProjectNotes(f)).filter((entry) => ['decision', 'gotcha', 'convention'].includes(entry.note.data.type))
+  return (await listProjectNotes(f)).filter((entry) =>
+    ['decision', 'gotcha', 'convention'].includes(entry.note.data.type),
+  )
 }
 
 /** The receipts written for one project, oldest first. */
@@ -389,7 +424,9 @@ async function readVault(f, relative) {
 
 /** The candidate notes parked in the explicit inbox (the MOC itself is not one). */
 async function inboxCandidates(f) {
-  return (await listProjectNotes(f)).filter((entry) => entry.path.startsWith(INBOX) && !entry.path.endsWith('/index.md'))
+  return (await listProjectNotes(f)).filter(
+    (entry) => entry.path.startsWith(INBOX) && !entry.path.endsWith('/index.md'),
+  )
 }
 
 /** The job on disk, or `null`. */
@@ -412,16 +449,20 @@ function recordingApply() {
 /** Seed one real decision note and return its identity and bytes. */
 async function seedDecision(f, { title = '旧结论', idempotencyKey = `seed:${randomUUID()}` } = {}) {
   const id = `dec-${randomUUID()}`
-  const written = await createMemoryWithId(f.binding, {
-    preassignedId: id,
-    idempotencyKey,
-    type: 'decision',
-    title,
-    body: '旧结论正文。',
-    status: 'accepted',
-    confidence: 0.9,
-    assertion: 'stated',
-  }, { dataRoot: f.dataRoot, home: f.home })
+  const written = await createMemoryWithId(
+    f.binding,
+    {
+      preassignedId: id,
+      idempotencyKey,
+      type: 'decision',
+      title,
+      body: '旧结论正文。',
+      status: 'accepted',
+      confidence: 0.9,
+      assertion: 'stated',
+    },
+    { dataRoot: f.dataRoot, home: f.home },
+  )
   return written
 }
 
@@ -474,7 +515,11 @@ test('an empty result writes a no-memory receipt and touches nothing', async (t)
   assert.equal(summary.completed, 1)
   assert.equal(llm.calls.length, 1)
   assert.deepEqual(await memoryNotes(f), [])
-  assert.deepEqual(await snapshotTree(f.vault), before, 'an empty distillation writes no vault byte')
+  assert.deepEqual(
+    await snapshotTree(f.vault),
+    before,
+    'an empty distillation writes no vault byte',
+  )
 
   const [receipt] = await readReceipts(f)
   assert.equal(receipt.result, 'no-memory')
@@ -488,15 +533,23 @@ test('dryRun writes a dry-run receipt and leaves the whole vault tree byte-ident
   await writeJobAtomic(f.queueRoot, jobFixture())
   const llm = stubLlm(JSON.stringify({ items: [itemFixture()] }))
 
-  const summary = await processQueue(queueOptions(f, { llm, config: baseConfig({ distill: { dryRun: true } }) }))
+  const summary = await processQueue(
+    queueOptions(f, { llm, config: baseConfig({ distill: { dryRun: true } }) }),
+  )
   assert.equal(summary.completed, 1)
   assert.equal(llm.calls.length, 1)
 
   assert.deepEqual(
-    (await listProjectNotes(f)).filter((entry) => ['decision', 'gotcha', 'convention'].includes(entry.note.data.type)),
+    (await listProjectNotes(f)).filter((entry) =>
+      ['decision', 'gotcha', 'convention'].includes(entry.note.data.type),
+    ),
     [],
   )
-  assert.deepEqual(await snapshotTree(f.vault), before, 'dryRun changes no note, MOC, hot file or log byte')
+  assert.deepEqual(
+    await snapshotTree(f.vault),
+    before,
+    'dryRun changes no note, MOC, hot file or log byte',
+  )
 
   const receipts = await readReceipts(f)
   assert.equal(receipts.at(-1).result, 'dry-run')
@@ -543,7 +596,9 @@ test('a project that cannot be resolved defers without consuming an attempt', as
   const f = await fixture(t)
   await writeJobAtomic(f.queueRoot, jobFixture())
 
-  const summary = await processQueue(queueOptions(f, { llm: stubLlm('{"items":[]}'), resolveBinding: () => null }))
+  const summary = await processQueue(
+    queueOptions(f, { llm: stubLlm('{"items":[]}'), resolveBinding: () => null }),
+  )
   assert.equal(summary.deferred, 1)
   const job = await jobOnDisk(f)
   assert.equal(job.state, 'deferred')
@@ -578,7 +633,11 @@ test('a deferred job is retried by the worker timer alone, with no new capture o
   llm = stubLlm(JSON.stringify({ items: [itemFixture()] }))
   // Wait for the JOB to finish (not just for the note to appear): the note commits
   // before the receipt and the deletion, so polling the note alone would race.
-  const finished = await waitFor(() => jobOnDisk(f), (job) => job === null, { timeoutMs: 8000 })
+  const finished = await waitFor(
+    () => jobOnDisk(f),
+    (job) => job === null,
+    { timeoutMs: 8000 },
+  )
   assert.equal(finished, null, 'the armed timer retried the deferred job on its own')
   assert.equal(llm.calls.length, 1)
   assert.equal((await memoryNotes(f)).length, 1)
@@ -597,7 +656,8 @@ test('a validation refusal records an attempt per pass and ends failed with a re
     await processQueue(queueOptions(f, { llm }))
     const job = await jobOnDisk(f)
     assert.equal(job.attempts, pass, `pass ${pass} records its attempt`)
-    if (pass < 3) assert.equal(job.state, 'raw-durable', 'the retry resumes from the durable barrier')
+    if (pass < 3)
+      assert.equal(job.state, 'raw-durable', 'the retry resumes from the durable barrier')
   }
 
   const failed = await jobOnDisk(f)
@@ -658,7 +718,11 @@ test('retryJob explicitly requeues a terminally failed job and refuses a healthy
   assert.equal(failed.attempts, 3)
 
   const revived = await retryJob(JOB_ID, { queueRoot: f.queueRoot })
-  assert.equal(revived.state, 'pending', 'a job with no durable output restarts from the model call')
+  assert.equal(
+    revived.state,
+    'pending',
+    'a job with no durable output restarts from the model call',
+  )
   assert.equal(revived.attempts, 0)
   assert.equal(revived.nextAttemptAt, null)
   assert.equal(revived.previousAttempts, 3, 'the prior attempt count stays inspectable')
@@ -686,12 +750,14 @@ test('a fault before the raw barrier leaves no output and the next pass calls th
   await writeJobAtomic(f.queueRoot, jobFixture())
   const llm = stubLlm(JSON.stringify({ items: [itemFixture()] }))
 
-  const first = await processQueue(queueOptions(f, {
-    llm,
-    beforePersist: (jobId, output) => {
-      if (output.state === 'raw-durable') throw new Error('injected-before-output')
-    },
-  }))
+  const first = await processQueue(
+    queueOptions(f, {
+      llm,
+      beforePersist: (jobId, output) => {
+        if (output.state === 'raw-durable') throw new Error('injected-before-output')
+      },
+    }),
+  )
   assert.equal(first.deferred, 1)
   const interrupted = await jobOnDisk(f)
   assert.equal(interrupted.output, null, 'nothing durable was written')
@@ -709,12 +775,14 @@ test('a raw-durable job resumes by re-validating the same bytes with no second m
   await writeJobAtomic(f.queueRoot, jobFixture())
   const llm = stubLlm(JSON.stringify({ items: [itemFixture()] }))
 
-  const first = await processQueue(queueOptions(f, {
-    llm,
-    afterPersist: (jobId, output) => {
-      if (output.state === 'raw-durable') throw new Error('injected-after-output')
-    },
-  }))
+  const first = await processQueue(
+    queueOptions(f, {
+      llm,
+      afterPersist: (jobId, output) => {
+        if (output.state === 'raw-durable') throw new Error('injected-after-output')
+      },
+    }),
+  )
   assert.equal(first.deferred, 1)
   const interrupted = await jobOnDisk(f)
   assert.equal(interrupted.output.state, 'raw-durable')
@@ -746,16 +814,22 @@ test('a crash after the first item resumes with only the unfinished second item'
   await writeJobAtomic(f.queueRoot, job)
 
   const apply = recordingApply(f)
-  const first = await processQueue(queueOptions(f, {
-    writeMemory: apply.seam,
-    beforeApply: (binding, current, item, index) => {
-      if (index === 1) throw new Error('injected-before-second-item')
-    },
-  }))
+  const first = await processQueue(
+    queueOptions(f, {
+      writeMemory: apply.seam,
+      beforeApply: (binding, current, item, index) => {
+        if (index === 1) throw new Error('injected-before-second-item')
+      },
+    }),
+  )
   assert.equal(first.deferred, 1)
   const interrupted = await jobOnDisk(f)
   assert.equal(interrupted.attempts, 1)
-  assert.deepEqual(interrupted.output.items.map((item) => item.preassignedId), ids, 'identities are byte-stable')
+  assert.deepEqual(
+    interrupted.output.items.map((item) => item.preassignedId),
+    ids,
+    'identities are byte-stable',
+  )
   assert.equal(interrupted.appliedItems.length, 1)
   assert.equal(interrupted.appliedItems[0].idempotencyKey, `${SESSION_ID}:${TO_SEQ}:0`)
 
@@ -770,11 +844,19 @@ test('a crash after the first item resumes with only the unfinished second item'
 
   const notes = await memoryNotes(f)
   assert.equal(notes.length, 2, 'no third note from the resumed item')
-  assert.deepEqual(notes.map((entry) => entry.note.data.id).sort(), [...ids].sort(), 'the same identities survive the resume')
+  assert.deepEqual(
+    notes.map((entry) => entry.note.data.id).sort(),
+    [...ids].sort(),
+    'the same identities survive the resume',
+  )
   assert.match(notes.map((entry) => entry.path).join('\n'), /ADR-1-/)
   assert.match(notes.map((entry) => entry.path).join('\n'), /ADR-2-/)
   const names = (await readdir(at(f.vault, DECISIONS))).filter((name) => name.endsWith('.md'))
-  assert.equal(names.filter((name) => name.startsWith('ADR-3-')).length, 0, 'no duplicate ADR number was minted')
+  assert.equal(
+    names.filter((name) => name.startsWith('ADR-3-')).length,
+    0,
+    'no duplicate ADR number was minted',
+  )
 })
 
 test('a crash after a note write but before the progress record replays its receipt', async (t) => {
@@ -783,11 +865,13 @@ test('a crash after a note write but before the progress record replays its rece
   const job = validatedJob(items)
   await writeJobAtomic(f.queueRoot, job)
 
-  const first = await processQueue(queueOptions(f, {
-    afterApply: (binding, current, item, index) => {
-      if (index === 1) throw new Error('injected-after-second-note')
-    },
-  }))
+  const first = await processQueue(
+    queueOptions(f, {
+      afterApply: (binding, current, item, index) => {
+        if (index === 1) throw new Error('injected-after-second-note')
+      },
+    }),
+  )
   assert.equal(first.deferred, 1)
   const interrupted = await jobOnDisk(f)
   assert.equal(interrupted.appliedItems.length, 1, 'the second item was written but not recorded')
@@ -796,15 +880,25 @@ test('a crash after a note write but before the progress record replays its rece
   const second = recordingApply(f)
   const resumed = await processQueue(queueOptions(f, { writeMemory: second.seam }))
   assert.equal(resumed.completed, 1)
-  assert.deepEqual(second.calls.map((entry) => entry.idempotencyKey), [`${SESSION_ID}:${TO_SEQ}:1`])
+  assert.deepEqual(
+    second.calls.map((entry) => entry.idempotencyKey),
+    [`${SESSION_ID}:${TO_SEQ}:1`],
+  )
 
   const notes = await memoryNotes(f)
   assert.equal(notes.length, 2, 'the replay created no third note')
   const log = await readVault(f, LOG)
   for (const item of job.output.items) {
-    assert.equal(occurrences(log, item.idempotencyKey), 1, `${item.idempotencyKey} appears exactly once in the log`)
+    assert.equal(
+      occurrences(log, item.idempotencyKey),
+      1,
+      `${item.idempotencyKey} appears exactly once in the log`,
+    )
   }
-  assert.equal((await readdir(at(f.vault, DECISIONS))).filter((name) => name.startsWith('ADR-3-')).length, 0)
+  assert.equal(
+    (await readdir(at(f.vault, DECISIONS))).filter((name) => name.startsWith('ADR-3-')).length,
+    0,
+  )
 })
 
 test('a fault after the result receipt but before the job deletion does not double-apply', async (t) => {
@@ -812,9 +906,13 @@ test('a fault after the result receipt but before the job deletion does not doub
   const job = validatedJob([itemFixture()])
   await writeJobAtomic(f.queueRoot, job)
 
-  const first = await processQueue(queueOptions(f, {
-    beforeComplete: () => { throw new Error('injected-before-complete') },
-  }))
+  const first = await processQueue(
+    queueOptions(f, {
+      beforeComplete: () => {
+        throw new Error('injected-before-complete')
+      },
+    }),
+  )
   assert.equal(first.deferred, 1)
   assert.notEqual(await jobOnDisk(f), null, 'the receipt exists but the job was not deleted')
   assert.equal((await readReceipts(f)).length, 1)
@@ -822,7 +920,11 @@ test('a fault after the result receipt but before the job deletion does not doub
   const second = await processQueue(queueOptions(f))
   assert.equal(second.completed, 1)
   assert.equal((await memoryNotes(f)).length, 1, 'the item replayed instead of being duplicated')
-  assert.equal((await readReceipts(f)).length, 1, 'the receipt is keyed by job, so it is upserted not appended')
+  assert.equal(
+    (await readReceipts(f)).length,
+    1,
+    'the receipt is keyed by job, so it is upserted not appended',
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -835,9 +937,15 @@ test('a working index is refreshed for each applied item', async (t) => {
   await writeJobAtomic(f.queueRoot, validatedJob(items))
   const refreshes = []
 
-  const summary = await processQueue(queueOptions(f, {
-    index: (binding) => ({ refresh: async () => { refreshes.push(binding.projectId) } }),
-  }))
+  const summary = await processQueue(
+    queueOptions(f, {
+      index: (binding) => ({
+        refresh: async () => {
+          refreshes.push(binding.projectId)
+        },
+      }),
+    }),
+  )
   assert.equal(summary.completed, 1)
   assert.deepEqual(refreshes, [PROJECT_ID, PROJECT_ID])
   assert.equal((await readReceipts(f)).at(-1).index, 'refreshed')
@@ -849,9 +957,15 @@ test('an index failure does not undo a successful vault transaction', async (t) 
   const items = job.output.items
   await writeJobAtomic(f.queueRoot, job)
 
-  const summary = await processQueue(queueOptions(f, {
-    index: () => ({ refresh: async () => { throw new Error('index-down') } }),
-  }))
+  const summary = await processQueue(
+    queueOptions(f, {
+      index: () => ({
+        refresh: async () => {
+          throw new Error('index-down')
+        },
+      }),
+    }),
+  )
   assert.equal(summary.completed, 1)
   const notes = await memoryNotes(f)
   assert.equal(notes.length, 1, 'the committed note stays')
@@ -868,10 +982,18 @@ test('a fault injected before the index update leaves the note committed', async
   await writeJobAtomic(f.queueRoot, job)
   const refreshes = []
 
-  const summary = await processQueue(queueOptions(f, {
-    index: () => ({ refresh: async () => { refreshes.push(1) } }),
-    beforeIndex: () => { throw new Error('injected-before-index') },
-  }))
+  const summary = await processQueue(
+    queueOptions(f, {
+      index: () => ({
+        refresh: async () => {
+          refreshes.push(1)
+        },
+      }),
+      beforeIndex: () => {
+        throw new Error('injected-before-index')
+      },
+    }),
+  )
   assert.equal(summary.completed, 1)
   assert.equal((await memoryNotes(f)).length, 1)
   assert.deepEqual(refreshes, [], 'the refresh never ran')
@@ -889,19 +1011,25 @@ test('a supersede whose old file changed mid-apply is not overwritten', async (t
   const item = itemFixture({ title: '新结论', supersedesId: old.id })
   await writeJobAtomic(f.queueRoot, validatedJob([item]))
 
-  const summary = await processQueue(queueOptions(f, {
-    afterScan: async ({ path }) => {
-      const absolute = at(f.vault, path)
-      const current = await readFile(absolute, 'utf8')
-      await writeFile(absolute, `${current}\n人工补充的一行。\n`)
-    },
-  }))
+  const summary = await processQueue(
+    queueOptions(f, {
+      afterScan: async ({ path }) => {
+        const absolute = at(f.vault, path)
+        const current = await readFile(absolute, 'utf8')
+        await writeFile(absolute, `${current}\n人工补充的一行。\n`)
+      },
+    }),
+  )
   assert.equal(summary.completed, 1)
 
   const after = await readFile(at(f.vault, old.path))
   assert.notEqual(sha256(after), sha256(before), 'the human edit is the revision on disk')
   assert.match(after.toString('utf8'), /人工补充的一行。/)
-  assert.doesNotMatch(after.toString('utf8'), /superseded_by: dec-/, 'the old note was not relinked')
+  assert.doesNotMatch(
+    after.toString('utf8'),
+    /superseded_by: dec-/,
+    'the old note was not relinked',
+  )
 
   const receipt = (await readReceipts(f)).at(-1)
   assert.equal(receipt.items[0].superseded, false)
@@ -947,7 +1075,10 @@ test('a legitimate supersede relinks the old note and never overwrites its body'
   const f = await fixture(t)
   const old = await seedDecision(f)
   const oldBytes = await readFile(at(f.vault, old.path))
-  await writeJobAtomic(f.queueRoot, validatedJob([itemFixture({ title: '新结论', supersedesId: old.id })]))
+  await writeJobAtomic(
+    f.queueRoot,
+    validatedJob([itemFixture({ title: '新结论', supersedesId: old.id })]),
+  )
 
   await processQueue(queueOptions(f))
   const receipt = (await readReceipts(f)).at(-1)
@@ -971,17 +1102,24 @@ test('a refused candidate is persisted beside the validated items and survives a
   const raw = JSON.stringify({
     items: [
       itemFixture({ title: '保留的结论' }),
-      itemFixture({ title: '被拒的结论', supersedesId: `Projects/other--deadbeef/Decisions/ADR-1.md` }),
+      itemFixture({
+        title: '被拒的结论',
+        supersedesId: `Projects/other--deadbeef/Decisions/ADR-1.md`,
+      }),
     ],
   })
   await writeJobAtomic(f.queueRoot, jobFixture())
   const llm = stubLlm(raw)
 
   // Stop right after the validated barrier: the output is durable, nothing applied.
-  const first = await processQueue(queueOptions(f, {
-    llm,
-    beforeApply: () => { throw new Error('injected-before-apply') },
-  }))
+  const first = await processQueue(
+    queueOptions(f, {
+      llm,
+      beforeApply: () => {
+        throw new Error('injected-before-apply')
+      },
+    }),
+  )
   assert.equal(first.deferred, 1)
   const interrupted = await jobOnDisk(f)
   assert.equal(interrupted.state, 'validated')
@@ -1007,9 +1145,11 @@ test('a refused candidate is persisted beside the validated items and survives a
 test('a refused candidate alone is a no-memory turn that still explains the drop', async (t) => {
   const f = await fixture(t)
   await writeJobAtomic(f.queueRoot, jobFixture())
-  const llm = stubLlm(JSON.stringify({
-    items: [itemFixture({ supersedesId: `Methods/跨项目方法.md` })],
-  }))
+  const llm = stubLlm(
+    JSON.stringify({
+      items: [itemFixture({ supersedesId: `Methods/跨项目方法.md` })],
+    }),
+  )
 
   const summary = await processQueue(queueOptions(f, { llm }))
   assert.equal(summary.completed, 1)
@@ -1030,9 +1170,12 @@ test('the receipt keeps the real refusal count while the listed reasons stay bou
     value: `Projects/other--deadbeef/Decisions/ADR-${index}.md`,
   }))
   const items = validatedJob([itemFixture()]).output.items
-  await writeJobAtomic(f.queueRoot, validatedJob([itemFixture()], {
-    output: { state: 'validated', raw: '{}', items, usage: null, refused },
-  }))
+  await writeJobAtomic(
+    f.queueRoot,
+    validatedJob([itemFixture()], {
+      output: { state: 'validated', raw: '{}', items, usage: null, refused },
+    }),
+  )
 
   await processQueue(queueOptions(f, { llm: undefined }))
   const receipt = (await readReceipts(f)).at(-1)
@@ -1046,20 +1189,29 @@ test('a process killed between the validated barrier and the audit still reports
   const raw = JSON.stringify({
     items: [
       itemFixture({ title: '保留的结论' }),
-      itemFixture({ title: '被拒的结论', supersedesId: `Projects/other--deadbeef/Decisions/ADR-1.md` }),
+      itemFixture({
+        title: '被拒的结论',
+        supersedesId: `Projects/other--deadbeef/Decisions/ADR-1.md`,
+      }),
     ],
   })
   await writeJobAtomic(f.queueRoot, jobFixture())
 
   const script = join(f.root, 't16-crash-child.mjs')
   await writeFile(script, T16_CRASH_CHILD, 'utf8')
-  const killed = spawnSync(process.execPath, [
-    script, f.queueRoot, f.dataRoot, f.home, JSON.stringify(f.binding), raw,
-  ], {
-    encoding: 'utf8',
-    env: { ...process.env, T16_CAPTURE_URL: new URL('../lib/capture.js', import.meta.url).href },
-  })
-  assert.equal(killed.signal, 'SIGKILL', `the child must die at the audit boundary, stderr: ${killed.stderr}`)
+  const killed = spawnSync(
+    process.execPath,
+    [script, f.queueRoot, f.dataRoot, f.home, JSON.stringify(f.binding), raw],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, T16_CAPTURE_URL: new URL('../lib/capture.js', import.meta.url).href },
+    },
+  )
+  assert.equal(
+    killed.signal,
+    'SIGKILL',
+    `the child must die at the audit boundary, stderr: ${killed.stderr}`,
+  )
 
   // The durable state after the kill: items are on disk, the audit is missing.
   const orphan = await jobOnDisk(f)
@@ -1144,22 +1296,30 @@ test('an output whose audit cannot be re-derived fails the job instead of comple
   const raw = JSON.stringify({
     items: [
       itemFixture({ title: '保留的结论' }),
-      itemFixture({ title: '被拒的结论', supersedesId: `Projects/other--deadbeef/Decisions/ADR-1.md` }),
+      itemFixture({
+        title: '被拒的结论',
+        supersedesId: `Projects/other--deadbeef/Decisions/ADR-1.md`,
+      }),
     ],
   })
   const items = withIdentity([itemFixture({ title: '保留的结论' })])
-  await writeJobAtomic(f.queueRoot, jobFixture({
-    state: 'validated',
-    output: { state: 'validated', raw, items, usage: null, refused: null },
-  }))
+  await writeJobAtomic(
+    f.queueRoot,
+    jobFixture({
+      state: 'validated',
+      output: { state: 'validated', raw, items, usage: null, refused: null },
+    }),
+  )
 
   // `maxItems: 1` makes the persisted output no longer validate, so the drop set
   // cannot be re-derived. Completing the job would delete the only copy of the
   // audit, so it is failed (bounded and visible, R43b) and kept instead.
-  const summary = await processQueue(queueOptions(f, {
-    llm: undefined,
-    config: baseConfig({ distill: { maxItems: 1 } }),
-  }))
+  const summary = await processQueue(
+    queueOptions(f, {
+      llm: undefined,
+      config: baseConfig({ distill: { maxItems: 1 } }),
+    }),
+  )
   assert.equal(summary.completed, 0)
   assert.equal(summary.deferred, 1)
   const job = await jobOnDisk(f)
@@ -1198,8 +1358,28 @@ test('the capture seam hands a freshly captured turn to the worker', async (t) =
   })
   const events = [
     { seq: 0, type: 'turn/start', data: { turn: 1 } },
-    { seq: 1, type: 'user/message', data: { role: 'user', content: [{ type: 'text', text: '把调度器改成可插拔后端' }], source: { kind: 'user' } } },
-    { seq: 2, type: 'assistant/message', data: { turn: 1, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: '已实现' }], source: { kind: 'model' } } } },
+    {
+      seq: 1,
+      type: 'user/message',
+      data: {
+        role: 'user',
+        content: [{ type: 'text', text: '把调度器改成可插拔后端' }],
+        source: { kind: 'user' },
+      },
+    },
+    {
+      seq: 2,
+      type: 'assistant/message',
+      data: {
+        turn: 1,
+        step: 1,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: '已实现' }],
+          source: { kind: 'model' },
+        },
+      },
+    },
     { seq: 3, type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
   ]
   const session = {
@@ -1224,7 +1404,11 @@ test('enqueueTurn produces nothing when autoCapture is off', async (t) => {
   const f = await fixture(t)
   const events = [
     { seq: 0, type: 'turn/start', data: { turn: 1 } },
-    { seq: 1, type: 'user/message', data: { role: 'user', content: [{ type: 'text', text: '你好' }], source: { kind: 'user' } } },
+    {
+      seq: 1,
+      type: 'user/message',
+      data: { role: 'user', content: [{ type: 'text', text: '你好' }], source: { kind: 'user' } },
+    },
     { seq: 2, type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
   ]
   const session = {
@@ -1256,7 +1440,11 @@ test('an explicit queueRoot and dataRoot are the only filesystem targets; DSH_HO
   await writeJobAtomic(f.queueRoot, validatedJob([itemFixture()]))
   const summary = await processQueue(queueOptions(f))
   assert.equal(summary.completed, 1)
-  assert.equal(existsSync(join(fakeHome, 'data')), false, 'the production data root was never derived')
+  assert.equal(
+    existsSync(join(fakeHome, 'data')),
+    false,
+    'the production data root was never derived',
+  )
   assert.equal(existsSync(join(fakeHome, 'skills')), false)
   // The vault is a temporary directory, never the default `~/Documents/dsh-memory`.
   assert.ok(f.vault.startsWith(f.root))
@@ -1270,7 +1458,9 @@ test('registerHooks starts capture and the worker from one queue root, end to en
   const config = baseConfig({ captureIdleMs: 1000 })
   const disposers = registerHooks(ctx, {
     resolveBinding: async () => f.binding,
-    index: async () => { throw new Error('the index is not part of this case') },
+    index: async () => {
+      throw new Error('the index is not part of this case')
+    },
     buildBrief: async () => null,
     config,
     queueRoot: f.queueRoot,
@@ -1278,14 +1468,36 @@ test('registerHooks starts capture and the worker from one queue root, end to en
     home: f.home,
     resolveJobBinding: () => f.binding,
   })
-  t.after(() => { for (const dispose of disposers) dispose() })
+  t.after(() => {
+    for (const dispose of disposers) dispose()
+  })
 
   // The worker effect resolved, so recovery ran and the debounce timer is armed.
   await ctx.settled()
   const events = [
     { seq: 0, type: 'turn/start', data: { turn: 1 } },
-    { seq: 1, type: 'user/message', data: { role: 'user', content: [{ type: 'text', text: '把调度器改成可插拔后端' }], source: { kind: 'user' } } },
-    { seq: 2, type: 'assistant/message', data: { turn: 1, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: '已实现' }], source: { kind: 'model' } } } },
+    {
+      seq: 1,
+      type: 'user/message',
+      data: {
+        role: 'user',
+        content: [{ type: 'text', text: '把调度器改成可插拔后端' }],
+        source: { kind: 'user' },
+      },
+    },
+    {
+      seq: 2,
+      type: 'assistant/message',
+      data: {
+        turn: 1,
+        step: 1,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: '已实现' }],
+          source: { kind: 'model' },
+        },
+      },
+    },
     { seq: 3, type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
   ]
   const session = {
@@ -1295,7 +1507,10 @@ test('registerHooks starts capture and the worker from one queue root, end to en
   }
   ctx.handlers.get('session/event')(session, events[3])
 
-  const notes = await waitFor(() => memoryNotes(f), (found) => found.length === 1)
+  const notes = await waitFor(
+    () => memoryNotes(f),
+    (found) => found.length === 1,
+  )
   assert.equal(notes.length, 1, 'the debounced worker pass applied the captured turn')
   assert.equal(llm.calls.length, 1)
   assert.equal(await jobOnDisk(f), null)
@@ -1344,12 +1559,15 @@ test('without a binding seam the worker resolves the project from the vault regi
   const f = await fixture(t)
   const otherProject = '7f3b19c2-4d05-4a1e-9c77-000000000002'
   await writeJobAtomic(f.queueRoot, validatedJob([itemFixture()]))
-  await writeJobAtomic(f.queueRoot, validatedJob([itemFixture()], {
-    jobId: 'job-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-    projectId: otherProject,
-    createdAt: '2026-09-23T00:00:01.000Z',
-    updatedAt: '2026-09-23T00:00:01.000Z',
-  }))
+  await writeJobAtomic(
+    f.queueRoot,
+    validatedJob([itemFixture()], {
+      jobId: 'job-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      projectId: otherProject,
+      createdAt: '2026-09-23T00:00:01.000Z',
+      updatedAt: '2026-09-23T00:00:01.000Z',
+    }),
+  )
 
   // No `resolveBinding`: this is exactly the production path, where the worker has
   // only the job's persisted project id and the configured vault.
@@ -1377,7 +1595,13 @@ test('without a binding seam the worker resolves the project from the vault regi
 test('a cloud-managed vault is refused by the worker instead of written into', async (t) => {
   const f = await fixture(t)
   const cloudHome = join(f.root, 'cloud-home')
-  const cloudVault = join(cloudHome, 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'dsh-memory')
+  const cloudVault = join(
+    cloudHome,
+    'Library',
+    'Mobile Documents',
+    'com~apple~CloudDocs',
+    'dsh-memory',
+  )
   await mkdir(cloudVault, { recursive: true })
   await writeJobAtomic(f.queueRoot, validatedJob([itemFixture()]))
 
@@ -1518,7 +1742,11 @@ test('a pass that outlives the plugin tree defers the rest of the queue instead 
   llm.release()
   const summary = await pass
 
-  assert.equal(llm.calls.length, 1, 'the settling pass did not start a second job with a dead handle')
+  assert.equal(
+    llm.calls.length,
+    1,
+    'the settling pass did not start a second job with a dead handle',
+  )
   assert.equal(summary.completed, 1, 'the job that was already in flight still completed')
   assert.deepEqual(
     summary.results.filter((entry) => entry.status === 'deferred').map((entry) => entry.reason),
@@ -1529,7 +1757,11 @@ test('a pass that outlives the plugin tree defers the rest of the queue instead 
   assert.equal(remaining.length, 1, 'the second job is kept for the next process')
   assert.equal(remaining[0].jobId, secondJob)
   assert.equal(remaining[0].attempts, 0, 'a deferred job must not consume an attempt')
-  assert.equal(remaining[0].lastError, undefined, 'and it must not record a failure the model never produced')
+  assert.equal(
+    remaining[0].lastError,
+    undefined,
+    'and it must not record a failure the model never produced',
+  )
   assert.equal(remaining[0].state, 'pending')
   assert.equal((await readReceipts(f)).length, 1)
   assert.equal((await memoryNotes(f)).length, 1)

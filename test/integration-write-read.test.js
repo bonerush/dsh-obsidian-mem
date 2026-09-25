@@ -46,7 +46,13 @@ const DATE = (() => {
 
 function gitEnvironment() {
   const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
-  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY']) {
+  for (const key of [
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_COMMON_DIR',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+  ]) {
     delete env[key]
   }
   return env
@@ -54,7 +60,10 @@ function gitEnvironment() {
 
 async function initRepo(dir) {
   await mkdir(dir, { recursive: true })
-  await execFileAsync('git', ['-c', 'init.defaultBranch=main', 'init', '-q'], { cwd: dir, env: gitEnvironment() })
+  await execFileAsync('git', ['-c', 'init.defaultBranch=main', 'init', '-q'], {
+    cwd: dir,
+    env: gitEnvironment(),
+  })
 }
 
 /** Vault-relative path → absolute path inside the throwaway vault. */
@@ -74,7 +83,13 @@ async function hashTree(root) {
       const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`
       const absolute = join(directory, entry.name)
       if (entry.isDirectory()) await walk(absolute, relative)
-      else if (entry.isFile()) found.set(relative, createHash('sha256').update(await readFile(absolute)).digest('hex'))
+      else if (entry.isFile())
+        found.set(
+          relative,
+          createHash('sha256')
+            .update(await readFile(absolute))
+            .digest('hex'),
+        )
     }
   }
   await walk(root, '')
@@ -92,10 +107,12 @@ async function hashTree(root) {
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t10-'))
   const dataRoot = await mkdtemp(join(tmpdir(), 'obsidian-mem-t10-data-'))
-  t.after(() => Promise.all([
-    rm(root, { recursive: true, force: true, maxRetries: 4 }),
-    rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }),
-  ]))
+  t.after(() =>
+    Promise.all([
+      rm(root, { recursive: true, force: true, maxRetries: 4 }),
+      rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }),
+    ]),
+  )
   const home = join(root, 'home')
   const repo = join(root, 'repo')
   const vault = join(root, 'vault')
@@ -113,7 +130,9 @@ async function bareBed(t) {
   ctx.provide('systemPrompt', { tools: () => () => {} })
   const fork = ctx.plugin(toolsPlugin)
   await fork
-  t.after(async () => { await fork.dispose().catch(() => {}) })
+  t.after(async () => {
+    await fork.dispose().catch(() => {})
+  })
   return ctx
 }
 
@@ -143,13 +162,19 @@ function call(ctx, name, args, { cwd, signal } = {}) {
     name,
     arguments: args,
     signal: signal ?? new AbortController().signal,
-    agent: { session: { header: { id: 'sess-integration', ...(cwd === undefined ? {} : { cwd }) } } },
+    agent: {
+      session: { header: { id: 'sess-integration', ...(cwd === undefined ? {} : { cwd }) } },
+    },
   })
 }
 
 /** Assert a call succeeded and hand back its canonical value. */
 function value(result, label) {
-  assert.equal(result.isError, false, `${label}: ${result.error?.message ?? JSON.stringify(result)}`)
+  assert.equal(
+    result.isError,
+    false,
+    `${label}: ${result.error?.message ?? JSON.stringify(result)}`,
+  )
   return result.value
 }
 
@@ -161,19 +186,33 @@ test('mem_write → mem_search → mem_read round-trips one note id', async (t) 
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
 
-  const written = value(await call(ctx, 'mem_write', {
-    type: 'doc',
-    title: '调度器改为可插拔后端',
-    body: '采用可插拔调度器方案，理由与备选方案见正文。',
-  }, { cwd: f.repo }), 'mem_write')
+  const written = value(
+    await call(
+      ctx,
+      'mem_write',
+      {
+        type: 'doc',
+        title: '调度器改为可插拔后端',
+        body: '采用可插拔调度器方案，理由与备选方案见正文。',
+      },
+      { cwd: f.repo },
+    ),
+    'mem_write',
+  )
 
-  assert.match(written.id, /^doc-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+  assert.match(
+    written.id,
+    /^doc-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  )
   assert.match(written.path, /^Projects\/[^/]+--[0-9a-f]{8}\/Docs\//)
   assert.equal(written.receipt.action, 'write')
   assert.equal(written.receipt.result.status, 'applied')
   assert.equal(written.receipt.afterHashes[written.path].length, 64)
 
-  const found = value(await call(ctx, 'mem_search', { query: '调度器' }, { cwd: f.repo }), 'mem_search')
+  const found = value(
+    await call(ctx, 'mem_search', { query: '调度器' }, { cwd: f.repo }),
+    'mem_search',
+  )
   const hit = found.hits.find((candidate) => candidate.id === written.id)
   assert.ok(hit, `mem_search must return the written id: ${JSON.stringify(found.hits)}`)
   assert.equal(hit.path, written.path)
@@ -183,7 +222,10 @@ test('mem_write → mem_search → mem_read round-trips one note id', async (t) 
   assert.ok(hit.scoreSignals.length > 0, 'a hit must explain its ranking')
   assert.match(hit.snippet, /调度器/)
 
-  const read = value(await call(ctx, 'mem_read', { path: written.path }, { cwd: f.repo }), 'mem_read')
+  const read = value(
+    await call(ctx, 'mem_read', { path: written.path }, { cwd: f.repo }),
+    'mem_read',
+  )
   assert.equal(read.id, written.id)
   assert.equal(read.path, written.path)
   assert.equal(read.hash, written.receipt.afterHashes[written.path])
@@ -200,7 +242,10 @@ test('mem_write → mem_search → mem_read round-trips one note id', async (t) 
   const badType = await call(ctx, 'mem_search', { query: '调度器', type: 'nope' }, { cwd: f.repo })
   assert.equal(badType.isError, true)
   assert.match(badType.error.message, /type must be one of/)
-  const aliased = value(await call(ctx, 'mem_search', { query: '调度器', type: 'invariant' }, { cwd: f.repo }), 'aliased type')
+  const aliased = value(
+    await call(ctx, 'mem_search', { query: '调度器', type: 'invariant' }, { cwd: f.repo }),
+    'aliased type',
+  )
   assert.deepEqual(aliased.hits, [], 'a convention filter must not return the doc note')
 })
 
@@ -208,23 +253,46 @@ test('a note written after the first scan is searchable in the same session', as
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
 
-  const before = value(await call(ctx, 'mem_search', { query: '索引未刷新' }, { cwd: f.repo }), 'first search')
+  const before = value(
+    await call(ctx, 'mem_search', { query: '索引未刷新' }, { cwd: f.repo }),
+    'first search',
+  )
   assert.deepEqual(before.hits, [], 'the index must be ready and empty before the write')
 
-  value(await call(ctx, 'mem_write', {
-    type: 'gotcha',
-    title: '写后必须刷新索引',
-    body: '索引未刷新时，同一会话搜不到刚写入的笔记。',
-  }, { cwd: f.repo }), 'mem_write')
+  value(
+    await call(
+      ctx,
+      'mem_write',
+      {
+        type: 'gotcha',
+        title: '写后必须刷新索引',
+        body: '索引未刷新时，同一会话搜不到刚写入的笔记。',
+      },
+      { cwd: f.repo },
+    ),
+    'mem_write',
+  )
 
-  const after = value(await call(ctx, 'mem_search', { query: '索引未刷新' }, { cwd: f.repo }), 'second search')
-  assert.equal(after.hits.some((h) => h.title === '写后必须刷新索引'), true, JSON.stringify(after.hits))
+  const after = value(
+    await call(ctx, 'mem_search', { query: '索引未刷新' }, { cwd: f.repo }),
+    'second search',
+  )
+  assert.equal(
+    after.hits.some((h) => h.title === '写后必须刷新索引'),
+    true,
+    JSON.stringify(after.hits),
+  )
 })
 
 test('a repeated idempotencyKey replays the original receipt instead of writing twice', async (t) => {
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
-  const args = { type: 'gotcha', title: '重试幂等', body: '同一 key 只写一次。', idempotencyKey: 'k-replay-1' }
+  const args = {
+    type: 'gotcha',
+    title: '重试幂等',
+    body: '同一 key 只写一次。',
+    idempotencyKey: 'k-replay-1',
+  }
 
   const first = value(await call(ctx, 'mem_write', args, { cwd: f.repo }), 'first write')
   const replay = value(await call(ctx, 'mem_write', args, { cwd: f.repo }), 'replay write')
@@ -233,28 +301,60 @@ test('a repeated idempotencyKey replays the original receipt instead of writing 
   assert.equal(replay.receipt.txId, first.receipt.txId)
 
   const notes = await readdir(at(f.vault, `${f.binding.relativeDir}/Pitfalls`))
-  assert.deepEqual(notes.filter((name) => name.endsWith('.md') && name !== 'index.md'), ['重试幂等.md'])
+  assert.deepEqual(
+    notes.filter((name) => name.endsWith('.md') && name !== 'index.md'),
+    ['重试幂等.md'],
+  )
 })
 
 test('mem_write updates a known id and refuses an unknown one', async (t) => {
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
-  const created = value(await call(ctx, 'mem_write', {
-    type: 'decision', title: '调度器改为可插拔后端', body: '初始正文。',
-  }, { cwd: f.repo }), 'create')
+  const created = value(
+    await call(
+      ctx,
+      'mem_write',
+      {
+        type: 'decision',
+        title: '调度器改为可插拔后端',
+        body: '初始正文。',
+      },
+      { cwd: f.repo },
+    ),
+    'create',
+  )
 
-  const updated = value(await call(ctx, 'mem_write', {
-    id: created.id, type: 'decision', title: '调度器改为可插拔后端', body: '改后的正文。',
-  }, { cwd: f.repo }), 'update')
+  const updated = value(
+    await call(
+      ctx,
+      'mem_write',
+      {
+        id: created.id,
+        type: 'decision',
+        title: '调度器改为可插拔后端',
+        body: '改后的正文。',
+      },
+      { cwd: f.repo },
+    ),
+    'update',
+  )
   assert.equal(updated.id, created.id)
   assert.equal(updated.path, created.path)
 
   const read = value(await call(ctx, 'mem_read', { path: created.path }, { cwd: f.repo }), 'read')
   assert.match(read.body, /改后的正文/)
 
-  const missing = await call(ctx, 'mem_write', {
-    id: 'dec-00000000-0000-4000-8000-000000000000', type: 'decision', title: '不存在', body: '正文',
-  }, { cwd: f.repo })
+  const missing = await call(
+    ctx,
+    'mem_write',
+    {
+      id: 'dec-00000000-0000-4000-8000-000000000000',
+      type: 'decision',
+      title: '不存在',
+      body: '正文',
+    },
+    { cwd: f.repo },
+  )
   assert.equal(missing.isError, true)
   assert.match(missing.error.message, /carries id/)
 })
@@ -262,7 +362,12 @@ test('mem_write updates a known id and refuses an unknown one', async (t) => {
 test('mem_write refuses an unknown type through the real memory layer', async (t) => {
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
-  const result = await call(ctx, 'mem_write', { type: 'docs', title: '标题', body: '正文' }, { cwd: f.repo })
+  const result = await call(
+    ctx,
+    'mem_write',
+    { type: 'docs', title: '标题', body: '正文' },
+    { cwd: f.repo },
+  )
   assert.equal(result.isError, true)
   assert.match(result.error.message, /type must be one of/)
 })
@@ -296,10 +401,12 @@ test('mem_read keeps every path inside the vault jail', async (t) => {
 test('a cloud-managed vault root refuses every read path without touching the vault', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t10-cloud-'))
   const dataRoot = await mkdtemp(join(tmpdir(), 'obsidian-mem-t10-cloud-data-'))
-  t.after(() => Promise.all([
-    rm(root, { recursive: true, force: true, maxRetries: 4 }),
-    rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }),
-  ]))
+  t.after(() =>
+    Promise.all([
+      rm(root, { recursive: true, force: true, maxRetries: 4 }),
+      rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }),
+    ]),
+  )
   const home = join(root, 'home')
   const repo = join(root, 'repo')
   // iCloud's documented root: `~/Library/Mobile Documents/`. A dataless file
@@ -308,7 +415,8 @@ test('a cloud-managed vault root refuses every read path without touching the va
   const vault = join(home, 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'dsh-memory')
   await mkdir(vault, { recursive: true })
   await initRepo(repo)
-  const note = '---\nid: "doc-11111111-1111-4111-8111-111111111111"\ntype: "doc"\ntitle: "云端笔记"\n---\n云端正文\n'
+  const note =
+    '---\nid: "doc-11111111-1111-4111-8111-111111111111"\ntype: "doc"\ntitle: "云端笔记"\n---\n云端正文\n'
   await writeFile(join(vault, 'note.md'), note)
   const { ctx } = await memoryBed(t, { home, repo, vault, dataRoot })
 
@@ -323,7 +431,11 @@ test('a cloud-managed vault root refuses every read path without touching the va
   ]
   for (const [name, args] of cases) {
     const result = await call(ctx, name, args, { cwd: repo })
-    assert.equal(result.isError, true, `${name} ${JSON.stringify(args)} must refuse a cloud-managed vault`)
+    assert.equal(
+      result.isError,
+      true,
+      `${name} ${JSON.stringify(args)} must refuse a cloud-managed vault`,
+    )
     assert.match(result.error.message, /cloud-managed/, `${name}: ${result.error.message}`)
   }
   // Nothing was opened, scanned, locked or written: no index directory, no lock,
@@ -346,10 +458,18 @@ test('an unbound working directory refuses project scope and writes but still re
   assert.equal(search.isError, true)
   assert.match(search.error.message, /needs a bound project/)
 
-  const global = value(await call(ctx, 'mem_search', { query: '调度器', scope: 'global' }, { cwd: other }), 'global search')
+  const global = value(
+    await call(ctx, 'mem_search', { query: '调度器', scope: 'global' }, { cwd: other }),
+    'global search',
+  )
   assert.deepEqual(global.hits, [])
 
-  const write = await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文' }, { cwd: other })
+  const write = await call(
+    ctx,
+    'mem_write',
+    { type: 'doc', title: '标题', body: '正文' },
+    { cwd: other },
+  )
   assert.equal(write.isError, true)
   assert.match(write.error.message, /bound project/)
 })
@@ -357,7 +477,11 @@ test('an unbound working directory refuses project scope and writes but still re
 test('mem_log appends exactly one idempotent day-log block', async (t) => {
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
-  const args = { text: '本轮修好了索引刷新。', session: '20260923-120000-abcd', idempotencyKey: 'log-key-1' }
+  const args = {
+    text: '本轮修好了索引刷新。',
+    session: '20260923-120000-abcd',
+    idempotencyKey: 'log-key-1',
+  }
 
   const first = value(await call(ctx, 'mem_log', args, { cwd: f.repo }), 'first log')
   const replay = value(await call(ctx, 'mem_log', args, { cwd: f.repo }), 'replayed log')
@@ -373,9 +497,20 @@ test('mem_log appends exactly one idempotent day-log block', async (t) => {
 test('mem_log section=hot writes the controlled 进行中 zone, not a day log', async (t) => {
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
-  const result = value(await call(ctx, 'mem_log', {
-    text: '正在实现六个工具。', session: 'sess-hot', section: 'hot', idempotencyKey: 'hot-key-1',
-  }, { cwd: f.repo }), 'hot log')
+  const result = value(
+    await call(
+      ctx,
+      'mem_log',
+      {
+        text: '正在实现六个工具。',
+        session: 'sess-hot',
+        section: 'hot',
+        idempotencyKey: 'hot-key-1',
+      },
+      { cwd: f.repo },
+    ),
+    'hot log',
+  )
   assert.equal(result.action, 'hot')
 
   const hot = await readFile(at(f.vault, `${f.binding.relativeDir}/_meta/hot.md`), 'utf8')
@@ -388,7 +523,15 @@ test('mem_log section=hot writes the controlled 进行中 zone, not a day log', 
 test('mem_brief returns the real budgeted brief through the tool runtime', async (t) => {
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
-  value(await call(ctx, 'mem_log', { text: '简报必须出现这一条。', session: 'sess-brief', section: 'hot' }, { cwd: f.repo }), 'hot log')
+  value(
+    await call(
+      ctx,
+      'mem_log',
+      { text: '简报必须出现这一条。', session: 'sess-brief', section: 'hot' },
+      { cwd: f.repo },
+    ),
+    'hot log',
+  )
   const brief = value(await call(ctx, 'mem_brief', {}, { cwd: f.repo }), 'mem_brief')
 
   // Task 11 binds `mem_brief` to the same `buildBrief` the pre-step injection
@@ -409,9 +552,15 @@ test('mem_admin exposes index status, the project list and bind(show)', async (t
   const f = await fixture(t)
   const { ctx, services } = await memoryBed(t, f)
 
-  const projects = value(await call(ctx, 'mem_admin', { action: 'projects' }, { cwd: f.repo }), 'projects')
+  const projects = value(
+    await call(ctx, 'mem_admin', { action: 'projects' }, { cwd: f.repo }),
+    'projects',
+  )
   assert.equal(projects.action, 'projects')
-  assert.deepEqual(projects.result.projects.map((row) => row.projectId), [f.binding.projectId])
+  assert.deepEqual(
+    projects.result.projects.map((row) => row.projectId),
+    [f.binding.projectId],
+  )
 
   const status = value(await call(ctx, 'mem_admin', { action: 'index' }, { cwd: f.repo }), 'index')
   assert.equal(status.action, 'index')
@@ -423,7 +572,10 @@ test('mem_admin exposes index status, the project list and bind(show)', async (t
   assert.equal(handle.boundProjectId, f.binding.projectId)
   assert.equal(handle.status().boundProjectId, f.binding.projectId)
 
-  const rebuilt = value(await call(ctx, 'mem_admin', { action: 'index', rebuild: true }, { cwd: f.repo }), 'index rebuild')
+  const rebuilt = value(
+    await call(ctx, 'mem_admin', { action: 'index', rebuild: true }, { cwd: f.repo }),
+    'index rebuild',
+  )
   assert.equal(rebuilt.result.rebuilt, true)
   assert.equal(rebuilt.result.ready, true)
 
@@ -447,12 +599,18 @@ test('mem_admin(lint) stays read-only by default and reports real vault facts', 
   assert.equal(report.result.report.status, 'none')
   assert.equal(report.result.index.compared, true)
   // The plugin's own receipts log and registry are permanently excluded.
-  assert.equal(report.result.findings.some((finding) => finding.path === '_meta/log.md'), false)
+  assert.equal(
+    report.result.findings.some((finding) => finding.path === '_meta/log.md'),
+    false,
+  )
   assert.ok(report.result.safetyExclusions.length > 0)
   // The dated report note is written only when the caller asks for it.
   await assert.rejects(readFile(at(f.vault, `_meta/Lint Report ${DATE}.md`)), { code: 'ENOENT' })
 
-  const written = value(await call(ctx, 'mem_admin', { action: 'lint', report: true }, { cwd: f.repo }), 'lint report')
+  const written = value(
+    await call(ctx, 'mem_admin', { action: 'lint', report: true }, { cwd: f.repo }),
+    'lint report',
+  )
   assert.equal(written.result.report.status, 'written')
   const text = await readFile(at(f.vault, written.result.report.path), 'utf8')
   assert.match(text, /<!-- obsidian-mem:generated begin sha256:[0-9a-f]{64} -->/)
@@ -472,14 +630,25 @@ test('mem_admin(lint, report=true) writes only the report; pruning is its own re
   await utimes(join(snapshot, '0__note.md'), longAgo, longAgo)
 
   const before = await hashTree(f.vault)
-  const reported = value(await call(ctx, 'mem_admin', { action: 'lint', report: true }, { cwd: f.repo }), 'lint report')
+  const reported = value(
+    await call(ctx, 'mem_admin', { action: 'lint', report: true }, { cwd: f.repo }),
+    'lint report',
+  )
   const after = await hashTree(f.vault)
-  const changed = [...new Set([...before.keys(), ...after.keys()])]
-    .filter((path) => before.get(path) !== after.get(path))
-  assert.deepEqual(changed, [reported.result.report.path], 'a report changes exactly the report note')
+  const changed = [...new Set([...before.keys(), ...after.keys()])].filter(
+    (path) => before.get(path) !== after.get(path),
+  )
+  assert.deepEqual(
+    changed,
+    [reported.result.report.path],
+    'a report changes exactly the report note',
+  )
   assert.equal(existsSync(snapshot), true, 'a report must not prune history')
 
-  const pruned = value(await call(ctx, 'mem_admin', { action: 'lint', prune: true }, { cwd: f.repo }), 'lint prune')
+  const pruned = value(
+    await call(ctx, 'mem_admin', { action: 'lint', prune: true }, { cwd: f.repo }),
+    'lint prune',
+  )
   assert.deepEqual(pruned.result.history.pruned, ['tx-old'], 'the prune is what deletes history')
   assert.equal(existsSync(snapshot), false)
 
@@ -492,12 +661,25 @@ test('mem_admin(lint, report=true) writes only the report; pruning is its own re
 test('mem_admin(promote) creates a Methods note and leaves the source untouched', async (t) => {
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
-  const source = value(await call(ctx, 'mem_write', {
-    type: 'convention', title: '项目内约定', body: '只在本项目成立。\n',
-  }, { cwd: f.repo }), 'write')
+  const source = value(
+    await call(
+      ctx,
+      'mem_write',
+      {
+        type: 'convention',
+        title: '项目内约定',
+        body: '只在本项目成立。\n',
+      },
+      { cwd: f.repo },
+    ),
+    'write',
+  )
 
   const before = await readFile(at(f.vault, source.path))
-  const promoted = value(await call(ctx, 'mem_admin', { action: 'promote', path: source.path }, { cwd: f.repo }), 'promote')
+  const promoted = value(
+    await call(ctx, 'mem_admin', { action: 'promote', path: source.path }, { cwd: f.repo }),
+    'promote',
+  )
   assert.equal(promoted.action, 'promote')
   assert.equal(promoted.result.moved, false)
   assert.equal(promoted.result.source, source.path)
@@ -507,7 +689,12 @@ test('mem_admin(promote) creates a Methods note and leaves the source untouched'
   assert.deepEqual(await readFile(at(f.vault, source.path)), before)
 
   // A source outside the vault is refused by the vault jail, not by a guess.
-  const refused = await call(ctx, 'mem_admin', { action: 'promote', path: '../../outside.md' }, { cwd: f.repo })
+  const refused = await call(
+    ctx,
+    'mem_admin',
+    { action: 'promote', path: '../../outside.md' },
+    { cwd: f.repo },
+  )
   assert.equal(refused.isError, true)
 })
 
@@ -520,7 +707,15 @@ test('mem_admin(jobs) lists the queue and reports a retry refusal honestly', asy
   assert.deepEqual(listed.result.jobs, [])
   assert.equal(listed.result.failed, 0)
 
-  const missing = value(await call(ctx, 'mem_admin', { action: 'jobs', jobId: 'job-404', retry: true }, { cwd: f.repo }), 'retry')
+  const missing = value(
+    await call(
+      ctx,
+      'mem_admin',
+      { action: 'jobs', jobId: 'job-404', retry: true },
+      { cwd: f.repo },
+    ),
+    'retry',
+  )
   assert.equal(missing.result.status, 'refused')
   assert.match(missing.result.message, /job-404/)
 
@@ -533,13 +728,19 @@ test('mem_admin(bind) modes report what they did, or why they refused', async (t
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
 
-  const shown = value(await call(ctx, 'mem_admin', { action: 'bind' }, { cwd: f.repo }), 'bind show')
+  const shown = value(
+    await call(ctx, 'mem_admin', { action: 'bind' }, { cwd: f.repo }),
+    'bind show',
+  )
   assert.equal(shown.result.mode, 'show')
   assert.equal(shown.result.status, 'shown')
   assert.equal(shown.result.resolution.kind, 'bound')
 
   // `retain` with no origin remote has nothing to confirm.
-  const refused = value(await call(ctx, 'mem_admin', { action: 'bind', mode: 'retain' }, { cwd: f.repo }), 'bind retain')
+  const refused = value(
+    await call(ctx, 'mem_admin', { action: 'bind', mode: 'retain' }, { cwd: f.repo }),
+    'bind retain',
+  )
   assert.equal(refused.result.mode, 'retain')
   assert.equal(refused.result.status, 'refused')
   assert.equal(refused.result.resolution.kind, 'conflict')
@@ -548,7 +749,10 @@ test('mem_admin(bind) modes report what they did, or why they refused', async (t
 
   // `fork` separates this worktree's identity without touching the old project.
   const before = await readFile(at(f.vault, `${f.binding.relativeDir}/index.md`), 'utf8')
-  const forked = value(await call(ctx, 'mem_admin', { action: 'bind', mode: 'fork' }, { cwd: f.repo }), 'bind fork')
+  const forked = value(
+    await call(ctx, 'mem_admin', { action: 'bind', mode: 'fork' }, { cwd: f.repo }),
+    'bind fork',
+  )
   assert.equal(forked.result.mode, 'fork')
   assert.equal(forked.result.status, 'forked')
   assert.equal(forked.result.previousProjectId, f.binding.projectId)
@@ -582,17 +786,29 @@ test('apply registers exactly the six tools, and nothing at all when enabled is 
   })
 
   apply(ctx, { vaultPath: f.vault })
-  assert.deepEqual(ctx.tools.schemas().map((schema) => schema.name).sort(), [
-    'mem_admin', 'mem_brief', 'mem_log', 'mem_read', 'mem_search', 'mem_write',
-  ])
+  assert.deepEqual(
+    ctx.tools
+      .schemas()
+      .map((schema) => schema.name)
+      .sort(),
+    ['mem_admin', 'mem_brief', 'mem_log', 'mem_read', 'mem_search', 'mem_write'],
+  )
 
   const installed = join(dshHome, 'skills', 'obsidian-mem', 'SKILL.md')
   const installedManifest = join(dshHome, 'skills', 'obsidian-mem', '.obsidian-mem-manifest.json')
   for (let attempt = 0; attempt < 400 && !existsSync(installedManifest); attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
-  assert.equal(existsSync(installed), true, 'the packaged skill is installed into the isolated DSH home')
-  assert.equal(existsSync(installedManifest), true, 'and the sync finished before the fixture was torn down')
+  assert.equal(
+    existsSync(installed),
+    true,
+    'the packaged skill is installed into the isolated DSH home',
+  )
+  assert.equal(
+    existsSync(installedManifest),
+    true,
+    'and the sync finished before the fixture was torn down',
+  )
 })
 
 test('apply hands one DSH_HOME-derived data root to the transaction engine and the index', async (t) => {
@@ -609,16 +825,44 @@ test('apply hands one DSH_HOME-derived data root to the transaction engine and t
   const ctx = await bareBed(t)
   apply(ctx, { vaultPath: f.vault })
 
-  const written = value(await call(ctx, 'mem_write', {
-    type: 'doc', title: '装配说明', body: '数据根由 DSH_HOME 推导。',
-  }, { cwd: f.repo }), 'mem_write through apply')
+  const written = value(
+    await call(
+      ctx,
+      'mem_write',
+      {
+        type: 'doc',
+        title: '装配说明',
+        body: '数据根由 DSH_HOME 推导。',
+      },
+      { cwd: f.repo },
+    ),
+    'mem_write through apply',
+  )
   assert.match(written.path, /^Projects\//)
 
   const dataRoot = join(dshHome, 'data', 'obsidian-mem')
-  assert.equal(existsSync(join(dataRoot, 'locks')), true, 'the transaction lock lives under the derived data root')
-  assert.equal(existsSync(join(dataRoot, 'receipts')), true, 'the receipt store lives under the derived data root')
+  assert.equal(
+    existsSync(join(dataRoot, 'locks')),
+    true,
+    'the transaction lock lives under the derived data root',
+  )
+  assert.equal(
+    existsSync(join(dataRoot, 'receipts')),
+    true,
+    'the receipt store lives under the derived data root',
+  )
 
-  const found = value(await call(ctx, 'mem_search', { query: '装配说明' }, { cwd: f.repo }), 'mem_search through apply')
-  assert.equal(found.hits.some((hit) => hit.id === written.id), true)
-  assert.equal(existsSync(join(dataRoot, 'index')), true, 'the index lives under the same derived data root')
+  const found = value(
+    await call(ctx, 'mem_search', { query: '装配说明' }, { cwd: f.repo }),
+    'mem_search through apply',
+  )
+  assert.equal(
+    found.hits.some((hit) => hit.id === written.id),
+    true,
+  )
+  assert.equal(
+    existsSync(join(dataRoot, 'index')),
+    true,
+    'the index lives under the same derived data root',
+  )
 })

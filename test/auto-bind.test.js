@@ -52,7 +52,13 @@ const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
  */
 function gitEnvironment() {
   const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
-  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY']) {
+  for (const key of [
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_COMMON_DIR',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+  ]) {
     delete env[key]
   }
   return env
@@ -62,10 +68,14 @@ function git(cwd, args) {
   return execFileAsync(
     'git',
     [
-      '-c', 'user.name=Task 20b',
-      '-c', 'user.email=t20b@example.invalid',
-      '-c', 'commit.gpgsign=false',
-      '-c', 'init.defaultBranch=main',
+      '-c',
+      'user.name=Task 20b',
+      '-c',
+      'user.email=t20b@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      'init.defaultBranch=main',
       ...args,
     ],
     { cwd, env: gitEnvironment(), encoding: 'utf8' },
@@ -92,10 +102,12 @@ async function addWorktree(repoDir, target) {
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t20b-'))
   const dataRoot = await mkdtemp(join(tmpdir(), 'obsidian-mem-t20b-data-'))
-  t.after(() => Promise.all([
-    rm(root, { recursive: true, force: true, maxRetries: 4 }),
-    rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }),
-  ]))
+  t.after(() =>
+    Promise.all([
+      rm(root, { recursive: true, force: true, maxRetries: 4 }),
+      rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }),
+    ]),
+  )
   const home = join(root, 'home')
   const repo = join(root, 'repo')
   const vault = join(root, 'vault')
@@ -110,7 +122,9 @@ async function bareBed(t) {
   ctx.provide('systemPrompt', { tools: () => () => {} })
   const fork = ctx.plugin(toolsPlugin)
   await fork
-  t.after(async () => { await fork.dispose().catch(() => {}) })
+  t.after(async () => {
+    await fork.dispose().catch(() => {})
+  })
   return ctx
 }
 
@@ -150,7 +164,11 @@ function call(ctx, name, args, { cwd } = {}) {
 
 /** Assert a call succeeded and hand back its canonical value. */
 function value(result, label) {
-  assert.equal(result.isError, false, `${label}: ${result.error?.message ?? JSON.stringify(result)}`)
+  assert.equal(
+    result.isError,
+    false,
+    `${label}: ${result.error?.message ?? JSON.stringify(result)}`,
+  )
   return result.value
 }
 
@@ -177,14 +195,25 @@ test('the first mem_write binds a pointerless Git repository and lands the note'
   const { ctx } = await memoryBed(t, f)
 
   await pointerIsAbsent(f.repo)
-  assert.equal((await readFile(join(f.vault, REGISTRY_RELATIVE_PATH), 'utf8').catch(() => null)), null,
-    'the vault does not exist before the write')
+  assert.equal(
+    await readFile(join(f.vault, REGISTRY_RELATIVE_PATH), 'utf8').catch(() => null),
+    null,
+    'the vault does not exist before the write',
+  )
 
-  const written = value(await call(ctx, 'mem_write', {
-    type: 'doc',
-    title: '调度器改为可插拔后端',
-    body: '采用可插拔调度器方案，理由与备选方案见正文。',
-  }, { cwd: f.repo }), 'first mem_write')
+  const written = value(
+    await call(
+      ctx,
+      'mem_write',
+      {
+        type: 'doc',
+        title: '调度器改为可插拔后端',
+        body: '采用可插拔调度器方案，理由与备选方案见正文。',
+      },
+      { cwd: f.repo },
+    ),
+    'first mem_write',
+  )
 
   // (a) the pointer: exactly the four fields, nothing machine-local.
   const bytes = await readPointerBytes(f.repo)
@@ -209,7 +238,10 @@ test('the first mem_write binds a pointerless Git repository and lands the note'
   assert.ok(hot.length > 0)
 
   // (b) the write proceeded, and the note round-trips.
-  const read = value(await call(ctx, 'mem_read', { path: written.path }, { cwd: f.repo }), 'mem_read')
+  const read = value(
+    await call(ctx, 'mem_read', { path: written.path }, { cwd: f.repo }),
+    'mem_read',
+  )
   assert.equal(read.id, written.id)
   assert.match(read.body, /采用可插拔调度器方案/)
 })
@@ -218,16 +250,28 @@ test('the first mem_log binds a pointerless Git repository too', async (t) => {
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
 
-  const receipt = value(await call(ctx, 'mem_log', {
-    text: '第一次写日志时自动绑定。',
-    session: 'sess-auto-bind-log',
-  }, { cwd: f.repo }), 'first mem_log')
+  const receipt = value(
+    await call(
+      ctx,
+      'mem_log',
+      {
+        text: '第一次写日志时自动绑定。',
+        session: 'sess-auto-bind-log',
+      },
+      { cwd: f.repo },
+    ),
+    'first mem_log',
+  )
 
   assert.equal(receipt.action, 'log')
   const pointer = JSON.parse((await readPointerBytes(f.repo)).toString('utf8'))
   assert.deepEqual(Object.keys(pointer).sort(), POINTER_KEYS)
-  assert.ok(receipt.paths.some((path) => path.startsWith(`Projects/${pointer.slug}--${pointer.projectId.slice(0, 8)}/Daily/`)),
-    `the log landed under the new project: ${JSON.stringify(receipt.paths)}`)
+  assert.ok(
+    receipt.paths.some((path) =>
+      path.startsWith(`Projects/${pointer.slug}--${pointer.projectId.slice(0, 8)}/Daily/`),
+    ),
+    `the log landed under the new project: ${JSON.stringify(receipt.paths)}`,
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -243,12 +287,28 @@ test('an automatic bind is visible to the next call in the same session', async 
   const before = await call(ctx, 'mem_search', { query: '调度器' }, { cwd: f.repo })
   assert.match(refused(before, 'mem_search before any bind'), /needs a bound project/)
 
-  const written = value(await call(ctx, 'mem_write', {
-    type: 'doc', title: '调度器改为可插拔后端', body: '采用可插拔调度器方案。',
-  }, { cwd: f.repo }), 'mem_write after the miss')
+  const written = value(
+    await call(
+      ctx,
+      'mem_write',
+      {
+        type: 'doc',
+        title: '调度器改为可插拔后端',
+        body: '采用可插拔调度器方案。',
+      },
+      { cwd: f.repo },
+    ),
+    'mem_write after the miss',
+  )
 
-  const after = value(await call(ctx, 'mem_search', { query: '调度器' }, { cwd: f.repo }), 'mem_search after the bind')
-  assert.ok(after.hits.some((hit) => hit.id === written.id), `the new binding must reach the index: ${JSON.stringify(after.hits)}`)
+  const after = value(
+    await call(ctx, 'mem_search', { query: '调度器' }, { cwd: f.repo }),
+    'mem_search after the bind',
+  )
+  assert.ok(
+    after.hits.some((hit) => hit.id === written.id),
+    `the new binding must reach the index: ${JSON.stringify(after.hits)}`,
+  )
 })
 
 test('an explicit bind is visible to the next call in the same session', async (t) => {
@@ -258,42 +318,73 @@ test('an explicit bind is visible to the next call in the same session', async (
   const before = await call(ctx, 'mem_search', { query: '调度器' }, { cwd: f.repo })
   assert.match(refused(before, 'mem_search before the explicit bind'), /needs a bound project/)
 
-  const bound = value(await call(ctx, 'mem_admin', { action: 'bind', mode: 'local' }, { cwd: f.repo }), 'mem_admin bind local')
+  const bound = value(
+    await call(ctx, 'mem_admin', { action: 'bind', mode: 'local' }, { cwd: f.repo }),
+    'mem_admin bind local',
+  )
   assert.equal(bound.result.status, 'bound')
   assert.equal(bound.result.resolution.kind, 'bound')
 
   const after = await call(ctx, 'mem_search', { query: '调度器' }, { cwd: f.repo })
-  assert.equal(after.isError, false, `the same session must see the binding: ${after.error?.message}`)
+  assert.equal(
+    after.isError,
+    false,
+    `the same session must see the binding: ${after.error?.message}`,
+  )
 })
 
 test('a second write never rewrites an existing pointer', async (t) => {
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
 
-  const first = value(await call(ctx, 'mem_write', { type: 'doc', title: '第一篇', body: '正文。' }, { cwd: f.repo }))
+  const first = value(
+    await call(ctx, 'mem_write', { type: 'doc', title: '第一篇', body: '正文。' }, { cwd: f.repo }),
+  )
   const bytesAfterFirst = await readPointerBytes(f.repo)
 
-  const second = value(await call(ctx, 'mem_write', { type: 'doc', title: '第二篇', body: '正文。' }, { cwd: f.repo }))
+  const second = value(
+    await call(ctx, 'mem_write', { type: 'doc', title: '第二篇', body: '正文。' }, { cwd: f.repo }),
+  )
   assert.notEqual(second.id, first.id)
-  assert.deepEqual(await readPointerBytes(f.repo), bytesAfterFirst, 'the pointer bytes must be identical')
-  assert.equal(second.path.slice(0, first.path.lastIndexOf('/')), first.path.slice(0, first.path.lastIndexOf('/')),
-    'both notes land in the same project directory')
+  assert.deepEqual(
+    await readPointerBytes(f.repo),
+    bytesAfterFirst,
+    'the pointer bytes must be identical',
+  )
+  assert.equal(
+    second.path.slice(0, first.path.lastIndexOf('/')),
+    first.path.slice(0, first.path.lastIndexOf('/')),
+    'both notes land in the same project directory',
+  )
 })
 
 test('a fresh worktree inherits its sibling pointer instead of minting a second id', async (t) => {
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
 
-  const onMain = value(await call(ctx, 'mem_write', { type: 'doc', title: '第一篇', body: '正文。' }, { cwd: f.repo }))
+  const onMain = value(
+    await call(ctx, 'mem_write', { type: 'doc', title: '第一篇', body: '正文。' }, { cwd: f.repo }),
+  )
   const mainPointer = JSON.parse((await readPointerBytes(f.repo)).toString('utf8'))
 
   const worktree = join(f.root, 'wt-fresh')
   await addWorktree(f.repo, worktree)
   await pointerIsAbsent(worktree)
 
-  const inWorktree = value(await call(ctx, 'mem_write', { type: 'doc', title: '第二篇', body: '正文。' }, { cwd: worktree }))
+  const inWorktree = value(
+    await call(
+      ctx,
+      'mem_write',
+      { type: 'doc', title: '第二篇', body: '正文。' },
+      { cwd: worktree },
+    ),
+  )
   const worktreePointer = JSON.parse((await readPointerBytes(worktree)).toString('utf8'))
-  assert.equal(worktreePointer.projectId, mainPointer.projectId, 'the worktree inherits the repository identity')
+  assert.equal(
+    worktreePointer.projectId,
+    mainPointer.projectId,
+    'the worktree inherits the repository identity',
+  )
   assert.equal(worktreePointer.slug, mainPointer.slug)
   assert.equal(
     inWorktree.path.slice(0, inWorktree.path.lastIndexOf('/')),
@@ -312,7 +403,10 @@ test('a non-Git directory still refuses and stays unbound', async (t) => {
   await mkdir(plain, { recursive: true })
   const { ctx } = await memoryBed(t, f)
 
-  const message = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: plain }), 'plain directory write')
+  const message = refused(
+    await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: plain }),
+    'plain directory write',
+  )
   assert.match(message, /needs a bound project/)
   assert.match(message, /no-git-root/)
   await pointerIsAbsent(plain)
@@ -324,9 +418,16 @@ test('a corrupt pointer still refuses and is left untouched', async (t) => {
   await writeFile(join(f.repo, POINTER_FILENAME), corrupt)
   const { ctx } = await memoryBed(t, f)
 
-  const message = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'corrupt pointer write')
+  const message = refused(
+    await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }),
+    'corrupt pointer write',
+  )
   assert.match(message, /pointer-corrupt/)
-  assert.equal(await readFile(join(f.repo, POINTER_FILENAME), 'utf8'), corrupt, 'a corrupt pointer is never repaired')
+  assert.equal(
+    await readFile(join(f.repo, POINTER_FILENAME), 'utf8'),
+    corrupt,
+    'a corrupt pointer is never repaired',
+  )
 })
 
 test('an unknown pointer schema still refuses and is left untouched', async (t) => {
@@ -340,7 +441,10 @@ test('an unknown pointer schema still refuses and is left untouched', async (t) 
   await writeFile(join(f.repo, POINTER_FILENAME), unknown)
   const { ctx } = await memoryBed(t, f)
 
-  const message = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'unknown schema write')
+  const message = refused(
+    await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }),
+    'unknown schema write',
+  )
   assert.match(message, /pointer-unsupported-schema/)
   assert.equal(await readFile(join(f.repo, POINTER_FILENAME), 'utf8'), unknown)
 })
@@ -360,14 +464,23 @@ test('an unreadable registry still refuses and leaves no minted pointer', async 
   )
   const { ctx } = await memoryBed(t, f)
 
-  const message = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'malformed registry write')
+  const message = refused(
+    await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }),
+    'malformed registry write',
+  )
   assert.match(message, /registry-invalid/)
   // The bind mints the pointer before it reads the registry; a refusal must not
   // leave that half-created identity behind, or the next attempt would read it
   // instead of minting again. The direct seam is the only place the annotated
   // `unwound` value is visible, so it is asserted here.
   await pointerIsAbsent(f.repo)
-  const direct = await resolveBinding({ cwd: f.repo, vaultRoot: f.vault, mode: 'local', dataRoot: f.dataRoot, home: f.home })
+  const direct = await resolveBinding({
+    cwd: f.repo,
+    vaultRoot: f.vault,
+    mode: 'local',
+    dataRoot: f.dataRoot,
+    home: f.home,
+  })
   assert.equal(direct.kind, 'conflict')
   assert.equal(direct.reason, 'registry-invalid')
   assert.equal(direct.unwound, true, 'the pointer this resolution created must be handed back')
@@ -381,7 +494,10 @@ test('an unreadable sibling worktree still refuses instead of minting', async (t
   await rm(doomed, { recursive: true, force: true })
   const { ctx } = await memoryBed(t, f)
 
-  const message = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'unreadable sibling write')
+  const message = refused(
+    await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }),
+    'unreadable sibling write',
+  )
   assert.match(message, /sibling-unreadable/)
   await pointerIsAbsent(f.repo)
 })
@@ -397,13 +513,19 @@ test('a property preflight refusal hands the minted pointer back', async (t) => 
   )
   const { ctx } = await memoryBed(t, f)
 
-  const first = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'preflight write')
+  const first = refused(
+    await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }),
+    'preflight write',
+  )
   assert.match(first, /tags/)
   // The pointer would otherwise make the next write resolve as bound and skip
   // the preflight that just refused it.
   await pointerIsAbsent(f.repo)
 
-  const second = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'second preflight write')
+  const second = refused(
+    await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }),
+    'second preflight write',
+  )
   assert.match(second, /tags/)
   await pointerIsAbsent(f.repo)
 })
@@ -414,18 +536,27 @@ test('a registry whose recorded hash does not match still refuses and leaves no 
   // sha256 does not cover the body, which only the bootstrap's registry step
   // verifies — a refusal that still happens before the first vault write.
   await mkdir(join(f.vault, '_meta'), { recursive: true })
-  await writeFile(join(f.vault, REGISTRY_RELATIVE_PATH), [
-    '<!-- obsidian-mem:registry begin sha256:0000000000000000000000000000000000000000000000000000000000000000 -->',
-    '<!-- obsidian-mem:registry end -->',
-    '',
-  ].join('\n'))
+  await writeFile(
+    join(f.vault, REGISTRY_RELATIVE_PATH),
+    [
+      '<!-- obsidian-mem:registry begin sha256:0000000000000000000000000000000000000000000000000000000000000000 -->',
+      '<!-- obsidian-mem:registry end -->',
+      '',
+    ].join('\n'),
+  )
   const { ctx } = await memoryBed(t, f)
 
-  const first = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'hash-mismatch write')
+  const first = refused(
+    await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }),
+    'hash-mismatch write',
+  )
   assert.match(first, /recorded sha256/)
   await pointerIsAbsent(f.repo)
 
-  const second = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'second hash-mismatch write')
+  const second = refused(
+    await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }),
+    'second hash-mismatch write',
+  )
   assert.match(second, /recorded sha256/)
   await pointerIsAbsent(f.repo)
 })
@@ -438,7 +569,10 @@ test('a failure after the skeleton is written keeps the identity, and an explici
   await writeFile(join(f.dataRoot, 'transactions'), 'not a directory')
   const { ctx } = await memoryBed(t, f)
 
-  const first = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'post-skeleton write')
+  const first = refused(
+    await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }),
+    'post-skeleton write',
+  )
   assert.match(first, /not a directory|ENOTDIR/)
 
   // The identity stays, because the skeleton it names really exists; only the
@@ -450,10 +584,17 @@ test('a failure after the skeleton is written keeps the identity, and an explici
   await assert.rejects(readFile(join(f.vault, REGISTRY_RELATIVE_PATH)), { code: 'ENOENT' })
 
   await rm(join(f.dataRoot, 'transactions'))
-  const healed = value(await call(ctx, 'mem_admin', { action: 'bind', mode: 'local' }, { cwd: f.repo }), 'repairing bind')
+  const healed = value(
+    await call(ctx, 'mem_admin', { action: 'bind', mode: 'local' }, { cwd: f.repo }),
+    'repairing bind',
+  )
   assert.equal(healed.result.status, 'bound')
   assert.equal(healed.result.registryUpdated, true)
-  assert.deepEqual(await readPointerBytes(f.repo), bytes, 'the repair reuses the identity instead of minting a second one')
+  assert.deepEqual(
+    await readPointerBytes(f.repo),
+    bytes,
+    'the repair reuses the identity instead of minting a second one',
+  )
   const registry = await readFile(join(f.vault, REGISTRY_RELATIVE_PATH), 'utf8')
   assert.match(registry, new RegExp(pointer.projectId))
 })
@@ -467,25 +608,49 @@ test('a pointer minted by another writer since the memoized miss is adopted, not
   const other = await memoryBed(t, f)
 
   assert.match(
-    refused(await call(mine.ctx, 'mem_search', { query: '调度器' }, { cwd: f.repo }), 'memoized miss'),
+    refused(
+      await call(mine.ctx, 'mem_search', { query: '调度器' }, { cwd: f.repo }),
+      'memoized miss',
+    ),
     /needs a bound project/,
   )
-  const bound = value(await call(other.ctx, 'mem_admin', { action: 'bind', mode: 'local' }, { cwd: f.repo }), 'other writer bind')
+  const bound = value(
+    await call(other.ctx, 'mem_admin', { action: 'bind', mode: 'local' }, { cwd: f.repo }),
+    'other writer bind',
+  )
   assert.equal(bound.result.status, 'bound')
 
   // This call's `show` probe now answers `bound`, which carries no `reason` or
   // `message`. Reporting it as a refusal printed `cannot be bound (undefined):
   // undefined`; it is the binding.
-  const written = value(await call(mine.ctx, 'mem_write', {
-    type: 'doc', title: '竞争中的写入', body: '另一进程已经铸出指针。',
-  }, { cwd: f.repo }), 'write after the race')
+  const written = value(
+    await call(
+      mine.ctx,
+      'mem_write',
+      {
+        type: 'doc',
+        title: '竞争中的写入',
+        body: '另一进程已经铸出指针。',
+      },
+      { cwd: f.repo },
+    ),
+    'write after the race',
+  )
   assert.match(written.path, /^Projects\//)
   const pointer = JSON.parse((await readPointerBytes(f.repo)).toString('utf8'))
-  assert.equal(pointer.projectId, bound.result.resolution.projectId, 'the adopted identity is the one on disk')
+  assert.equal(
+    pointer.projectId,
+    bound.result.resolution.projectId,
+    'the adopted identity is the one on disk',
+  )
 
   // The memoized miss was replaced, so the next call does not replay it.
   const after = await call(mine.ctx, 'mem_search', { query: '竞争' }, { cwd: f.repo })
-  assert.equal(after.isError, false, `the adopted binding must survive the memo: ${after.error?.message}`)
+  assert.equal(
+    after.isError,
+    false,
+    `the adopted binding must survive the memo: ${after.error?.message}`,
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -497,16 +662,25 @@ test('an explicit bind that refuses before its first write hands the pointer and
   // The §6.4 property preflight refuses inside `bootstrapVault`, before any vault
   // write: exactly the class of refusal `autoBindProject` releases on.
   await mkdir(join(f.vault, 'Projects', 'x--deadbeef'), { recursive: true })
-  await writeFile(join(f.vault, 'Projects', 'x--deadbeef', '坏笔记.md'), '---\nid: "dec-1"\ntags: foo\n---\nBody\n')
+  await writeFile(
+    join(f.vault, 'Projects', 'x--deadbeef', '坏笔记.md'),
+    '---\nid: "dec-1"\ntags: foo\n---\nBody\n',
+  )
   const { ctx } = await memoryBed(t, f)
 
-  const message = refused(await call(ctx, 'mem_admin', { action: 'bind', mode: 'local' }, { cwd: f.repo }), 'explicit bind')
+  const message = refused(
+    await call(ctx, 'mem_admin', { action: 'bind', mode: 'local' }, { cwd: f.repo }),
+    'explicit bind',
+  )
   assert.match(message, /tags/)
   await pointerIsAbsent(f.repo)
 
   // The memo must not have been published either: with it published the next
   // write would resolve as bound and skip the preflight that just refused it.
-  const second = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'write after the refused bind')
+  const second = refused(
+    await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }),
+    'write after the refused bind',
+  )
   assert.match(second, /tags/)
   await pointerIsAbsent(f.repo)
 })
@@ -517,7 +691,10 @@ test('a cloud-managed vault still refuses and mints nothing', async (t) => {
   await mkdir(vault, { recursive: true })
   const { ctx } = await memoryBed(t, f, { vaultPath: vault })
 
-  const message = refused(await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }), 'cloud-managed vault write')
+  const message = refused(
+    await call(ctx, 'mem_write', { type: 'doc', title: '标题', body: '正文。' }, { cwd: f.repo }),
+    'cloud-managed vault write',
+  )
   assert.match(message, /cloud-managed/)
   await pointerIsAbsent(f.repo)
 })

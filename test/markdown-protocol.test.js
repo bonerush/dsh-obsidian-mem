@@ -73,7 +73,10 @@ async function snapshotTree(root) {
         await walk(childAbsolute, childRelative)
       } else {
         const info = await stat(childAbsolute)
-        out.set(childRelative, `${info.size}:${info.mtimeMs}:${sha256(await readFile(childAbsolute))}`)
+        out.set(
+          childRelative,
+          `${info.size}:${info.mtimeMs}:${sha256(await readFile(childAbsolute))}`,
+        )
       }
     }
   }
@@ -106,7 +109,11 @@ test('safeBasename strips every forbidden filename character', () => {
   const dirty = 'a/b\\c:d*e?f"g<h>i|j#k^l[m]n'
   const clean = safeBasename(dirty)
   for (const forbidden of ['/', '\\', ':', '*', '?', '"', '<', '>', '|', '#', '^', '[', ']']) {
-    assert.equal(clean.includes(forbidden), false, `${JSON.stringify(clean)} must not contain ${JSON.stringify(forbidden)}`)
+    assert.equal(
+      clean.includes(forbidden),
+      false,
+      `${JSON.stringify(clean)} must not contain ${JSON.stringify(forbidden)}`,
+    )
   }
   // the visible words survive: the forbidden characters became separators, not deletions
   assert.equal(clean.split(/\s+/).join(''), 'abcdefghijklmn')
@@ -132,9 +139,24 @@ test('safeBasename trims trailing spaces, trailing dots and repeated dots', () =
 })
 
 test('safeBasename never returns a Windows device name', () => {
-  for (const device of ['CON', 'con', 'PrN', 'aux', 'NUL', 'COM1', 'com9', 'LPT1', 'lpt9', 'CON.md']) {
+  for (const device of [
+    'CON',
+    'con',
+    'PrN',
+    'aux',
+    'NUL',
+    'COM1',
+    'com9',
+    'LPT1',
+    'lpt9',
+    'CON.md',
+  ]) {
     const clean = safeBasename(device)
-    assert.notEqual(clean.toLowerCase().split('.')[0], device.toLowerCase().split('.')[0], `${device} must not stay a reserved name`)
+    assert.notEqual(
+      clean.toLowerCase().split('.')[0],
+      device.toLowerCase().split('.')[0],
+      `${device} must not stay a reserved name`,
+    )
   }
   // a device name stays stable for the same title
   assert.equal(safeBasename('CON'), safeBasename('CON'))
@@ -145,7 +167,10 @@ test('safeBasename budgets the file name to 200 UTF-8 bytes without splitting a 
   // contract minus the 3-byte `.md` extension. `safeBasename(title) + '.md'`
   // therefore fits on every path, suffixed or not.
   const clean = safeBasename('决'.repeat(120))
-  assert.ok(Buffer.byteLength(clean, 'utf8') <= 197, `${Buffer.byteLength(clean, 'utf8')} bytes must fit the budget`)
+  assert.ok(
+    Buffer.byteLength(clean, 'utf8') <= 197,
+    `${Buffer.byteLength(clean, 'utf8')} bytes must fit the budget`,
+  )
   assert.equal(clean, '决'.repeat(65), '195 bytes is the longest whole-character prefix')
   assert.equal(clean.includes('\uFFFD'), false)
   assert.ok(Buffer.byteLength(`${clean}.md`, 'utf8') <= 200)
@@ -211,7 +236,11 @@ test('a real readdir list can never lose the collision guard', async (t) => {
   const name = safeBasename('foo', existing)
   assert.notEqual(name.toLowerCase(), 'foo')
   const folded = existing.map((entry) => entry.replace(/\.md$/iu, '').toLowerCase())
-  assert.equal(folded.includes(name.toLowerCase()), false, `${name} must not collide with ${existing.join(', ')}`)
+  assert.equal(
+    folded.includes(name.toLowerCase()),
+    false,
+    `${name} must not collide with ${existing.join(', ')}`,
+  )
   assert.equal(existing.includes(`${name}.md`), false)
 })
 
@@ -225,15 +254,28 @@ test('safeBasename rejects a non-string title', () => {
 // Step 1: parseNote — refuse instead of repairing
 // ---------------------------------------------------------------------------
 
-const SIMPLE = Buffer.from('---\nid: "dec-1"\ntitle: "调度器"\ntags: ["dsh-mem/decision"]\nproject: null\n---\n# 正文\n\n内容\n')
+const SIMPLE = Buffer.from(
+  '---\nid: "dec-1"\ntitle: "调度器"\ntags: ["dsh-mem/decision"]\nproject: null\n---\n# 正文\n\n内容\n',
+)
 
 test('parseNote reads frontmatter and body without changing the bytes it was given', () => {
   const before = Buffer.from(SIMPLE)
   const note = parseNote(SIMPLE)
   assert.equal(note.hasFrontmatter, true)
-  assert.deepEqual(note.data, { id: 'dec-1', title: '调度器', tags: ['dsh-mem/decision'], project: null })
+  assert.deepEqual(note.data, {
+    id: 'dec-1',
+    title: '调度器',
+    tags: ['dsh-mem/decision'],
+    project: null,
+  })
   assert.equal(note.body, '# 正文\n\n内容\n')
-  assert.equal(note.bodyOffset, Buffer.byteLength('---\nid: "dec-1"\ntitle: "调度器"\ntags: ["dsh-mem/decision"]\nproject: null\n---\n', 'utf8'))
+  assert.equal(
+    note.bodyOffset,
+    Buffer.byteLength(
+      '---\nid: "dec-1"\ntitle: "调度器"\ntags: ["dsh-mem/decision"]\nproject: null\n---\n',
+      'utf8',
+    ),
+  )
   assert.equal(note.bodyBytes.equals(SIMPLE.subarray(note.bodyOffset)), true)
   assert.deepEqual(SIMPLE, before, 'parsing must not mutate the caller buffer')
 })
@@ -260,7 +302,11 @@ test('a preflight head cut exactly at a would-be closing marker is refused, not 
   // parse a 65 KiB "frontmatter" and report a clean vault.
   const opening = '---\nid: "a"\n'
   const filler = `note: ${'x'.repeat(FRONTMATTER_SCAN_LIMIT - Buffer.byteLength(opening) - 'note: '.length - 1 - 3)}`
-  assert.equal(Buffer.byteLength(`${opening}${filler}\n---`), FRONTMATTER_SCAN_LIMIT, 'the window must end inside the marker')
+  assert.equal(
+    Buffer.byteLength(`${opening}${filler}\n---`),
+    FRONTMATTER_SCAN_LIMIT,
+    'the window must end inside the marker',
+  )
   await writeFile(at(vault, 'Methods/片段.md'), `${opening}${filler}\n---xyz\nmore\n`)
 
   const result = await validateKnownPropertyTypes(vault, { home: root })
@@ -316,36 +362,43 @@ test('parseNote refuses a BOM, an unclosed block, invalid YAML and duplicate key
 // ---------------------------------------------------------------------------
 
 test('patchOwnedFields replaces one value and keeps comments, unknown keys and body', () => {
-  const original = Buffer.from('---\nid: "dec-5d46ff43-1bf8-496d-8b9f-c11e89d4e2aa"\ncssclasses: [wide] # owner\nstatus: "accepted"\n---\nBody\n')
+  const original = Buffer.from(
+    '---\nid: "dec-5d46ff43-1bf8-496d-8b9f-c11e89d4e2aa"\ncssclasses: [wide] # owner\nstatus: "accepted"\n---\nBody\n',
+  )
   const updated = patchOwnedFields(original, { status: 'superseded' }, sha256(original))
-  assert.deepEqual(updated, Buffer.from('---\nid: "dec-5d46ff43-1bf8-496d-8b9f-c11e89d4e2aa"\ncssclasses: [wide] # owner\nstatus: "superseded"\n---\nBody\n'))
+  assert.deepEqual(
+    updated,
+    Buffer.from(
+      '---\nid: "dec-5d46ff43-1bf8-496d-8b9f-c11e89d4e2aa"\ncssclasses: [wide] # owner\nstatus: "superseded"\n---\nBody\n',
+    ),
+  )
   assert.match(updated.toString(), /cssclasses: \[wide\] # owner/)
   assert.match(updated.toString(), /\nBody\n$/)
 })
 
 test('patchOwnedFields splices CJK, emoji, CRLF and bare 0123 at the right byte offset', () => {
   const original = Buffer.from(
-    '---\r\n'
-    + 'id: "dec-1"\r\n'
-    + 'legacy_rank: 0123\r\n'
-    + 'title: "调度器🎉改为可插拔后端"\r\n'
-    + 'link: "[[路径/笔记]]"\r\n'
-    + 'cssclasses: [wide] # owner\r\n'
-    + 'status: "proposed"\r\n'
-    + '---\r\n'
-    + '正文 🎉\r\n[[路径/笔记]]\r\n',
+    '---\r\n' +
+      'id: "dec-1"\r\n' +
+      'legacy_rank: 0123\r\n' +
+      'title: "调度器🎉改为可插拔后端"\r\n' +
+      'link: "[[路径/笔记]]"\r\n' +
+      'cssclasses: [wide] # owner\r\n' +
+      'status: "proposed"\r\n' +
+      '---\r\n' +
+      '正文 🎉\r\n[[路径/笔记]]\r\n',
     'utf8',
   )
   const expected = Buffer.from(
-    '---\r\n'
-    + 'id: "dec-1"\r\n'
-    + 'legacy_rank: 0123\r\n'
-    + 'title: "调度器🎉改为可插拔后端"\r\n'
-    + 'link: "[[路径/笔记]]"\r\n'
-    + 'cssclasses: [wide] # owner\r\n'
-    + 'status: "accepted"\r\n'
-    + '---\r\n'
-    + '正文 🎉\r\n[[路径/笔记]]\r\n',
+    '---\r\n' +
+      'id: "dec-1"\r\n' +
+      'legacy_rank: 0123\r\n' +
+      'title: "调度器🎉改为可插拔后端"\r\n' +
+      'link: "[[路径/笔记]]"\r\n' +
+      'cssclasses: [wide] # owner\r\n' +
+      'status: "accepted"\r\n' +
+      '---\r\n' +
+      '正文 🎉\r\n[[路径/笔记]]\r\n',
     'utf8',
   )
 
@@ -368,19 +421,32 @@ test('patchOwnedFields splices CJK, emoji, CRLF and bare 0123 at the right byte 
 test('patchOwnedFields inserts a missing key as one minimal line before the closing marker', () => {
   const original = Buffer.from('---\nid: "dec-1"\nstatus: "accepted"\n---\nBody\n')
   const updated = patchOwnedFields(original, { tags: ['dsh-mem/decision'] }, sha256(original))
-  assert.deepEqual(updated, Buffer.from('---\nid: "dec-1"\nstatus: "accepted"\ntags: ["dsh-mem/decision"]\n---\nBody\n'))
+  assert.deepEqual(
+    updated,
+    Buffer.from('---\nid: "dec-1"\nstatus: "accepted"\ntags: ["dsh-mem/decision"]\n---\nBody\n'),
+  )
 })
 
-test('patchOwnedFields inserts with the file\'s own CRLF line ending', () => {
+test("patchOwnedFields inserts with the file's own CRLF line ending", () => {
   const original = Buffer.from('---\r\nid: "dec-1"\r\n---\r\nBody\r\n')
   const updated = patchOwnedFields(original, { updated: '2026-09-23' }, sha256(original))
-  assert.deepEqual(updated, Buffer.from('---\r\nid: "dec-1"\r\nupdated: 2026-09-23\r\n---\r\nBody\r\n'))
+  assert.deepEqual(
+    updated,
+    Buffer.from('---\r\nid: "dec-1"\r\nupdated: 2026-09-23\r\n---\r\nBody\r\n'),
+  )
 })
 
 test('patchOwnedFields preserves a comment that floats outside the replaced value', () => {
   const original = Buffer.from('---\nstatus: # why\n  "proposed"\ntags: [a] # list\n---\nBody\n')
-  const updated = patchOwnedFields(original, { status: 'accepted', tags: ['a', 'b'] }, sha256(original))
-  assert.deepEqual(updated, Buffer.from('---\nstatus: # why\n  "accepted"\ntags: ["a", "b"] # list\n---\nBody\n'))
+  const updated = patchOwnedFields(
+    original,
+    { status: 'accepted', tags: ['a', 'b'] },
+    sha256(original),
+  )
+  assert.deepEqual(
+    updated,
+    Buffer.from('---\nstatus: # why\n  "accepted"\ntags: ["a", "b"] # list\n---\nBody\n'),
+  )
 })
 
 test('patchOwnedFields refuses when the target range carries a comment it cannot keep', () => {
@@ -443,11 +509,28 @@ test('patchOwnedFields refuses a hash mismatch, an empty value range and a missi
 })
 
 test('the writable vocabulary is exactly the §6.4 property set', () => {
-  assert.deepEqual(Object.keys(OWNED_FIELD_TYPES).sort(), [
-    'assertion', 'confidence', 'created', 'harness', 'id', 'project', 'review_after',
-    'session', 'source', 'status', 'superseded_by', 'supersedes', 'tags', 'title',
-    'trust', 'type', 'updated',
-  ].sort())
+  assert.deepEqual(
+    Object.keys(OWNED_FIELD_TYPES).sort(),
+    [
+      'assertion',
+      'confidence',
+      'created',
+      'harness',
+      'id',
+      'project',
+      'review_after',
+      'session',
+      'source',
+      'status',
+      'superseded_by',
+      'supersedes',
+      'tags',
+      'title',
+      'trust',
+      'type',
+      'updated',
+    ].sort(),
+  )
   assert.equal(OWNED_FIELD_TYPES.cssclasses, undefined)
 })
 
@@ -475,7 +558,10 @@ test('serializeOwnedValue renders each §6.4 type so that it round-trips', () =>
     const note = parseNote(Buffer.from(`---\n${key}: ${token}\n---\nBody\n`))
     assert.deepEqual(note.data[key], value, `${key}: ${token} must round-trip`)
   }
-  assert.equal(serializeOwnedValue('tags', ['dsh-mem/decision', 'project/xeros']), '["dsh-mem/decision", "project/xeros"]')
+  assert.equal(
+    serializeOwnedValue('tags', ['dsh-mem/decision', 'project/xeros']),
+    '["dsh-mem/decision", "project/xeros"]',
+  )
   assert.equal(serializeOwnedValue('supersedes', '[[路径/笔记]]'), '"[[路径/笔记]]"')
   assert.equal(serializeOwnedValue('id', '0123'), '"0123"')
   assert.equal(serializeOwnedValue('updated', '2026-09-23'), '2026-09-23')
@@ -496,29 +582,36 @@ test('serializeOwnedValue refuses values the vocabulary cannot hold', () => {
 
 test('patchOwnedFields writes dates bare, wikilinks quoted and tags as a list', () => {
   const original = Buffer.from('---\nid: "dec-1"\n---\nBody\n')
-  const updated = patchOwnedFields(original, {
-    created: '2026-09-23',
-    updated: '2026-09-23 10:00:00',
-    supersedes: '[[路径/笔记]]',
-    tags: ['dsh-mem/decision'],
-    confidence: 0.9,
-    assertion: 'stated',
-    session: null,
-    superseded_by: null,
-  }, sha256(original))
-  assert.deepEqual(updated, Buffer.from(
-    '---\n'
-    + 'id: "dec-1"\n'
-    + 'created: 2026-09-23\n'
-    + 'updated: 2026-09-23 10:00:00\n'
-    + 'supersedes: "[[路径/笔记]]"\n'
-    + 'tags: ["dsh-mem/decision"]\n'
-    + 'confidence: 0.9\n'
-    + 'assertion: "stated"\n'
-    + 'session: null\n'
-    + 'superseded_by: null\n'
-    + '---\nBody\n',
-  ))
+  const updated = patchOwnedFields(
+    original,
+    {
+      created: '2026-09-23',
+      updated: '2026-09-23 10:00:00',
+      supersedes: '[[路径/笔记]]',
+      tags: ['dsh-mem/decision'],
+      confidence: 0.9,
+      assertion: 'stated',
+      session: null,
+      superseded_by: null,
+    },
+    sha256(original),
+  )
+  assert.deepEqual(
+    updated,
+    Buffer.from(
+      '---\n' +
+        'id: "dec-1"\n' +
+        'created: 2026-09-23\n' +
+        'updated: 2026-09-23 10:00:00\n' +
+        'supersedes: "[[路径/笔记]]"\n' +
+        'tags: ["dsh-mem/decision"]\n' +
+        'confidence: 0.9\n' +
+        'assertion: "stated"\n' +
+        'session: null\n' +
+        'superseded_by: null\n' +
+        '---\nBody\n',
+    ),
+  )
   const note = parseNote(updated)
   assert.equal(note.data.supersedes, '[[路径/笔记]]')
   assert.deepEqual(note.data.tags, ['dsh-mem/decision'])
@@ -529,7 +622,11 @@ test('a bare leading-zero identifier is quoted, never written as 0123', () => {
   const original = Buffer.from('---\nlegacy: 0123\n---\nBody\n')
   const updated = patchOwnedFields(original, { id: '0123' }, sha256(original))
   assert.equal(updated.toString().includes('id: "0123"'), true)
-  assert.equal(updated.toString().includes('legacy: 0123'), true, 'an unknown key is never re-serialized')
+  assert.equal(
+    updated.toString().includes('legacy: 0123'),
+    true,
+    'an unknown key is never re-serialized',
+  )
   assert.equal(parseNote(updated).data.id, '0123')
 })
 
@@ -542,7 +639,9 @@ test('the same semantic content twice leaves the bytes and the mtime untouched',
 
   const root = await tempRoot(t)
   const path = join(root, 'note.md')
-  const original = Buffer.from('---\nid: "dec-1"\nstatus: "accepted"\nupdated: 2026-09-23\n---\nBody\n')
+  const original = Buffer.from(
+    '---\nid: "dec-1"\nstatus: "accepted"\nupdated: 2026-09-23\n---\nBody\n',
+  )
   await writeFile(path, original)
 
   const before = await stat(path)
@@ -556,7 +655,11 @@ test('the same semantic content twice leaves the bytes and the mtime untouched',
   // the read-only control: the skip is real, not an artifact of a permissive fs
   await chmod(path, 0o444)
   const again = await readFile(path)
-  const second = patchOwnedFields(again, { status: 'accepted', updated: '2026-09-23' }, sha256(again))
+  const second = patchOwnedFields(
+    again,
+    { status: 'accepted', updated: '2026-09-23' },
+    sha256(again),
+  )
   assert.equal(await writeIfChanged(path, second), false)
   assert.deepEqual(await readFile(path), original)
   assert.equal((await stat(path)).mtimeMs, before.mtimeMs)
@@ -568,7 +671,10 @@ test('the same semantic content twice leaves the bytes and the mtime untouched',
   // and a real semantic change lands on disk with exactly one line replaced
   const changed = patchOwnedFields(await readFile(path), { status: 'superseded' }, sha256(original))
   assert.equal(await writeIfChanged(path, changed), true)
-  assert.deepEqual(await readFile(path), Buffer.from('---\nid: "dec-1"\nstatus: "superseded"\nupdated: 2026-09-23\n---\nBody\n'))
+  assert.deepEqual(
+    await readFile(path),
+    Buffer.from('---\nid: "dec-1"\nstatus: "superseded"\nupdated: 2026-09-23\n---\nBody\n'),
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -580,7 +686,12 @@ test('a new note is full-serialized and then verified against the vocabulary', (
     '---\nid: "hub-1"\ncreated: 2026-09-23\ntags: ["dsh-mem/hub"]\nproject: null\n---\nBody\n',
     { path: 'index.md' },
   )
-  assert.deepEqual(ok.data, { id: 'hub-1', created: '2026-09-23', tags: ['dsh-mem/hub'], project: null })
+  assert.deepEqual(ok.data, {
+    id: 'hub-1',
+    created: '2026-09-23',
+    tags: ['dsh-mem/hub'],
+    project: null,
+  })
 
   const rejected = [
     ['---\ntags: foo\n---\nBody\n', 'property-type-conflict'],
@@ -608,10 +719,17 @@ test('bootstrap refuses when an existing note declares tags as text', async (t) 
   const before = await snapshotTree(vault)
 
   await assert.rejects(
-    bootstrapVault(binding(vault), { initGitOnCreate: false, home: root, dataRoot: join(root, '.data') }),
-    (error) => error instanceof BootstrapError
-      && error.code === 'property-type-conflict'
-      && error.conflicts.some((conflict) => conflict.reason === 'type-conflict' && conflict.key === 'tags'),
+    bootstrapVault(binding(vault), {
+      initGitOnCreate: false,
+      home: root,
+      dataRoot: join(root, '.data'),
+    }),
+    (error) =>
+      error instanceof BootstrapError &&
+      error.code === 'property-type-conflict' &&
+      error.conflicts.some(
+        (conflict) => conflict.reason === 'type-conflict' && conflict.key === 'tags',
+      ),
   )
   assert.deepEqual(await snapshotTree(vault), before, 'a refused bootstrap must not write anything')
 })
@@ -620,15 +738,27 @@ test('bootstrap refuses when a quoted confidence value conflicts with the vocabu
   const root = await tempRoot(t)
   const vault = join(root, 'vault')
   await mkdir(at(vault, PROJECT_DIR), { recursive: true })
-  await writeFile(at(vault, `${PROJECT_DIR}/笔记.md`), '---\nid: "dec-1"\nconfidence: "高"\n---\nBody\n')
+  await writeFile(
+    at(vault, `${PROJECT_DIR}/笔记.md`),
+    '---\nid: "dec-1"\nconfidence: "高"\n---\nBody\n',
+  )
   const before = await snapshotTree(vault)
 
   await assert.rejects(
-    bootstrapVault(binding(vault), { initGitOnCreate: false, home: root, dataRoot: join(root, '.data') }),
-    (error) => error instanceof BootstrapError
-      && error.code === 'property-type-conflict'
-      && error.conflicts.some((conflict) => conflict.key === 'confidence'
-        && conflict.expected === 'number-or-null' && conflict.actual === 'text'),
+    bootstrapVault(binding(vault), {
+      initGitOnCreate: false,
+      home: root,
+      dataRoot: join(root, '.data'),
+    }),
+    (error) =>
+      error instanceof BootstrapError &&
+      error.code === 'property-type-conflict' &&
+      error.conflicts.some(
+        (conflict) =>
+          conflict.key === 'confidence' &&
+          conflict.expected === 'number-or-null' &&
+          conflict.actual === 'text',
+      ),
   )
   assert.deepEqual(await snapshotTree(vault), before)
 })
@@ -646,10 +776,17 @@ test('bootstrap refuses a vault note whose frontmatter cannot be trusted', async
     const path = at(vault, `${PROJECT_DIR}/坏.md`)
     await writeFile(path, text)
     await assert.rejects(
-      bootstrapVault(binding(vault), { initGitOnCreate: false, home: root, dataRoot: join(root, '.data') }),
-      (error) => error instanceof BootstrapError
-        && error.code === 'property-preflight-conflict'
-        && error.conflicts.some((conflict) => conflict.reason === 'invalid-frontmatter' && conflict.code === code),
+      bootstrapVault(binding(vault), {
+        initGitOnCreate: false,
+        home: root,
+        dataRoot: join(root, '.data'),
+      }),
+      (error) =>
+        error instanceof BootstrapError &&
+        error.code === 'property-preflight-conflict' &&
+        error.conflicts.some(
+          (conflict) => conflict.reason === 'invalid-frontmatter' && conflict.code === code,
+        ),
       `expected ${code} to stop bootstrap`,
     )
     await rm(path)
@@ -660,7 +797,10 @@ test('validateKnownPropertyTypes passes a clean vault and reports each conflict 
   const root = await tempRoot(t)
   const vault = join(root, 'vault')
   await mkdir(at(vault, 'Methods'), { recursive: true })
-  await writeFile(at(vault, 'Methods/index.md'), '---\ntype: "hub"\ntags: ["dsh-mem/hub"]\nproject: null\ncreated: 2026-09-23\nconfidence: null\n---\nBody\n')
+  await writeFile(
+    at(vault, 'Methods/index.md'),
+    '---\ntype: "hub"\ntags: ["dsh-mem/hub"]\nproject: null\ncreated: 2026-09-23\nconfidence: null\n---\nBody\n',
+  )
   await writeFile(at(vault, '说明.txt'), 'tags: foo\n')
   const clean = await validateKnownPropertyTypes(vault, { home: root })
   assert.deepEqual(clean.conflicts, [])
@@ -713,7 +853,11 @@ test('the preflight reports a note it cannot read instead of guessing', async (t
 test('a bootstrapped vault stays preflight-clean on every later run', async (t) => {
   const root = await tempRoot(t)
   const vault = join(root, 'vault')
-  const result = await bootstrapVault(binding(vault), { initGitOnCreate: false, home: root, dataRoot: join(root, '.data') })
+  const result = await bootstrapVault(binding(vault), {
+    initGitOnCreate: false,
+    home: root,
+    dataRoot: join(root, '.data'),
+  })
   assert.equal(result.registryUpdated, true)
 
   const first = await validateKnownPropertyTypes(vault, { home: root })
@@ -721,7 +865,11 @@ test('a bootstrapped vault stays preflight-clean on every later run', async (t) 
   assert.ok(first.scanned >= 8, 'every MOC and hot.md was inspected')
 
   // a second bootstrap must not be stopped by the plugin's own output
-  const again = await bootstrapVault(binding(vault), { initGitOnCreate: false, home: root, dataRoot: join(root, '.data') })
+  const again = await bootstrapVault(binding(vault), {
+    initGitOnCreate: false,
+    home: root,
+    dataRoot: join(root, '.data'),
+  })
   assert.deepEqual(again.createdPaths, [])
   assert.deepEqual((await validateKnownPropertyTypes(vault, { home: root })).conflicts, [])
 })

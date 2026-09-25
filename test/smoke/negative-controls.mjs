@@ -37,27 +37,41 @@ const MUTATIONS = [
   {
     id: 'plugin-row-missing',
     expectation: 'the checker fails when the plugin row is absent from --dump-config',
-    mutate: (record) => { record.checks.pluginRowInDumpConfig = false; record.profile.dumpConfigRowLine = '# (row removed)' },
+    mutate: (record) => {
+      record.checks.pluginRowInDumpConfig = false
+      record.profile.dumpConfigRowLine = '# (row removed)'
+    },
   },
   {
     id: 'duplicate-brief',
     expectation: 'the checker fails when two briefs reach the first step',
-    mutate: (record) => { record.checks.firstStepBriefCount = 2 },
+    mutate: (record) => {
+      record.checks.firstStepBriefCount = 2
+    },
   },
   {
     id: 'over-budget-brief',
     expectation: 'the checker fails when the brief exceeds the character budget',
-    mutate: (record) => { record.checks.firstStepBriefChars = record.checks.briefBudgetChars + 1 },
+    mutate: (record) => {
+      record.checks.firstStepBriefChars = record.checks.briefBudgetChars + 1
+    },
   },
   {
     id: 'no-chinese-hit',
     expectation: 'the checker fails when the Chinese search misses the written document',
-    mutate: (record) => { record.checks.chineseSearch.hitCount = 0; record.checks.chineseSearch.matchedDocPath = false; record.checks.chineseSearch.ok = false },
+    mutate: (record) => {
+      record.checks.chineseSearch.hitCount = 0
+      record.checks.chineseSearch.matchedDocPath = false
+      record.checks.chineseSearch.ok = false
+    },
   },
   {
     id: 'wrong-supersede',
     expectation: 'the checker fails when the old note is not the one superseded',
-    mutate: (record) => { record.checks.supersede.oldSupersededBy = 'dec-00000000-0000-4000-8000-000000000000'; record.checks.supersede.ok = false },
+    mutate: (record) => {
+      record.checks.supersede.oldSupersededBy = 'dec-00000000-0000-4000-8000-000000000000'
+      record.checks.supersede.ok = false
+    },
   },
   {
     id: 'pending-restart-duplicate',
@@ -70,7 +84,11 @@ const MUTATIONS = [
   {
     id: 'external-edit-overwritten',
     expectation: 'the checker fails when an external edit was overwritten',
-    mutate: (record) => { record.checks.humanOwned.hashAfterUpdate = 'deadbeef'; record.checks.humanOwned.survivedUpdate = false; record.checks.humanOwned.ok = false },
+    mutate: (record) => {
+      record.checks.humanOwned.hashAfterUpdate = 'deadbeef'
+      record.checks.humanOwned.survivedUpdate = false
+      record.checks.humanOwned.ok = false
+    },
   },
   {
     id: 'model-lane-lost-its-receipt',
@@ -79,7 +97,9 @@ const MUTATIONS = [
       // Exactly the Task 18 shape: the lane ran, the seed job is on disk, but no
       // result receipt exists for it (the model call never completed).
       record.checks.capture.modelLane.live.receipt = null
-      record.checks.capture.modelLane.live.cycles = record.checks.capture.modelLane.live.cycles.map((entry) => ({ ...entry, receiptResult: null }))
+      record.checks.capture.modelLane.live.cycles = record.checks.capture.modelLane.live.cycles.map(
+        (entry) => ({ ...entry, receiptResult: null }),
+      )
     },
   },
   {
@@ -125,7 +145,12 @@ const SKIPPED_LANE = {
   id: 'model-lane-explicitly-skipped',
   expectation: "a lane carrying the runner's explicit skipped: true still passes",
   mutate: (record) => {
-    record.checks.capture.modelLane.dryRun = { skipped: true, jobId: null, cycles: [], receipt: null }
+    record.checks.capture.modelLane.dryRun = {
+      skipped: true,
+      jobId: null,
+      cycles: [],
+      receipt: null,
+    }
   },
 }
 
@@ -160,16 +185,29 @@ const skippedPath = join(workDir, `${SKIPPED_LANE.id}.json`)
 writeFileSync(skippedPath, `${JSON.stringify(skippedRecord, null, 2)}\n`)
 const skippedExit = verifyExit(skippedPath)
 
-const refusedPersonalPath = spawnSync(process.execPath, [VERIFY, cleanPath, '--vault', join(process.env.HOME ?? '/root', 'Documents', 'dsh-memory')], { encoding: 'utf8' })
+const refusedPersonalPath = spawnSync(
+  process.execPath,
+  [VERIFY, cleanPath, '--vault', join(process.env.HOME ?? '/root', 'Documents', 'dsh-memory')],
+  { encoding: 'utf8' },
+)
 
 const failures = results.filter((entry) => !entry.passed)
 process.stdout.write(`negative-controls: clean record exit=${cleanExit} (expected 0)\n`)
 for (const entry of results) {
-  process.stdout.write(`  ${entry.passed ? 'PASS' : 'FAIL'} ${entry.id} -> verify exit=${entry.exit} (${entry.expectation})\n`)
+  process.stdout.write(
+    `  ${entry.passed ? 'PASS' : 'FAIL'} ${entry.id} -> verify exit=${entry.exit} (${entry.expectation})\n`,
+  )
 }
-process.stdout.write(`  ${skippedExit === 0 ? 'PASS' : 'FAIL'} ${SKIPPED_LANE.id} -> verify exit=${skippedExit} (${SKIPPED_LANE.expectation})\n`)
-process.stdout.write(`  ${refusedPersonalPath.status === 2 ? 'PASS' : 'FAIL'} refuses-personal-vault-path -> verify exit=${refusedPersonalPath.status} (expected 2)\n`)
+process.stdout.write(
+  `  ${skippedExit === 0 ? 'PASS' : 'FAIL'} ${SKIPPED_LANE.id} -> verify exit=${skippedExit} (${SKIPPED_LANE.expectation})\n`,
+)
+process.stdout.write(
+  `  ${refusedPersonalPath.status === 2 ? 'PASS' : 'FAIL'} refuses-personal-vault-path -> verify exit=${refusedPersonalPath.status} (expected 2)\n`,
+)
 
-const ok = cleanExit === 0 && failures.length === 0 && skippedExit === 0 && refusedPersonalPath.status === 2
-process.stdout.write(`negative-controls: ${ok ? 'OK' : 'FAILED'} (${results.length} negative controls, 1 positive control)\n`)
+const ok =
+  cleanExit === 0 && failures.length === 0 && skippedExit === 0 && refusedPersonalPath.status === 2
+process.stdout.write(
+  `negative-controls: ${ok ? 'OK' : 'FAILED'} (${results.length} negative controls, 1 positive control)\n`,
+)
 process.exit(ok ? 0 : 1)

@@ -42,8 +42,19 @@ const DEFAULT_ROOT = resolve(HERE, '..')
  * that must never ship into a user's tree.
  */
 const FORBIDDEN_SEGMENTS = new Set([
-  'node_modules', 'pending', 'locks', 'transactions', '.history', '_meta',
-  '.obsidian', '.superpowers', 'scratch', 'research', 'docs', 'test', 'coverage',
+  'node_modules',
+  'pending',
+  'locks',
+  'transactions',
+  '.history',
+  '_meta',
+  '.obsidian',
+  '.superpowers',
+  'scratch',
+  'research',
+  'docs',
+  'test',
+  'coverage',
 ])
 
 /** Basenames that are always evidence or local state, never an asset. */
@@ -105,7 +116,9 @@ function parseArgs(argv) {
     } else if (argument.startsWith('--root=')) {
       root = argument.slice('--root='.length)
     } else {
-      throw new Error(`unknown argument ${JSON.stringify(argument)}; usage: verify-pack.mjs [--root <dir>]`)
+      throw new Error(
+        `unknown argument ${JSON.stringify(argument)}; usage: verify-pack.mjs [--root <dir>]`,
+      )
     }
     if (typeof root !== 'string' || !root.trim()) throw new Error('--root needs a directory')
   }
@@ -129,7 +142,9 @@ function readJson(path) {
 
 /** True when `target` is one of the allowlist entries or lives below one. */
 function isCovered(target, entries) {
-  return entries.some((entry) => target === entry || target.startsWith(entry.endsWith('/') ? entry : `${entry}/`))
+  return entries.some(
+    (entry) => target === entry || target.startsWith(entry.endsWith('/') ? entry : `${entry}/`),
+  )
 }
 
 /** Every file a directory entry would pull into the tarball, as pack-relative paths. */
@@ -163,21 +178,31 @@ export function verifyPack(root) {
   const plugin = readJson(join(root, 'dsh.plugin.json'))
 
   // 1. The two manifests describe one release.
-  if (typeof pkg.version !== 'string' || !pkg.version.trim()) problems.push('package.json: version must be a non-blank string')
-  if (typeof plugin.version !== 'string' || !plugin.version.trim()) problems.push('dsh.plugin.json: version must be a non-blank string')
+  if (typeof pkg.version !== 'string' || !pkg.version.trim())
+    problems.push('package.json: version must be a non-blank string')
+  if (typeof plugin.version !== 'string' || !plugin.version.trim())
+    problems.push('dsh.plugin.json: version must be a non-blank string')
   if (pkg.version !== plugin.version) {
-    problems.push(`version disagreement: package.json is ${JSON.stringify(pkg.version)} but dsh.plugin.json is ${JSON.stringify(plugin.version)}`)
+    problems.push(
+      `version disagreement: package.json is ${JSON.stringify(pkg.version)} but dsh.plugin.json is ${JSON.stringify(plugin.version)}`,
+    )
   }
   if (pkg.name !== plugin.id) {
-    problems.push(`identity disagreement: package.json name ${JSON.stringify(pkg.name)} is not dsh.plugin.json id ${JSON.stringify(plugin.id)}`)
+    problems.push(
+      `identity disagreement: package.json name ${JSON.stringify(pkg.name)} is not dsh.plugin.json id ${JSON.stringify(plugin.id)}`,
+    )
   }
   if (pkg.main !== plugin.main) {
-    problems.push(`entry disagreement: package.json main ${JSON.stringify(pkg.main)} is not dsh.plugin.json main ${JSON.stringify(plugin.main)}`)
+    problems.push(
+      `entry disagreement: package.json main ${JSON.stringify(pkg.main)} is not dsh.plugin.json main ${JSON.stringify(plugin.main)}`,
+    )
   }
 
   const floor = pkg.engines?.node
   if (typeof floor !== 'string' || !/^>=\d+\.\d+\.\d+$/.test(floor)) {
-    problems.push(`engines.node must be a measured floor like ">=22.22.2" (R8); found ${JSON.stringify(floor)}`)
+    problems.push(
+      `engines.node must be a measured floor like ">=22.22.2" (R8); found ${JSON.stringify(floor)}`,
+    )
   }
 
   // 2. `files` is deliberate and cannot escape the package root.
@@ -191,14 +216,26 @@ export function verifyPack(root) {
       problems.push(`files: ${JSON.stringify(entry)} is not a non-blank string`)
       continue
     }
-    if (isAbsolute(entry)) problems.push(`files: ${JSON.stringify(entry)} is absolute; entries must be package-relative`)
-    if (entry.startsWith('~') || entry.includes('~')) problems.push(`files: ${JSON.stringify(entry)} uses a home shorthand; entries must be package-relative`)
+    if (isAbsolute(entry))
+      problems.push(`files: ${JSON.stringify(entry)} is absolute; entries must be package-relative`)
+    if (entry.startsWith('~') || entry.includes('~'))
+      problems.push(
+        `files: ${JSON.stringify(entry)} uses a home shorthand; entries must be package-relative`,
+      )
     if (entry.startsWith('/')) problems.push(`files: ${JSON.stringify(entry)} starts with "/"`)
-    if (entry.split('/').includes('..')) problems.push(`files: ${JSON.stringify(entry)} escapes the package root with ".."`)
-    if (entry !== entry.replace(/\/{2,}/g, '/').replace(/^\.\//, '').replace(/\/$/, '')) {
+    if (entry.split('/').includes('..'))
+      problems.push(`files: ${JSON.stringify(entry)} escapes the package root with ".."`)
+    if (
+      entry !==
+      entry
+        .replace(/\/{2,}/g, '/')
+        .replace(/^\.\//, '')
+        .replace(/\/$/, '')
+    ) {
       problems.push(`files: ${JSON.stringify(entry)} is not a normalised relative path`)
     }
-    if (entry === '.' || entry === '..' || entry === '*') problems.push(`files: ${JSON.stringify(entry)} would pack the whole repository`)
+    if (entry === '.' || entry === '..' || entry === '*')
+      problems.push(`files: ${JSON.stringify(entry)} would pack the whole repository`)
   }
 
   // 4. Nothing the allowlist would pack is scratch, evidence or local state.
@@ -212,13 +249,17 @@ export function verifyPack(root) {
       const segments = packed.split('/')
       const bad = segments.find((segment) => FORBIDDEN_SEGMENTS.has(segment))
       if (bad !== undefined) {
-        problems.push(`files: ${JSON.stringify(entry)} would pack ${JSON.stringify(packed)} (${JSON.stringify(bad)} is never package content)`)
+        problems.push(
+          `files: ${JSON.stringify(entry)} would pack ${JSON.stringify(packed)} (${JSON.stringify(bad)} is never package content)`,
+        )
         continue
       }
       const name = segments[segments.length - 1]
       const matched = FORBIDDEN_NAMES.find((pattern) => pattern.test(name))
       if (matched !== undefined) {
-        problems.push(`files: ${JSON.stringify(entry)} would pack ${JSON.stringify(packed)} (${matched} is never package content)`)
+        problems.push(
+          `files: ${JSON.stringify(entry)} would pack ${JSON.stringify(packed)} (${matched} is never package content)`,
+        )
       }
     }
   }
@@ -238,11 +279,16 @@ export function verifyPack(root) {
   if (existsSync(toolsPath)) {
     const registered = registeredToolNames(readFileSync(toolsPath, 'utf8'))
     for (const name of TOOL_NAMES) {
-      if (!registered.has(name)) problems.push(`lib/tools.js no longer registers ${name} (no name: '${name}' registration site)`)
+      if (!registered.has(name))
+        problems.push(
+          `lib/tools.js no longer registers ${name} (no name: '${name}' registration site)`,
+        )
     }
     for (const name of registered) {
       if (!TOOL_NAMES.includes(name)) {
-        problems.push(`lib/tools.js registers ${name}, which is not one of the six tools (the surface is deliberately capped)`)
+        problems.push(
+          `lib/tools.js registers ${name}, which is not one of the six tools (the surface is deliberately capped)`,
+        )
       }
     }
   } else {
@@ -268,12 +314,16 @@ function main() {
     return 1
   }
   if (problems.length > 0) {
-    process.stdout.write(`verify-pack: FAIL (${problems.length} problem${problems.length === 1 ? '' : 's'}) in ${root}\n`)
+    process.stdout.write(
+      `verify-pack: FAIL (${problems.length} problem${problems.length === 1 ? '' : 's'}) in ${root}\n`,
+    )
     for (const problem of problems) process.stdout.write(`  - ${problem}\n`)
     return 1
   }
   process.stdout.write(`verify-pack: OK ${root}\n`)
-  process.stdout.write(`  version ${readJson(join(root, 'package.json')).version}, files allowlist ${readJson(join(root, 'package.json')).files.length} entries, ${REQUIRED_ASSETS.length} required assets present and covered, ${TOOL_NAMES.length} tools registered\n`)
+  process.stdout.write(
+    `  version ${readJson(join(root, 'package.json')).version}, files allowlist ${readJson(join(root, 'package.json')).files.length} entries, ${REQUIRED_ASSETS.length} required assets present and covered, ${TOOL_NAMES.length} tools registered\n`,
+  )
   return 0
 }
 

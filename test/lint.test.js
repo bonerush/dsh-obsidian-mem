@@ -15,7 +15,18 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
@@ -37,7 +48,14 @@ import {
 import { promoteNote, writeMemory } from '../lib/memory.js'
 import { readPendingJobs, writeJobAtomic } from '../lib/pending.js'
 import { createMemoryServices } from '../lib/tools.js'
-import { bootstrapVault, newTransactionId, resolveBinding, runTransaction, vaultIdentity, withVaultLock } from '../lib/vault.js'
+import {
+  bootstrapVault,
+  newTransactionId,
+  resolveBinding,
+  runTransaction,
+  vaultIdentity,
+  withVaultLock,
+} from '../lib/vault.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -75,7 +93,13 @@ function sha256(value) {
 /** A hermetic git environment (no user/system config, no inherited GIT_* redirection). */
 function gitEnvironment() {
   const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
-  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY']) {
+  for (const key of [
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_COMMON_DIR',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+  ]) {
     delete env[key]
   }
   return env
@@ -85,7 +109,17 @@ function gitEnvironment() {
 function git(cwd, args) {
   return execFileAsync(
     'git',
-    ['-c', 'user.name=Task Seventeen', '-c', 'user.email=t17@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'init.defaultBranch=main', ...args],
+    [
+      '-c',
+      'user.name=Task Seventeen',
+      '-c',
+      'user.email=t17@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      'init.defaultBranch=main',
+      ...args,
+    ],
     { cwd, env: gitEnvironment(), encoding: 'utf8' },
   )
 }
@@ -146,7 +180,10 @@ async function fixture(t, { pointer = true, git: withGit = true, projectId = ID1
   if (withGit) await initRepo(repo)
   else await mkdir(repo, { recursive: true })
   if (pointer) {
-    await writeFile(join(repo, '.obsidian-mem'), `${JSON.stringify({ projectId, slug: 'demo', displayName: 'demo', schema: 1 }, null, 2)}\n`)
+    await writeFile(
+      join(repo, '.obsidian-mem'),
+      `${JSON.stringify({ projectId, slug: 'demo', displayName: 'demo', schema: 1 }, null, 2)}\n`,
+    )
   }
   const binding = await resolveBinding({ cwd: repo, vaultRoot: vault, home })
   assert.equal(binding.kind, 'bound', JSON.stringify(binding))
@@ -223,16 +260,30 @@ test('orphan files and orphan index rows are named from the index rows and the v
   // index has never seen and delete one file the index already knows.
   await f.index.refresh()
   const removed = projectPath(f, 'Docs/删除目标.md')
-  await writeNote(f, removed, pluginNote({ id: 'doc-11111111-1111-4111-8111-111111111111', title: '删除目标' }))
+  await writeNote(
+    f,
+    removed,
+    pluginNote({ id: 'doc-11111111-1111-4111-8111-111111111111', title: '删除目标' }),
+  )
   await f.index.refresh()
   await rm(join(f.vault, ...removed.split('/')))
-  await writeNote(f, projectPath(f, 'Docs/新增孤儿.md'), pluginNote({ id: 'doc-22222222-2222-4222-8222-222222222222', title: '新增孤儿' }))
+  await writeNote(
+    f,
+    projectPath(f, 'Docs/新增孤儿.md'),
+    pluginNote({ id: 'doc-22222222-2222-4222-8222-222222222222', title: '新增孤儿' }),
+  )
 
   const report = await lintOf(f)
   const orphanFiles = report.findings.filter((finding) => finding.kind === 'orphan-file')
   const orphanRows = report.findings.filter((finding) => finding.kind === 'orphan-index-row')
-  assert.deepEqual(orphanFiles.map((finding) => finding.path), [projectPath(f, 'Docs/新增孤儿.md')])
-  assert.deepEqual(orphanRows.map((finding) => finding.path), [removed])
+  assert.deepEqual(
+    orphanFiles.map((finding) => finding.path),
+    [projectPath(f, 'Docs/新增孤儿.md')],
+  )
+  assert.deepEqual(
+    orphanRows.map((finding) => finding.path),
+    [removed],
+  )
   assert.equal(report.index.notes, report.index.rows)
   assert.equal(report.index.compared, true)
   await f.index.close()
@@ -241,7 +292,11 @@ test('orphan files and orphan index rows are named from the index rows and the v
 test('a dead wikilink is reported and a resolvable one is not', async (t) => {
   const f = await fixture(t)
   const target = projectPath(f, 'Docs/目标.md')
-  await writeNote(f, target, pluginNote({ id: 'doc-33333333-3333-4333-8333-333333333333', title: '目标' }))
+  await writeNote(
+    f,
+    target,
+    pluginNote({ id: 'doc-33333333-3333-4333-8333-333333333333', title: '目标' }),
+  )
   await writeNote(
     f,
     projectPath(f, 'Docs/引用者.md'),
@@ -265,16 +320,30 @@ test('case-folded duplicate note names are reported, exact duplicates are not', 
   // Two directories on purpose: a case-insensitive filesystem cannot hold both
   // names side by side, but Obsidian's link resolver still sees one ambiguous
   // target across the project.
-  await writeNote(f, projectPath(f, 'Docs/Readme.md'), pluginNote({ id: 'doc-55555555-5555-4555-8555-555555555555', title: 'Readme' }))
-  await writeNote(f, projectPath(f, 'Decisions/README.md'), pluginNote({ id: 'doc-66666666-6666-4666-8666-666666666666', title: 'README' }))
+  await writeNote(
+    f,
+    projectPath(f, 'Docs/Readme.md'),
+    pluginNote({ id: 'doc-55555555-5555-4555-8555-555555555555', title: 'Readme' }),
+  )
+  await writeNote(
+    f,
+    projectPath(f, 'Decisions/README.md'),
+    pluginNote({ id: 'doc-66666666-6666-4666-8666-666666666666', title: 'README' }),
+  )
 
   const report = await lintOf(f)
   const duplicates = report.findings.filter((finding) => finding.kind === 'duplicate-name')
   assert.equal(duplicates.length, 1, JSON.stringify(duplicates))
-  assert.deepEqual(duplicates[0].paths.slice().sort(), [projectPath(f, 'Decisions/README.md'), projectPath(f, 'Docs/Readme.md')].sort())
+  assert.deepEqual(
+    duplicates[0].paths.slice().sort(),
+    [projectPath(f, 'Decisions/README.md'), projectPath(f, 'Docs/Readme.md')].sort(),
+  )
   // The bootstrap skeleton names every hub `index.md`; identical names are by
   // design and must never be reported as a case-folded duplicate.
-  assert.equal(duplicates.some((finding) => /index\.md$/.test(finding.message)), false)
+  assert.equal(
+    duplicates.some((finding) => /index\.md$/.test(finding.message)),
+    false,
+  )
   await f.index.close()
 })
 
@@ -307,7 +376,10 @@ test('broken frontmatter, a frontmatter gap and an expired review_after are repo
 test('a pending backlog is reported from the queue, corrupt files included', async (t) => {
   const f = await fixture(t)
   await writeJobAtomic(f.queueRoot, jobDocument())
-  await writeJobAtomic(f.queueRoot, jobDocument({ jobId: 'job-2', state: 'validated', attempts: 0 }))
+  await writeJobAtomic(
+    f.queueRoot,
+    jobDocument({ jobId: 'job-2', state: 'validated', attempts: 0 }),
+  )
   await writeFile(join(f.queueRoot, 'job-3.json'), '{ not json')
 
   const report = await lintOf(f)
@@ -339,11 +411,17 @@ test('a repository Markdown file with no vault link is reported and never moved'
   await writeNote(
     f,
     projectPath(f, 'Docs/已链接.md'),
-    pluginNote({ id: 'doc-77777777-7777-4777-8777-777777777777', title: '已链接', body: '见 [[NOTES]]。\n' }),
+    pluginNote({
+      id: 'doc-77777777-7777-4777-8777-777777777777',
+      title: '已链接',
+      body: '见 [[NOTES]]。\n',
+    }),
   )
   const second = await lintOf(f)
   assert.deepEqual(
-    second.findings.filter((finding) => finding.kind === 'unlinked-repo-markdown').map((finding) => finding.path),
+    second.findings
+      .filter((finding) => finding.kind === 'unlinked-repo-markdown')
+      .map((finding) => finding.path),
     ['docs/guide.md'],
   )
   await f.index.close()
@@ -351,7 +429,11 @@ test('a repository Markdown file with no vault link is reported and never moved'
 
 test('the default lint leaves every vault and repository byte untouched', async (t) => {
   const f = await fixture(t)
-  await writeMemory(f.binding, { type: 'doc', title: '笔记', body: '正文\n' }, { dataRoot: f.dataRoot, home: f.home })
+  await writeMemory(
+    f.binding,
+    { type: 'doc', title: '笔记', body: '正文\n' },
+    { dataRoot: f.dataRoot, home: f.home },
+  )
   await rm(join(f.vault, '_meta', 'user.md'))
   const vaultBefore = await hashTree(f.vault)
   const repoBefore = await hashTree(f.repo)
@@ -371,18 +453,45 @@ test('the default lint leaves every vault and repository byte untouched', async 
 test('the safety exclusions cannot be cancelled by user globs', async (t) => {
   const f = await fixture(t)
   // A note a user glob names, and a safety path no glob may unname.
-  await writeNote(f, projectPath(f, 'Docs/忽略我.md'), pluginNote({ id: 'doc-88888888-8888-4888-8888-888888888888', title: '忽略我' }))
-  await writeNote(f, '_meta/.history/tx-1/0__泄露.md', pluginNote({ id: 'doc-99999999-9999-4999-8999-999999999999', title: '历史' }))
+  await writeNote(
+    f,
+    projectPath(f, 'Docs/忽略我.md'),
+    pluginNote({ id: 'doc-88888888-8888-4888-8888-888888888888', title: '忽略我' }),
+  )
+  await writeNote(
+    f,
+    '_meta/.history/tx-1/0__泄露.md',
+    pluginNote({ id: 'doc-99999999-9999-4999-8999-999999999999', title: '历史' }),
+  )
 
   const ignored = await lintOf(f, { ignoreGlobs: ['**/忽略我.md'] })
-  assert.equal(ignored.findings.some((finding) => finding.path.endsWith('忽略我.md')), false)
-  assert.equal(ignored.findings.some((finding) => finding.path.includes('.history')), false)
+  assert.equal(
+    ignored.findings.some((finding) => finding.path.endsWith('忽略我.md')),
+    false,
+  )
+  assert.equal(
+    ignored.findings.some((finding) => finding.path.includes('.history')),
+    false,
+  )
   assert.deepEqual(ignored.ignoreGlobs, ['**/忽略我.md'])
 
   // A negation (or any other unsupported syntax) is refused at config validation
   // instead of silently mis-matching.
-  for (const glob of ['!Projects/**', '[a]b.md', '{a,b}.md', '**/x@.md', 'a\\b.md', '/absolute/**', '../escape/**', '']) {
-    assert.throws(() => validateConfig({ ignoreGlobs: [glob] }), RangeError, `must refuse ${JSON.stringify(glob)}`)
+  for (const glob of [
+    '!Projects/**',
+    '[a]b.md',
+    '{a,b}.md',
+    '**/x@.md',
+    'a\\b.md',
+    '/absolute/**',
+    '../escape/**',
+    '',
+  ]) {
+    assert.throws(
+      () => validateConfig({ ignoreGlobs: [glob] }),
+      RangeError,
+      `must refuse ${JSON.stringify(glob)}`,
+    )
   }
   // The supported subset compiles, and a `.` stays a literal dot rather than
   // becoming a regular-expression wildcard.
@@ -412,7 +521,10 @@ test('an explicit report request writes the dated report note once and is idempo
   const text = await readFile(absolute, 'utf8')
   assert.match(text, /<!-- obsidian-mem:generated begin sha256:[0-9a-f]{64} -->/)
   const declared = /sha256:([0-9a-f]{64})/.exec(text)[1]
-  const body = text.slice(text.indexOf('-->\n') + 4, text.lastIndexOf('\n<!-- obsidian-mem:generated end -->'))
+  const body = text.slice(
+    text.indexOf('-->\n') + 4,
+    text.lastIndexOf('\n<!-- obsidian-mem:generated end -->'),
+  )
   assert.equal(declared, sha256(body))
   const stat = await lstat(absolute)
 
@@ -424,7 +536,13 @@ test('an explicit report request writes the dated report note once and is idempo
   assert.equal((await lstat(absolute)).mtimeMs, stat.mtimeMs)
 
   // A human edit inside the generated area stops the rewrite and is reported.
-  await writeFile(absolute, text.replace('<!-- obsidian-mem:generated end -->', '人类补充\n<!-- obsidian-mem:generated end -->'))
+  await writeFile(
+    absolute,
+    text.replace(
+      '<!-- obsidian-mem:generated end -->',
+      '人类补充\n<!-- obsidian-mem:generated end -->',
+    ),
+  )
   const edited = await readFile(absolute, 'utf8')
   const third = await lintOf(f, { report: true, now: new Date('2026-09-25T10:00:00Z') })
   assert.equal(third.report.status, 'written')
@@ -438,13 +556,18 @@ test('an explicit report request writes the dated report note once and is idempo
 
 test('an explicit report changes exactly one vault file and nothing else', async (t) => {
   const f = await fixture(t)
-  await writeMemory(f.binding, { type: 'doc', title: '笔记', body: '正文\n' }, { dataRoot: f.dataRoot, home: f.home })
+  await writeMemory(
+    f.binding,
+    { type: 'doc', title: '笔记', body: '正文\n' },
+    { dataRoot: f.dataRoot, home: f.home },
+  )
   const before = await hashTree(f.vault)
 
   const report = await lintOf(f, { report: true, now: new Date('2026-09-24T10:00:00Z') })
   const after = await hashTree(f.vault)
-  const changed = [...new Set([...before.keys(), ...after.keys()])]
-    .filter((path) => before.get(path) !== after.get(path))
+  const changed = [...new Set([...before.keys(), ...after.keys()])].filter(
+    (path) => before.get(path) !== after.get(path),
+  )
   assert.deepEqual(changed, [report.report.path], JSON.stringify(report.findings))
   assert.equal(report.report.status, 'written')
 })
@@ -459,10 +582,19 @@ test('history retention prunes only old unprotected snapshots and spares a needs
   await writeFile(join(old, '0__note.md'), '# old snapshot\n')
   await writeFile(join(fresh, '0__note.md'), '# fresh snapshot\n')
   await writeFile(join(repair, '0__note.md'), '# repair snapshot\n')
-  await writeFile(join(repair, 'manifest.json'), `${JSON.stringify({ schema: 1, txId: 'tx-repair', state: 'needs-manual-repair' })}\n`)
+  await writeFile(
+    join(repair, 'manifest.json'),
+    `${JSON.stringify({ schema: 1, txId: 'tx-repair', state: 'needs-manual-repair' })}\n`,
+  )
   const longAgo = new Date(Date.now() - 400 * 24 * 3600_000)
   const recently = new Date(Date.now() - 3600_000)
-  for (const target of [old, join(old, '0__note.md'), repair, join(repair, '0__note.md'), join(repair, 'manifest.json')]) {
+  for (const target of [
+    old,
+    join(old, '0__note.md'),
+    repair,
+    join(repair, '0__note.md'),
+    join(repair, 'manifest.json'),
+  ]) {
     await utimes(target, longAgo, longAgo)
   }
   await utimes(fresh, recently, recently)
@@ -496,7 +628,10 @@ test('a live transaction manifest under the data root spares its history snapsho
   const identity = await vaultIdentity(f.binding, { home: f.home })
   const store = join(f.dataRoot, 'transactions', identity.vaultHash)
   await mkdir(store, { recursive: true })
-  await writeFile(join(store, 'tx-live.json'), `${JSON.stringify({ schema: 1, txId: 'tx-live', state: 'prepared' })}\n`)
+  await writeFile(
+    join(store, 'tx-live.json'),
+    `${JSON.stringify({ schema: 1, txId: 'tx-live', state: 'prepared' })}\n`,
+  )
 
   const report = await lintOf(f, { pruneHistory: true })
   assert.deepEqual(report.history.pruned, [])
@@ -519,15 +654,19 @@ test('a prune waits for the whole-vault lock and never interleaves with a transa
   // Another writer holds the vault lock for the duration of this block, exactly
   // as an in-flight transaction does. The sweep must wait for it instead of
   // deleting anything it cannot see yet.
-  await withVaultLock(f.binding, async () => {
-    prune = lintOf(f, { pruneHistory: true }).then((value) => {
-      pruneSettled = true
-      return value
-    })
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    assert.equal(pruneSettled, false, 'the prune must wait for the vault lock')
-    assert.equal((await lstat(target)).isDirectory(), true, 'a locked vault keeps its history')
-  }, { dataRoot: f.dataRoot, home: f.home })
+  await withVaultLock(
+    f.binding,
+    async () => {
+      prune = lintOf(f, { pruneHistory: true }).then((value) => {
+        pruneSettled = true
+        return value
+      })
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      assert.equal(pruneSettled, false, 'the prune must wait for the vault lock')
+      assert.equal((await lstat(target)).isDirectory(), true, 'a locked vault keeps its history')
+    },
+    { dataRoot: f.dataRoot, home: f.home },
+  )
 
   const report = await prune
   assert.deepEqual(report.history.pruned, ['tx-old'], 'the sweep runs once the lock is free')
@@ -552,7 +691,11 @@ test('a prune that cannot take the lock deletes nothing and says so', async (t) 
   )
   assert.deepEqual(blocked.history.pruned, [])
   assert.equal((await lstat(target)).isDirectory(), true)
-  assert.equal(blocked.findings.some((finding) => finding.kind === 'history-prune-blocked'), true, JSON.stringify(blocked.findings))
+  assert.equal(
+    blocked.findings.some((finding) => finding.kind === 'history-prune-blocked'),
+    true,
+    JSON.stringify(blocked.findings),
+  )
   await f.index.close()
 })
 
@@ -570,19 +713,26 @@ test('a prune refuses to run while the vault still owes manual repair', async (t
   const identity = await vaultIdentity(f.binding, { home: f.home })
   const store = join(f.dataRoot, 'transactions', identity.vaultHash)
   await mkdir(store, { recursive: true })
-  await writeFile(join(store, 'tx-broken.json'), `${JSON.stringify({
-    schema: 1,
-    txId: 'tx-broken',
-    vaultHash: identity.vaultHash,
-    state: 'needs-manual-repair',
-    steps: { prepared: true },
-    targets: [],
-  })}\n`)
+  await writeFile(
+    join(store, 'tx-broken.json'),
+    `${JSON.stringify({
+      schema: 1,
+      txId: 'tx-broken',
+      vaultHash: identity.vaultHash,
+      state: 'needs-manual-repair',
+      steps: { prepared: true },
+      targets: [],
+    })}\n`,
+  )
 
   const report = await lintOf(f, { pruneHistory: true })
   assert.deepEqual(report.history.pruned, [], 'nothing is deleted while recovery is required')
   assert.equal((await readdir(historyRoot)).includes('tx-old'), true)
-  assert.equal(report.findings.some((finding) => finding.kind === 'history-prune-blocked'), true, JSON.stringify(report.findings))
+  assert.equal(
+    report.findings.some((finding) => finding.kind === 'history-prune-blocked'),
+    true,
+    JSON.stringify(report.findings),
+  )
   await f.index.close()
 })
 
@@ -592,7 +742,9 @@ test('oversized history is a finding, and the retention policy is reported', asy
   const big = join(history, 'tx-big')
   await mkdir(big, { recursive: true })
   await writeFile(join(big, '0__note.md'), 'x'.repeat(4096))
-  const report = await lintOf(f, { historyPolicy: { oversizeBytes: 1024, oversizedSnapshotBytes: 1024 } })
+  const report = await lintOf(f, {
+    historyPolicy: { oversizeBytes: 1024, oversizedSnapshotBytes: 1024 },
+  })
   const oversized = report.findings.filter((finding) => finding.kind === 'history-oversized')
   assert.deepEqual(
     oversized.map((finding) => finding.path).sort(),
@@ -611,7 +763,11 @@ test('_meta/user.md is created once by bootstrap and never rewritten', async (t)
   assert.match(created, /^---\n/)
   const stat = await lstat(userFile)
 
-  const again = await bootstrapVault(f.binding, { initGitOnCreate: false, home: f.home, dataRoot: f.dataRoot })
+  const again = await bootstrapVault(f.binding, {
+    initGitOnCreate: false,
+    home: f.home,
+    dataRoot: f.dataRoot,
+  })
   assert.equal(again.createdPaths.includes('_meta/user.md'), false)
   assert.equal(again.existingPaths.includes('_meta/user.md'), true)
   assert.equal(await readFile(userFile, 'utf8'), created)
@@ -660,11 +816,20 @@ test('bind mode local mints a pointer in a non-git directory and bootstraps it',
 
 test('bind mode fork mints a new id, swaps the pointer and never moves the old project', async (t) => {
   const f = await fixture(t, { projectId: OLD_ID })
-  await writeMemory(f.binding, { type: 'doc', title: '旧项目笔记', body: '旧内容\n' }, { dataRoot: f.dataRoot, home: f.home })
+  await writeMemory(
+    f.binding,
+    { type: 'doc', title: '旧项目笔记', body: '旧内容\n' },
+    { dataRoot: f.dataRoot, home: f.home },
+  )
   const oldTree = await hashTree(join(f.vault, ...f.binding.relativeDir.split('/')))
   const oldId = f.binding.projectId
 
-  const forked = await resolveBinding({ cwd: f.repo, vaultRoot: f.vault, mode: 'fork', home: f.home })
+  const forked = await resolveBinding({
+    cwd: f.repo,
+    vaultRoot: f.vault,
+    mode: 'fork',
+    home: f.home,
+  })
   assert.equal(forked.kind, 'bound', JSON.stringify(forked))
   assert.notEqual(forked.projectId, oldId)
   assert.equal(forked.previousProjectId, oldId)
@@ -676,14 +841,28 @@ test('bind mode fork mints a new id, swaps the pointer and never moves the old p
   // The old project's content is exactly where it was, byte for byte.
   assert.deepEqual(await hashTree(join(f.vault, ...f.binding.relativeDir.split('/'))), oldTree)
 
-  const boot = await bootstrapVault(forked, { initGitOnCreate: false, home: f.home, dataRoot: f.dataRoot })
+  const boot = await bootstrapVault(forked, {
+    initGitOnCreate: false,
+    home: f.home,
+    dataRoot: f.dataRoot,
+  })
   assert.equal(boot.registryUpdated, true)
-  await writeMemory(forked, { type: 'doc', title: '新项目笔记', body: '新内容\n' }, { dataRoot: f.dataRoot, home: f.home })
+  await writeMemory(
+    forked,
+    { type: 'doc', title: '新项目笔记', body: '新内容\n' },
+    { dataRoot: f.dataRoot, home: f.home },
+  )
   // The old project is still exactly as it was, and the new one never inherited it.
   assert.deepEqual(await hashTree(join(f.vault, ...f.binding.relativeDir.split('/'))), oldTree)
   const newTree = await hashTree(join(f.vault, ...forked.relativeDir.split('/')))
-  assert.equal([...newTree.keys()].some((path) => path.includes('旧项目笔记')), false)
-  assert.equal([...newTree.keys()].some((path) => path.includes('新项目笔记')), true)
+  assert.equal(
+    [...newTree.keys()].some((path) => path.includes('旧项目笔记')),
+    false,
+  )
+  assert.equal(
+    [...newTree.keys()].some((path) => path.includes('新项目笔记')),
+    true,
+  )
   assert.equal([...newTree.keys()].includes('index.md'), true)
 
   // A repository with no pointer has nothing to fork away from.
@@ -691,7 +870,12 @@ test('bind mode fork mints a new id, swaps the pointer and never moves the old p
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 4 }))
   const bare = join(root, 'repo')
   await initRepo(bare)
-  const refused = await resolveBinding({ cwd: bare, vaultRoot: f.vault, mode: 'fork', home: f.home })
+  const refused = await resolveBinding({
+    cwd: bare,
+    vaultRoot: f.vault,
+    mode: 'fork',
+    home: f.home,
+  })
   assert.equal(refused.kind, 'conflict')
   assert.equal(refused.reason, 'no-pointer')
   await assert.rejects(lstat(join(bare, '.obsidian-mem')), { code: 'ENOENT' })
@@ -701,18 +885,33 @@ test('bind mode fork mints a new id, swaps the pointer and never moves the old p
 test('bind mode retain updates only the confirmed remote hint', async (t) => {
   const f = await fixture(t)
   await git(f.repo, ['remote', 'add', 'origin', 'https://example.invalid/demo.git'])
-  const retained = await resolveBinding({ cwd: f.repo, vaultRoot: f.vault, mode: 'retain', home: f.home, dataRoot: f.dataRoot })
+  const retained = await resolveBinding({
+    cwd: f.repo,
+    vaultRoot: f.vault,
+    mode: 'retain',
+    home: f.home,
+    dataRoot: f.dataRoot,
+  })
   assert.equal(retained.kind, 'bound', JSON.stringify(retained))
   assert.equal(retained.retained, true)
   assert.equal(retained.remote, 'https://example.invalid/demo')
   const registry = await readFile(join(f.vault, '_meta', 'registry.md'), 'utf8')
   assert.match(registry, /https:\/\/example\.invalid\/demo/)
   const declared = /sha256:([0-9a-f]{64})/.exec(registry)[1]
-  const body = registry.slice(registry.indexOf('-->\n') + 4, registry.indexOf('<!-- obsidian-mem:registry end -->'))
+  const body = registry.slice(
+    registry.indexOf('-->\n') + 4,
+    registry.indexOf('<!-- obsidian-mem:registry end -->'),
+  )
   assert.equal(declared, sha256(body))
 
   const stat = await lstat(join(f.vault, '_meta', 'registry.md'))
-  const again = await resolveBinding({ cwd: f.repo, vaultRoot: f.vault, mode: 'retain', home: f.home, dataRoot: f.dataRoot })
+  const again = await resolveBinding({
+    cwd: f.repo,
+    vaultRoot: f.vault,
+    mode: 'retain',
+    home: f.home,
+    dataRoot: f.dataRoot,
+  })
   assert.equal(again.retained, false)
   assert.equal((await lstat(join(f.vault, '_meta', 'registry.md'))).mtimeMs, stat.mtimeMs)
 
@@ -732,7 +931,13 @@ test('bind mode retain updates only the confirmed remote hint', async (t) => {
   assert.notEqual(tampered, original)
   await writeFile(registryPath, tampered)
   await git(f.repo, ['remote', 'set-url', 'origin', 'https://example.invalid/moved.git'])
-  const refused = await resolveBinding({ cwd: f.repo, vaultRoot: f.vault, mode: 'retain', home: f.home, dataRoot: f.dataRoot })
+  const refused = await resolveBinding({
+    cwd: f.repo,
+    vaultRoot: f.vault,
+    mode: 'retain',
+    home: f.home,
+    dataRoot: f.dataRoot,
+  })
   assert.equal(refused.kind, 'conflict')
   assert.equal(refused.reason, 'registry-hash-mismatch')
   assert.equal(await readFile(registryPath, 'utf8'), tampered)
@@ -756,10 +961,16 @@ test('a retain whose registry transaction cannot run refuses instead of naming a
   const indexPath = join(f.vault, ...indexRelative.split('/'))
   const before = await readFile(indexPath, 'utf8')
   await assert.rejects(
-    runTransaction(f.binding, {
-      txId: newTransactionId(),
-      updates: [{ path: indexRelative, hash: sha256(before), contents: `${before}\n注入后未完成\n` }],
-    }, { dataRoot: f.dataRoot, home: f.home, failAfter: 'old-status' }),
+    runTransaction(
+      f.binding,
+      {
+        txId: newTransactionId(),
+        updates: [
+          { path: indexRelative, hash: sha256(before), contents: `${before}\n注入后未完成\n` },
+        ],
+      },
+      { dataRoot: f.dataRoot, home: f.home, failAfter: 'old-status' },
+    ),
     { code: 'injected-failure' },
   )
   // The human edits the same note in Obsidian before recovery runs. That edit is
@@ -767,7 +978,13 @@ test('a retain whose registry transaction cannot run refuses instead of naming a
   const external = `${before}\n外部编辑\n`
   await writeFile(indexPath, external)
 
-  const refused = await resolveBinding({ cwd: f.repo, vaultRoot: f.vault, mode: 'retain', home: f.home, dataRoot: f.dataRoot })
+  const refused = await resolveBinding({
+    cwd: f.repo,
+    vaultRoot: f.vault,
+    mode: 'retain',
+    home: f.home,
+    dataRoot: f.dataRoot,
+  })
   assert.equal(refused.kind, 'conflict', JSON.stringify(refused))
   assert.equal(refused.reason, 'recovery-required')
   assert.match(refused.message, /unresolved transaction/)
@@ -782,11 +999,20 @@ test('promote creates a Methods note that links its source and never moves the s
   await writeNote(
     f,
     source,
-    pluginNote({ id: 'con-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', type: 'convention', title: '本地约定', body: '只在项目内成立。\n' }),
+    pluginNote({
+      id: 'con-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      type: 'convention',
+      title: '本地约定',
+      body: '只在项目内成立。\n',
+    }),
   )
   const before = await readFile(join(f.vault, ...source.split('/')))
 
-  const promoted = await promoteNote(f.binding, { path: source }, { dataRoot: f.dataRoot, home: f.home })
+  const promoted = await promoteNote(
+    f.binding,
+    { path: source },
+    { dataRoot: f.dataRoot, home: f.home },
+  )
   assert.equal(promoted.source, source)
   assert.equal(promoted.moved, false)
   assert.match(promoted.path, /^Methods\//)
@@ -798,18 +1024,31 @@ test('promote creates a Methods note that links its source and never moves the s
   assert.deepEqual(await readFile(join(f.vault, ...source.split('/'))), before)
 
   // A second promotion of the same note is a second note, never an overwrite.
-  const again = await promoteNote(f.binding, { path: source }, { dataRoot: f.dataRoot, home: f.home })
+  const again = await promoteNote(
+    f.binding,
+    { path: source },
+    { dataRoot: f.dataRoot, home: f.home },
+  )
   assert.notEqual(again.path, promoted.path)
 
   // A source that is not there is the documented `note-not-found`, not a generic
   // error from somewhere inside the reader.
-  const missing = await promoteNote(f.binding, { path: projectPath(f, 'Docs/不存在.md') }, { dataRoot: f.dataRoot, home: f.home })
-    .then(() => null, (error) => error)
+  const missing = await promoteNote(
+    f.binding,
+    { path: projectPath(f, 'Docs/不存在.md') },
+    { dataRoot: f.dataRoot, home: f.home },
+  ).then(
+    () => null,
+    (error) => error,
+  )
   assert.equal(missing?.name, 'MemoryError', String(missing))
   assert.equal(missing?.code, 'note-not-found')
 
   // A path outside the vault is refused by the jail, and nothing is created.
-  await assert.rejects(promoteNote(f.binding, { path: '../outside.md' }, { dataRoot: f.dataRoot, home: f.home }), /vault|path/i)
+  await assert.rejects(
+    promoteNote(f.binding, { path: '../outside.md' }, { dataRoot: f.dataRoot, home: f.home }),
+    /vault|path/i,
+  )
   // A source already in `Methods/` is refused rather than promoted again.
   await assert.rejects(
     promoteNote(f.binding, { path: promoted.path }, { dataRoot: f.dataRoot, home: f.home }),
@@ -822,13 +1061,22 @@ test('jobs lists the queue and retries only on an explicit request', async (t) =
   const f = await fixture(t)
   await writeJobAtomic(f.queueRoot, jobDocument())
   const config = validateConfig({ vaultPath: f.vault })
-  const services = createMemoryServices({ config, dataRoot: f.dataRoot, cwd: f.repo, home: f.home, binding: f.binding })
+  const services = createMemoryServices({
+    config,
+    dataRoot: f.dataRoot,
+    cwd: f.repo,
+    home: f.home,
+    binding: f.binding,
+  })
   t.after(() => services.close())
 
   const listed = await services.admin({ action: 'jobs', retry: false })
   assert.equal(listed.action, 'jobs')
   assert.equal(listed.result.status, 'listed')
-  assert.deepEqual(listed.result.jobs.map((job) => job.jobId), ['job-1'])
+  assert.deepEqual(
+    listed.result.jobs.map((job) => job.jobId),
+    ['job-1'],
+  )
   assert.equal(listed.result.failed, 1)
   assert.equal(listed.result.jobs[0].state, 'failed')
   assert.equal(listed.result.jobs[0].attempts, 3)
@@ -853,7 +1101,11 @@ test('jobs lists the queue and retries only on an explicit request', async (t) =
 test('the weekly hint is due only when the last report is older than seven days', async (t) => {
   const f = await fixture(t)
   // A vault that does not exist yet has nothing to inspect and must stay quiet.
-  const absent = await weeklyLintHint({ vaultPath: join(f.root, 'no-vault-yet'), home: f.home, now: new Date() })
+  const absent = await weeklyLintHint({
+    vaultPath: join(f.root, 'no-vault-yet'),
+    home: f.home,
+    now: new Date(),
+  })
   assert.equal(absent.due, false)
   assert.equal(absent.text, '')
 
@@ -895,22 +1147,31 @@ test('the weekly hint rides the first pre-step of a session, exactly once', asyn
       return { due: true, text: '记忆体检提醒：建议运行 mem_admin(action="lint", report=true)。' }
     },
   })
-  t.after(async () => { for (const dispose of disposers) await dispose() })
+  t.after(async () => {
+    for (const dispose of disposers) await dispose()
+  })
 
   const agent = { session: { header: { id: 'sess-hint', cwd: '/tmp/example' } } }
   ctx.emit('agent/session-start', { agent, source: 'startup' })
-  const preStep = () => ctx.waterfall(
-    'agent/pre-step',
-    { agent, messages: [], turn: 1, step: 1, signal: new AbortController().signal },
-    async () => ({ kind: 'enter', messages: [] }),
-  )
+  const preStep = () =>
+    ctx.waterfall(
+      'agent/pre-step',
+      { agent, messages: [], turn: 1, step: 1, signal: new AbortController().signal },
+      async () => ({ kind: 'enter', messages: [] }),
+    )
 
   const first = await preStep()
-  const injected = (first.messages ?? []).filter((message) => message?.source?.kind === RECALL_SOURCE.kind)
+  const injected = (first.messages ?? []).filter(
+    (message) => message?.source?.kind === RECALL_SOURCE.kind,
+  )
   assert.equal(injected.length, 1, JSON.stringify(first.messages))
   assert.match(injected[0].content[0].text, /体检提醒/)
   const second = await preStep()
-  assert.equal((second.messages ?? []).length, 0, 'the hint is a session-start reminder, never a repeated one')
+  assert.equal(
+    (second.messages ?? []).length,
+    0,
+    'the hint is a session-start reminder, never a repeated one',
+  )
   assert.equal(asked, 1, 'the seam is asked at most once per session')
 
   // The hint shares the session's one brief budget: a first request must never
@@ -920,12 +1181,22 @@ test('the weekly hint rides the first pre-step of a session, exactly once', asyn
   const briefText = 'B'.repeat(40)
   const hintText = 'H'.repeat(40)
   const sharedDisposers = registerHooks(shared, {
-    resolveBinding: async () => ({ kind: 'bound', projectId: ID1, slug: 'demo', displayName: 'demo', relativeDir: 'Projects/demo--1c392abb' }),
+    resolveBinding: async () => ({
+      kind: 'bound',
+      projectId: ID1,
+      slug: 'demo',
+      displayName: 'demo',
+      relativeDir: 'Projects/demo--1c392abb',
+    }),
     index: async () => ({ waitReady: async () => ({ ready: true }) }),
     buildBrief: async () => ({
-      text: briefText, charCount: briefText.length, hotHash: null, hotItems: [],
+      text: briefText,
+      charCount: briefText.length,
+      hotHash: null,
+      hotItems: [],
       indexState: { status: 'ready', reason: null, backend: 'scan', notes: 0, scanning: false },
-      truncated: false, omitted: 0,
+      truncated: false,
+      omitted: 0,
     }),
     // Exactly the room the brief alone fits in: the reminder must be dropped.
     config: { injectBrief: true, briefBudgetChars: briefText.length + hintText.length - 1 },
@@ -934,7 +1205,9 @@ test('the weekly hint rides the first pre-step of a session, exactly once', asyn
       return { due: true, text: hintText }
     },
   })
-  t.after(async () => { for (const dispose of sharedDisposers) await dispose() })
+  t.after(async () => {
+    for (const dispose of sharedDisposers) await dispose()
+  })
   const sharedAgent = { session: { header: { id: 'sess-shared', cwd: '/tmp/example' } } }
   const sharedDecision = await shared.waterfall(
     'agent/pre-step',
@@ -942,8 +1215,14 @@ test('the weekly hint rides the first pre-step of a session, exactly once', asyn
     async () => ({ kind: 'enter', messages: [] }),
   )
   assert.equal(sharedAsked, 1)
-  const sharedMessages = (sharedDecision.messages ?? []).filter((message) => message?.source?.kind === RECALL_SOURCE.kind)
-  assert.deepEqual(sharedMessages.map((message) => message.content[0].text), [briefText], 'the brief keeps the budget; the hint is dropped')
+  const sharedMessages = (sharedDecision.messages ?? []).filter(
+    (message) => message?.source?.kind === RECALL_SOURCE.kind,
+  )
+  assert.deepEqual(
+    sharedMessages.map((message) => message.content[0].text),
+    [briefText],
+    'the brief keeps the budget; the hint is dropped',
+  )
 
   // A session whose hint is not due stays silent, and a throwing seam never
   // breaks the decision.
@@ -951,11 +1230,17 @@ test('the weekly hint rides the first pre-step of a session, exactly once', asyn
   const quietDisposers = registerHooks(quiet, {
     resolveBinding: async () => ({ kind: 'unbound', reason: 'no-pointer' }),
     index: async () => ({ waitReady: async () => ({ ready: true }) }),
-    buildBrief: async () => { throw new Error('unbound') },
+    buildBrief: async () => {
+      throw new Error('unbound')
+    },
     config: { injectBrief: true, briefBudgetChars: 6000 },
-    lintHint: async () => { throw new Error('vault unreadable') },
+    lintHint: async () => {
+      throw new Error('vault unreadable')
+    },
   })
-  t.after(async () => { for (const dispose of quietDisposers) await dispose() })
+  t.after(async () => {
+    for (const dispose of quietDisposers) await dispose()
+  })
   const other = { session: { header: { id: 'sess-quiet', cwd: '/tmp/example' } } }
   const decision = await quiet.waterfall(
     'agent/pre-step',
@@ -977,8 +1262,16 @@ test('an unreadable history or queue degrades to a finding instead of failing th
   await writeFile(f.queueRoot, 'not a directory\n')
 
   const report = await lintOf(f)
-  assert.equal(report.findings.some((finding) => finding.kind === 'history-unreadable'), true, JSON.stringify(report.findings))
-  assert.equal(report.findings.some((finding) => finding.kind === 'pending-unreadable'), true, JSON.stringify(report.findings))
+  assert.equal(
+    report.findings.some((finding) => finding.kind === 'history-unreadable'),
+    true,
+    JSON.stringify(report.findings),
+  )
+  assert.equal(
+    report.findings.some((finding) => finding.kind === 'pending-unreadable'),
+    true,
+    JSON.stringify(report.findings),
+  )
   assert.deepEqual(report.history.pruned, [])
   assert.equal(report.pending.known, false)
   await f.index.close()
@@ -992,7 +1285,11 @@ test('an unreadable repository subdirectory degrades the audit to a finding', as
   await chmod(blocked, 0o000)
   try {
     const report = await lintOf(f)
-    assert.equal(report.findings.some((finding) => finding.kind === 'repository-unreadable'), true, JSON.stringify(report.findings))
+    assert.equal(
+      report.findings.some((finding) => finding.kind === 'repository-unreadable'),
+      true,
+      JSON.stringify(report.findings),
+    )
     assert.equal(report.repository.known, false)
   } finally {
     await chmod(blocked, 0o755)
@@ -1003,11 +1300,20 @@ test('an unreadable repository subdirectory degrades the audit to a finding', as
 test('lint ignores symlinked notes instead of following them out of the vault', async (t) => {
   const f = await fixture(t)
   const outside = join(f.root, 'outside.md')
-  await writeFile(outside, pluginNote({ id: 'doc-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', title: '外面' }))
+  await writeFile(
+    outside,
+    pluginNote({ id: 'doc-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', title: '外面' }),
+  )
   await symlink(outside, join(f.vault, ...projectPath(f, 'Docs/链接.md').split('/')))
   const report = await lintOf(f)
-  assert.equal(report.findings.some((finding) => finding.path.endsWith('链接.md')), false)
-  assert.equal(await readFile(outside, 'utf8'), pluginNote({ id: 'doc-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', title: '外面' }))
+  assert.equal(
+    report.findings.some((finding) => finding.path.endsWith('链接.md')),
+    false,
+  )
+  assert.equal(
+    await readFile(outside, 'utf8'),
+    pluginNote({ id: 'doc-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', title: '外面' }),
+  )
   await f.index.close()
 })
 

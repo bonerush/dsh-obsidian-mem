@@ -44,7 +44,14 @@ const RELATIVE_DIR = `Projects/demo--${PROJECT_ID.slice(0, 8)}`
 const BUDGET = 6000
 
 /** The six tools this plugin registers, sorted for set comparison. */
-const SIX = Object.freeze(['mem_admin', 'mem_brief', 'mem_log', 'mem_read', 'mem_search', 'mem_write'])
+const SIX = Object.freeze([
+  'mem_admin',
+  'mem_brief',
+  'mem_log',
+  'mem_read',
+  'mem_search',
+  'mem_write',
+])
 
 /** A `kind:'bound'` binding, the only shape `buildBrief` accepts. */
 const BINDING = Object.freeze({
@@ -68,7 +75,13 @@ function hotItem(id, text) {
   return { id, section: '进行中', text, source: null }
 }
 
-const READY_STATE = Object.freeze({ status: 'ready', reason: null, backend: 'sqlite', notes: 1, scanning: false })
+const READY_STATE = Object.freeze({
+  status: 'ready',
+  reason: null,
+  backend: 'sqlite',
+  notes: 1,
+  scanning: false,
+})
 const NOT_READY_STATE = Object.freeze({
   status: 'not-ready',
   reason: 'index-not-ready',
@@ -82,7 +95,14 @@ const NOT_READY_STATE = Object.freeze({
  * `truncated`/`omitted`). `omitField` drops the truncation signal entirely, the
  * shape an older `lib/brief.js` in the same working tree still returns.
  */
-function briefValue({ text = 'BRIEF', hotHash = 'h1', hotItems = [], ready = true, truncated = false, omitField = false } = {}) {
+function briefValue({
+  text = 'BRIEF',
+  hotHash = 'h1',
+  hotItems = [],
+  ready = true,
+  truncated = false,
+  omitField = false,
+} = {}) {
   const value = {
     text,
     charCount: [...text].length,
@@ -122,7 +142,8 @@ function bed(t, options = {}) {
   if (options.systemPrompt !== false) {
     ctx.provide('systemPrompt', {
       section(section) {
-        if (sections.some((entry) => entry.name === section.name)) throw new Error(`duplicate section ${section.name}`)
+        if (sections.some((entry) => entry.name === section.name))
+          throw new Error(`duplicate section ${section.name}`)
         sections.push(section)
         return () => {
           const at = sections.indexOf(section)
@@ -138,8 +159,9 @@ function bed(t, options = {}) {
     Object.defineProperty(ctx, 'logger', { configurable: true, get: () => options.logger })
   }
   const config = { briefBudgetChars: BUDGET, injectBrief: true, ...(options.config ?? {}) }
-  const resolveBinding = options.resolveBinding
-    ?? (async (cwd) => {
+  const resolveBinding =
+    options.resolveBinding ??
+    (async (cwd) => {
       calls.resolveBinding.push(cwd)
       return BINDING
     })
@@ -192,10 +214,14 @@ function bed(t, options = {}) {
 }
 
 /** The plugin-authored messages of one decision — the only ones this task adds. */
-const recalled = (decision) => (decision.messages ?? []).filter((message) => message?.source?.kind === RECALL_SOURCE.kind)
+const recalled = (decision) =>
+  (decision.messages ?? []).filter((message) => message?.source?.kind === RECALL_SOURCE.kind)
 
 /** A `buildBrief` that always answers with the mutable `hot` view under test. */
-function hotDrivenBrief(hot, { deltaText = (hash) => `DELTA:${hash}`, truncated = () => false, omitField = false } = {}) {
+function hotDrivenBrief(
+  hot,
+  { deltaText = (hash) => `DELTA:${hash}`, truncated = () => false, omitField = false } = {},
+) {
   return async (_binding, briefOptions) => {
     if (briefOptions.mode === 'delta') {
       return briefValue({
@@ -296,8 +322,16 @@ test('the recall source is admitted by the v4 producer-owned source rule', () =>
   // alongside a valid kind is admitted. They pin that this shape is what the
   // converter emits (`rewritePluginSource` drops that field and keeps the rest),
   // so a converted session and a new write name the producer identically.
-  assert.equal(Object.hasOwn(RECALL_SOURCE, 'plugin'), false, 'matches the shape the v3→v4 converter emits')
-  assert.equal(RECALL_SOURCE.kind, `plugin:${PLUGIN_ID}`, 'the value producerKind() derives for this plugin')
+  assert.equal(
+    Object.hasOwn(RECALL_SOURCE, 'plugin'),
+    false,
+    'matches the shape the v3→v4 converter emits',
+  )
+  assert.equal(
+    RECALL_SOURCE.kind,
+    `plugin:${PLUGIN_ID}`,
+    'the value producerKind() derives for this plugin',
+  )
 })
 
 test('the decision from next() is preserved in order and the recall comes last', async (t) => {
@@ -306,7 +340,17 @@ test('the decision from next() is preserved in order and the recall comes last',
   let calls = 0
   const decision = await h.preStep(agent, async () => {
     calls += 1
-    return { kind: 'enter', messages: [{ id: 'm0', role: 'user', content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } }] }
+    return {
+      kind: 'enter',
+      messages: [
+        {
+          id: 'm0',
+          role: 'user',
+          content: [{ type: 'text', text: 'hello' }],
+          source: { kind: 'user' },
+        },
+      ],
+    }
   })
   assert.equal(calls, 1, 'next() is awaited exactly once, before the injection decision')
   assert.equal(decision.kind, 'enter')
@@ -320,12 +364,19 @@ test('the injection asks the index for the session binding and passes a bounded 
   const agent = h.start()
   await h.preStep(agent)
 
-  assert.deepEqual(h.calls.resolveBinding, [CWD], 'the binding is resolved once, for the session cwd')
+  assert.deepEqual(
+    h.calls.resolveBinding,
+    [CWD],
+    'the binding is resolved once, for the session cwd',
+  )
   assert.equal(h.calls.index.length, 1)
   assert.equal(h.calls.index[0].exec.agent, agent, 'the index service receives the same agent')
   const { signal, readyTimeoutMs } = h.calls.buildBrief[0].options
   assert.ok(signal instanceof AbortSignal)
-  assert.ok(Number.isSafeInteger(readyTimeoutMs) && readyTimeoutMs > 0, 'the ready barrier is bounded')
+  assert.ok(
+    Number.isSafeInteger(readyTimeoutMs) && readyTimeoutMs > 0,
+    'the ready barrier is bounded',
+  )
   assert.equal(h.calls.buildBrief[0].options.previousHotItems, undefined)
 })
 
@@ -392,14 +443,22 @@ test('injectBrief:false disables the recall entirely', async (t) => {
 
 test('a timed-out index injects a not-ready state, then re-sends exactly once when ready', async (t) => {
   let ready = false
-  const handle = indexHandle(async () => (ready
-    ? { ready: true, backend: 'sqlite', notes: 1 }
-    : { ready: false, reason: 'index-not-ready', scanning: true }))
+  const handle = indexHandle(async () =>
+    ready
+      ? { ready: true, backend: 'sqlite', notes: 1 }
+      : { ready: false, reason: 'index-not-ready', scanning: true },
+  )
   const h = bed(t, {
     handle,
-    buildBrief: async (_binding, briefOptions) => (ready
-      ? briefValue({ text: 'READY BRIEF', hotHash: 'h1', hotItems: [hotItem('hot-a', 'a')], ready: true })
-      : briefValue({ text: 'INDEX NOT READY: index-not-ready', hotHash: 'h1', ready: false })),
+    buildBrief: async (_binding, briefOptions) =>
+      ready
+        ? briefValue({
+            text: 'READY BRIEF',
+            hotHash: 'h1',
+            hotItems: [hotItem('hot-a', 'a')],
+            ready: true,
+          })
+        : briefValue({ text: 'INDEX NOT READY: index-not-ready', hotHash: 'h1', ready: false }),
   })
   const agent = h.start()
 
@@ -421,7 +480,11 @@ test('a timed-out index injects a not-ready state, then re-sends exactly once wh
 })
 
 test('an index that never becomes ready still injects exactly one not-ready status', async (t) => {
-  const handle = indexHandle(async () => ({ ready: false, reason: 'index-not-ready', scanning: true }))
+  const handle = indexHandle(async () => ({
+    ready: false,
+    reason: 'index-not-ready',
+    scanning: true,
+  }))
   const h = bed(t, {
     handle,
     buildBrief: async () => briefValue({ text: 'STATUS: index-not-ready', ready: false }),
@@ -461,10 +524,18 @@ test('a hot hash change injects a delta built from the stored snapshot, and only
   const changed = await h.preStep(agent)
   assert.equal(recalled(changed).length, 1)
   assert.equal(recalled(changed)[0].content[0].text, 'DELTA:h2')
-  assert.deepEqual(h.calls.buildBrief[2].options.previousHotItems, [itemA], 'the delta compares against the stored items')
+  assert.deepEqual(
+    h.calls.buildBrief[2].options.previousHotItems,
+    [itemA],
+    'the delta compares against the stored items',
+  )
 
   const again = await h.preStep(agent)
-  assert.equal(again.messages.length, 0, 'the snapshot advanced only after the successful injection')
+  assert.equal(
+    again.messages.length,
+    0,
+    'the snapshot advanced only after the successful injection',
+  )
   assert.deepEqual(h.calls.buildBrief[3].options.previousHotItems, [itemA, itemB])
 
   hot.hash = 'h1'
@@ -512,17 +583,27 @@ test('a truncated delta is injected but holds the snapshot, and the next hot cha
   const itemC = hotItem('hot-c', 'gamma')
   const hot = { hash: 'h1', items: [itemA] }
   let truncating = new Set()
-  const h = bed(t, { buildBrief: hotDrivenBrief(hot, { truncated: (hash) => truncating.has(hash) }) })
+  const h = bed(t, {
+    buildBrief: hotDrivenBrief(hot, { truncated: (hash) => truncating.has(hash) }),
+  })
   const agent = h.start()
 
-  assert.equal(recalled(await h.preStep(agent)).length, 1, 'the complete full brief advances the snapshot')
+  assert.equal(
+    recalled(await h.preStep(agent)).length,
+    1,
+    'the complete full brief advances the snapshot',
+  )
 
   // h2 is over budget: the delta goes out, but h2 must not become the baseline.
   hot.hash = 'h2'
   hot.items = [itemA, itemB]
   truncating = new Set(['h2'])
   assert.equal(recalled(await h.preStep(agent)).length, 1)
-  assert.equal((await h.preStep(agent)).messages.length, 0, 'the held version is recorded once, not re-sent every step')
+  assert.equal(
+    (await h.preStep(agent)).messages.length,
+    0,
+    'the held version is recorded once, not re-sent every step',
+  )
 
   // The next hot change compares against h1, not h2, so the item h2 dropped is
   // still inside the delta.
@@ -537,7 +618,11 @@ test('a truncated delta is injected but holds the snapshot, and the next hot cha
     'the held snapshot is the last complete version, not the truncated one',
   )
 
-  assert.equal((await h.preStep(agent)).messages.length, 0, 'the complete h3 version now advances the snapshot')
+  assert.equal(
+    (await h.preStep(agent)).messages.length,
+    0,
+    'the complete h3 version now advances the snapshot',
+  )
 })
 
 test('a brief without the truncation field is treated as incomplete, never as complete', async (t) => {
@@ -547,7 +632,11 @@ test('a brief without the truncation field is treated as incomplete, never as co
   const agent = h.start()
 
   assert.equal(recalled(await h.preStep(agent)).length, 1)
-  assert.equal((await h.preStep(agent)).messages.length, 0, 'the injected version is remembered even while held')
+  assert.equal(
+    (await h.preStep(agent)).messages.length,
+    0,
+    'the injected version is remembered even while held',
+  )
 
   // The snapshot stayed at its initial (empty) value, so the next hot change
   // still carries every item rather than assuming h1 was fully represented.
@@ -572,7 +661,10 @@ test('an explicitly complete brief advances the snapshot — the truncated:false
   hot.hash = 'h3'
   hot.items = [itemA]
   assert.equal(recalled(await h.preStep(agent)).length, 1, 'each new complete version is delivered')
-  assert.deepEqual(h.calls.buildBrief.at(-1).options.previousHotItems, [itemA, hotItem('hot-b', 'beta')])
+  assert.deepEqual(h.calls.buildBrief.at(-1).options.previousHotItems, [
+    itemA,
+    hotItem('hot-b', 'beta'),
+  ])
 })
 
 // ---------------------------------------------------------------------------
@@ -602,7 +694,9 @@ test('a rejected disposal flush reaches the host log instead of vanishing', asyn
       recover: async () => {},
       sessionEvent: () => {},
       flush: async () => {},
-      disposed: async () => { throw new Error('pending flush down') },
+      disposed: async () => {
+        throw new Error('pending flush down')
+      },
     },
   })
   h.disposed()
@@ -615,7 +709,11 @@ test('a rejected disposal flush reaches the host log instead of vanishing', asyn
 })
 
 test('a failing dependency never breaks the turn — the decision passes through unchanged', async (t) => {
-  const boom = bed(t, { buildBrief: async () => { throw new Error('vault exploded') } })
+  const boom = bed(t, {
+    buildBrief: async () => {
+      throw new Error('vault exploded')
+    },
+  })
   const boomAgent = boom.start()
   const first = await boom.preStep(boomAgent)
   assert.equal(first.kind, 'enter')
@@ -625,7 +723,11 @@ test('a failing dependency never breaks the turn — the decision passes through
   assert.equal(second.messages.length, 0)
   assert.equal(boom.calls.buildBrief.length, 2)
 
-  const refused = bed(t, { resolveBinding: async () => { throw new Error('EACCES') } })
+  const refused = bed(t, {
+    resolveBinding: async () => {
+      throw new Error('EACCES')
+    },
+  })
   const refusedAgent = refused.start()
   const decision = await refused.preStep(refusedAgent)
   assert.equal(decision.kind, 'enter')
@@ -637,16 +739,31 @@ test('a failing dependency never breaks the turn — the decision passes through
 // ---------------------------------------------------------------------------
 
 test('an unopenable index injects one status-bearing message, never an empty decision', async (t) => {
-  const h = bed(t, { index: async () => { throw new Error('ENOTDIR: not a directory, mkdir /tmp/data/index') } })
+  const h = bed(t, {
+    index: async () => {
+      throw new Error('ENOTDIR: not a directory, mkdir /tmp/data/index')
+    },
+  })
   const agent = h.start()
   const first = await h.preStep(agent, async () => ({
     kind: 'enter',
-    messages: [{ id: 'm0', role: 'user', content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } }],
+    messages: [
+      {
+        id: 'm0',
+        role: 'user',
+        content: [{ type: 'text', text: 'hello' }],
+        source: { kind: 'user' },
+      },
+    ],
   }))
 
   const injected = recalled(first)
   assert.equal(injected.length, 1, 'the session is told, instead of receiving nothing')
-  assert.equal(first.messages.length, 2, 'the status is appended to the real decision, not a blank one')
+  assert.equal(
+    first.messages.length,
+    2,
+    'the status is appended to the real decision, not a blank one',
+  )
   const text = injected[0].content[0].text
   assert.match(text, /记忆索引当前不可用/)
   assert.match(text, /ENOTDIR/, 'the caught reason is the diagnostic')
@@ -666,7 +783,9 @@ test('the unavailable status stays inside the budget, dropping the reason when i
   // holding if the floor or the status text ever grows.
   const h = bed(t, {
     config: { briefBudgetChars: 120 },
-    index: async () => { throw new Error(`ENOTDIR: ${'x'.repeat(4000)}`) },
+    index: async () => {
+      throw new Error(`ENOTDIR: ${'x'.repeat(4000)}`)
+    },
   })
   const agent = h.start()
   const first = await h.preStep(agent)
@@ -686,7 +805,8 @@ test('once the index opens, the owed full brief arrives exactly once', async (t)
       if (failing) throw new Error('EAGAIN: index locked')
       return handle
     },
-    buildBrief: async () => briefValue({ text: 'FULL BRIEF', hotHash: 'h1', hotItems: [hotItem('hot-a', 'alpha')] }),
+    buildBrief: async () =>
+      briefValue({ text: 'FULL BRIEF', hotHash: 'h1', hotItems: [hotItem('hot-a', 'alpha')] }),
   })
   const agent = h.start()
 
@@ -695,7 +815,11 @@ test('once the index opens, the owed full brief arrives exactly once', async (t)
   failing = false
   const owed = await h.preStep(agent)
   assert.equal(recalled(owed).length, 1)
-  assert.equal(recalled(owed)[0].content[0].text, 'FULL BRIEF', 'the owed brief is delivered, not the status')
+  assert.equal(
+    recalled(owed)[0].content[0].text,
+    'FULL BRIEF',
+    'the owed brief is delivered, not the status',
+  )
   assert.equal((await h.preStep(agent)).messages.length, 0)
   assert.equal(h.calls.buildBrief.filter((call) => call.options.mode === 'full').length, 1)
 })
@@ -704,7 +828,9 @@ test('the caught reason reaches the host log once, and a broken logger changes n
   const warnings = []
   const logged = bed(t, {
     logger: { warn: (...args) => warnings.push(args), info: () => {}, error: () => {} },
-    index: async () => { throw new Error('ENOTDIR: not a directory') },
+    index: async () => {
+      throw new Error('ENOTDIR: not a directory')
+    },
   })
   const agent = logged.start()
   await logged.preStep(agent)
@@ -712,7 +838,16 @@ test('the caught reason reaches the host log once, and a broken logger changes n
   assert.equal(warnings.length, 1, 'one diagnostic per session, not one per step')
   assert.match(String(warnings[0][0]), /ENOTDIR/)
 
-  const broken = bed(t, { logger: { get warn() { throw new Error('logger down') } }, index: async () => { throw new Error('EACCES') } })
+  const broken = bed(t, {
+    logger: {
+      get warn() {
+        throw new Error('logger down')
+      },
+    },
+    index: async () => {
+      throw new Error('EACCES')
+    },
+  })
   const brokenAgent = broken.start()
   const decision = await broken.preStep(brokenAgent)
   assert.equal(decision.kind, 'enter')
@@ -724,16 +859,27 @@ test('the six tools still register while the index is unavailable, and the injec
   ctx.provide('systemPrompt', { tools: () => () => {} })
   const fork = ctx.plugin(toolsPlugin)
   await fork
-  t.after(async () => { await fork.dispose().catch(() => {}) })
+  t.after(async () => {
+    await fork.dispose().catch(() => {})
+  })
 
   const services = {}
-  for (const key of ['search', 'read', 'write', 'log', 'brief', 'admin']) services[key] = async () => ({})
+  for (const key of ['search', 'read', 'write', 'log', 'brief', 'admin'])
+    services[key] = async () => ({})
   registerTools(ctx, services)
-  assert.deepEqual(ctx.tools.schemas().map((schema) => schema.name).sort(), SIX)
+  assert.deepEqual(
+    ctx.tools
+      .schemas()
+      .map((schema) => schema.name)
+      .sort(),
+    SIX,
+  )
 
   registerHooks(ctx, {
     resolveBinding: async () => BINDING,
-    index: async () => { throw new Error('ENOTDIR: not a directory') },
+    index: async () => {
+      throw new Error('ENOTDIR: not a directory')
+    },
     buildBrief,
     config: { briefBudgetChars: BUDGET, injectBrief: true },
   })
@@ -744,7 +890,14 @@ test('the six tools still register while the index is unavailable, and the injec
     { agent, messages: [], turn: 1, step: 1, signal: new AbortController().signal },
     async () => ({ kind: 'enter', messages: [] }),
   )
-  assert.deepEqual(ctx.tools.schemas().map((schema) => schema.name).sort(), SIX, 'the six tools are unaffected')
+  assert.deepEqual(
+    ctx.tools
+      .schemas()
+      .map((schema) => schema.name)
+      .sort(),
+    SIX,
+    'the six tools are unaffected',
+  )
   assert.equal(recalled(decision).length, 1, 'and the injection path still runs')
 })
 
@@ -770,16 +923,30 @@ test('a real vault and the shipped buildBrief produce one budgeted brief and not
   await mkdir(home, { recursive: true })
   const binding = { ...BINDING, vaultRoot: vault }
   await bootstrapVault(binding, { dataRoot, home })
-  await updateHot(binding, { section: '进行中', text: 'T12 真 vault 注入', session: SESSION_ID }, {
-    dataRoot, home, capacityChars: 9000, archiveRatio: 0.67,
-  })
+  await updateHot(
+    binding,
+    { section: '进行中', text: 'T12 真 vault 注入', session: SESSION_ID },
+    {
+      dataRoot,
+      home,
+      capacityChars: 9000,
+      archiveRatio: 0.67,
+    },
+  )
   let index = null
   t.after(async () => {
     if (index !== null) await index.close().catch(() => {})
     await rm(root, { recursive: true, force: true, maxRetries: 4 })
   })
   const open = async () => {
-    if (index === null) index = await openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: PROJECT_ID, home })
+    if (index === null)
+      index = await openIndex({
+        vaultRoot: vault,
+        dataRoot,
+        backend: 'sqlite',
+        projectId: PROJECT_ID,
+        home,
+      })
     return index
   }
 
@@ -796,7 +963,10 @@ test('a real vault and the shipped buildBrief produce one budgeted brief and not
   const text = injected[0].content[0].text
   assert.ok([...text].length <= BUDGET, 'the injected message respects the configured budget')
   assert.ok(text.includes(RELATIVE_DIR), 'the brief identifies the bound project')
-  assert.ok(text.includes('T12 真 vault 注入'), 'the brief carries the hot-layer entry just written')
+  assert.ok(
+    text.includes('T12 真 vault 注入'),
+    'the brief carries the hot-layer entry just written',
+  )
   assert.match(text, /brief:/, 'the footer reports the budget and index state')
 
   const second = await h.preStep(agent)
@@ -830,7 +1000,13 @@ test('apply() wires the hooks without touching the vault, and the six tools stil
   const vault = join(root, 'vault')
   const dispose = apply(ctx, { enabled: true, vaultPath: vault })
   t.after(() => dispose())
-  assert.deepEqual(ctx.tools.schemas().map((schema) => schema.name).sort(), SIX)
+  assert.deepEqual(
+    ctx.tools
+      .schemas()
+      .map((schema) => schema.name)
+      .sort(),
+    SIX,
+  )
 
   // A real session in a directory that is not bound: the first pre-step must
   // attach nothing and leave no trace — no `.obsidian-mem` pointer, no vault,

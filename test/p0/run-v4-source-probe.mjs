@@ -64,7 +64,11 @@ function admission(gate, subject) {
   try {
     return { admitted: true, stored: gate(subject) }
   } catch (error) {
-    return { admitted: false, error: error?.constructor?.name ?? 'Error', message: error?.message ?? String(error) }
+    return {
+      admitted: false,
+      error: error?.constructor?.name ?? 'Error',
+      message: error?.message ?? String(error),
+    }
   }
 }
 
@@ -89,27 +93,37 @@ const results = {
 }
 
 // The install must actually refuse the old shape, or this probe proves nothing.
-if (results.retiredShape.admitted) throw new Error('the retired plugin wrapper was admitted; the probe premise does not hold')
-if (!results.currentShape.admitted) throw new Error(`the current source was refused: ${results.currentShape.message}`)
+if (results.retiredShape.admitted)
+  throw new Error('the retired plugin wrapper was admitted; the probe premise does not hold')
+if (!results.currentShape.admitted)
+  throw new Error(`the current source was refused: ${results.currentShape.message}`)
 
 if (v3root !== null) {
   const v3catalog = await load(v3root, 'dsh-session-format-catalog')
-  const gate = (source) => v3catalog.sessionFormatCatalog.encodeCurrentEvent(v3Event(source)).data.source
+  const gate = (source) =>
+    v3catalog.sessionFormatCatalog.encodeCurrentEvent(v3Event(source)).data.source
   results.v3 = {
     currentVersion: v3catalog.sessionFormatCatalog.currentVersion,
     retiredShape: admission(gate, RETIRED_SOURCE),
     currentShape: admission(gate, RECALL_SOURCE),
   }
-  if (!results.v3.currentShape.admitted) throw new Error(`the V3 writer refused the current source: ${results.v3.currentShape.message}`)
+  if (!results.v3.currentShape.admitted)
+    throw new Error(`the V3 writer refused the current source: ${results.v3.currentShape.message}`)
 }
 
 if (session !== null) {
   if (!existsSync(session)) throw new Error(`no such session file: ${session}`)
   const catalog = await load(root, 'dsh-session-format-catalog')
   const text = execFileSync('zstd', ['-dc', session], { encoding: 'utf8', maxBuffer: 1 << 28 })
-  const rows = text.split('\n').filter((line) => line.trim() !== '').map((line) => JSON.parse(line))
+  const rows = text
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line))
   const bound = catalog.createSessionFormatCatalogWithChildren([])
-  const restore = bound.createRestore(rows[0], { recovery: 'recoverable', validation: 'transformed' })
+  const restore = bound.createRestore(rows[0], {
+    recovery: 'recoverable',
+    validation: 'transformed',
+  })
   for (const physical of rows.slice(1)) restore.decodeRow(physical)
   const current = restore.finish()
   const counts = new Map()
@@ -122,10 +136,12 @@ if (session !== null) {
   const mine = `user/message ${JSON.stringify({ kind: RECALL_SOURCE.kind, form: 'recall' })}`
   results.convertedKind = counts.get(mine) === undefined ? null : RECALL_SOURCE.kind
   results.restoredSourceCounts = { events: current.events.length, [mine]: counts.get(mine) ?? 0 }
-  results.conversion = counts.get(mine) === undefined
-    ? 'the converted session carries no source from this producer'
-    : `converted to ${mine}`
-  if (counts.get(mine) === undefined) throw new Error(`the converter did not derive ${RECALL_SOURCE.kind}`)
+  results.conversion =
+    counts.get(mine) === undefined
+      ? 'the converted session carries no source from this producer'
+      : `converted to ${mine}`
+  if (counts.get(mine) === undefined)
+    throw new Error(`the converter did not derive ${RECALL_SOURCE.kind}`)
 }
 
 process.stdout.write(`${JSON.stringify(results, null, 2)}\n`)

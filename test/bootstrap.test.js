@@ -22,7 +22,12 @@ import { promisify } from 'node:util'
 import { parse as parseYaml } from 'yaml'
 
 import { escapeRegistryCell, PROJECTS_DIR, REGISTRY_RELATIVE_PATH } from '../lib/registry.js'
-import { bootstrapVault, BootstrapError, parseRegistryMarkdown, resolveBinding } from '../lib/vault.js'
+import {
+  bootstrapVault,
+  BootstrapError,
+  parseRegistryMarkdown,
+  resolveBinding,
+} from '../lib/vault.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -41,7 +46,13 @@ const MOC_DIRS = Object.freeze(['Docs', 'Decisions', 'Conventions', 'Pitfalls', 
 
 function gitEnvironment() {
   const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
-  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY']) {
+  for (const key of [
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_COMMON_DIR',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+  ]) {
     delete env[key]
   }
   return env
@@ -51,10 +62,14 @@ function git(cwd, args) {
   return execFileAsync(
     'git',
     [
-      '-c', 'user.name=Task Five',
-      '-c', 'user.email=t5@example.invalid',
-      '-c', 'commit.gpgsign=false',
-      '-c', 'init.defaultBranch=main',
+      '-c',
+      'user.name=Task Five',
+      '-c',
+      'user.email=t5@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      'init.defaultBranch=main',
       ...args,
     ],
     { cwd, env: gitEnvironment(), encoding: 'utf8' },
@@ -98,12 +113,19 @@ async function bind({ vault, repo, home, projectId = ID1, slug = 'alpha', displa
     `${JSON.stringify({ projectId, slug, displayName, schema: 1 }, null, 2)}\n`,
   )
   const binding = await resolveBinding({ cwd: repo, vaultRoot: vault, home })
-  assert.equal(binding.kind, 'bound', `expected a bound fixture (got ${binding.kind}: ${binding.reason ?? ''})`)
+  assert.equal(
+    binding.kind,
+    'bound',
+    `expected a bound fixture (got ${binding.kind}: ${binding.reason ?? ''})`,
+  )
   return binding
 }
 
 /** A binding object of the shape `resolveBinding` returns, built without a repo. */
-function handBinding(vaultRoot, { projectId = ID1, slug = 'alpha', displayName = 'Alpha', relativeDir } = {}) {
+function handBinding(
+  vaultRoot,
+  { projectId = ID1, slug = 'alpha', displayName = 'Alpha', relativeDir } = {},
+) {
   return {
     kind: 'bound',
     projectId,
@@ -189,7 +211,10 @@ function sha256(value) {
  * `renderRegistryRegion` hashes and `inspectRegistryRegion` verifies.
  */
 function registryRegion(text) {
-  const match = /<!--\s*obsidian-mem:registry begin sha256:([0-9a-f]{64})\s*-->(\r?\n)?([\s\S]*?)<!--\s*obsidian-mem:registry end\s*-->/.exec(text)
+  const match =
+    /<!--\s*obsidian-mem:registry begin sha256:([0-9a-f]{64})\s*-->(\r?\n)?([\s\S]*?)<!--\s*obsidian-mem:registry end\s*-->/.exec(
+      text,
+    )
   assert.ok(match, 'the registry must carry a generated region with a sha256 marker')
   return { declaredHash: match[1], body: match[3] }
 }
@@ -202,7 +227,10 @@ function note(text) {
   const end = lines.indexOf('---', 1)
   assert.ok(end > 1, 'frontmatter must close')
   const frontmatter = parseYaml(lines.slice(1, end).join('\n'))
-  assert.ok(frontmatter !== null && typeof frontmatter === 'object', 'frontmatter must be a mapping')
+  assert.ok(
+    frontmatter !== null && typeof frontmatter === 'object',
+    'frontmatter must be a mapping',
+  )
   return { frontmatter, body: lines.slice(end + 1).join('\n') }
 }
 
@@ -212,11 +240,12 @@ async function registryText(vault) {
 
 /** A hand-written registry table, used to tamper with a valid one. */
 function rawRegistry(rows, { hash } = {}) {
-  const body = [
-    '| projectId | hub 相对路径 | displayName | remote |',
-    '| --- | --- | --- | --- |',
-    ...rows,
-  ].join('\n') + '\n'
+  const body =
+    [
+      '| projectId | hub 相对路径 | displayName | remote |',
+      '| --- | --- | --- | --- |',
+      ...rows,
+    ].join('\n') + '\n'
   return `<!-- obsidian-mem:registry begin sha256:${hash ?? sha256(body)} -->\n${body}<!-- obsidian-mem:registry end -->\n`
 }
 
@@ -258,12 +287,14 @@ test('the first run creates every §5.1 directory and MOC and registers the proj
   assert.equal(declaredHash, sha256(body))
   const { regionPresent, rows } = parseRegistryMarkdown(text)
   assert.equal(regionPresent, true)
-  assert.deepEqual(rows, [{
-    projectId: ID1,
-    dir: binding.relativeDir,
-    displayName: 'Alpha',
-    remote: '',
-  }])
+  assert.deepEqual(rows, [
+    {
+      projectId: ID1,
+      dir: binding.relativeDir,
+      displayName: 'Alpha',
+      remote: '',
+    },
+  ])
   assert.ok(body.includes('| projectId | hub 相对路径 | displayName | remote |'))
 
   // every index.md is a parseable hub MOC in the closed property vocabulary
@@ -282,7 +313,10 @@ test('the first run creates every §5.1 directory and MOC and registers the proj
   // the hub links to each type directory with a vault-root-relative wikilink
   const hub = await readFile(join(binding.projectDir, 'index.md'), 'utf8')
   for (const dir of MOC_DIRS) {
-    assert.ok(hub.includes(`[[${binding.relativeDir}/${dir}/index|${dir}]]`), `hub must link to ${dir}`)
+    assert.ok(
+      hub.includes(`[[${binding.relativeDir}/${dir}/index|${dir}]]`),
+      `hub must link to ${dir}`,
+    )
   }
 
   // hot.md carries the three fixed plugin-managed sections
@@ -330,14 +364,21 @@ test('a hand-written index.md is preserved and only missing items are added', as
   assert.equal(result.existingPaths.includes(`${binding.relativeDir}/index.md`), true)
   // the missing MOC and hot.md were added around it
   for (const added of ['Pitfalls/index.md', '_meta/hot.md']) {
-    assert.equal(result.createdPaths.includes(`${binding.relativeDir}/${added}`), true, `${added} must be created`)
+    assert.equal(
+      result.createdPaths.includes(`${binding.relativeDir}/${added}`),
+      true,
+      `${added} must be created`,
+    )
   }
   const expected = vaultTargets(binding.relativeDir)
   const found = await listRelative(vault)
-  assert.deepEqual(found, new Map([
-    ...expected.dirs.map((dir) => [dir, 'dir']),
-    ...expected.files.map((file) => [file, 'file']),
-  ]))
+  assert.deepEqual(
+    found,
+    new Map([
+      ...expected.dirs.map((dir) => [dir, 'dir']),
+      ...expected.files.map((file) => [file, 'file']),
+    ]),
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -368,7 +409,11 @@ test('a vault this call created is git-initialised only when asked', async (t) =
 
   const plain = await fixture(t)
   const other = await bind({ vault: plain.vault, repo: plain.repo, home: plain.home })
-  const withoutGit = await bootstrapVault(other, { initGitOnCreate: false, home: plain.home, dataRoot: plain.dataRoot })
+  const withoutGit = await bootstrapVault(other, {
+    initGitOnCreate: false,
+    home: plain.home,
+    dataRoot: plain.dataRoot,
+  })
   assert.equal(withoutGit.vaultCreated, true)
   assert.equal(withoutGit.gitInitialized, false)
   await assert.rejects(lstat(join(plain.vault, '.git')), { code: 'ENOENT' })
@@ -377,7 +422,10 @@ test('a vault this call created is git-initialised only when asked', async (t) =
 test('initGitOnCreate must be a boolean', async (t) => {
   const { vault, repo, home, dataRoot } = await fixture(t)
   const binding = await bind({ vault, repo, home })
-  await assert.rejects(bootstrapVault(binding, { initGitOnCreate: 'yes', home, dataRoot }), RangeError)
+  await assert.rejects(
+    bootstrapVault(binding, { initGitOnCreate: 'yes', home, dataRoot }),
+    RangeError,
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -430,7 +478,10 @@ test('the generated region carries the fixed four columns and escapes a `|` in a
   assert.equal(declaredHash, sha256(body))
 
   const hub = binding.relativeDir
-  assert.ok(text.includes(`[[${hub}/index\\|${basename(hub)}]]`), 'the hub wikilink alias must be escaped')
+  assert.ok(
+    text.includes(`[[${hub}/index\\|${basename(hub)}]]`),
+    'the hub wikilink alias must be escaped',
+  )
   assert.ok(text.includes(`| ${ID1} | [[${hub}/index\\|${basename(hub)}]] | Acme \\| 记忆 |  |`))
 
   // the escaped row still round-trips through the Task 4 parser
@@ -457,11 +508,16 @@ test('a tampered table with a matching hash stops the write', async (t) => {
 
   const hub = alpha.relativeDir
   const registryPath = join(vault, REGISTRY_RELATIVE_PATH)
-  await writeFile(registryPath, rawRegistry([tableRow(ID1, hub, 'Alpha'), tableRow(ID1, hub, 'Alpha')]))
+  await writeFile(
+    registryPath,
+    rawRegistry([tableRow(ID1, hub, 'Alpha'), tableRow(ID1, hub, 'Alpha')]),
+  )
   const before = await snapshot(vault)
 
   const beta = handBinding(vault, { projectId: ID2, slug: 'beta', displayName: 'Beta' })
-  await assert.rejects(bootstrapVault(beta, { initGitOnCreate: false, home, dataRoot }), { code: 'registry-duplicate-id' })
+  await assert.rejects(bootstrapVault(beta, { initGitOnCreate: false, home, dataRoot }), {
+    code: 'registry-duplicate-id',
+  })
   assert.deepEqual(await snapshot(vault), before, 'a refused bootstrap must not write anything')
 })
 
@@ -477,13 +533,21 @@ test('a generated-region hash mismatch stops the write', async (t) => {
   // 1. the declared hash no longer matches the bytes it covers
   await writeFile(registryPath, valid.replace(/sha256:[0-9a-f]{64}/, `sha256:${'0'.repeat(64)}`))
   const tamperedHash = await snapshot(vault)
-  await assert.rejects(bootstrapVault(beta, { initGitOnCreate: false, home, dataRoot }), { code: 'registry-hash-mismatch' })
-  assert.deepEqual(await snapshot(vault), tamperedHash, 'a refused bootstrap must not write anything')
+  await assert.rejects(bootstrapVault(beta, { initGitOnCreate: false, home, dataRoot }), {
+    code: 'registry-hash-mismatch',
+  })
+  assert.deepEqual(
+    await snapshot(vault),
+    tamperedHash,
+    'a refused bootstrap must not write anything',
+  )
 
   // 2. the region carries no hash at all
   await writeFile(registryPath, valid.replace(/ begin sha256:[0-9a-f]{64}/, ' begin'))
   const noHash = await snapshot(vault)
-  await assert.rejects(bootstrapVault(beta, { initGitOnCreate: false, home, dataRoot }), { code: 'registry-hash-missing' })
+  await assert.rejects(bootstrapVault(beta, { initGitOnCreate: false, home, dataRoot }), {
+    code: 'registry-hash-missing',
+  })
   assert.deepEqual(await snapshot(vault), noHash, 'a refused bootstrap must not write anything')
 })
 
@@ -495,7 +559,10 @@ test('a symlinked _meta directory is refused instead of written through', async 
   await mkdir(outside, { recursive: true })
   await symlink(outside, join(vault, '_meta'))
 
-  await assert.rejects(bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot }), /symlink/i)
+  await assert.rejects(
+    bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot }),
+    /symlink/i,
+  )
   assert.deepEqual(await readdir(outside), [])
 })
 
@@ -508,14 +575,24 @@ test('a second project gains its own row without disturbing the first', async (t
   const alpha = await bind({ vault, repo, home })
   await bootstrapVault(alpha, { initGitOnCreate: false, home, dataRoot })
 
-  const beta = await bind({ vault, repo: otherRepo, home, projectId: ID2, slug: 'beta', displayName: 'Beta' })
+  const beta = await bind({
+    vault,
+    repo: otherRepo,
+    home,
+    projectId: ID2,
+    slug: 'beta',
+    displayName: 'Beta',
+  })
   const second = await bootstrapVault(beta, { initGitOnCreate: false, home, dataRoot })
   assert.equal(second.registryUpdated, true)
 
   const text = await registryText(vault)
   assert.equal(registryRegion(text).declaredHash, sha256(registryRegion(text).body))
   const { rows } = parseRegistryMarkdown(text)
-  assert.deepEqual(rows.map((row) => row.projectId), [ID1, ID2])
+  assert.deepEqual(
+    rows.map((row) => row.projectId),
+    [ID1, ID2],
+  )
   assert.equal(new Set(rows.map((row) => row.dir)).size, 2)
 
   // re-running either project is a no-op, byte for byte
@@ -540,7 +617,9 @@ test('an existing row is verified, never rewritten, and a conflicting directory 
     displayName: 'Alpha',
     relativeDir: `${PROJECTS_DIR}/alpha-renamed--${ID1.slice(0, 8)}`,
   })
-  await assert.rejects(bootstrapVault(moved, { initGitOnCreate: false, home, dataRoot }), { code: 'registry-id-conflict' })
+  await assert.rejects(bootstrapVault(moved, { initGitOnCreate: false, home, dataRoot }), {
+    code: 'registry-id-conflict',
+  })
 
   // a directory already owned by another id is a conflict even when the id8 matches
   const twin = handBinding(vault, {
@@ -549,7 +628,9 @@ test('an existing row is verified, never rewritten, and a conflicting directory 
     displayName: 'Twin',
     relativeDir: `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}`,
   })
-  await assert.rejects(bootstrapVault(twin, { initGitOnCreate: false, home, dataRoot }), { code: 'registry-directory-taken' })
+  await assert.rejects(bootstrapVault(twin, { initGitOnCreate: false, home, dataRoot }), {
+    code: 'registry-directory-taken',
+  })
 
   assert.deepEqual(await snapshot(vault), before)
 })
@@ -581,7 +662,10 @@ test('an invalid binding is refused before anything is written', async (t) => {
     [handBinding(vault, { slug: 'Not A Slug' }), 'binding-invalid'],
     [{ ...handBinding(vault), displayName: 'bad\u0000name' }, 'binding-invalid'],
     [{ ...handBinding(vault), relativeDir: `${PROJECTS_DIR}/alpha--deadbeef` }, 'binding-invalid'],
-    [{ ...handBinding(vault), relativeDir: `Methods/alpha--${ID1.slice(0, 8)}` }, 'binding-invalid'],
+    [
+      { ...handBinding(vault), relativeDir: `Methods/alpha--${ID1.slice(0, 8)}` },
+      'binding-invalid',
+    ],
     [{ ...handBinding(vault), vaultRoot: '' }, 'binding-invalid'],
   ]
   for (const [binding, code] of cases) {

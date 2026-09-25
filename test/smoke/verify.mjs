@@ -31,7 +31,15 @@ import { dirname, join, resolve, sep } from 'node:path'
 import process from 'node:process'
 import YAML from 'yaml'
 
-const DATE_FIELDS = new Set(['created', 'updated', 'review_after', 'last_lint', 'date', 'valid_from', 'valid_until'])
+const DATE_FIELDS = new Set([
+  'created',
+  'updated',
+  'review_after',
+  'last_lint',
+  'date',
+  'valid_from',
+  'valid_until',
+])
 const DATE_SHAPE = /^\d{4}-\d{2}-\d{2}$/
 
 const argv = process.argv.slice(2)
@@ -50,7 +58,8 @@ if (options.help === true) {
   process.stdout.write('usage: node test/smoke/verify.mjs <record.json> [--vault <dir>] [--json]\n')
   process.exit(0)
 }
-if (options.record === null) fail(2, 'no run record given; usage: node test/smoke/verify.mjs <record.json> [--vault <dir>]')
+if (options.record === null)
+  fail(2, 'no run record given; usage: node test/smoke/verify.mjs <record.json> [--vault <dir>]')
 
 /** Report a usage/refusal problem and exit with a fixed non-zero code. */
 function fail(code, message) {
@@ -60,7 +69,9 @@ function fail(code, message) {
 
 /** The temporary roots this checker is willing to read from. */
 function tempRoots() {
-  return [resolve(tmpdir()), '/tmp', '/private/tmp', '/var/folders'].map((root) => (root.endsWith(sep) ? root.slice(0, -1) : root))
+  return [resolve(tmpdir()), '/tmp', '/private/tmp', '/var/folders'].map((root) =>
+    root.endsWith(sep) ? root.slice(0, -1) : root,
+  )
 }
 
 /** Whether one path is inside a temporary root (and so is not a personal vault). */
@@ -96,7 +107,10 @@ if (record?.paths?.dshHome !== undefined && record.paths.dshHome !== null) {
 }
 if (record.schema !== 1) fail(2, `unsupported run record schema: ${JSON.stringify(record.schema)}`)
 if (!existsSync(vaultPath)) {
-  fail(2, `the temporary vault is gone, so the Obsidian filesystem facts cannot be re-derived: ${vaultPath}`)
+  fail(
+    2,
+    `the temporary vault is gone, so the Obsidian filesystem facts cannot be re-derived: ${vaultPath}`,
+  )
 }
 
 const checks = []
@@ -115,7 +129,10 @@ function check(id, ok, detail) {
  * @returns {string} the sorted `path:hash` join.
  */
 function canonicalTree(map) {
-  return Object.keys(map ?? {}).sort().map((key) => `${key}:${map[key]}`).join('\n')
+  return Object.keys(map ?? {})
+    .sort()
+    .map((key) => `${key}:${map[key]}`)
+    .join('\n')
 }
 
 /**
@@ -144,7 +161,8 @@ check(
 )
 check(
   'plugin-row-line-recorded',
-  typeof record.profile?.dumpConfigRowLine === 'string' && record.profile.dumpConfigRowLine.includes('obsidian-mem'),
+  typeof record.profile?.dumpConfigRowLine === 'string' &&
+    record.profile.dumpConfigRowLine.includes('obsidian-mem'),
   record.profile?.dumpConfigRowLine ?? '(no row line)',
 )
 
@@ -158,7 +176,8 @@ check(
 )
 check(
   'brief-not-repeated-later',
-  typeof vault.sessionBriefCount === 'number' && vault.sessionBriefCount === vault.firstStepBriefCount,
+  typeof vault.sessionBriefCount === 'number' &&
+    vault.sessionBriefCount === vault.firstStepBriefCount,
   `sessionBriefCount=${vault.sessionBriefCount}`,
 )
 
@@ -180,7 +199,10 @@ check(
 const search = vault.chineseSearch ?? {}
 check(
   'chinese-search-hit',
-  search.ok === true && search.matchedDocPath === true && Number.isSafeInteger(search.hitCount) && search.hitCount >= 1,
+  search.ok === true &&
+    search.matchedDocPath === true &&
+    Number.isSafeInteger(search.hitCount) &&
+    search.hitCount >= 1,
   `queryChars=${search.queryChars} hitCount=${search.hitCount} matchedDocPath=${search.matchedDocPath}`,
 )
 const docPath = vault.documentWrite?.path ?? null
@@ -212,7 +234,9 @@ check(
 // ---------------------------------------------------------------------------
 check(
   'interrupted-process-was-killed',
-  restart.killedBy === 'SIGKILL' && capture.liveInjection !== null && capture.liveInjection !== undefined,
+  restart.killedBy === 'SIGKILL' &&
+    capture.liveInjection !== null &&
+    capture.liveInjection !== undefined,
   `killedBy=${restart.killedBy} jobId=${capture.liveJobId} injected=${capture.liveInjection?.outputState}`,
 )
 check(
@@ -265,7 +289,8 @@ check(
 //     a failure too, so the acceptance cannot pass on a total capture failure.
 const modelLane = capture.modelLane ?? {}
 /** Whether the worker's receipt shows a real model answer (not a stubbed path). */
-const realModelCall = (receipt) => (receipt?.usage?.outputTokens ?? 0) > 0 && (receipt?.durationMs ?? 0) > 0
+const realModelCall = (receipt) =>
+  (receipt?.usage?.outputTokens ?? 0) > 0 && (receipt?.durationMs ?? 0) > 0
 for (const [label, lane, expected] of [
   ['dry-run', modelLane.dryRun, 'dry-run'],
   ['live', modelLane.live, 'applied'],
@@ -275,12 +300,16 @@ for (const [label, lane, expected] of [
       `model-lane-${label}-real-distill`,
       false,
       `the ${label} lane is absent from the record, so nothing about the headline path was verified; ` +
-      'only an explicit `skipped: true` from the runner (`--only`) marks a lane as not run',
+        'only an explicit `skipped: true` from the runner (`--only`) marks a lane as not run',
     )
     continue
   }
   if (lane.skipped === true) {
-    check(`model-lane-${label}-real-distill`, true, `the ${label} lane carries the runner's explicit skipped: true (--only); nothing to verify`)
+    check(
+      `model-lane-${label}-real-distill`,
+      true,
+      `the ${label} lane carries the runner's explicit skipped: true (--only); nothing to verify`,
+    )
     continue
   }
   const cycle = Array.isArray(lane.cycles) ? lane.cycles[lane.cycles.length - 1] : {}
@@ -295,9 +324,9 @@ for (const [label, lane, expected] of [
       realModelCall(receipt) &&
       cycle.vaultChanged === (expected === 'applied'),
     captured
-      ? (receipt === null
-          ? 'a job was captured but no result receipt exists: the worker\'s own model call did not complete'
-          : `result=${receipt.result} attempts=${receipt.attempts} outputTokens=${receipt.usage?.outputTokens ?? '(none)'} durationMs=${receipt.durationMs ?? '(none)'} vaultChanged=${cycle.vaultChanged}`)
+      ? receipt === null
+        ? "a job was captured but no result receipt exists: the worker's own model call did not complete"
+        : `result=${receipt.result} attempts=${receipt.attempts} outputTokens=${receipt.usage?.outputTokens ?? '(none)'} durationMs=${receipt.durationMs ?? '(none)'} vaultChanged=${cycle.vaultChanged}`
       : 'no job was captured on this lane, so there is nothing the worker could have distilled',
   )
 }
@@ -329,20 +358,54 @@ check(
 // ---------------------------------------------------------------------------
 check(
   'read-only-lint-never-writes',
-  vault.lintReadonly?.ok === true && vault.lintReadonly?.treeUntouched === true && vault.lintReadonly?.readOnly === true,
+  vault.lintReadonly?.ok === true &&
+    vault.lintReadonly?.treeUntouched === true &&
+    vault.lintReadonly?.readOnly === true,
   `findings=${vault.lintReadonly?.total} treeUntouched=${vault.lintReadonly?.treeUntouched}`,
 )
-check('real-dsh-home-unchanged', vault.realHomeUnchanged === true, `real ~/.dsh fingerprint unchanged: ${vault.realHomeUnchanged}`)
+check(
+  'real-dsh-home-unchanged',
+  vault.realHomeUnchanged === true,
+  `real ~/.dsh fingerprint unchanged: ${vault.realHomeUnchanged}`,
+)
 
 // ---------------------------------------------------------------------------
 // The Obsidian-facing filesystem facts, re-derived here
 // ---------------------------------------------------------------------------
 const fs2 = inspectVault(vaultPath)
-check('frontmatter-parses-under-yaml-v2', fs2.unparsable.length === 0, fs2.unparsable.length === 0 ? `${fs2.notes} notes parsed` : `unparsable: ${JSON.stringify(fs2.unparsable.slice(0, 5))}`)
-check('tags-is-a-list', fs2.badTags.length === 0, fs2.badTags.length === 0 ? `${fs2.tagged} notes carry a tags list` : `not a list: ${JSON.stringify(fs2.badTags.slice(0, 5))}`)
-check('date-fields-are-iso-days', fs2.badDates.length === 0, fs2.badDates.length === 0 ? `${fs2.dated} date fields shaped YYYY-MM-DD` : `bad dates: ${JSON.stringify(fs2.badDates.slice(0, 5))}`)
-check('wikilinks-resolve', fs2.deadLinks.length === 0, fs2.deadLinks.length === 0 ? `${fs2.links} wikilinks resolved by path or basename` : `dead: ${JSON.stringify(fs2.deadLinks.slice(0, 5))}`)
-check('obsidian-directory-untouched', vault.externalEdit?.obsidianUntouched === true, `externalEdit.obsidianUntouched=${vault.externalEdit?.obsidianUntouched}`)
+check(
+  'frontmatter-parses-under-yaml-v2',
+  fs2.unparsable.length === 0,
+  fs2.unparsable.length === 0
+    ? `${fs2.notes} notes parsed`
+    : `unparsable: ${JSON.stringify(fs2.unparsable.slice(0, 5))}`,
+)
+check(
+  'tags-is-a-list',
+  fs2.badTags.length === 0,
+  fs2.badTags.length === 0
+    ? `${fs2.tagged} notes carry a tags list`
+    : `not a list: ${JSON.stringify(fs2.badTags.slice(0, 5))}`,
+)
+check(
+  'date-fields-are-iso-days',
+  fs2.badDates.length === 0,
+  fs2.badDates.length === 0
+    ? `${fs2.dated} date fields shaped YYYY-MM-DD`
+    : `bad dates: ${JSON.stringify(fs2.badDates.slice(0, 5))}`,
+)
+check(
+  'wikilinks-resolve',
+  fs2.deadLinks.length === 0,
+  fs2.deadLinks.length === 0
+    ? `${fs2.links} wikilinks resolved by path or basename`
+    : `dead: ${JSON.stringify(fs2.deadLinks.slice(0, 5))}`,
+)
+check(
+  'obsidian-directory-untouched',
+  vault.externalEdit?.obsidianUntouched === true,
+  `externalEdit.obsidianUntouched=${vault.externalEdit?.obsidianUntouched}`,
+)
 
 // ---------------------------------------------------------------------------
 // Notes: what this run does NOT establish
@@ -357,17 +420,23 @@ const unverified = []
 // control that tells "the route is broken" apart from "the worker's call was cut
 // off", so it is reported beside it.
 const modelLaneRan = ['dryRun', 'live'].filter((key) => modelLane[key]?.skipped !== true)
-const modelLaneMissing = modelLaneRan.filter((key) => modelLane[key]?.receipt === null || modelLane[key]?.receipt === undefined)
+const modelLaneMissing = modelLaneRan.filter(
+  (key) => modelLane[key]?.receipt === null || modelLane[key]?.receipt === undefined,
+)
 if (modelLaneMissing.length > 0) {
   unverified.push(
     `the queue worker's own model-backed distill produced no receipt on the ${modelLaneMissing.join(', ')} lane(s); the apply checks above were satisfied through the documented \`raw-durable\` resume path instead`,
   )
   if (modelLane.llmProbe !== null && modelLane.llmProbe !== undefined) {
-    unverified.push(`in-context llm.stream() control: finish=${modelLane.llmProbe.finishKind} ms=${modelLane.llmProbe.ms} — the route itself answered, so the worker's call is what did not complete`)
+    unverified.push(
+      `in-context llm.stream() control: finish=${modelLane.llmProbe.finishKind} ms=${modelLane.llmProbe.ms} — the route itself answered, so the worker's call is what did not complete`,
+    )
   }
 }
 if (record.versions?.obsidian === null || record.versions?.obsidian === undefined) {
-  unverified.push('Obsidian GUI checks (rendered tag list, date property, clickable wikilink): the vault was never opened in Obsidian')
+  unverified.push(
+    'Obsidian GUI checks (rendered tag list, date property, clickable wikilink): the vault was never opened in Obsidian',
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -389,14 +458,18 @@ if (options.json === true) {
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
 } else {
   process.stdout.write(`verify: ${recordPath}\n`)
-  process.stdout.write(`  versions: dsh=${record.versions?.dsh} node=${record.versions?.node} obsidian=${record.versions?.obsidian ?? '(not supplied; GUI checks unverified)'}\n`)
+  process.stdout.write(
+    `  versions: dsh=${record.versions?.dsh} node=${record.versions?.node} obsidian=${record.versions?.obsidian ?? '(not supplied; GUI checks unverified)'}\n`,
+  )
   for (const entry of checks) {
     process.stdout.write(`  ${entry.ok ? 'PASS' : 'FAIL'} ${entry.id} — ${entry.detail}\n`)
   }
   for (const note of unverified) {
     process.stdout.write(`  UNVERIFIED ${note}\n`)
   }
-  process.stdout.write(`verify: ${failed.length === 0 ? 'OK' : `${failed.length} FAILED`} (${checks.length} checks, ${fs2.notes} vault notes)\n`)
+  process.stdout.write(
+    `verify: ${failed.length === 0 ? 'OK' : `${failed.length} FAILED`} (${checks.length} checks, ${fs2.notes} vault notes)\n`,
+  )
 }
 
 process.exit(failed.length === 0 ? 0 : 1)
@@ -418,7 +491,16 @@ function inspectVault(vaultRoot) {
     targets.add(stem)
     targets.add(stem.split('/').at(-1))
   }
-  const result = { notes: 0, tagged: 0, dated: 0, links: 0, unparsable: [], badTags: [], badDates: [], deadLinks: [] }
+  const result = {
+    notes: 0,
+    tagged: 0,
+    dated: 0,
+    links: 0,
+    unparsable: [],
+    badTags: [],
+    badDates: [],
+    deadLinks: [],
+  }
   for (const path of files) {
     let text
     try {
@@ -441,7 +523,8 @@ function inspectVault(vaultRoot) {
       continue
     }
     if (data.tags !== undefined) {
-      if (Array.isArray(data.tags) && data.tags.every((tag) => typeof tag === 'string')) result.tagged += 1
+      if (Array.isArray(data.tags) && data.tags.every((tag) => typeof tag === 'string'))
+        result.tagged += 1
       else result.badTags.push(`${path}: tags=${JSON.stringify(data.tags)}`)
     }
     for (const [key, value] of Object.entries(data)) {

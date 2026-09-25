@@ -232,7 +232,10 @@ if (!ENV_ONLY) {
       )
       for (const entry of cases.values()) {
         assert.equal(entry.name, 'probe/llm-case')
-        assert.ok(Array.isArray(entry.chunkTypes) && entry.chunkTypes.length >= 1, `${entry.case} saw no chunk`)
+        assert.ok(
+          Array.isArray(entry.chunkTypes) && entry.chunkTypes.length >= 1,
+          `${entry.case} saw no chunk`,
+        )
       }
       return EXPECTED_CASES.join(', ')
     })
@@ -240,30 +243,54 @@ if (!ENV_ONLY) {
     await check('llm', 'explicit route: request accepted, chunks observed', async () => {
       const entry = cases.get('explicit-route')
       assert.ok(entry, 'expected an explicit-route case')
-      assert.equal(entry.threwName, null, `stream() threw: ${entry.threwName} ${entry.threwMessage ?? ''}`)
+      assert.equal(
+        entry.threwName,
+        null,
+        `stream() threw: ${entry.threwName} ${entry.threwMessage ?? ''}`,
+      )
       assert.equal(entry.hasAsyncIterator, true, 'stream() must return an AsyncIterable')
       assert.ok(
         ['stop', 'max-tokens', 'tool-calls'].includes(entry.finishKind),
         `expected a successful terminal finish, got ${entry.finishKind}`,
       )
-      assert.ok(entry.textDeltaCount >= 1, `expected at least one text-delta, got ${entry.textDeltaCount}`)
+      assert.ok(
+        entry.textDeltaCount >= 1,
+        `expected at least one text-delta, got ${entry.textDeltaCount}`,
+      )
       assert.ok(entry.chunkTypes.includes('block-end'), 'expected a block-end chunk')
-      assert.ok(entry.blockEndTypes.includes('text'), 'expected the block-end chunk to carry a text block')
+      assert.ok(
+        entry.blockEndTypes.includes('text'),
+        'expected the block-end chunk to carry a text block',
+      )
       assert.ok(entry.chunkTypes.includes('usage'), 'expected a usage chunk')
       for (const field of ['inputTokens', 'outputTokens']) {
-        assert.ok(entry.usageFields.includes(field), `expected usage.${field} in ${entry.usageFields.join(',')}`)
+        assert.ok(
+          entry.usageFields.includes(field),
+          `expected usage.${field} in ${entry.usageFields.join(',')}`,
+        )
       }
       const usageAt = entry.chunkTypes.indexOf('usage')
       const finishAt = entry.chunkTypes.lastIndexOf('finish')
-      assert.ok(usageAt >= 0 && usageAt < finishAt, 'expected usage before the terminal finish chunk')
+      assert.ok(
+        usageAt >= 0 && usageAt < finishAt,
+        'expected usage before the terminal finish chunk',
+      )
       return `${summarizeChunks(entry.chunkTypes)} (${entry.ms}ms)`
     })
 
     await check('llm', 'empty route: terminal error chunk, no throw', async () => {
       const entry = cases.get('empty-route')
       assert.ok(entry, 'expected an empty-route case')
-      assert.equal(entry.threwName, null, `empty route threw: ${entry.threwName} ${entry.threwMessage ?? ''}`)
-      assert.equal(entry.finishKind, 'error', `expected a terminal error finish, got ${entry.finishKind}`)
+      assert.equal(
+        entry.threwName,
+        null,
+        `empty route threw: ${entry.threwName} ${entry.threwMessage ?? ''}`,
+      )
+      assert.equal(
+        entry.finishKind,
+        'error',
+        `expected a terminal error finish, got ${entry.finishKind}`,
+      )
       assert.ok(
         typeof entry.finishFailureCode === 'string' && entry.finishFailureCode.length > 0,
         'expected a non-empty failure code on the terminal error chunk',
@@ -274,9 +301,20 @@ if (!ENV_ONLY) {
     await check('llm', 'caller AbortSignal: terminal aborted chunk, no throw', async () => {
       const entry = cases.get('abort-caller')
       assert.ok(entry, 'expected an abort-caller case')
-      assert.ok(entry.abortAfterChunk > 0, 'expected the caller abort to be issued after a chunk was observed')
-      assert.equal(entry.threwName, null, `caller abort threw: ${entry.threwName} ${entry.threwMessage ?? ''}`)
-      assert.equal(entry.finishKind, 'aborted', `expected a terminal aborted finish, got ${entry.finishKind}`)
+      assert.ok(
+        entry.abortAfterChunk > 0,
+        'expected the caller abort to be issued after a chunk was observed',
+      )
+      assert.equal(
+        entry.threwName,
+        null,
+        `caller abort threw: ${entry.threwName} ${entry.threwMessage ?? ''}`,
+      )
+      assert.equal(
+        entry.finishKind,
+        'aborted',
+        `expected a terminal aborted finish, got ${entry.finishKind}`,
+      )
       return `aborted after ${entry.abortAfterChunk} chunk(s) in ${entry.ms}ms`
     })
 
@@ -284,8 +322,16 @@ if (!ENV_ONLY) {
       const entry = cases.get('timeout')
       assert.ok(entry, 'expected a timeout case')
       assert.equal(entry.signalAborted, true, 'expected the timeout signal to have fired')
-      assert.equal(entry.threwName, null, `timeout threw: ${entry.threwName} ${entry.threwMessage ?? ''}`)
-      assert.equal(entry.finishKind, 'aborted', `expected a terminal aborted finish, got ${entry.finishKind}`)
+      assert.equal(
+        entry.threwName,
+        null,
+        `timeout threw: ${entry.threwName} ${entry.threwMessage ?? ''}`,
+      )
+      assert.equal(
+        entry.finishKind,
+        'aborted',
+        `expected a terminal aborted finish, got ${entry.finishKind}`,
+      )
       assert.ok(entry.ms < 30000, `expected prompt settlement, took ${entry.ms}ms`)
       return `finish=aborted reason=${entry.signalReasonName} in ${entry.ms}ms`
     })
@@ -302,13 +348,17 @@ for (const result of results) {
     lastSection = result.section
     console.log(`llm-sqlite-probe: ${result.section} section`)
   }
-  console.log(`  ${result.ok ? PASS : FAIL}  ${result.name}${result.detail === '' ? '' : ` — ${result.detail}`}`)
+  console.log(
+    `  ${result.ok ? PASS : FAIL}  ${result.name}${result.detail === '' ? '' : ` — ${result.detail}`}`,
+  )
 }
 
 const failed = results.filter((result) => !result.ok)
 const envSection = `node ${process.version} ${process.platform}/${process.arch}`
 if (failed.length > 0) {
-  console.error(`llm-sqlite-probe: FAIL — ${failed.length} of ${results.length} assertion(s) failed (${envSection})`)
+  console.error(
+    `llm-sqlite-probe: FAIL — ${failed.length} of ${results.length} assertion(s) failed (${envSection})`,
+  )
   process.exit(1)
 }
 console.log(

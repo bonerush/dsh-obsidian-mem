@@ -36,7 +36,14 @@ function baseManifest() {
     version: '0.1.0',
     main: 'lib/index.js',
     engines: { node: '>=22.22.2' },
-    files: ['lib', 'skills/obsidian-mem/SKILL.md', 'cordis.patch.yml', 'dsh.plugin.json', 'README.md', 'LICENSE'],
+    files: [
+      'lib',
+      'skills/obsidian-mem/SKILL.md',
+      'cordis.patch.yml',
+      'dsh.plugin.json',
+      'README.md',
+      'LICENSE',
+    ],
   }
 }
 
@@ -121,7 +128,11 @@ test('an entry that is absolute or escapes the package root fails', (t) => {
     pkg.files = [...pkg.files, entry]
     const run = verify(t, { pkg })
     assert.notEqual(run.status, 0, `expected ${entry} to be refused`)
-    assert.match(run.stdout + run.stderr, /files/, `expected the report to name \`files\` for ${entry}`)
+    assert.match(
+      run.stdout + run.stderr,
+      /files/,
+      `expected the report to name \`files\` for ${entry}`,
+    )
   }
 })
 
@@ -145,7 +156,11 @@ test('probe records, dependency trees and pending data can never be packed', (t)
     pkg.files = [...pkg.files, entry]
     const run = verify(t, { pkg })
     assert.notEqual(run.status, 0, `expected ${entry} to be refused`)
-    assert.match(run.stdout + run.stderr, new RegExp(entry.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `expected the report to name ${entry}`)
+    assert.match(
+      run.stdout + run.stderr,
+      new RegExp(entry.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      `expected the report to name ${entry}`,
+    )
   }
 })
 
@@ -169,8 +184,16 @@ test('a missing plugin entry or a dropped tool fails', (t) => {
   const pkg = baseManifest()
   const droppedTool = verify(t, { pkg })
   assert.equal(droppedTool.status, 0)
-  write(droppedTool.root, 'lib/tools.js', TOOL_NAMES.slice(0, 5).map((name) => `  name: '${name}',\n`).join(''))
-  const rerun = spawnSync(process.execPath, [VERIFIER, '--root', droppedTool.root], { encoding: 'utf8' })
+  write(
+    droppedTool.root,
+    'lib/tools.js',
+    TOOL_NAMES.slice(0, 5)
+      .map((name) => `  name: '${name}',\n`)
+      .join(''),
+  )
+  const rerun = spawnSync(process.execPath, [VERIFIER, '--root', droppedTool.root], {
+    encoding: 'utf8',
+  })
   assert.notEqual(rerun.status, 0)
   assert.match(rerun.stdout + rerun.stderr, /mem_admin/)
 })
@@ -193,11 +216,15 @@ test('the tool check requires a registration site, not a mention', (t) => {
 
   // Every one of the six names is still present as a *mention* — in a comment and
   // in an exported list — while `mem_admin` has no `name: '…'` registration.
-  write(run.root, 'lib/tools.js', [
-    '// The six tools: mem_search, mem_read, mem_write, mem_log, mem_brief, mem_admin.',
-    `export const TOOL_NAMES = Object.freeze([${TOOL_NAMES.map((name) => `'${name}'`).join(', ')}])`,
-    ...TOOL_NAMES.filter((name) => name !== 'mem_admin').map((name) => `  name: '${name}',\n`),
-  ].join('\n'))
+  write(
+    run.root,
+    'lib/tools.js',
+    [
+      '// The six tools: mem_search, mem_read, mem_write, mem_log, mem_brief, mem_admin.',
+      `export const TOOL_NAMES = Object.freeze([${TOOL_NAMES.map((name) => `'${name}'`).join(', ')}])`,
+      ...TOOL_NAMES.filter((name) => name !== 'mem_admin').map((name) => `  name: '${name}',\n`),
+    ].join('\n'),
+  )
   const dropped = spawnSync(process.execPath, [VERIFIER, '--root', run.root], { encoding: 'utf8' })
   assert.notEqual(dropped.status, 0, 'a comment and an export list must not satisfy the check')
   assert.match(dropped.stdout + dropped.stderr, /no longer registers mem_admin/)
@@ -206,7 +233,11 @@ test('the tool check requires a registration site, not a mention', (t) => {
 test('a seventh registration fails, because the surface is capped at six', (t) => {
   const run = verify(t)
   assert.equal(run.status, 0, run.stdout + run.stderr)
-  write(run.root, 'lib/tools.js', [...TOOL_NAMES, 'mem_extra'].map((name) => `  name: '${name}',\n`).join(''))
+  write(
+    run.root,
+    'lib/tools.js',
+    [...TOOL_NAMES, 'mem_extra'].map((name) => `  name: '${name}',\n`).join(''),
+  )
   const extra = spawnSync(process.execPath, [VERIFIER, '--root', run.root], { encoding: 'utf8' })
   assert.notEqual(extra.status, 0)
   assert.match(extra.stdout + extra.stderr, /mem_extra/)

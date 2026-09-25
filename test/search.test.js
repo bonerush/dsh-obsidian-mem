@@ -14,7 +14,19 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { getEventListeners } from 'node:events'
 import { existsSync } from 'node:fs'
-import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -53,7 +65,7 @@ const HAS_SQLITE = await (async () => {
   try {
     const { DatabaseSync } = await import('node:sqlite')
     const db = new DatabaseSync(':memory:')
-    db.exec("CREATE VIRTUAL TABLE probe USING fts5(x)")
+    db.exec('CREATE VIRTUAL TABLE probe USING fts5(x)')
     db.close()
     return true
   } catch {
@@ -94,7 +106,13 @@ async function harness(t) {
     await rm(root, { recursive: true, force: true })
   })
   const open = async (options = {}) => {
-    const index = await openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: ALPHA, ...options })
+    const index = await openIndex({
+      vaultRoot: vault,
+      dataRoot,
+      backend: 'sqlite',
+      projectId: ALPHA,
+      ...options,
+    })
     indexes.push(index)
     return index
   }
@@ -141,15 +159,34 @@ ${body}
 `
   await writeFile(at(vault, PAGED_SHALLOW), note('浅层', '浅层的普通说明。'))
   await writeFile(at(vault, PAGED_DEEP_FIRST), note('首个', '第一个深层的说明，含 器 字。'))
-  await writeFile(at(vault, `${PAGED_DIR}/Docs/sub/bbb-deep.md`), note('第二', '第二个深层的说明。'))
-  await writeFile(at(vault, `${PAGED_DIR}/Docs/sub/ccc-deep.md`), note('第三', '第三个深层的说明。'))
+  await writeFile(
+    at(vault, `${PAGED_DIR}/Docs/sub/bbb-deep.md`),
+    note('第二', '第二个深层的说明。'),
+  )
+  await writeFile(
+    at(vault, `${PAGED_DIR}/Docs/sub/ccc-deep.md`),
+    note('第三', '第三个深层的说明。'),
+  )
   await writeFile(at(vault, PAGED_DEEP_LAST), note('第四', '第四个深层的说明，亦含 器 字。'))
-  const index = await openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: PAGED_ID, ...indexOptions })
+  const index = await openIndex({
+    vaultRoot: vault,
+    dataRoot,
+    backend: 'sqlite',
+    projectId: PAGED_ID,
+    ...indexOptions,
+  })
   t.after(async () => {
     await index.close().catch(() => {})
     await rm(root, { recursive: true, force: true })
   })
-  return { root, vault, dataRoot, index, open: (options) => openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: PAGED_ID, ...options }) }
+  return {
+    root,
+    vault,
+    dataRoot,
+    index,
+    open: (options) =>
+      openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: PAGED_ID, ...options }),
+  }
 }
 
 /** A third project whose match set is wider than the default candidate window. */
@@ -174,7 +211,8 @@ async function windowHarness(t) {
       `---\ntype: "doc"\ntitle: "${title}"\nstatus: "active"\nproject: "${WINDOW_ID}"\n---\n# ${title}\n\n第 ${name} 条，含 器 字。\n`,
     )
   }
-  const open = (options = {}) => openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: WINDOW_ID, ...options })
+  const open = (options = {}) =>
+    openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: WINDOW_ID, ...options })
   const index = await open()
   t.after(async () => {
     await index.close().catch(() => {})
@@ -205,10 +243,19 @@ async function widecharHarness(t, indexOptions = {}) {
   const vault = join(root, 'vault')
   const dataRoot = join(root, 'data')
   await mkdir(join(vault, WIDECHAR_DIR, 'Docs'), { recursive: true })
-  const note = (title) => `---\ntype: "doc"\ntitle: "${title}"\nstatus: "active"\nproject: "${WIDECHAR_ID}"\n---\n# ${title}\n\n正文含 器 字。\n`
+  const note = (title) =>
+    `---\ntype: "doc"\ntitle: "${title}"\nstatus: "active"\nproject: "${WIDECHAR_ID}"\n---\n# ${title}\n\n正文含 器 字。\n`
   await writeFile(at(vault, WIDECHAR_FIRST), note('！'))
   await writeFile(at(vault, WIDECHAR_UTF16_FIRST), note('🎵'))
-  const open = (options = {}) => openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: WIDECHAR_ID, ...indexOptions, ...options })
+  const open = (options = {}) =>
+    openIndex({
+      vaultRoot: vault,
+      dataRoot,
+      backend: 'sqlite',
+      projectId: WIDECHAR_ID,
+      ...indexOptions,
+      ...options,
+    })
   const index = await open()
   t.after(async () => {
     await index.close().catch(() => {})
@@ -246,21 +293,33 @@ test('the fixed corpus is complete and the index lives under the data root, neve
   const expected = join(h.dataRoot, 'index', `index-${sha256(await realpath(h.vault))}.db`)
   assert.equal(index.status().dbPath, expected)
   assert.equal(await indexFilePath(h.vault, h.dataRoot), expected)
-  assert.equal(await exists(join(h.vault, 'index')), false, 'the vault must not learn the index exists')
+  assert.equal(
+    await exists(join(h.vault, 'index')),
+    false,
+    'the vault must not learn the index exists',
+  )
   assert.ok(!(await readdir(h.vault)).includes('index'))
   // The vault is also untouched byte-wise: a scan never writes to it.
-  assert.equal(await readFile(at(h.vault, N.user), 'utf8'), await readFile(at(CORPUS_ROOT, N.user), 'utf8'))
+  assert.equal(
+    await readFile(at(h.vault, N.user), 'utf8'),
+    await readFile(at(CORPUS_ROOT, N.user), 'utf8'),
+  )
 })
 
 test('the first scan yields in batches; a timed-out waitReady is an explicit not-ready, never an empty result', async (t) => {
   const h = await harness(t)
   let yields = 0
   const index = await h.open({
-    yieldToEventLoop: async () => { yields += 1; await delay(5) },
+    yieldToEventLoop: async () => {
+      yields += 1
+      await delay(5)
+    },
     batchSize: 3,
   })
   let ticks = 0
-  const timer = setInterval(() => { ticks += 1 }, 1)
+  const timer = setInterval(() => {
+    ticks += 1
+  }, 1)
   let early
   try {
     early = await index.waitReady(undefined, 1)
@@ -291,7 +350,13 @@ test('production derives the index root from DSH_HOME and never from the vault',
     await rm(home, { recursive: true, force: true })
   })
   await ready(index)
-  const expected = join(home, 'data', 'obsidian-mem', 'index', `index-${sha256(await realpath(vault))}.db`)
+  const expected = join(
+    home,
+    'data',
+    'obsidian-mem',
+    'index',
+    `index-${sha256(await realpath(vault))}.db`,
+  )
   assert.equal(index.status().dbPath, expected)
   assert.ok(existsSync(expected))
 })
@@ -299,7 +364,13 @@ test('production derives the index root from DSH_HOME and never from the vault',
 test('a data root inside the vault is refused', async (t) => {
   const h = await harness(t)
   await assert.rejects(
-    () => openIndex({ vaultRoot: h.vault, dataRoot: join(h.vault, 'cache'), backend: 'sqlite', projectId: ALPHA }),
+    () =>
+      openIndex({
+        vaultRoot: h.vault,
+        dataRoot: join(h.vault, 'cache'),
+        backend: 'sqlite',
+        projectId: ALPHA,
+      }),
     (error) => error instanceof IndexError && error.code === 'index-inside-vault',
   )
 })
@@ -313,15 +384,27 @@ test('project scope returns the explainable first hits and excludes history by d
   const index = await h.open()
   await ready(index)
 
-  const hits = await searchNotes(index, { query: Q.threeCharCjk, scope: 'project', projectId: ALPHA, limit: 8 })
+  const hits = await searchNotes(index, {
+    query: Q.threeCharCjk,
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 8,
+  })
   assert.equal(hits[0].projectId, ALPHA)
   assert.equal(hits[0].path, N.alphaExactTitle, 'the exact title match must win')
-  assert.equal(hits.some((hit) => hit.status === 'superseded'), false)
-  assert.equal(hits.some((hit) => hit.status === 'archived'), false)
+  assert.equal(
+    hits.some((hit) => hit.status === 'superseded'),
+    false,
+  )
+  assert.equal(
+    hits.some((hit) => hit.status === 'archived'),
+    false,
+  )
   assert.equal(hits.length, E.projectScopeThreeChar.length)
   assert.deepEqual(sorted(hits), [...E.projectScopeThreeChar].sort())
   for (const [i, hit] of hits.entries()) {
-    if (i > 0) assert.ok(hits[i - 1].score >= hit.score, 'hits must be ordered by non-increasing score')
+    if (i > 0)
+      assert.ok(hits[i - 1].score >= hit.score, 'hits must be ordered by non-increasing score')
     assert.ok(reasons(hit).length > 0, `hit ${hit.path} has no explanation`)
     // Attribution is the frontmatter id when it exists and the project directory
     // (which is the authoritative location) when the frontmatter does not parse.
@@ -334,7 +417,13 @@ test('project scope returns the explainable first hits and excludes history by d
   }
   assert.deepEqual(reasons(hits[0]).sort(), ['phrase', 'title-exact', 'tokens:2', 'type:2'])
 
-  const history = await searchNotes(index, { query: Q.threeCharCjk, scope: 'project', projectId: ALPHA, includeHistory: true, limit: 20 })
+  const history = await searchNotes(index, {
+    query: Q.threeCharCjk,
+    scope: 'project',
+    projectId: ALPHA,
+    includeHistory: true,
+    limit: 20,
+  })
   assert.deepEqual(sorted(history), [...E.projectScopeThreeCharWithHistory].sort())
   const superseded = history.find((hit) => hit.path === N.alphaDecisionSuperseded)
   assert.equal(superseded.status, 'superseded')
@@ -346,14 +435,32 @@ test('duplicate titles stay distinct: scope decides which same-titled note is vi
   const index = await h.open()
   await ready(index)
 
-  const project = await searchNotes(index, { query: CORPUS.duplicateTitle, scope: 'project', projectId: ALPHA, limit: 1 })
+  const project = await searchNotes(index, {
+    query: CORPUS.duplicateTitle,
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 1,
+  })
   assert.deepEqual(paths(project), [N.alphaDecision])
   assert.equal(project[0].title, CORPUS.duplicateTitle)
   assert.equal(project[0].id, 'dec-5d46ff43-1bf8-496d-8b9f-c11e89d4e2aa')
   assert.equal(project[0].signals.titleExact, true)
-  const inProject = await searchNotes(index, { query: CORPUS.duplicateTitle, scope: 'project', projectId: ALPHA, limit: 20 })
-  assert.equal(paths(inProject).includes(N.betaDecision), false, 'a same-titled note in another project must stay invisible')
-  assert.equal(paths(inProject).includes(N.alphaDecisionSuperseded), false, 'the superseded same-titled note is history')
+  const inProject = await searchNotes(index, {
+    query: CORPUS.duplicateTitle,
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 20,
+  })
+  assert.equal(
+    paths(inProject).includes(N.betaDecision),
+    false,
+    'a same-titled note in another project must stay invisible',
+  )
+  assert.equal(
+    paths(inProject).includes(N.alphaDecisionSuperseded),
+    false,
+    'the superseded same-titled note is history',
+  )
   assert.equal(inProject[0].path, N.alphaDecision)
 
   // The two same-titled notes outrank every note that merely shares a bigram,
@@ -371,9 +478,17 @@ test('the scope matrix isolates projects, global memory and the read-only user f
   await ready(index)
 
   // project: only the bound project, and a different projectId is refused outright
-  const project = await searchNotes(index, { query: Q.threeCharCjk, scope: 'project', projectId: ALPHA, limit: 20 })
+  const project = await searchNotes(index, {
+    query: Q.threeCharCjk,
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 20,
+  })
   assert.ok(project.length > 0)
-  assert.ok(project.every((hit) => hit.path.startsWith(`${ALPHA_DIR}/`)), 'project scope must not cross projects')
+  assert.ok(
+    project.every((hit) => hit.path.startsWith(`${ALPHA_DIR}/`)),
+    'project scope must not cross projects',
+  )
   await assert.rejects(
     () => searchNotes(index, { query: Q.threeCharCjk, scope: 'project', projectId: BETA }),
     (error) => error instanceof IndexError && error.code === 'project-mismatch',
@@ -385,9 +500,16 @@ test('the scope matrix isolates projects, global memory and the read-only user f
   const user = await searchNotes(index, { query: Q.userWord, scope: 'global', limit: 20 })
   assert.deepEqual(paths(user), E.globalScopeUserWord)
   const globalAll = await searchNotes(index, { query: Q.threeCharCjk, scope: 'global', limit: 20 })
-  assert.ok(globalAll.every((hit) => hit.path.startsWith('Methods/') || hit.path === '_meta/user.md'))
+  assert.ok(
+    globalAll.every((hit) => hit.path.startsWith('Methods/') || hit.path === '_meta/user.md'),
+  )
   // a projectId carries no meaning in the global scope, so it is ignored rather than refused
-  const ignored = await searchNotes(index, { query: Q.methodWord, scope: 'global', projectId: BETA, limit: 20 })
+  const ignored = await searchNotes(index, {
+    query: Q.methodWord,
+    scope: 'global',
+    projectId: BETA,
+    limit: 20,
+  })
   assert.deepEqual(paths(ignored), E.globalScopeMethodWord)
 
   // all: crosses projects, still honours an explicit projectId filter
@@ -396,16 +518,32 @@ test('the scope matrix isolates projects, global memory and the read-only user f
   assert.ok(allPaths.includes(N.alphaDecision))
   assert.ok(allPaths.includes(N.betaDecision))
   assert.ok(all[0].signals !== undefined)
-  const beta = await searchNotes(index, { query: Q.threeCharCjk, scope: 'all', projectId: BETA, limit: 20 })
+  const beta = await searchNotes(index, {
+    query: Q.threeCharCjk,
+    scope: 'all',
+    projectId: BETA,
+    limit: 20,
+  })
   assert.deepEqual(sorted(beta), [N.betaDecision, N.betaEnglish].sort())
   // ...and the cross-project corpus is reachable through `all` as well
-  assert.deepEqual(paths(await searchNotes(index, { query: Q.methodWord, scope: 'all', limit: 20 })), [N.method])
-  assert.ok(paths(await searchNotes(index, { query: Q.userWord, scope: 'all', limit: 20 })).includes(N.user))
+  assert.deepEqual(
+    paths(await searchNotes(index, { query: Q.methodWord, scope: 'all', limit: 20 })),
+    [N.method],
+  )
+  assert.ok(
+    paths(await searchNotes(index, { query: Q.userWord, scope: 'all', limit: 20 })).includes(
+      N.user,
+    ),
+  )
 
   // shared `_meta/` plumbing is never retrievable, in any scope
   for (const [marker, path] of Object.entries(CORPUS.excludedMarkers)) {
     const hits = await searchNotes(index, { query: marker, scope: 'all', limit: 20 })
-    assert.equal(paths(hits).includes(path), false, `${path} must not be indexed (marker ${marker})`)
+    assert.equal(
+      paths(hits).includes(path),
+      false,
+      `${path} must not be indexed (marker ${marker})`,
+    )
   }
   assert.deepEqual(await searchNotes(index, { query: '收据', scope: 'all' }), [])
 
@@ -437,17 +575,39 @@ test('CJK is pre-tokenised on both sides: a two-character query matches because 
     raw.exec("INSERT INTO raw(x) VALUES('调度器改为可插拔后端')")
     const count = raw.prepare('SELECT count(*) AS c FROM raw WHERE raw MATCH ?').get('"调度"').c
     raw.close()
-    assert.equal(count, 0, 'raw FTS5 finds no two-character CJK query; the index must not rely on it')
+    assert.equal(
+      count,
+      0,
+      'raw FTS5 finds no two-character CJK query; the index must not rely on it',
+    )
   }
 
-  const three = await searchNotes(index, { query: Q.threeCharCjk, scope: 'project', projectId: ALPHA, limit: 20 })
-  const two = await searchNotes(index, { query: Q.twoCharCjk, scope: 'project', projectId: ALPHA, limit: 20 })
+  const three = await searchNotes(index, {
+    query: Q.threeCharCjk,
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 20,
+  })
+  const two = await searchNotes(index, {
+    query: Q.twoCharCjk,
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 20,
+  })
   assert.ok(three.length > 0)
-  assert.ok(two.length > 0, 'a two-character CJK query must work through the shared bigram tokenizer')
+  assert.ok(
+    two.length > 0,
+    'a two-character CJK query must work through the shared bigram tokenizer',
+  )
   assert.ok(two.every((hit) => hit.signals.tokenHits > 0))
 
   // A single CJK character has no bigram, so it takes the bounded substring branch.
-  const single = await searchNotes(index, { query: Q.singleCharCjk, scope: 'project', projectId: ALPHA, limit: 20 })
+  const single = await searchNotes(index, {
+    query: Q.singleCharCjk,
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 20,
+  })
   assert.ok(single.length > 0, 'single CJK characters must still be findable')
   assert.ok(single.every((hit) => hit.signals.matchedBy === 'substring'))
   assert.ok(single.every((hit) => hit.snippet.includes(Q.singleCharCjk)))
@@ -459,8 +619,25 @@ test('dangerous FTS operator input is data, never syntax', async (t) => {
   await ready(index)
 
   const dangerous = [
-    '"', '*', '-', 'NEAR', 'NEAR/2', '"调度器" OR *', '-调度器', '调度*', 'a NOT b', '^', '---',
-    '(((', '))', '调度器 AND', '标题:', '"', '\\', "O'Brien", 'wildcard* NEAR/3 -x',
+    '"',
+    '*',
+    '-',
+    'NEAR',
+    'NEAR/2',
+    '"调度器" OR *',
+    '-调度器',
+    '调度*',
+    'a NOT b',
+    '^',
+    '---',
+    '(((',
+    '))',
+    '调度器 AND',
+    '标题:',
+    '"',
+    '\\',
+    "O'Brien",
+    'wildcard* NEAR/3 -x',
   ]
   for (const query of dangerous) {
     const hits = await searchNotes(index, { query, scope: 'all', limit: 8 })
@@ -473,7 +650,11 @@ test('dangerous FTS operator input is data, never syntax', async (t) => {
   const near = await searchNotes(index, { query: Q.dangerLiteral, scope: 'all', limit: 8 })
   assert.ok(paths(near).includes(N.alphaDangerousOperators))
   // a query far past the token cap is truncated, not rejected
-  const flooded = await searchNotes(index, { query: new Array(200).fill('调度器').join(' '), scope: 'all', limit: 8 })
+  const flooded = await searchNotes(index, {
+    query: new Array(200).fill('调度器').join(' '),
+    scope: 'all',
+    limit: 8,
+  })
   assert.ok(Array.isArray(flooded))
 })
 
@@ -482,7 +663,12 @@ test('a note with broken frontmatter is still plain-text searchable and keeps it
   const index = await h.open()
   await ready(index)
 
-  const hits = await searchNotes(index, { query: Q.brokenWord, scope: 'project', projectId: ALPHA, limit: 8 })
+  const hits = await searchNotes(index, {
+    query: Q.brokenWord,
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 8,
+  })
   assert.deepEqual(paths(hits), [N.alphaBrokenFrontmatter])
   assert.equal(hits[0].title, null)
   assert.equal(hits[0].type, null)
@@ -512,7 +698,11 @@ test('a same-mtime, same-size external rewrite is never trusted from the cache',
   const original = await readFile(file, 'utf8')
   const rewritten = original.replace(Q.rewriteBefore, Q.rewriteAfter)
   assert.notEqual(rewritten, original)
-  assert.equal(Buffer.byteLength(rewritten), Buffer.byteLength(original), 'the rewrite must keep the byte length identical')
+  assert.equal(
+    Buffer.byteLength(rewritten),
+    Buffer.byteLength(original),
+    'the rewrite must keep the byte length identical',
+  )
   await writeFile(file, rewritten)
   await utimes(file, 1_700_000_000, 1_700_000_000)
   const afterStat = await stat(file, { bigint: true })
@@ -525,11 +715,25 @@ test('a same-mtime, same-size external rewrite is never trusted from the cache',
   assert.ok(incremental.unchanged >= 1)
 
   // ...so the stale cache body must never be returned for the old phrase...
-  const stale = await searchNotes(index, { query: Q.rewriteBefore, scope: 'project', projectId: ALPHA, limit: 20 })
-  assert.equal(paths(stale).includes(N.alphaExternalRewrite), false, 'a cache hit whose source hash changed must be re-read, not trusted')
+  const stale = await searchNotes(index, {
+    query: Q.rewriteBefore,
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 20,
+  })
+  assert.equal(
+    paths(stale).includes(N.alphaExternalRewrite),
+    false,
+    'a cache hit whose source hash changed must be re-read, not trusted',
+  )
 
   // ...and the read-triggered revalidation converges the index onto the new bytes.
-  const fresh = await searchNotes(index, { query: Q.rewriteAfter, scope: 'project', projectId: ALPHA, limit: 20 })
+  const fresh = await searchNotes(index, {
+    query: Q.rewriteAfter,
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 20,
+  })
   assert.deepEqual(paths(fresh), [N.alphaExternalRewrite])
   assert.match(fresh[0].snippet, /绿色办法/)
   assert.equal(fresh[0].hash, sha256(await readFile(file)))
@@ -544,12 +748,21 @@ test('a deleted source disappears from results and its cached body is never serv
   const h = await harness(t)
   const index = await h.open()
   await ready(index)
-  assert.ok(paths(await searchNotes(index, { query: Q.deletedWord, scope: 'project', projectId: ALPHA })).includes(N.alphaDeleted))
+  assert.ok(
+    paths(
+      await searchNotes(index, { query: Q.deletedWord, scope: 'project', projectId: ALPHA }),
+    ).includes(N.alphaDeleted),
+  )
 
   // A hit whose source vanished is dropped by the read-before-trust step, so the
   // cached body is never served even before any refresh runs.
   await rm(at(h.vault, N.alphaDeleted))
-  const hits = await searchNotes(index, { query: Q.deletedWord, scope: 'project', projectId: ALPHA, limit: 20 })
+  const hits = await searchNotes(index, {
+    query: Q.deletedWord,
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 20,
+  })
   assert.equal(paths(hits).includes(N.alphaDeleted), false)
 
   // A file deleted without an intervening hit is removed by the next scan.
@@ -557,7 +770,12 @@ test('a deleted source disappears from results and its cached body is never serv
   const summary = await index.refresh()
   assert.equal(summary.ok, true)
   assert.equal(summary.removed, 1)
-  assert.equal(paths(await searchNotes(index, { query: '死锁', scope: 'project', projectId: ALPHA, limit: 20 })).includes(N.alphaGotcha), false)
+  assert.equal(
+    paths(
+      await searchNotes(index, { query: '死锁', scope: 'project', projectId: ALPHA, limit: 20 }),
+    ).includes(N.alphaGotcha),
+    false,
+  )
 })
 
 test('readNote re-reads the source, refuses internal and oversized paths, and can slice a section', async (t) => {
@@ -576,18 +794,31 @@ test('readNote re-reads the source, refuses internal and oversized paths, and ca
     (error) => error instanceof IndexError && error.code === 'section-not-found',
   )
 
-  for (const internal of [CORPUS.excluded.receipts, CORPUS.excluded.registry, CORPUS.excluded.lint, CORPUS.excluded.history, CORPUS.excluded.obsidian, '.gitignore']) {
+  for (const internal of [
+    CORPUS.excluded.receipts,
+    CORPUS.excluded.registry,
+    CORPUS.excluded.lint,
+    CORPUS.excluded.history,
+    CORPUS.excluded.obsidian,
+    '.gitignore',
+  ]) {
     await assert.rejects(
       () => readNote(h.vault, internal),
       (error) => error instanceof IndexError && error.code === 'internal-path',
       `${internal} must be refused`,
     )
   }
-  await assert.rejects(() => readNote(h.vault, '../outside.md'), (error) => error.name === 'PathSafetyError')
+  await assert.rejects(
+    () => readNote(h.vault, '../outside.md'),
+    (error) => error.name === 'PathSafetyError',
+  )
 
   const link = at(h.vault, `${ALPHA_DIR}/Docs/链接.md`)
   await symlink(at(h.vault, N.user), link)
-  await assert.rejects(() => readNote(h.vault, `${ALPHA_DIR}/Docs/链接.md`), (error) => error.name === 'PathSafetyError')
+  await assert.rejects(
+    () => readNote(h.vault, `${ALPHA_DIR}/Docs/链接.md`),
+    (error) => error.name === 'PathSafetyError',
+  )
 
   const huge = at(h.vault, `${ALPHA_DIR}/Docs/超大.md`)
   await writeFile(huge, `---\ntitle: "超大"\n---\n# 超大\n\n${'x'.repeat(MAX_NOTE_BYTES + 1)}\n`)
@@ -597,7 +828,12 @@ test('readNote re-reads the source, refuses internal and oversized paths, and ca
   )
   const summary = await index.refresh()
   assert.ok(summary.skippedLarge >= 1)
-  assert.equal(paths(await searchNotes(index, { query: '超大', scope: 'project', projectId: ALPHA })).includes(`${ALPHA_DIR}/Docs/超大.md`), false)
+  assert.equal(
+    paths(await searchNotes(index, { query: '超大', scope: 'project', projectId: ALPHA })).includes(
+      `${ALPHA_DIR}/Docs/超大.md`,
+    ),
+    false,
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -606,7 +842,9 @@ test('readNote re-reads the source, refuses internal and oversized paths, and ca
 
 test("backend 'auto' degrades to the scan backend and says why; 'sqlite' fails loudly; 'scan' opens no database", async (t) => {
   const h = await harness(t)
-  const boom = () => { throw Object.assign(new Error('no such module: fts5'), { code: 'SQLITE_ERROR' }) }
+  const boom = () => {
+    throw Object.assign(new Error('no such module: fts5'), { code: 'SQLITE_ERROR' })
+  }
 
   const degraded = await h.open({ backend: 'auto', openDatabase: boom })
   await ready(degraded)
@@ -615,7 +853,12 @@ test("backend 'auto' degrades to the scan backend and says why; 'sqlite' fails l
   assert.equal(degraded.status().degraded, true)
   assert.match(degraded.status().reason, /fts5/)
   assert.equal(degraded.status().dbPath, null)
-  const hits = await searchNotes(degraded, { query: Q.threeCharCjk, scope: 'project', projectId: ALPHA, limit: 8 })
+  const hits = await searchNotes(degraded, {
+    query: Q.threeCharCjk,
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 8,
+  })
   assert.equal(hits[0].path, N.alphaExactTitle)
 
   await assert.rejects(
@@ -629,8 +872,14 @@ test("backend 'auto' degrades to the scan backend and says why; 'sqlite' fails l
   assert.equal(scan.status().dbPath, null)
   assert.equal(scan.status().degraded, false)
   const indexDir = join(h.dataRoot, 'index')
-  const entries = await readdir(indexDir).catch((error) => (error.code === 'ENOENT' ? [] : Promise.reject(error)))
-  assert.deepEqual(entries.filter((name) => name.endsWith('.db')), [], "an explicit 'scan' backend must not open a database at all")
+  const entries = await readdir(indexDir).catch((error) =>
+    error.code === 'ENOENT' ? [] : Promise.reject(error),
+  )
+  assert.deepEqual(
+    entries.filter((name) => name.endsWith('.db')),
+    [],
+    "an explicit 'scan' backend must not open a database at all",
+  )
 })
 
 test('the scan backend and SQLite agree on filtering across the scope matrix', async (t) => {
@@ -661,12 +910,23 @@ test('the scan backend and SQLite agree on filtering across the scope matrix', a
     const b = await searchNotes(scan, { limit: 50, ...options })
     assert.deepEqual(sorted(a), sorted(b), `backends disagree for ${JSON.stringify(options)}`)
     assert.equal(a.length, b.length)
-    if (a.length > 0) assert.equal(a[0].path, b[0].path, `top hit differs for ${JSON.stringify(options)}`)
+    if (a.length > 0)
+      assert.equal(a[0].path, b[0].path, `top hit differs for ${JSON.stringify(options)}`)
   }
 
   // ...and both carry the exact-title corpus winner for the CJK query.
-  const a = await searchNotes(sqlite, { query: Q.threeCharCjk, scope: 'project', projectId: ALPHA, limit: 8 })
-  const b = await searchNotes(scan, { query: Q.threeCharCjk, scope: 'project', projectId: ALPHA, limit: 8 })
+  const a = await searchNotes(sqlite, {
+    query: Q.threeCharCjk,
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 8,
+  })
+  const b = await searchNotes(scan, {
+    query: Q.threeCharCjk,
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 8,
+  })
   assert.deepEqual(sorted(a), sorted(b))
   assert.equal(a[0].path, N.alphaExactTitle)
   assert.equal(b[0].path, N.alphaExactTitle)
@@ -689,7 +949,12 @@ test('a damaged index is quarantined and rebuilt, and pending work is never dele
   assert.equal(second.status().quarantined.length, 1)
   assert.match(second.status().quarantined[0], /\.corrupt-/)
   assert.ok(existsSync(second.status().quarantined[0]))
-  const hits = await searchNotes(second, { query: Q.threeCharCjk, scope: 'project', projectId: ALPHA, limit: 8 })
+  const hits = await searchNotes(second, {
+    query: Q.threeCharCjk,
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 8,
+  })
   assert.equal(hits[0].path, N.alphaExactTitle)
   assert.equal(await readFile(marker, 'utf8'), '{"job":"distill","state":"queued"}\n')
 
@@ -703,7 +968,17 @@ test('a damaged index is quarantined and rebuilt, and pending work is never dele
     const third = await h.open()
     await ready(third)
     assert.equal(third.status().quarantined.length, 1)
-    assert.equal((await searchNotes(third, { query: Q.threeCharCjk, scope: 'project', projectId: ALPHA, limit: 1 })).length, 1)
+    assert.equal(
+      (
+        await searchNotes(third, {
+          query: Q.threeCharCjk,
+          scope: 'project',
+          projectId: ALPHA,
+          limit: 1,
+        })
+      ).length,
+      1,
+    )
   }
   const leftovers = await readdir(join(h.dataRoot, 'pending'))
   assert.deepEqual(leftovers, ['queued-job.json'])
@@ -715,20 +990,34 @@ test('an index failure is reported as stale and never fails the vault transactio
   await writeFile(join(h.dataRoot, 'pending', 'keep.json'), '{}\n')
 
   const index = await h.open({
-    io: { readdir: async () => { throw Object.assign(new Error('EACCES: injected'), { code: 'EACCES' }) } },
+    io: {
+      readdir: async () => {
+        throw Object.assign(new Error('EACCES: injected'), { code: 'EACCES' })
+      },
+    },
   })
   const outcome = await index.waitReady(undefined, 5000)
   assert.equal(outcome.ready, false)
   assert.match(String(outcome.reason), /scan|EACCES/i)
 
-  await assert.rejects(() => index.refresh(), (error) => error instanceof IndexError && error.code === 'scan-failed')
+  await assert.rejects(
+    () => index.refresh(),
+    (error) => error instanceof IndexError && error.code === 'scan-failed',
+  )
   assert.equal(index.status().stale, true)
   assert.match(String(index.status().reason), /EACCES/)
 
   const relative = `${ALPHA_DIR}/Docs/写入成功.md`
   const contents = `---\ntitle: "写入成功"\nproject: "${ALPHA}"\n---\n# 写入成功\n\n即使索引更新失败，写入也必须成功。\n`
   const receipt = await runTransaction(
-    { kind: 'bound', projectId: ALPHA, slug: 'alpha', displayName: 'alpha', vaultRoot: h.vault, relativeDir: ALPHA_DIR },
+    {
+      kind: 'bound',
+      projectId: ALPHA,
+      slug: 'alpha',
+      displayName: 'alpha',
+      vaultRoot: h.vault,
+      relativeDir: ALPHA_DIR,
+    },
     { txId: newTransactionId(), creates: [{ path: relative, contents }], receipt: null },
     { dataRoot: h.dataRoot, notifyIndex: () => index.refresh() },
   )
@@ -739,33 +1028,61 @@ test('an index failure is reported as stale and never fails the vault transactio
 
   // A later, healthy refresh clears the stale flag and indexes the new note.
   await index.close()
-  const healthy = await openIndex({ vaultRoot: h.vault, dataRoot: h.dataRoot, backend: 'sqlite', projectId: ALPHA })
+  const healthy = await openIndex({
+    vaultRoot: h.vault,
+    dataRoot: h.dataRoot,
+    backend: 'sqlite',
+    projectId: ALPHA,
+  })
   t.after(() => healthy.close())
   await ready(healthy)
   assert.equal(healthy.status().stale, false)
-  assert.ok(paths(await searchNotes(healthy, { query: '即使索引更新失败', scope: 'project', projectId: ALPHA })).includes(relative))
+  assert.ok(
+    paths(
+      await searchNotes(healthy, { query: '即使索引更新失败', scope: 'project', projectId: ALPHA }),
+    ).includes(relative),
+  )
 })
 
 test('openIndex validates its inputs and a closed index refuses work', async (t) => {
   const h = await harness(t)
   await assert.rejects(() => openIndex({ backend: 'sqlite' }), RangeError)
-  await assert.rejects(() => openIndex({ vaultRoot: h.vault, dataRoot: h.dataRoot, backend: 'nope' }), RangeError)
+  await assert.rejects(
+    () => openIndex({ vaultRoot: h.vault, dataRoot: h.dataRoot, backend: 'nope' }),
+    RangeError,
+  )
 
   const index = await h.open()
   await ready(index)
-  const hits = await searchNotes(index, { query: Q.threeCharCjk, scope: 'project', projectId: ALPHA })
+  const hits = await searchNotes(index, {
+    query: Q.threeCharCjk,
+    scope: 'project',
+    projectId: ALPHA,
+  })
   assert.ok(hits.length > 0)
   assert.equal(hits.length <= 8, true, 'the default limit is 8')
 
-  await assert.rejects(() => searchNotes(index, { query: '', scope: 'project', projectId: ALPHA }), RangeError)
+  await assert.rejects(
+    () => searchNotes(index, { query: '', scope: 'project', projectId: ALPHA }),
+    RangeError,
+  )
   await assert.rejects(() => searchNotes(index, { query: 'x', scope: 'nope' }), RangeError)
   await assert.rejects(() => searchNotes(index, { query: 'x', scope: 'all', limit: 0 }), RangeError)
-  await assert.rejects(() => searchNotes(index, { query: 'x', scope: 'all', limit: 999 }), RangeError)
+  await assert.rejects(
+    () => searchNotes(index, { query: 'x', scope: 'all', limit: 999 }),
+    RangeError,
+  )
 
   await index.close()
   await index.close() // idempotent
-  await assert.rejects(() => index.refresh(), (error) => error instanceof IndexError && error.code === 'closed')
-  await assert.rejects(() => index.search({ query: 'x', filters: {} }), (error) => error instanceof IndexError && error.code === 'closed')
+  await assert.rejects(
+    () => index.refresh(),
+    (error) => error instanceof IndexError && error.code === 'closed',
+  )
+  await assert.rejects(
+    () => index.search({ query: 'x', filters: {} }),
+    (error) => error instanceof IndexError && error.code === 'closed',
+  )
   const closed = await index.waitReady(undefined, 10)
   assert.equal(closed.ready, false)
   assert.equal(closed.reason, 'closed')
@@ -778,7 +1095,10 @@ test('the schema keeps the six designed tables and populates tags, frontmatter a
   await ready(index)
   const { DatabaseSync } = await import('node:sqlite')
   const db = new DatabaseSync(index.status().dbPath)
-  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type IN ('table','view') ORDER BY name").all().map((row) => row.name)
+  const tables = db
+    .prepare("SELECT name FROM sqlite_master WHERE type IN ('table','view') ORDER BY name")
+    .all()
+    .map((row) => row.name)
   for (const table of ['notes', 'notes_fts', 'fm_kv', 'tags', 'links', 'kv']) {
     assert.ok(tables.includes(table), `missing table ${table}`)
   }
@@ -789,15 +1109,25 @@ test('the schema keeps the six designed tables and populates tags, frontmatter a
   assert.equal(note.id, 'dec-5d46ff43-1bf8-496d-8b9f-c11e89d4e2aa')
   assert.equal(note.hash, sha256(await readFile(at(h.vault, N.alphaDecision))))
   assert.ok(db.prepare('SELECT count(*) AS c FROM tags WHERE note_id = ?').get(note.id).c >= 2)
-  assert.equal(db.prepare("SELECT value FROM fm_kv WHERE note_id = ? AND key = 'status'").get(note.id).value, 'accepted')
-  assert.ok(db.prepare('SELECT count(*) AS c FROM links').get().c >= 1, 'wikilinks from the corpus hubs must be recorded')
+  assert.equal(
+    db.prepare("SELECT value FROM fm_kv WHERE note_id = ? AND key = 'status'").get(note.id).value,
+    'accepted',
+  )
+  assert.ok(
+    db.prepare('SELECT count(*) AS c FROM links').get().c >= 1,
+    'wikilinks from the corpus hubs must be recorded',
+  )
   db.close()
 })
 
 test('the query builder quotes and caps every token, and the path rule is a pure predicate', async () => {
   assert.equal(buildMatchQuery([]), null)
   assert.equal(buildMatchQuery(['调度', 'NEAR']), '"调度" OR "NEAR"')
-  assert.equal(buildMatchQuery(['a"b']), '"a""b"', 'a quote in a token is escaped, never left as FTS syntax')
+  assert.equal(
+    buildMatchQuery(['a"b']),
+    '"a""b"',
+    'a quote in a token is escaped, never left as FTS syntax',
+  )
   const flooded = planQuery(new Array(50).fill('调度器').join(' '))
   assert.equal(flooded.tokens.length, MAX_QUERY_TOKENS)
   assert.equal(flooded.branch, 'tokens')
@@ -808,12 +1138,25 @@ test('the query builder quotes and caps every token, and the path rule is a pure
   assert.deepEqual(planQuery('调度器').tokens, ['调度', '度器'])
 
   assert.equal(isIndexableRelativePath('_meta/user.md'), true)
-  assert.equal(isIndexableRelativePath('Inbox/待定条目.md'), true, 'the inbox is searchable, only `pending/` is not')
+  assert.equal(
+    isIndexableRelativePath('Inbox/待定条目.md'),
+    true,
+    'the inbox is searchable, only `pending/` is not',
+  )
   assert.equal(isIndexableRelativePath('Projects/alpha--1c392abb/Inbox/待定条目.md'), true)
   for (const bad of [
-    '_meta/log.md', '_meta/registry.md', '_meta/Lint Report 2026-09-23.md', '_meta/.history/x.md',
-    '.obsidian/workspace.json', '.gitignore', 'pending/x.md', 'Projects/a--1c392abb/pending/x.md',
-    'Projects/a--1c392abb/Docs/x.txt', 'Projects/a--1c392abb/Docs/.hidden.md', '../x.md', '/abs/x.md',
+    '_meta/log.md',
+    '_meta/registry.md',
+    '_meta/Lint Report 2026-09-23.md',
+    '_meta/.history/x.md',
+    '.obsidian/workspace.json',
+    '.gitignore',
+    'pending/x.md',
+    'Projects/a--1c392abb/pending/x.md',
+    'Projects/a--1c392abb/Docs/x.txt',
+    'Projects/a--1c392abb/Docs/.hidden.md',
+    '../x.md',
+    '/abs/x.md',
   ]) {
     assert.equal(isIndexableRelativePath(bad), false, `${bad} must not be indexable`)
   }
@@ -822,7 +1165,12 @@ test('the query builder quotes and caps every token, and the path rule is a pure
 test('a vault that does not exist yet is empty and ready, not broken', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t9-absent-'))
   const dataRoot = join(root, 'data')
-  const index = await openIndex({ vaultRoot: join(root, 'vault-not-yet'), dataRoot, backend: 'sqlite', projectId: ALPHA })
+  const index = await openIndex({
+    vaultRoot: join(root, 'vault-not-yet'),
+    dataRoot,
+    backend: 'sqlite',
+    projectId: ALPHA,
+  })
   t.after(async () => {
     await index.close().catch(() => {})
     await rm(root, { recursive: true, force: true })
@@ -830,7 +1178,10 @@ test('a vault that does not exist yet is empty and ready, not broken', async (t)
   const readiness = await index.waitReady(undefined, 10_000)
   assert.equal(readiness.ready, true)
   assert.equal(index.status().notes, 0)
-  assert.deepEqual(await searchNotes(index, { query: '调度器', scope: 'project', projectId: ALPHA }), [])
+  assert.deepEqual(
+    await searchNotes(index, { query: '调度器', scope: 'project', projectId: ALPHA }),
+    [],
+  )
 })
 
 test('concurrent refreshes are serialized and leave a consistent store', async (t) => {
@@ -857,11 +1208,19 @@ test('the scan backend keeps working after the vault changes, without ever touch
 
   await rm(at(h.vault, N.alphaDeleted))
   const relative = `${ALPHA_DIR}/Docs/新增.md`
-  await writeFile(at(h.vault, relative), `---\ntitle: "新增"\nproject: "${ALPHA}"\n---\n# 新增\n\n新的调度器备注。\n`)
+  await writeFile(
+    at(h.vault, relative),
+    `---\ntitle: "新增"\nproject: "${ALPHA}"\n---\n# 新增\n\n新的调度器备注。\n`,
+  )
   const summary = await index.refresh()
   assert.equal(summary.added, 1)
   assert.equal(summary.removed, 1)
-  const hits = await searchNotes(index, { query: '新的调度', scope: 'project', projectId: ALPHA, limit: 20 })
+  const hits = await searchNotes(index, {
+    query: '新的调度',
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 20,
+  })
   assert.ok(paths(hits).includes(relative))
   assert.equal(index.status().dbPath, null)
 })
@@ -876,7 +1235,12 @@ test('the substring branch pages in path order and reports its bound instead of 
 
   // Only the path-smallest row may be examined; it is the deep file, not the
   // shallow one the scan inserted first (whose rowid is lower).
-  const hits = await searchNotes(h.index, { query: Q.singleCharCjk, scope: 'project', projectId: PAGED_ID, limit: 50 })
+  const hits = await searchNotes(h.index, {
+    query: Q.singleCharCjk,
+    scope: 'project',
+    projectId: PAGED_ID,
+    limit: 50,
+  })
   assert.deepEqual(paths(hits), [PAGED_DEEP_FIRST])
   assert.equal(hits.truncated, true, 'a bound that cut the scan must be visible on the result')
   assert.match(String(hits.truncationReason), /substring-scan-bound/)
@@ -886,9 +1250,18 @@ test('the substring branch pages in path order and reports its bound instead of 
 
   // A bound that hides every match is still distinguishable from "found nothing":
   // the match sits beyond the bound, so the list is empty *and* flagged.
-  const blind = await searchNotes(h.index, { query: '亦', scope: 'project', projectId: PAGED_ID, limit: 50 })
+  const blind = await searchNotes(h.index, {
+    query: '亦',
+    scope: 'project',
+    projectId: PAGED_ID,
+    limit: 50,
+  })
   assert.deepEqual(blind, [])
-  assert.equal(blind.truncated, true, 'an empty list is never silently empty while the bound is the reason')
+  assert.equal(
+    blind.truncated,
+    true,
+    'an empty list is never silently empty while the bound is the reason',
+  )
   assert.match(String(blind.truncationReason), /substring-scan-bound/)
 })
 
@@ -897,7 +1270,12 @@ test('paging crosses pages in path order and a bound past the vault is not flagg
   await ready(bounded.index)
   // Two pages of two rows cover the path prefix; the path-fifth shallow note is
   // outside it, so `ddd` is the last match and the flag must be set.
-  const page1 = await searchNotes(bounded.index, { query: Q.singleCharCjk, scope: 'project', projectId: PAGED_ID, limit: 50 })
+  const page1 = await searchNotes(bounded.index, {
+    query: Q.singleCharCjk,
+    scope: 'project',
+    projectId: PAGED_ID,
+    limit: 50,
+  })
   assert.deepEqual(paths(page1), [PAGED_DEEP_FIRST, PAGED_DEEP_LAST].sort())
   assert.equal(page1.truncated, true)
   assert.equal(page1.rowsExamined, 4)
@@ -905,7 +1283,12 @@ test('paging crosses pages in path order and a bound past the vault is not flagg
   // A bound beyond the vault exhausts the source, and that must not be reported as truncation.
   const whole = await pagedHarness(t, { scanBranchMaxRows: 10, scanBranchPageSize: 2 })
   await ready(whole.index)
-  const all = await searchNotes(whole.index, { query: Q.singleCharCjk, scope: 'project', projectId: PAGED_ID, limit: 50 })
+  const all = await searchNotes(whole.index, {
+    query: Q.singleCharCjk,
+    scope: 'project',
+    projectId: PAGED_ID,
+    limit: 50,
+  })
   assert.deepEqual(paths(all), [PAGED_DEEP_FIRST, PAGED_DEEP_LAST].sort())
   assert.equal(all.truncated, false, 'an exhausted scan is complete, not truncated')
   assert.equal(all.truncationReason, null)
@@ -926,13 +1309,27 @@ test('paging crosses pages in path order and a bound past the vault is not flagg
     assert.equal(a.truncated, b.truncated, `truncation differs for ${JSON.stringify(options)}`)
     // `rowsExamined` is comparable exactly here: both walk the same path-ordered
     // prefix and the plan-mandated bound applies to that number.
-    assert.equal(a.rowsExamined, b.rowsExamined, `examined rows differ for ${JSON.stringify(options)}`)
+    assert.equal(
+      a.rowsExamined,
+      b.rowsExamined,
+      `examined rows differ for ${JSON.stringify(options)}`,
+    )
   }
   // On the tokens branch it is deliberately backend-specific: SQLite reports the
   // rows its single relevance-ordered window fetched, the in-memory scan reports
   // every matching record. Results and truncation still have to agree.
-  const tokensA = await searchNotes(sqlite.index, { query: '第二', scope: 'project', projectId: PAGED_ID, limit: 50 })
-  const tokensB = await searchNotes(scan, { query: '第二', scope: 'project', projectId: PAGED_ID, limit: 50 })
+  const tokensA = await searchNotes(sqlite.index, {
+    query: '第二',
+    scope: 'project',
+    projectId: PAGED_ID,
+    limit: 50,
+  })
+  const tokensB = await searchNotes(scan, {
+    query: '第二',
+    scope: 'project',
+    projectId: PAGED_ID,
+    limit: 50,
+  })
   assert.deepEqual(sorted(tokensA), sorted(tokensB))
   assert.equal(tokensA.truncated, tokensB.truncated)
   assert.equal(tokensA.candidatesScored, tokensB.candidatesScored)
@@ -958,7 +1355,10 @@ test('the composite score promotes a title match that bm25 ranks below the limit
       `---\ntype: "doc"\ntitle: "filler ${i}"\nstatus: "active"\nproject: "${ALPHA}"\n---\n# filler ${i}\n\n${'zebra '.repeat(60)}\n`,
     )
   }
-  await writeFile(at(h.vault, exact), `---\ntype: "doc"\ntitle: "zebra"\nstatus: "active"\nproject: "${ALPHA}"\n---\n# zebra\n\nzebra\n`)
+  await writeFile(
+    at(h.vault, exact),
+    `---\ntype: "doc"\ntitle: "zebra"\nstatus: "active"\nproject: "${ALPHA}"\n---\n# zebra\n\nzebra\n`,
+  )
   const index = await h.open()
   await ready(index)
 
@@ -967,16 +1367,34 @@ test('the composite score promotes a title match that bm25 ranks below the limit
   const { DatabaseSync } = await import('node:sqlite')
   const db = new DatabaseSync(index.status().dbPath)
   const match = buildMatchQuery(planQuery('zebra').tokens)
-  const ranked = db.prepare(`
+  const ranked = db
+    .prepare(
+      `
     SELECT n.path FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid
     WHERE notes_fts MATCH ? ORDER BY bm25(notes_fts, 10.0, 1.0, 4.0) ASC LIMIT 3
-  `).all(match).map((row) => row.path)
+  `,
+    )
+    .all(match)
+    .map((row) => row.path)
   db.close()
-  assert.equal(ranked.includes(exact), false, 'the corpus must really rank the title match below the limit')
+  assert.equal(
+    ranked.includes(exact),
+    false,
+    'the corpus must really rank the title match below the limit',
+  )
 
-  const hits = await searchNotes(index, { query: 'zebra', scope: 'project', projectId: ALPHA, limit: 3 })
+  const hits = await searchNotes(index, {
+    query: 'zebra',
+    scope: 'project',
+    projectId: ALPHA,
+    limit: 3,
+  })
   assert.equal(hits.length, 3)
-  assert.equal(hits[0].path, exact, 'the composite score must promote the title match over raw bm25')
+  assert.equal(
+    hits[0].path,
+    exact,
+    'the composite score must promote the title match over raw bm25',
+  )
   assert.equal(hits[0].signals.titleExact, true)
   assert.ok(hits.every((hit) => hit.path !== exact || hit === hits[0]))
 })
@@ -986,22 +1404,43 @@ test('an aborted signal cancels the search instead of being accepted and ignored
   const index = await h.open()
   await ready(index)
   await assert.rejects(
-    () => searchNotes(index, { query: Q.threeCharCjk, scope: 'project', projectId: ALPHA, signal: AbortSignal.abort() }),
+    () =>
+      searchNotes(index, {
+        query: Q.threeCharCjk,
+        scope: 'project',
+        projectId: ALPHA,
+        signal: AbortSignal.abort(),
+      }),
     (error) => error instanceof IndexError && error.code === 'aborted',
   )
 })
 
 test('a ready barrier removes its abort listener when the timeout wins', async (t) => {
   const h = await harness(t)
-  const slow = await h.open({ batchSize: 1, yieldToEventLoop: async () => { await delay(5) } })
+  const slow = await h.open({
+    batchSize: 1,
+    yieldToEventLoop: async () => {
+      await delay(5)
+    },
+  })
   const controller = new AbortController()
   const outcome = await slow.waitReady(controller.signal, 1)
   assert.equal(outcome.ready, false)
-  assert.equal(getEventListeners(controller.signal, 'abort').length, 0, 'the timeout path must not leak its abort listener')
+  assert.equal(
+    getEventListeners(controller.signal, 'abort').length,
+    0,
+    'the timeout path must not leak its abort listener',
+  )
   await ready(slow)
   controller.abort()
   await assert.rejects(
-    () => searchNotes(slow, { query: Q.threeCharCjk, scope: 'project', projectId: ALPHA, signal: controller.signal }),
+    () =>
+      searchNotes(slow, {
+        query: Q.threeCharCjk,
+        scope: 'project',
+        projectId: ALPHA,
+        signal: controller.signal,
+      }),
     (error) => error instanceof IndexError && error.code === 'aborted',
   )
 })
@@ -1012,13 +1451,29 @@ test('a substring window that withholds matches reports truncation, never a fals
   await ready(h.index)
   await ready(scan)
 
-  for (const [backend, index] of [['sqlite', h.index], ['scan', scan]]) {
+  for (const [backend, index] of [
+    ['sqlite', h.index],
+    ['scan', scan],
+  ]) {
     // limit 8 => window 32, while 40 in-scope notes match: the source itself must
     // cap its emission and say so, instead of handing over 40 and letting the
     // caller score 32 under a "complete" flag.
-    const narrow = await searchNotes(index, { query: Q.singleCharCjk, scope: 'project', projectId: WINDOW_ID, limit: 8 })
-    assert.equal(narrow.truncated, true, `${backend} must not claim an exhaustive scan while the window withheld matches`)
-    assert.match(String(narrow.truncationReason), /candidate-window/, `${backend} must name the window as the cause`)
+    const narrow = await searchNotes(index, {
+      query: Q.singleCharCjk,
+      scope: 'project',
+      projectId: WINDOW_ID,
+      limit: 8,
+    })
+    assert.equal(
+      narrow.truncated,
+      true,
+      `${backend} must not claim an exhaustive scan while the window withheld matches`,
+    )
+    assert.match(
+      String(narrow.truncationReason),
+      /candidate-window/,
+      `${backend} must name the window as the cause`,
+    )
     assert.equal(narrow.candidateWindow, 32)
     assert.equal(narrow.candidatesScored, 32)
     assert.equal(paths(narrow).includes(WINDOW_EXACT), false)
@@ -1026,15 +1481,38 @@ test('a substring window that withholds matches reports truncation, never a fals
     // With a window that covers the whole vault the exact title is scored — and
     // wins, which is what makes the truncation flag above meaningful rather than
     // cosmetic.
-    const wide = await searchNotes(index, { query: Q.singleCharCjk, scope: 'project', projectId: WINDOW_ID, limit: 50 })
-    assert.equal(wide.truncated, false, `${backend} must report completeness when every match was scored`)
+    const wide = await searchNotes(index, {
+      query: Q.singleCharCjk,
+      scope: 'project',
+      projectId: WINDOW_ID,
+      limit: 50,
+    })
+    assert.equal(
+      wide.truncated,
+      false,
+      `${backend} must report completeness when every match was scored`,
+    )
     assert.equal(wide.truncationReason, null)
-    assert.equal(wide[0].path, WINDOW_EXACT, `${backend} must return the exact-title match once it is inside the window`)
+    assert.equal(
+      wide[0].path,
+      WINDOW_EXACT,
+      `${backend} must return the exact-title match once it is inside the window`,
+    )
     assert.equal(wide.length, 40)
   }
 
-  const a = await searchNotes(h.index, { query: Q.singleCharCjk, scope: 'project', projectId: WINDOW_ID, limit: 8 })
-  const b = await searchNotes(scan, { query: Q.singleCharCjk, scope: 'project', projectId: WINDOW_ID, limit: 8 })
+  const a = await searchNotes(h.index, {
+    query: Q.singleCharCjk,
+    scope: 'project',
+    projectId: WINDOW_ID,
+    limit: 8,
+  })
+  const b = await searchNotes(scan, {
+    query: Q.singleCharCjk,
+    scope: 'project',
+    projectId: WINDOW_ID,
+    limit: 8,
+  })
   assert.deepEqual(sorted(a), sorted(b))
   assert.equal(a.truncationReason, b.truncationReason)
   assert.equal(h.index.status().lastSearch.truncated, true)
@@ -1048,9 +1526,21 @@ test('both backends take the same path prefix when a later path holds a non-BMP 
 
   // SQLite orders TEXT by UTF-8 bytes (code-point order); a UTF-16 comparison
   // would pick the surrogate-pair path first and silently examine a different row.
-  for (const [backend, index] of [['sqlite', h.index], ['scan', scan]]) {
-    const hits = await searchNotes(index, { query: Q.singleCharCjk, scope: 'project', projectId: WIDECHAR_ID, limit: 50 })
-    assert.deepEqual(paths(hits), [WIDECHAR_FIRST], `${backend} must examine the code-point-first path`)
+  for (const [backend, index] of [
+    ['sqlite', h.index],
+    ['scan', scan],
+  ]) {
+    const hits = await searchNotes(index, {
+      query: Q.singleCharCjk,
+      scope: 'project',
+      projectId: WIDECHAR_ID,
+      limit: 50,
+    })
+    assert.deepEqual(
+      paths(hits),
+      [WIDECHAR_FIRST],
+      `${backend} must examine the code-point-first path`,
+    )
     assert.equal(paths(hits).includes(WIDECHAR_UTF16_FIRST), false)
     assert.equal(hits.truncated, true)
     assert.equal(hits.rowsExamined, 1)

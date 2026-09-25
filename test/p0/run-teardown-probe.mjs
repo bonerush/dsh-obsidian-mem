@@ -21,7 +21,17 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import process from 'node:process'
@@ -77,7 +87,13 @@ function run(command, commandArgs, options = {}) {
     child.stderr.on('data', (chunk) => stderr.push(chunk))
     child.on('error', (error) => {
       clearTimeout(timer)
-      resolvePromise({ code: null, signal: null, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), spawnError: error.message })
+      resolvePromise({
+        code: null,
+        signal: null,
+        stdout: Buffer.concat(stdout),
+        stderr: Buffer.concat(stderr),
+        spawnError: error.message,
+      })
     })
     child.on('close', (code, signal) => {
       clearTimeout(timer)
@@ -91,8 +107,12 @@ function realHomeFingerprint() {
   const home = join(homedir(), '.dsh')
   const map = {}
   for (const path of [
-    'cordis.patch.yml', 'settings.yaml', '.credentials.yaml',
-    'profiles/web/package.json', 'profiles/web/pnpm-workspace.yaml', 'profiles/web/cordis.patch.yml',
+    'cordis.patch.yml',
+    'settings.yaml',
+    '.credentials.yaml',
+    'profiles/web/package.json',
+    'profiles/web/pnpm-workspace.yaml',
+    'profiles/web/cordis.patch.yml',
   ]) {
     try {
       map[path] = sha256(readFileSync(join(home, path)))
@@ -141,7 +161,8 @@ function defaultVaultFingerprint() {
       const relative = prefix === '' ? name : `${prefix}/${name}`
       try {
         const stat = lstatSync(join(directory, name))
-        if (stat.isSymbolicLink()) parts.push(`${relative} -> ${readlinkSync(join(directory, name))}`)
+        if (stat.isSymbolicLink())
+          parts.push(`${relative} -> ${readlinkSync(join(directory, name))}`)
         else if (stat.isDirectory()) {
           parts.push(`${relative}/`)
           walk(join(directory, name), relative)
@@ -170,11 +191,16 @@ main().catch((error) => {
 async function main() {
   const credential = resolveCredential()
   if (credential === null) {
-    process.stderr.write('run-teardown-probe: no DEEPSEEK_API_KEY in the environment and none in the credentials store; refusing to run without a model route\n')
+    process.stderr.write(
+      'run-teardown-probe: no DEEPSEEK_API_KEY in the environment and none in the credentials store; refusing to run without a model route\n',
+    )
     process.exit(2)
   }
 
-  const baseDir = assertTempPath(mkdtempSync(join(tmpdir(), 'dsh-obsidian-mem-teardown-')), 'baseDir')
+  const baseDir = assertTempPath(
+    mkdtempSync(join(tmpdir(), 'dsh-obsidian-mem-teardown-')),
+    'baseDir',
+  )
   const dshHome = join(baseDir, 'home')
   const repo = join(baseDir, 'repo')
   const recordPath = join(baseDir, 'teardown.jsonl')
@@ -183,14 +209,34 @@ async function main() {
   writeFileSync(join(repo, 'README.md'), '# teardown probe repository\n')
   await run('git', ['init', '-q', '-b', 'main'], { cwd: repo })
   await run('git', ['add', 'README.md'], { cwd: repo })
-  await run('git', ['-c', 'user.name=probe', '-c', 'user.email=probe@example.invalid', 'commit', '-q', '-m', 'chore: seed'], { cwd: repo })
+  await run(
+    'git',
+    [
+      '-c',
+      'user.name=probe',
+      '-c',
+      'user.email=probe@example.invalid',
+      'commit',
+      '-q',
+      '-m',
+      'chore: seed',
+    ],
+    { cwd: repo },
+  )
 
   const homeBefore = realHomeFingerprint()
   const vaultBefore = defaultVaultFingerprint()
   const env = { ...process.env, DSH_HOME: dshHome, DEEPSEEK_API_KEY: credential.value }
 
-  await run(DSH_BIN, ['--profile', PROFILE, '--from-default-profile', 'headless', '--dump-config'], { cwd: REPO_ROOT, env })
-  await run(DSH_BIN, ['plugin', '--profile', PROFILE, 'add', `link:${join(HERE, 'teardown')}`], { cwd: REPO_ROOT, env })
+  await run(
+    DSH_BIN,
+    ['--profile', PROFILE, '--from-default-profile', 'headless', '--dump-config'],
+    { cwd: REPO_ROOT, env },
+  )
+  await run(DSH_BIN, ['plugin', '--profile', PROFILE, 'add', `link:${join(HERE, 'teardown')}`], {
+    cwd: REPO_ROOT,
+    env,
+  })
   const dump = await run(DSH_BIN, ['--profile', PROFILE, '--dump-config'], { cwd: REPO_ROOT, env })
 
   const result = await run(DSH_BIN, ['--profile', PROFILE, TASK], {
@@ -203,12 +249,20 @@ async function main() {
     .filter((line) => line.trim() !== '')
     .map((line) => JSON.parse(line))
 
-  const find = (label) => records.find((entry) => entry.rec === 'llm' && entry.label === label) ?? null
+  const find = (label) =>
+    records.find((entry) => entry.rec === 'llm' && entry.label === label) ?? null
   const disposal = records.find((entry) => entry.rec === 'disposer') ?? null
-  const strictLive = records.find((entry) => entry.rec === 'vis' && entry.llm?.strictHas === true) ?? null
-  const afterDisposal = records.find(
-    (entry) => entry.rec === 'vis' && disposal !== null && entry.t > disposal.t && entry.llm?.strictHas === false && entry.llm?.looseHas === false,
-  ) ?? null
+  const strictLive =
+    records.find((entry) => entry.rec === 'vis' && entry.llm?.strictHas === true) ?? null
+  const afterDisposal =
+    records.find(
+      (entry) =>
+        entry.rec === 'vis' &&
+        disposal !== null &&
+        entry.t > disposal.t &&
+        entry.llm?.strictHas === false &&
+        entry.llm?.looseHas === false,
+    ) ?? null
   const bare = find('bare-timer-live-window')
   const workerSignal = find('live-window-worker-signal')
   const privateSignal = find('live-window-private-signal')
@@ -218,61 +272,109 @@ async function main() {
 
   const answered = (entry) => entry !== null && ['stop', 'max-tokens'].includes(entry.finishKind)
 
-  check('probe-row-registered', new RegExp(`^- id: ${ROW_ID}$`, 'm').test(dump.stdout.toString('utf8')), `dump-config has "- id: ${ROW_ID}"`)
-  check('run-completed', result.code === 0 && result.signal === null, `exit=${result.code ?? result.signal} stdoutBytes=${result.stdout.length} stderrBytes=${result.stderr.length}`)
+  check(
+    'probe-row-registered',
+    new RegExp(`^- id: ${ROW_ID}$`, 'm').test(dump.stdout.toString('utf8')),
+    `dump-config has "- id: ${ROW_ID}"`,
+  )
+  check(
+    'run-completed',
+    result.code === 0 && result.signal === null,
+    `exit=${result.code ?? result.signal} stdoutBytes=${result.stdout.length} stderrBytes=${result.stderr.length}`,
+  )
   check(
     'service-is-live-with-an-active-provider-fiber',
-    strictLive !== null && strictLive.llm.providerFiber === 'LlmRuntime' && strictLive.llm.providerState === 'ACTIVE',
-    strictLive === null ? 'no record saw a live `llm`' : `label=${strictLive.label} provider=${strictLive.llm.providerFiber}/${strictLive.llm.providerState} isolateKey=${strictLive.llm.isolateKey}`,
+    strictLive !== null &&
+      strictLive.llm.providerFiber === 'LlmRuntime' &&
+      strictLive.llm.providerState === 'ACTIVE',
+    strictLive === null
+      ? 'no record saw a live `llm`'
+      : `label=${strictLive.label} provider=${strictLive.llm.providerFiber}/${strictLive.llm.providerState} isolateKey=${strictLive.llm.isolateKey}`,
   )
   check(
     'in-handler-call-is-a-real-answer',
     answered(inHandler) && inHandler.chunks > 0,
-    inHandler === null ? 'no in-handler control record' : `finish=${inHandler.finishKind} chunks=${inHandler.chunks} ms=${inHandler.ms}`,
+    inHandler === null
+      ? 'no in-handler control record'
+      : `finish=${inHandler.finishKind} chunks=${inHandler.chunks} ms=${inHandler.ms}`,
   )
   check(
     'bare-timer-in-the-live-window-is-a-real-answer',
     answered(bare),
-    bare === null ? 'no bare-timer record' : `finish=${bare.finishKind} chunks=${bare.chunks} ms=${bare.ms}`,
+    bare === null
+      ? 'no bare-timer record'
+      : `finish=${bare.finishKind} chunks=${bare.chunks} ms=${bare.ms}`,
   )
   check(
     'the-tree-is-disposed-at-the-end-of-the-run',
     disposal !== null && afterDisposal !== null,
-    disposal === null ? 'no disposer record' : `disposer t=${disposal.t}; after it, ctx.get('llm') strict=false loose=false at t=${afterDisposal?.t ?? '-'}`,
+    disposal === null
+      ? 'no disposer record'
+      : `disposer t=${disposal.t}; after it, ctx.get('llm') strict=false loose=false at t=${afterDisposal?.t ?? '-'}`,
   )
   check(
     'an-in-flight-stream-survives-the-disposal',
-    privateSignal !== null && answered(privateSignal) && privateSignal.callerAbortedAtFinish !== true &&
-      disposal !== null && privateSignal.finishedAt > disposal.t,
-    privateSignal === null ? 'no private-signal record' : `finish=${privateSignal.finishKind} ms=${privateSignal.ms} finishedAt=${privateSignal.finishedAt} (disposer t=${disposal?.t ?? '-'})`,
+    privateSignal !== null &&
+      answered(privateSignal) &&
+      privateSignal.callerAbortedAtFinish !== true &&
+      disposal !== null &&
+      privateSignal.finishedAt > disposal.t,
+    privateSignal === null
+      ? 'no private-signal record'
+      : `finish=${privateSignal.finishKind} ms=${privateSignal.ms} finishedAt=${privateSignal.finishedAt} (disposer t=${disposal?.t ?? '-'})`,
   )
   check(
     'the-worker-signal-disposer-abort-is-what-produces-aborted',
-    workerSignal !== null && workerSignal.finishKind === 'aborted' && workerSignal.callerAbortedAtFinish === true &&
-      disposal !== null && Math.abs(workerSignal.finishedAt - disposal.t) <= 1000,
+    workerSignal !== null &&
+      workerSignal.finishKind === 'aborted' &&
+      workerSignal.callerAbortedAtFinish === true &&
+      disposal !== null &&
+      Math.abs(workerSignal.finishedAt - disposal.t) <= 1000,
     workerSignal === null
       ? 'no worker-signal record'
       : `finish=${workerSignal.finishKind} failureCode=${workerSignal.failureCode} callerAbortedAtFinish=${workerSignal.callerAbortedAtFinish} finishedAt=${workerSignal.finishedAt} (disposer t=${disposal?.t ?? '-'})`,
   )
   check(
     'no-lookup-path-works-after-the-disposal',
-    (freshAfter === null || answered(freshAfter) === false) && (capturedAfter === null || answered(capturedAfter) === false),
+    (freshAfter === null || answered(freshAfter) === false) &&
+      (capturedAfter === null || answered(capturedAfter) === false),
     `fresh=${freshAfter?.reason ?? freshAfter?.finishKind ?? '-'}/${freshAfter?.failureCode ?? '-'} captured=${capturedAfter?.finishKind ?? '-'}/${capturedAfter?.failureCode ?? '-'}`,
   )
 
   const homeAfter = realHomeFingerprint()
-  check('real-dsh-home-unchanged', sha256(JSON.stringify(homeBefore)) === sha256(JSON.stringify(homeAfter)), 'the real ~/.dsh fingerprint is byte-identical')
-  check('real-data-dir-absent', !existsSync(join(homedir(), '.dsh', 'data')), '~/.dsh/data does not exist')
-  check('real-skills-only-ultramath', JSON.stringify(readdirSync(join(homedir(), '.dsh', 'skills'))) === JSON.stringify(['ultramath']), `~/.dsh/skills = ${JSON.stringify(readdirSync(join(homedir(), '.dsh', 'skills')))}`)
-  check('default-vault-unchanged', defaultVaultFingerprint() === vaultBefore, '~/Documents/dsh-memory metadata is identical (before/after)')
+  check(
+    'real-dsh-home-unchanged',
+    sha256(JSON.stringify(homeBefore)) === sha256(JSON.stringify(homeAfter)),
+    'the real ~/.dsh fingerprint is byte-identical',
+  )
+  check(
+    'real-data-dir-absent',
+    !existsSync(join(homedir(), '.dsh', 'data')),
+    '~/.dsh/data does not exist',
+  )
+  check(
+    'real-skills-only-ultramath',
+    JSON.stringify(readdirSync(join(homedir(), '.dsh', 'skills'))) ===
+      JSON.stringify(['ultramath']),
+    `~/.dsh/skills = ${JSON.stringify(readdirSync(join(homedir(), '.dsh', 'skills')))}`,
+  )
+  check(
+    'default-vault-unchanged',
+    defaultVaultFingerprint() === vaultBefore,
+    '~/Documents/dsh-memory metadata is identical (before/after)',
+  )
 
-  process.stdout.write(`run-teardown-probe: credentialRoute=${credential.source} records=${records.length}\n`)
+  process.stdout.write(
+    `run-teardown-probe: credentialRoute=${credential.source} records=${records.length}\n`,
+  )
   process.stdout.write('--- records (metadata only) ---\n')
   for (const entry of records) process.stdout.write(`${JSON.stringify(entry)}\n`)
 
   if (!KEEP) rmSync(baseDir, { recursive: true, force: true })
 
   const failed = checks.filter((entry) => !entry.ok)
-  process.stdout.write(`run-teardown-probe: ${failed.length === 0 ? 'OK' : `${failed.length} FAILED`} (${checks.length} assertion(s))\n`)
+  process.stdout.write(
+    `run-teardown-probe: ${failed.length === 0 ? 'OK' : `${failed.length} FAILED`} (${checks.length} assertion(s))\n`,
+  )
   process.exit(failed.length === 0 ? 0 : 1)
 }

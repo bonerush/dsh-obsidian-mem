@@ -72,7 +72,11 @@ export function problems() {
  * @param {{ check?: boolean, log?: Function, fail?: Function }} [io] - output sinks, injected so a test can call this without exiting anything.
  * @returns {number} a process exit code.
  */
-export function main({ check = false, log = (line) => process.stdout.write(`${line}\n`), fail = (line) => process.stderr.write(`${line}\n`) } = {}) {
+export function main({
+  check = false,
+  log = (line) => process.stdout.write(`${line}\n`),
+  fail = (line) => process.stderr.write(`${line}\n`),
+} = {}) {
   const required = problems()
   if (required.length > 0) {
     for (const problem of required) fail(`prepare: ${problem}`)

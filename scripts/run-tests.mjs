@@ -48,7 +48,9 @@ function testFiles() {
 // the repository's `test/*.test.js` under an isolated `DSH_HOME`, and silently
 // ignoring a flag would make a run look narrower or wider than it was.
 if (process.argv.length > 2) {
-  process.stderr.write(`run-tests: takes no arguments, got ${JSON.stringify(process.argv.slice(2))}\n`)
+  process.stderr.write(
+    `run-tests: takes no arguments, got ${JSON.stringify(process.argv.slice(2))}\n`,
+  )
   process.exit(2)
 }
 

@@ -45,12 +45,17 @@ export const SERVER_INFO = Object.freeze({ name: 'dsh-obsidian-mem', version: '0
  * skill, which is loaded as instructions rather than skimmed as a tool list.
  */
 const DESCRIPTION = Object.freeze({
-  mem_search: 'Search project memory and return ranked notes with their vault-relative paths. Defaults to the project bound to the current working directory; scope "global" covers Methods/ and _meta/user.md, "all" crosses projects.',
+  mem_search:
+    'Search project memory and return ranked notes with their vault-relative paths. Defaults to the project bound to the current working directory; scope "global" covers Methods/ and _meta/user.md, "all" crosses projects.',
   mem_read: 'Read one note by its vault-relative path, optionally a single ATX section of it.',
-  mem_write: 'Create or update one memory note and index it. Omitting "id" always creates a new note; pass an existing "id" to update it. Nothing is ever deleted — to correct a fact, write the new note with "supersedes".',
-  mem_log: 'Append one entry to the project day log under Daily/. With section "hot" it edits the controlled hot zone instead.',
-  mem_brief: 'The recall brief for the project bound to the current working directory: binding, hot memory, conventions and recent decisions. Call this once when you start work in a repository.',
-  mem_admin: 'Vault maintenance: lint, index status/rebuild, bind (show/local/fork/retain), the project list, promote a note into Methods/, and the pending job queue.',
+  mem_write:
+    'Create or update one memory note and index it. Omitting "id" always creates a new note; pass an existing "id" to update it. Nothing is ever deleted — to correct a fact, write the new note with "supersedes".',
+  mem_log:
+    'Append one entry to the project day log under Daily/. With section "hot" it edits the controlled hot zone instead.',
+  mem_brief:
+    'The recall brief for the project bound to the current working directory: binding, hot memory, conventions and recent decisions. Call this once when you start work in a repository.',
+  mem_admin:
+    'Vault maintenance: lint, index status/rebuild, bind (show/local/fork/retain), the project list, promote a note into Methods/, and the pending job queue.',
 })
 
 /**
@@ -120,8 +125,18 @@ export function openMemory(options = {}) {
  * @throws {RangeError} when the tool name is unknown.
  */
 export async function callMemoryTool(memory, name, args = {}) {
-  const service = { mem_search: 'search', mem_read: 'read', mem_write: 'write', mem_log: 'log', mem_brief: 'brief', mem_admin: 'admin' }[name]
-  if (service === undefined) throw new RangeError(`unknown tool ${JSON.stringify(name)}; this server exposes ${TOOL_NAMES.join(', ')}`)
+  const service = {
+    mem_search: 'search',
+    mem_read: 'read',
+    mem_write: 'write',
+    mem_log: 'log',
+    mem_brief: 'brief',
+    mem_admin: 'admin',
+  }[name]
+  if (service === undefined)
+    throw new RangeError(
+      `unknown tool ${JSON.stringify(name)}; this server exposes ${TOOL_NAMES.join(', ')}`,
+    )
   return memory.services[service](args)
 }
 
@@ -178,30 +193,40 @@ export async function serve(io = {}) {
     return memory
   }
 
-  const askRoots = () => new Promise((resolve) => {
-    const id = nextId
-    nextId += 1
-    pendingRoots.set(id, resolve)
-    send({ jsonrpc: '2.0', id, method: 'roots/list' })
-    // A client that goes quiet must not hang the first tool call.
-    setTimeout(() => {
-      if (pendingRoots.delete(id)) resolve(null)
-    }, 2000).unref()
-  })
+  const askRoots = () =>
+    new Promise((resolve) => {
+      const id = nextId
+      nextId += 1
+      pendingRoots.set(id, resolve)
+      send({ jsonrpc: '2.0', id, method: 'roots/list' })
+      // A client that goes quiet must not hang the first tool call.
+      setTimeout(() => {
+        if (pendingRoots.delete(id)) resolve(null)
+      }, 2000).unref()
+    })
 
   const handleToolCall = async (id, params) => {
     const name = params?.name
     try {
       const opened = await openOnce()
       const result = await callMemoryTool(opened, name, params?.arguments ?? {})
-      send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } })
+      send({
+        jsonrpc: '2.0',
+        id,
+        result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] },
+      })
     } catch (error) {
       warn(`${name} failed: ${error?.code ?? ''} ${error?.message ?? error}`)
       send({
         jsonrpc: '2.0',
         id,
         result: {
-          content: [{ type: 'text', text: `${error?.code === undefined ? '' : `${error.code}: `}${error?.message ?? String(error)}` }],
+          content: [
+            {
+              type: 'text',
+              text: `${error?.code === undefined ? '' : `${error.code}: `}${error?.message ?? String(error)}`,
+            },
+          ],
           isError: true,
         },
       })
@@ -218,7 +243,9 @@ export async function serve(io = {}) {
       pendingRoots.delete(id)
       const first = Array.isArray(message.result?.roots) ? message.result.roots[0]?.uri : undefined
       try {
-        settle(typeof first === 'string' && first.startsWith('file://') ? fileURLToPath(first) : null)
+        settle(
+          typeof first === 'string' && first.startsWith('file://') ? fileURLToPath(first) : null,
+        )
       } catch {
         settle(null)
       }
@@ -253,7 +280,11 @@ export async function serve(io = {}) {
         await handleToolCall(id, params)
         return
       default:
-        send({ jsonrpc: '2.0', id, error: { code: -32601, message: `method not found: ${method}` } })
+        send({
+          jsonrpc: '2.0',
+          id,
+          error: { code: -32601, message: `method not found: ${method}` },
+        })
     }
   }
 

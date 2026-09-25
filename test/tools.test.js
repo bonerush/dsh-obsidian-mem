@@ -32,7 +32,14 @@ import toolsPlugin, { defineTool } from '@deepseek-ai/dsh-tools'
 import { TOOL_NAMES, TOOL_PARAMETERS, registerTools } from '../lib/tools.js'
 
 /** The six names, sorted for set comparison. */
-const SIX = Object.freeze(['mem_admin', 'mem_brief', 'mem_log', 'mem_read', 'mem_search', 'mem_write'])
+const SIX = Object.freeze([
+  'mem_admin',
+  'mem_brief',
+  'mem_log',
+  'mem_read',
+  'mem_search',
+  'mem_write',
+])
 
 /** The one required parameter of each tool (spec §9). */
 const REQUIRED = Object.freeze({
@@ -89,8 +96,24 @@ const adminResult = (action) => {
         total: 0,
         counts: {},
         findings: [],
-        index: { backend: 'sqlite', ready: true, notes: 1, rows: 1, files: 1, compared: true, reason: null },
-        history: { policy: { keepCount: 200 }, directories: 0, bytes: 0, prunable: 0, pruned: [], needsRepair: [], oversized: false },
+        index: {
+          backend: 'sqlite',
+          ready: true,
+          notes: 1,
+          rows: 1,
+          files: 1,
+          compared: true,
+          reason: null,
+        },
+        history: {
+          policy: { keepCount: 200 },
+          directories: 0,
+          bytes: 0,
+          prunable: 0,
+          pruned: [],
+          needsRepair: [],
+          oversized: false,
+        },
         pending: { jobs: 0, failed: 0, invalid: 0, known: true },
         repository: { scanned: 0, candidates: 0, truncated: false, known: true },
         report: { status: 'none', path: null, message: null },
@@ -102,9 +125,16 @@ const adminResult = (action) => {
   }
   return {
     action,
-    result: action === 'promote'
-      ? { source: SAMPLE_PATH, moved: false, id: SAMPLE_ID, path: 'Methods/样例.md', receipt: sampleReceipt('write') }
-      : { status: 'listed', jobs: [], failed: 0, message: null },
+    result:
+      action === 'promote'
+        ? {
+            source: SAMPLE_PATH,
+            moved: false,
+            id: SAMPLE_ID,
+            path: 'Methods/样例.md',
+            receipt: sampleReceipt('write'),
+          }
+        : { status: 'listed', jobs: [], failed: 0, message: null },
   }
 }
 
@@ -144,7 +174,9 @@ async function toolbed(t) {
   ctx.provide('systemPrompt', { tools: () => () => {} })
   const fork = ctx.plugin(toolsPlugin)
   await fork
-  t.after(async () => { await fork.dispose().catch(() => {}) })
+  t.after(async () => {
+    await fork.dispose().catch(() => {})
+  })
   return ctx
 }
 
@@ -170,10 +202,12 @@ function objectNodes(node, path, out) {
   }
   if (node.type === 'object') out.push({ path, node })
   if (node.properties !== undefined) {
-    for (const [key, value] of Object.entries(node.properties)) objectNodes(value, `${path}.${key}`, out)
+    for (const [key, value] of Object.entries(node.properties))
+      objectNodes(value, `${path}.${key}`, out)
   }
   if (node.items !== undefined) objectNodes(node.items, `${path}[]`, out)
-  if (node.oneOf !== undefined) node.oneOf.forEach((arm, index) => objectNodes(arm, `${path}|${index}`, out))
+  if (node.oneOf !== undefined)
+    node.oneOf.forEach((arm, index) => objectNodes(arm, `${path}|${index}`, out))
 }
 
 // ---------------------------------------------------------------------------
@@ -183,7 +217,10 @@ function objectNodes(node, path, out) {
 test('the registered name set is exactly the six documented tools', async (t) => {
   const ctx = await toolbed(t)
   registerTools(ctx, stubServices())
-  const names = ctx.tools.schemas().map((schema) => schema.name).sort()
+  const names = ctx.tools
+    .schemas()
+    .map((schema) => schema.name)
+    .sort()
   assert.deepEqual(names, SIX)
   assert.deepEqual([...TOOL_NAMES].sort(), SIX)
   for (const name of names) assert.match(name, /^mem_[a-z]+$/)
@@ -200,11 +237,15 @@ test('every required parameter is a per-property required:true in the DSL', () =
   for (const name of SIX) {
     const spec = TOOL_PARAMETERS[name]
     assert.equal(typeof spec, 'object', `${name} has a parameter spec`)
-    const required = Object.entries(spec).filter(([, node]) => node.required === true).map(([key]) => key).sort()
+    const required = Object.entries(spec)
+      .filter(([, node]) => node.required === true)
+      .map(([key]) => key)
+      .sort()
     assert.deepEqual(required, REQUIRED[name].slice().sort(), `${name} required set`)
     // No property may carry the JSON-Schema array form; the DSL wants `true`.
     for (const [key, node] of Object.entries(spec)) {
-      if (Object.hasOwn(node, 'required')) assert.equal(node.required, true, `${name}.${key}.required must be true`)
+      if (Object.hasOwn(node, 'required'))
+        assert.equal(node.required, true, `${name}.${key}.required must be true`)
     }
   }
 })
@@ -215,7 +256,11 @@ test('the runtime compiles those annotations into the JSON Schema required array
   for (const name of SIX) {
     const compiled = ctx.tools.get(name).parameters
     assert.equal(compiled.type, 'object')
-    assert.deepEqual((compiled.required ?? []).slice().sort(), REQUIRED[name].slice().sort(), `${name} compiled required`)
+    assert.deepEqual(
+      (compiled.required ?? []).slice().sort(),
+      REQUIRED[name].slice().sort(),
+      `${name} compiled required`,
+    )
     for (const key of REQUIRED[name]) assert.equal(Object.hasOwn(compiled.properties, key), true)
   }
 })
@@ -226,7 +271,11 @@ test('the compiled parameter root is OPEN, so extra keys are refused by execute 
   for (const name of SIX) {
     const compiled = ctx.tools.get(name).parameters
     assert.equal(compiled.type, 'object', `${name} root is an object`)
-    assert.equal(Object.hasOwn(compiled, 'additionalProperties'), false, `${name} root must stay open`)
+    assert.equal(
+      Object.hasOwn(compiled, 'additionalProperties'),
+      false,
+      `${name} root must stay open`,
+    )
   }
 })
 
@@ -239,8 +288,16 @@ test('every object node of every output schema declares additionalProperties', a
     objectNodes(schema, name, nodes)
     assert.ok(nodes.length > 0, `${name} declares at least one object node`)
     for (const { path, node } of nodes) {
-      assert.equal(Object.hasOwn(node, 'additionalProperties'), true, `${path} must declare additionalProperties`)
-      assert.equal(typeof node.additionalProperties, 'boolean', `${path}.additionalProperties must be a boolean`)
+      assert.equal(
+        Object.hasOwn(node, 'additionalProperties'),
+        true,
+        `${path} must declare additionalProperties`,
+      )
+      assert.equal(
+        typeof node.additionalProperties,
+        'boolean',
+        `${path}.additionalProperties must be a boolean`,
+      )
     }
   }
 })
@@ -256,13 +313,29 @@ test('the documented enums and defaults are exactly spec §9', async (t) => {
   assert.equal(params('mem_search').limit.default, 8)
   assert.equal(params('mem_search').query.required, true)
 
-  assert.deepEqual(params('mem_admin').action.enum, ['lint', 'index', 'bind', 'projects', 'promote', 'jobs'])
+  assert.deepEqual(params('mem_admin').action.enum, [
+    'lint',
+    'index',
+    'bind',
+    'projects',
+    'promote',
+    'jobs',
+  ])
   assert.deepEqual(params('mem_admin').mode.enum, ['show', 'local', 'fork', 'retain'])
   assert.equal(params('mem_admin').mode.default, 'show')
   assert.equal(params('mem_admin').rebuild.default, false)
   assert.equal(params('mem_admin').report.default, false)
   assert.equal(params('mem_admin').prune.default, false)
-  assert.deepEqual(Object.keys(params('mem_admin')).sort(), ['action', 'jobId', 'mode', 'path', 'prune', 'rebuild', 'report', 'retry'])
+  assert.deepEqual(Object.keys(params('mem_admin')).sort(), [
+    'action',
+    'jobId',
+    'mode',
+    'path',
+    'prune',
+    'rebuild',
+    'report',
+    'retry',
+  ])
   assert.deepEqual(params('mem_write').assertion.enum, ['stated', 'inferred', 'observed'])
 
   assert.deepEqual(Object.keys(params('mem_brief')), [])
@@ -303,16 +376,24 @@ test('the runtime passes an undeclared key through, which is why every execute c
   // own: the runtime compiles `{type:'object', properties}` and validates only
   // the declared properties, so the extra key reaches `execute` untouched. This
   // is the fact `assertKnownArguments` exists for.
-  ctx.tools.register(defineTool({
-    name: 'control_open_root',
-    description: 'control: open parameter root, no key check',
-    parameters: { query: { type: 'string', required: true } },
-    output: {
-      schema: { type: 'object', additionalProperties: false, properties: { seen: { type: 'array', required: true, items: { type: 'string' } } } },
-      render: (_args, value) => [{ type: 'text', text: value.seen.join(',') }],
-    },
-    async execute(args) { return { seen: Object.keys(args).sort() } },
-  }))
+  ctx.tools.register(
+    defineTool({
+      name: 'control_open_root',
+      description: 'control: open parameter root, no key check',
+      parameters: { query: { type: 'string', required: true } },
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { seen: { type: 'array', required: true, items: { type: 'string' } } },
+        },
+        render: (_args, value) => [{ type: 'text', text: value.seen.join(',') }],
+      },
+      async execute(args) {
+        return { seen: Object.keys(args).sort() }
+      },
+    }),
+  )
   const result = await call(ctx, 'control_open_root', { query: 'x', zzz: 1 })
   assert.equal(result.isError, false, result.error?.message)
   assert.deepEqual(result.value.seen, ['query', 'zzz'])
@@ -389,9 +470,17 @@ test('mem_search fills the spec §9 defaults before the service sees them', asyn
 test('mem_admin defaults mode to show, retry to false and report to false', async (t) => {
   const ctx = await toolbed(t)
   const services = stubServices({
-    admin: (args) => (args.action === 'bind'
-      ? { action: 'bind', result: { mode: 'show', status: 'shown', resolution: { kind: 'unbound', reason: 'no-pointer' } } }
-      : adminResult(args.action)),
+    admin: (args) =>
+      args.action === 'bind'
+        ? {
+            action: 'bind',
+            result: {
+              mode: 'show',
+              status: 'shown',
+              resolution: { kind: 'unbound', reason: 'no-pointer' },
+            },
+          }
+        : adminResult(args.action),
   })
   registerTools(ctx, services)
 
@@ -473,7 +562,10 @@ test('mem_brief reports an unbound project instead of an empty brief', async (t)
   registerTools(ctx, stubServices())
   const result = await call(ctx, 'mem_brief', {})
   assert.equal(result.isError, false, result.error?.message)
-  assert.deepEqual(result.value, { status: 'unbound', message: 'this working directory is not a bound project' })
+  assert.deepEqual(result.value, {
+    status: 'unbound',
+    message: 'this working directory is not a bound project',
+  })
 })
 
 test('every mem_admin action answers its own real result shape, with no placeholder', async (t) => {

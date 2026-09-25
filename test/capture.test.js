@@ -59,31 +59,58 @@ const toolCallPart = (name) => ({ type: 'tool-call', id: `call-${name}`, name, a
 const at = (seq, type, data) => ({ seq, type, data, time: 1_700_000_000_000 + seq })
 
 const turnStart = (seq, turn = 1) => at(seq, 'turn/start', { turn })
-const userMessage = (seq, value, source = 'user') => at(seq, 'user/message', {
-  id: `u${seq}`, role: 'user', content: [text(value)], source: { kind: source },
-})
-const assistantMessage = (seq, parts, turn = 1, step = 1) => at(seq, 'assistant/message', {
-  turn, step, message: { id: `a${seq}`, role: 'assistant', content: parts, source: { kind: 'model' } },
-})
-const toolCall = (seq, name, callId = `call-${name}`, turn = 1, step = 1) => at(seq, 'tool/call', {
-  turn, step, callId, name, arguments: '{}',
-})
-const toolResult = (seq, textValue, { callId = 'call-bash', isError = false, turn = 1, step = 1 } = {}) => at(seq, 'tool/result', {
-  turn,
-  step,
-  message: {
+const userMessage = (seq, value, source = 'user') =>
+  at(seq, 'user/message', {
+    id: `u${seq}`,
     role: 'user',
-    content: [{ type: 'tool-result', toolCallId: callId, content: [text(textValue)], isError }],
-    source: { kind: 'tool', callId },
-  },
-})
+    content: [text(value)],
+    source: { kind: source },
+  })
+const assistantMessage = (seq, parts, turn = 1, step = 1) =>
+  at(seq, 'assistant/message', {
+    turn,
+    step,
+    message: { id: `a${seq}`, role: 'assistant', content: parts, source: { kind: 'model' } },
+  })
+const toolCall = (seq, name, callId = `call-${name}`, turn = 1, step = 1) =>
+  at(seq, 'tool/call', {
+    turn,
+    step,
+    callId,
+    name,
+    arguments: '{}',
+  })
+const toolResult = (
+  seq,
+  textValue,
+  { callId = 'call-bash', isError = false, turn = 1, step = 1 } = {},
+) =>
+  at(seq, 'tool/result', {
+    turn,
+    step,
+    message: {
+      role: 'user',
+      content: [{ type: 'tool-result', toolCallId: callId, content: [text(textValue)], isError }],
+      source: { kind: 'tool', callId },
+    },
+  })
 const turnEnd = (seq, reason, turn = 1) => at(seq, 'turn/end', { turn, reason })
 
 const COMPLETED = { kind: 'completed' }
 const ABORTED = { kind: 'aborted', reason: { kind: 'user' } }
-const MISSING_CREDENTIAL = { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'no API key' } }
+const MISSING_CREDENTIAL = {
+  kind: 'error',
+  error: { code: 'MISSING_CREDENTIAL', message: 'no API key' },
+}
 
-function sessionOf(events, { id = SESSION_ID, header = {}, route = { provider: 'deepseek-official', model: 'deepseek-flash' } } = {}) {
+function sessionOf(
+  events,
+  {
+    id = SESSION_ID,
+    header = {},
+    route = { provider: 'deepseek-official', model: 'deepseek-flash' },
+  } = {},
+) {
   return {
     header: { id, cwd: CWD, ...header },
     snapshotEvents(from = 0, to) {
@@ -118,23 +145,43 @@ test('a completed root turn with a real user message enqueues a bounded, auditab
   const session = sessionOf(events)
 
   const job = await enqueueTurn({
-    session, event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG,
+    session,
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
   })
 
   assert.notEqual(job, null)
-  assert.deepEqual(job.allowedEvents.map((entry) => entry.kind), ['user', 'assistant-final'])
+  assert.deepEqual(
+    job.allowedEvents.map((entry) => entry.kind),
+    ['user', 'assistant-final'],
+  )
   assert.ok([...job.safeInput].length <= CONFIG.distill.maxInputChars)
   assert.equal(statSync(queueRoot).mode & 0o777, 0o700)
 
   // The white-listed seqs are the audit trail: the plugin-injected message at
   // seq 2 is not in it, and neither is anything without a text body.
-  assert.deepEqual(job.allowedEvents.map((entry) => entry.seq), [1, 4])
+  assert.deepEqual(
+    job.allowedEvents.map((entry) => entry.seq),
+    [1, 4],
+  )
   assert.ok(!job.safeInput.includes('plugin-injected system context'))
   assert.ok(job.safeInput.includes('implement the queue'))
   assert.ok(job.safeInput.includes('committed final answer'))
 
   // PendingJob's required shape.
-  for (const key of ['jobId', 'sessionId', 'projectId', 'fromSeq', 'toSeq', 'state', 'route', 'allowedEvents', 'safeInput']) {
+  for (const key of [
+    'jobId',
+    'sessionId',
+    'projectId',
+    'fromSeq',
+    'toSeq',
+    'state',
+    'route',
+    'allowedEvents',
+    'safeInput',
+  ]) {
     assert.ok(key in job, `the job must carry ${key}`)
   }
   assert.equal(job.sessionId, SESSION_ID)
@@ -164,7 +211,13 @@ test('a cancelled turn and an errored turn never enter the input snapshot', asyn
       turnEnd(4, reason),
     ]
     assert.equal(
-      await enqueueTurn({ session: sessionOf(events), event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG }),
+      await enqueueTurn({
+        session: sessionOf(events),
+        event: events.at(-1),
+        binding: BINDING,
+        queueRoot,
+        config: CONFIG,
+      }),
       null,
       `reason ${reason.kind} must not enqueue`,
     )
@@ -174,22 +227,64 @@ test('a cancelled turn and an errored turn never enter the input snapshot', asyn
 
 test('the legacy string reason is accepted, and anything else is refused', async (t) => {
   const queueRoot = await queueIn(t)
-  const completed = [turnStart(0), userMessage(1, 'hi'), assistantMessage(2, [text('done')]), turnEnd(3, 'completed')]
-  const job = await enqueueTurn({ session: sessionOf(completed), event: completed.at(-1), binding: BINDING, queueRoot, config: CONFIG })
-  assert.notEqual(job, null, "a host that records the bare string 'completed' is still a completed turn")
+  const completed = [
+    turnStart(0),
+    userMessage(1, 'hi'),
+    assistantMessage(2, [text('done')]),
+    turnEnd(3, 'completed'),
+  ]
+  const job = await enqueueTurn({
+    session: sessionOf(completed),
+    event: completed.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+  })
+  assert.notEqual(
+    job,
+    null,
+    "a host that records the bare string 'completed' is still a completed turn",
+  )
 
   const weird = [turnStart(0), userMessage(1, 'hi'), turnEnd(2, { kind: 'something-new' })]
-  assert.equal(await enqueueTurn({ session: sessionOf(weird), event: weird.at(-1), binding: BINDING, queueRoot, config: CONFIG }), null)
+  assert.equal(
+    await enqueueTurn({
+      session: sessionOf(weird),
+      event: weird.at(-1),
+      binding: BINDING,
+      queueRoot,
+      config: CONFIG,
+    }),
+    null,
+  )
 })
 
 test('a child-agent session is never captured, by either header field', async (t) => {
   const queueRoot = await queueIn(t)
   const events = simpleTurn()
   const child = sessionOf(events, { header: { parentSession: 'session-parent-1' } })
-  assert.equal(await enqueueTurn({ session: child, event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG }), null)
+  assert.equal(
+    await enqueueTurn({
+      session: child,
+      event: events.at(-1),
+      binding: BINDING,
+      queueRoot,
+      config: CONFIG,
+    }),
+    null,
+  )
 
   const subagent = sessionOf(events, { header: { origin: 'subagent', delegationDepth: 2 } })
-  assert.equal(await enqueueTurn({ session: subagent, event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG }), null)
+  assert.equal(
+    await enqueueTurn({
+      session: subagent,
+      event: events.at(-1),
+      binding: BINDING,
+      queueRoot,
+      config: CONFIG,
+    }),
+    null,
+  )
   assert.deepEqual(await loadPending(queueRoot), [])
 })
 
@@ -202,15 +297,37 @@ test('plugin-injected and tool-sourced user messages do not count as a real user
     assistantMessage(3, [text('a reply to nothing the user said')]),
     turnEnd(4, COMPLETED),
   ]
-  assert.equal(await enqueueTurn({ session: sessionOf(events), event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG }), null)
+  assert.equal(
+    await enqueueTurn({
+      session: sessionOf(events),
+      event: events.at(-1),
+      binding: BINDING,
+      queueRoot,
+      config: CONFIG,
+    }),
+    null,
+  )
   assert.deepEqual(await loadPending(queueRoot), [])
 })
 
 test('an unbound project is not a capture target', async (t) => {
   const queueRoot = await queueIn(t)
   const events = simpleTurn()
-  for (const binding of [null, { kind: 'unbound' }, { kind: 'conflict', reason: 'vault-cloud-managed' }]) {
-    assert.equal(await enqueueTurn({ session: sessionOf(events), event: events.at(-1), binding, queueRoot, config: CONFIG }), null)
+  for (const binding of [
+    null,
+    { kind: 'unbound' },
+    { kind: 'conflict', reason: 'vault-cloud-managed' },
+  ]) {
+    assert.equal(
+      await enqueueTurn({
+        session: sessionOf(events),
+        event: events.at(-1),
+        binding,
+        queueRoot,
+        config: CONFIG,
+      }),
+      null,
+    )
   }
   assert.deepEqual(await loadPending(queueRoot), [])
 })
@@ -230,15 +347,33 @@ test('the pre-tool draft is discarded in favour of the last tool-call-free assis
     assistantMessage(5, [text('FINAL: the parser is fixed')]),
     turnEnd(6, COMPLETED),
   ]
-  const job = await enqueueTurn({ session: sessionOf(events), event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG })
+  const job = await enqueueTurn({
+    session: sessionOf(events),
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+  })
 
-  assert.deepEqual(job.allowedEvents.map((entry) => entry.kind), ['user', 'tool', 'assistant-final'])
-  assert.deepEqual(job.allowedEvents.map((entry) => entry.seq), [1, 4, 5])
+  assert.deepEqual(
+    job.allowedEvents.map((entry) => entry.kind),
+    ['user', 'tool', 'assistant-final'],
+  )
+  assert.deepEqual(
+    job.allowedEvents.map((entry) => entry.seq),
+    [1, 4, 5],
+  )
   assert.deepEqual(job.allowedEvents[1], { kind: 'tool', seq: 4, name: 'bash', ok: true })
   assert.ok(job.safeInput.includes('FINAL: the parser is fixed'))
   assert.ok(!job.safeInput.includes('DRAFT:'))
-  assert.ok(!job.safeInput.includes('RAW_TOOL_OUTPUT'), 'raw tool output never reaches the snapshot')
-  assert.ok(!JSON.stringify(job).includes('RAW_TOOL_OUTPUT'), 'not even the persisted job records it')
+  assert.ok(
+    !job.safeInput.includes('RAW_TOOL_OUTPUT'),
+    'raw tool output never reaches the snapshot',
+  )
+  assert.ok(
+    !JSON.stringify(job).includes('RAW_TOOL_OUTPUT'),
+    'not even the persisted job records it',
+  )
 })
 
 test('a tool call that failed is recorded as a failed tool, still without its output', async (t) => {
@@ -252,8 +387,17 @@ test('a tool call that failed is recorded as a failed tool, still without its ou
     assistantMessage(5, [text('it failed')]),
     turnEnd(6, COMPLETED),
   ]
-  const job = await enqueueTurn({ session: sessionOf(events), event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG })
-  assert.deepEqual(job.allowedEvents.find((entry) => entry.kind === 'tool'), { kind: 'tool', seq: 4, name: 'bash', ok: false })
+  const job = await enqueueTurn({
+    session: sessionOf(events),
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+  })
+  assert.deepEqual(
+    job.allowedEvents.find((entry) => entry.kind === 'tool'),
+    { kind: 'tool', seq: 4, name: 'bash', ok: false },
+  )
   assert.ok(!job.safeInput.includes('SECRET_PERMISSION_DENIED_TAIL'))
 })
 
@@ -265,7 +409,13 @@ test('thinking blocks are never part of the model-facing text', async (t) => {
     assistantMessage(2, [reasoning('THINKING_MARKER: private chain'), text('the answer')]),
     turnEnd(3, COMPLETED),
   ]
-  const job = await enqueueTurn({ session: sessionOf(events), event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG })
+  const job = await enqueueTurn({
+    session: sessionOf(events),
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+  })
   assert.ok(job.safeInput.includes('the answer'))
   assert.ok(!job.safeInput.includes('THINKING_MARKER'))
 })
@@ -284,7 +434,13 @@ test('a completed turn/end with no matching turn/start does not widen its window
     turnEnd(5, COMPLETED, 2),
   ]
   assert.equal(
-    await enqueueTurn({ session: sessionOf(events), event: events[5], binding: BINDING, queueRoot, config: CONFIG }),
+    await enqueueTurn({
+      session: sessionOf(events),
+      event: events[5],
+      binding: BINDING,
+      queueRoot,
+      config: CONFIG,
+    }),
     null,
     'without a turn/start the turn cannot be attributed, so nothing is captured',
   )
@@ -297,8 +453,14 @@ test('a message that fails the credential scrub is skipped whole and counted', a
     ['aws', 'deploy with AKIAIOSFODNN7EXAMPLE please'],
     ['github', 'use ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 to push'],
     ['github-pat', 'use github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz to push'],
-    ['pem', 'here it is:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----'],
-    ['pgp', 'here it is:\n-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: GnuPG\n-----END PGP PRIVATE KEY BLOCK-----'],
+    [
+      'pem',
+      'here it is:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----',
+    ],
+    [
+      'pgp',
+      'here it is:\n-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: GnuPG\n-----END PGP PRIVATE KEY BLOCK-----',
+    ],
     ['bearer', 'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig'],
   ]
   for (const [label, tainted] of cases) {
@@ -308,11 +470,24 @@ test('a message that fails the credential scrub is skipped whole and counted', a
       assistantMessage(2, [text('a clean final answer')]),
       turnEnd(3, COMPLETED),
     ]
-    const job = await enqueueTurn({ session: sessionOf(events, { id: `session-${label}` }), event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG })
+    const job = await enqueueTurn({
+      session: sessionOf(events, { id: `session-${label}` }),
+      event: events.at(-1),
+      binding: BINDING,
+      queueRoot,
+      config: CONFIG,
+    })
     assert.notEqual(job, null, label)
     assert.equal(job.credentialSkips, 1, `${label}: the hit is counted`)
-    assert.deepEqual(job.allowedEvents.map((entry) => entry.kind), ['assistant-final'], `${label}: the message is skipped whole`)
-    assert.ok(!/AKIA|ghp_|github_pat_|PRIVATE KEY|Bearer/.test(job.safeInput), `${label}: nothing of the secret survives`)
+    assert.deepEqual(
+      job.allowedEvents.map((entry) => entry.kind),
+      ['assistant-final'],
+      `${label}: the message is skipped whole`,
+    )
+    assert.ok(
+      !/AKIA|ghp_|github_pat_|PRIVATE KEY|Bearer/.test(job.safeInput),
+      `${label}: nothing of the secret survives`,
+    )
     assert.ok(!JSON.stringify(job).includes('AKIAIOSFODNN7EXAMPLE'))
   }
 })
@@ -325,9 +500,18 @@ test('a credential hit on the final answer leaves the user message and no conclu
     assistantMessage(2, [text('the key is AKIAIOSFODNN7EXAMPLE')]),
     turnEnd(3, COMPLETED),
   ]
-  const job = await enqueueTurn({ session: sessionOf(events), event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG })
+  const job = await enqueueTurn({
+    session: sessionOf(events),
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+  })
   assert.equal(job.credentialSkips, 1)
-  assert.deepEqual(job.allowedEvents.map((entry) => entry.kind), ['user'])
+  assert.deepEqual(
+    job.allowedEvents.map((entry) => entry.kind),
+    ['user'],
+  )
   assert.ok(job.safeInput.includes('what happened?'))
   assert.ok(!job.safeInput.includes('AKIA'))
 })
@@ -351,8 +535,22 @@ test('safeInput respects maxInputChars and records what it had to omit', async (
     turnEnd(7, COMPLETED, 2),
   ]
   const session = sessionOf(events)
-  await enqueueTurn({ session, event: events[3], binding: BINDING, queueRoot, config, now: 1_000_000 })
-  const job = await enqueueTurn({ session, event: events[7], binding: BINDING, queueRoot, config, now: 1_000_000 + 1_000 })
+  await enqueueTurn({
+    session,
+    event: events[3],
+    binding: BINDING,
+    queueRoot,
+    config,
+    now: 1_000_000,
+  })
+  const job = await enqueueTurn({
+    session,
+    event: events[7],
+    binding: BINDING,
+    queueRoot,
+    config,
+    now: 1_000_000 + 1_000,
+  })
   assert.equal(job.toSeq, 7, 'the two turns coalesced, so the budget covers both')
   assert.ok([...job.safeInput].length <= 256, 'the hard bound holds even for oversized content')
   assert.equal(job.truncated, true)
@@ -363,12 +561,17 @@ test('safeInput respects maxInputChars and records what it had to omit', async (
 
 test('a turn with nothing left after scrubbing is not enqueued', async (t) => {
   const queueRoot = await queueIn(t)
-  const events = [
-    turnStart(0),
-    userMessage(1, 'AKIAIOSFODNN7EXAMPLE'),
-    turnEnd(2, COMPLETED),
-  ]
-  assert.equal(await enqueueTurn({ session: sessionOf(events), event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG }), null)
+  const events = [turnStart(0), userMessage(1, 'AKIAIOSFODNN7EXAMPLE'), turnEnd(2, COMPLETED)]
+  assert.equal(
+    await enqueueTurn({
+      session: sessionOf(events),
+      event: events.at(-1),
+      binding: BINDING,
+      queueRoot,
+      config: CONFIG,
+    }),
+    null,
+  )
   assert.deepEqual(await loadPending(queueRoot), [])
 })
 
@@ -380,15 +583,33 @@ test('the same completed turn enqueues exactly once, with a stable jobId', async
   const queueRoot = await queueIn(t)
   const events = simpleTurn()
   const session = sessionOf(events)
-  const first = await enqueueTurn({ session, event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG })
-  const second = await enqueueTurn({ session, event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG })
+  const first = await enqueueTurn({
+    session,
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+  })
+  const second = await enqueueTurn({
+    session,
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+  })
   assert.equal(second, null, 'an already-handled turn is not enqueued a second time')
   assert.equal((await loadPending(queueRoot)).length, 1)
 
   // The id is a pure function of the project, session and seq range: a fresh
   // queue over the same events mints the same id.
   const otherQueue = await queueIn(t)
-  const again = await enqueueTurn({ session, event: events.at(-1), binding: BINDING, queueRoot: otherQueue, config: CONFIG })
+  const again = await enqueueTurn({
+    session,
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot: otherQueue,
+    config: CONFIG,
+  })
   assert.equal(again.jobId, first.jobId)
 })
 
@@ -442,8 +663,22 @@ test('two concurrent enqueueTurn calls merge instead of racing past each other',
   ]
   const session = sessionOf(events)
   const [first, second] = await Promise.all([
-    enqueueTurn({ session, event: events[3], binding: BINDING, queueRoot, config: CONFIG, now: 1_000_000 }),
-    enqueueTurn({ session, event: events[7], binding: BINDING, queueRoot, config: CONFIG, now: 1_000_000 }),
+    enqueueTurn({
+      session,
+      event: events[3],
+      binding: BINDING,
+      queueRoot,
+      config: CONFIG,
+      now: 1_000_000,
+    }),
+    enqueueTurn({
+      session,
+      event: events[7],
+      binding: BINDING,
+      queueRoot,
+      config: CONFIG,
+      now: 1_000_000,
+    }),
   ])
   assert.notEqual(first, null)
   assert.notEqual(second, null)
@@ -478,7 +713,11 @@ test('after a restart with a consumed queue, flush does not re-enqueue finished 
   const { recovered } = await restarted.recover()
   assert.equal(recovered, 0, 'the queue really is empty after completion')
   await restarted.flush(session)
-  assert.deepEqual(await loadPending(queueRoot), [], 'a finished turn is not re-enqueued after a restart')
+  assert.deepEqual(
+    await loadPending(queueRoot),
+    [],
+    'a finished turn is not re-enqueued after a restart',
+  )
 })
 
 test('a genuinely unprocessed completed turn is still picked up after a restart', async (t) => {
@@ -507,13 +746,22 @@ test('a genuinely unprocessed completed turn is still picked up after a restart'
   assert.equal(jobs.length, 1)
   assert.equal(jobs[0].toSeq, 9)
   assert.ok(jobs[0].safeInput.includes('a genuinely new completed turn'))
-  assert.ok(!jobs[0].safeInput.includes('implement the queue'), 'the finished turn is not re-captured')
+  assert.ok(
+    !jobs[0].safeInput.includes('implement the queue'),
+    'the finished turn is not re-captured',
+  )
 })
 
 test('the processed floor grows with each capture and is reported on recovery', async (t) => {
   const queueRoot = await queueIn(t)
   const events = simpleTurn()
-  await enqueueTurn({ session: sessionOf(events), event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG })
+  await enqueueTurn({
+    session: sessionOf(events),
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+  })
   const records = await loadProcessedRecords(queueRoot)
   assert.deepEqual(records.get(SESSION_ID).ranges, [[0, 5]])
 })
@@ -521,7 +769,13 @@ test('the processed floor grows with each capture and is reported on recovery', 
 test('a restart sees the same job and the same identity (the fsync boundary)', async (t) => {
   const queueRoot = await queueIn(t)
   const events = simpleTurn()
-  const job = await enqueueTurn({ session: sessionOf(events), event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG })
+  const job = await enqueueTurn({
+    session: sessionOf(events),
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+  })
 
   // A separate "process" is another `loadPending` over the same directory.
   const [recovered] = await loadPending(queueRoot)
@@ -536,16 +790,32 @@ test('the route is the session last recorded route; with none the job stays defe
   const queueRoot = await queueIn(t)
   const events = simpleTurn()
 
-  const routed = await enqueueTurn({ session: sessionOf(events), event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG })
+  const routed = await enqueueTurn({
+    session: sessionOf(events),
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+  })
   assert.equal(routed.state, 'pending')
   assert.deepEqual(routed.route, { provider: 'deepseek-official', model: 'deepseek-flash' })
 
   const routeless = sessionOf(events, { id: 'session-no-route', route: null })
-  const deferred = await enqueueTurn({ session: routeless, event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG })
+  const deferred = await enqueueTurn({
+    session: routeless,
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+  })
   assert.equal(deferred.state, 'deferred')
   assert.equal(deferred.route, null)
   assert.equal(deferred.deferredReason, 'no-route')
-  assert.equal((await loadPending(queueRoot)).length, 2, 'a deferred job is still durable pending work')
+  assert.equal(
+    (await loadPending(queueRoot)).length,
+    2,
+    'a deferred job is still durable pending work',
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -562,8 +832,22 @@ test('completed turns within the idle window coalesce their seq range into one j
     turnEnd(9, COMPLETED, 2),
   ]
   const session = sessionOf(events)
-  const first = await enqueueTurn({ session, event: events[5], binding: BINDING, queueRoot, config: CONFIG, now: 1_000_000 })
-  const second = await enqueueTurn({ session, event: events[9], binding: BINDING, queueRoot, config: CONFIG, now: 1_000_000 + 89_000 })
+  const first = await enqueueTurn({
+    session,
+    event: events[5],
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+    now: 1_000_000,
+  })
+  const second = await enqueueTurn({
+    session,
+    event: events[9],
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+    now: 1_000_000 + 89_000,
+  })
 
   assert.equal(second.jobId, first.jobId, 'within the window the job is extended, not duplicated')
   assert.equal(second.fromSeq, 0)
@@ -590,13 +874,30 @@ test('a merged range never absorbs a non-completed turn between two completed on
     turnEnd(10, COMPLETED, 3),
   ]
   const session = sessionOf(events)
-  await enqueueTurn({ session, event: events[3], binding: BINDING, queueRoot, config: CONFIG, now: 1_000_000 })
-  const job = await enqueueTurn({ session, event: events[10], binding: BINDING, queueRoot, config: CONFIG, now: 1_000_000 + 1_000 })
+  await enqueueTurn({
+    session,
+    event: events[3],
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+    now: 1_000_000,
+  })
+  const job = await enqueueTurn({
+    session,
+    event: events[10],
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+    now: 1_000_000 + 1_000,
+  })
 
   assert.equal(job.toSeq, 10, 'the completed turns merged')
   assert.ok(job.safeInput.includes('FIRST_COMPLETED'))
   assert.ok(job.safeInput.includes('THIRD_COMPLETED'))
-  assert.ok(!job.safeInput.includes('ABORTED_TURN_MARKER'), 'an aborted turn inside the range is not evidence')
+  assert.ok(
+    !job.safeInput.includes('ABORTED_TURN_MARKER'),
+    'an aborted turn inside the range is not evidence',
+  )
   assert.ok(!job.allowedEvents.some((entry) => entry.seq === 5))
   assert.equal((await loadPending(queueRoot)).length, 1)
 })
@@ -611,8 +912,22 @@ test('a turn that arrives after the idle window starts a new job', async (t) => 
     turnEnd(9, COMPLETED, 2),
   ]
   const session = sessionOf(events)
-  const first = await enqueueTurn({ session, event: events[5], binding: BINDING, queueRoot, config: CONFIG, now: 1_000_000 })
-  const second = await enqueueTurn({ session, event: events[9], binding: BINDING, queueRoot, config: CONFIG, now: 1_000_000 + 90_001 })
+  const first = await enqueueTurn({
+    session,
+    event: events[5],
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+    now: 1_000_000,
+  })
+  const second = await enqueueTurn({
+    session,
+    event: events[9],
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+    now: 1_000_000 + 90_001,
+  })
 
   assert.notEqual(second.jobId, first.jobId)
   assert.equal((await loadPending(queueRoot)).length, 2)
@@ -628,12 +943,26 @@ test('a new turn while the previous job is being processed becomes a successor, 
     turnEnd(9, COMPLETED, 2),
   ]
   const session = sessionOf(events)
-  const running = await enqueueTurn({ session, event: events[5], binding: BINDING, queueRoot, config: CONFIG, now: 1_000_000 })
+  const running = await enqueueTurn({
+    session,
+    event: events[5],
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+    now: 1_000_000,
+  })
   // The worker claims the job the way Task 15/16 will.
   const { markJob } = await import('../lib/pending.js')
   await markJob(running.jobId, { state: 'distilling' }, { queueRoot })
 
-  const successor = await enqueueTurn({ session, event: events[9], binding: BINDING, queueRoot, config: CONFIG, now: 1_000_000 + 1_000 })
+  const successor = await enqueueTurn({
+    session,
+    event: events[9],
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+    now: 1_000_000 + 1_000,
+  })
   assert.notEqual(successor.jobId, running.jobId)
   assert.equal(successor.fromSeq, 6)
   assert.equal(successor.toSeq, 9)
@@ -663,18 +992,30 @@ function captureFor(queueRoot, clock = { at: 1_000_000 }) {
 test('recovery at startup makes a previously fsynced job known before any new capture', async (t) => {
   const queueRoot = await queueIn(t)
   const events = simpleTurn()
-  const seeded = await enqueueTurn({ session: sessionOf(events), event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG })
+  const seeded = await enqueueTurn({
+    session: sessionOf(events),
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+  })
 
   const capture = captureFor(queueRoot)
   const { jobs, recovered } = await capture.recover()
   assert.equal(recovered, 1)
-  assert.deepEqual(jobs.map((job) => job.jobId), [seeded.jobId])
+  assert.deepEqual(
+    jobs.map((job) => job.jobId),
+    [seeded.jobId],
+  )
 
   // Re-capturing the same turn after recovery changes nothing: recovery ran
   // first, and the coverage check keeps it a single job.
   capture.sessionEvent(sessionOf(events), events.at(-1))
   await capture.settle()
-  assert.deepEqual((await loadPending(queueRoot)).map((job) => job.jobId), [seeded.jobId])
+  assert.deepEqual(
+    (await loadPending(queueRoot)).map((job) => job.jobId),
+    [seeded.jobId],
+  )
 })
 
 test('flush finds an unprocessed completed turn and enqueues it, exactly once', async (t) => {
@@ -701,7 +1042,11 @@ test('flush never treats a checkpoint with no committed turn/end as a turn end',
   // The mid-turn checkpoint from the P0 record: a real user message already
   // committed, the turn still open. This is exactly the shape a naive
   // "flush means the turn ended" implementation would capture.
-  const events = [turnStart(0), userMessage(1, 'still working'), at(2, 'request/header', { reason: 'initial' })]
+  const events = [
+    turnStart(0),
+    userMessage(1, 'still working'),
+    at(2, 'request/header', { reason: 'initial' }),
+  ]
   const capture = captureFor(queueRoot)
   await capture.recover()
   await capture.flush(sessionOf(events))
@@ -716,7 +1061,11 @@ test('disposed flushes what was captured and never reaches for a model', async (
 
   capture.sessionEvent(sessionOf(events), events.at(-1))
   await capture.disposed({ session: sessionOf(events) })
-  assert.equal((await loadPending(queueRoot)).length, 1, 'the captured turn is durable before disposal returns')
+  assert.equal(
+    (await loadPending(queueRoot)).length,
+    1,
+    'the captured turn is durable before disposal returns',
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -726,15 +1075,26 @@ test('disposed flushes what was captured and never reaches for a model', async (
 function hookBed(t, queueRoot, config = CONFIG) {
   const ctx = new Context()
   let modelCalls = 0
-  ctx.provide('llm', { stream() { modelCalls += 1; throw new Error('the capture path must never call the model') } })
+  ctx.provide('llm', {
+    stream() {
+      modelCalls += 1
+      throw new Error('the capture path must never call the model')
+    },
+  })
   const disposers = registerHooks(ctx, {
     resolveBinding: async () => BINDING,
-    index: async () => { throw new Error('unused') },
-    buildBrief: async () => { throw new Error('unused') },
+    index: async () => {
+      throw new Error('unused')
+    },
+    buildBrief: async () => {
+      throw new Error('unused')
+    },
     config: { briefBudgetChars: 6000, injectBrief: true, ...config },
     queueRoot,
   })
-  t.after(async () => { for (const dispose of disposers) await dispose() })
+  t.after(async () => {
+    for (const dispose of disposers) await dispose()
+  })
   return { ctx, modelCalls: () => modelCalls }
 }
 
@@ -762,7 +1122,10 @@ test('the registered session/event listener captures a completed turn durably', 
     return found.length === 1 ? found : null
   })
   assert.notEqual(jobs, null, 'the completed turn reaches the queue')
-  assert.deepEqual(jobs[0].allowedEvents.map((entry) => entry.kind), ['user', 'assistant-final'])
+  assert.deepEqual(
+    jobs[0].allowedEvents.map((entry) => entry.kind),
+    ['user', 'assistant-final'],
+  )
   assert.equal(bed.modelCalls(), 0)
 })
 
@@ -803,11 +1166,17 @@ test('without a queue root the hooks register no capture at all', async (t) => {
   const ctx = new Context()
   const disposers = registerHooks(ctx, {
     resolveBinding: async () => BINDING,
-    index: async () => { throw new Error('unused') },
-    buildBrief: async () => { throw new Error('unused') },
+    index: async () => {
+      throw new Error('unused')
+    },
+    buildBrief: async () => {
+      throw new Error('unused')
+    },
     config: { briefBudgetChars: 6000, injectBrief: true },
   })
-  t.after(async () => { for (const dispose of disposers) await dispose() })
+  t.after(async () => {
+    for (const dispose of disposers) await dispose()
+  })
 
   // Emitting the whole lifecycle must not create or read anything: there is no
   // queue to write to, which is why registering without one is inert.
@@ -833,13 +1202,16 @@ test('capture never derives a root of its own, and never consults DSH_HOME', asy
 
   const queueRoot = join(root, 'queue')
   const events = simpleTurn()
-  await enqueueTurn({ session: sessionOf(events), event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG })
+  await enqueueTurn({
+    session: sessionOf(events),
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+  })
 
   assert.equal(existsSync(dshHome), false, 'an explicit queueRoot must be the only target')
-  assert.deepEqual(
-    (await readdir(queueRoot)).filter((name) => name.endsWith('.json')).length,
-    1,
-  )
+  assert.deepEqual((await readdir(queueRoot)).filter((name) => name.endsWith('.json')).length, 1)
 })
 
 test('no raw transcript is written anywhere but the 0600 pending job', async (t) => {
@@ -854,11 +1226,21 @@ test('no raw transcript is written anywhere but the 0600 pending job', async (t)
     assistantMessage(5, [text('FINAL_TRANSCRIPT_MARKER')]),
     turnEnd(6, COMPLETED),
   ]
-  const job = await enqueueTurn({ session: sessionOf(events), event: events.at(-1), binding: BINDING, queueRoot, config: CONFIG })
+  const job = await enqueueTurn({
+    session: sessionOf(events),
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+  })
 
   const files = await readdir(root, { recursive: true })
   const regular = files.filter((name) => name.endsWith('.json')).map((name) => join(root, name))
-  assert.equal(regular.length, 2, 'the pending job and its processed floor record are the only JSON artifacts')
+  assert.equal(
+    regular.length,
+    2,
+    'the pending job and its processed floor record are the only JSON artifacts',
+  )
   const bodies = await Promise.all(regular.map((path) => readFile(path, 'utf8')))
   const all = bodies.join('\n')
   // The floor record carries seq ranges, never conversation text.

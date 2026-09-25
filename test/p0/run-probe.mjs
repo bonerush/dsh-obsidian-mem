@@ -61,7 +61,9 @@ assert.equal(
 
 // 2. A completed turn is observable as a committed `turn/end` session event.
 assert.equal(
-  events.some((e) => e.name === 'session/event' && e.type === 'turn/end' && e.reason === 'completed'),
+  events.some(
+    (e) => e.name === 'session/event' && e.type === 'turn/end' && e.reason === 'completed',
+  ),
   true,
   "expected a session/event record with type 'turn/end' and reason 'completed'",
 )
@@ -70,7 +72,7 @@ assert.equal(
 assert.equal(
   events.some((e) => e.name === 'session/flush'),
   true,
-  "expected a session/flush record",
+  'expected a session/flush record',
 )
 
 // --- Evidence summary ------------------------------------------------------
@@ -83,14 +85,14 @@ const SESSION_RECORD_NAMES = new Set([
   'session/event',
   'session/flush',
 ])
-const sessionIds = [...new Set(events.filter((e) => SESSION_RECORD_NAMES.has(e.name)).map((e) => e.id))]
+const sessionIds = [
+  ...new Set(events.filter((e) => SESSION_RECORD_NAMES.has(e.name)).map((e) => e.id)),
+]
 const bySession = (id) => events.filter((e) => e.id === id)
 
 const summarize = (id) => {
   const own = bySession(id)
-  const sessionEvents = own
-    .filter((e) => e.name === 'session/event')
-    .sort((a, b) => a.seq - b.seq)
+  const sessionEvents = own.filter((e) => e.name === 'session/event').sort((a, b) => a.seq - b.seq)
   const turnEnds = sessionEvents
     .filter((e) => e.type === 'turn/end')
     .map((e) => `${e.turn}:${e.reason}`)

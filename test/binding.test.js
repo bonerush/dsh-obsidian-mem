@@ -9,14 +9,31 @@
 // the real `~/Library`.
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { basename, isAbsolute, join, resolve, sep } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
 import * as gitModule from '../lib/git.js'
-import { isCloudManagedVaultRoot, resolveDataRoot, resolveVaultFile, resolveVaultRoot } from '../lib/paths.js'
+import {
+  isCloudManagedVaultRoot,
+  resolveDataRoot,
+  resolveVaultFile,
+  resolveVaultRoot,
+} from '../lib/paths.js'
 import * as pointerModule from '../lib/pointer.js'
 import * as registryModule from '../lib/registry.js'
 import * as vaultModule from '../lib/vault.js'
@@ -37,7 +54,13 @@ const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
  */
 function gitEnvironment() {
   const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
-  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY']) {
+  for (const key of [
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_COMMON_DIR',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+  ]) {
     delete env[key]
   }
   return env
@@ -47,10 +70,14 @@ function git(cwd, args) {
   return execFileAsync(
     'git',
     [
-      '-c', 'user.name=Task Four',
-      '-c', 'user.email=t4@example.invalid',
-      '-c', 'commit.gpgsign=false',
-      '-c', 'init.defaultBranch=main',
+      '-c',
+      'user.name=Task Four',
+      '-c',
+      'user.email=t4@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      'init.defaultBranch=main',
       ...args,
     ],
     { cwd, env: gitEnvironment(), encoding: 'utf8' },
@@ -113,7 +140,10 @@ function registryMarkdown(rows, { link = true } = {}) {
     '<!-- obsidian-mem:registry begin sha256:0000000000000000000000000000000000000000000000000000000000000000 -->',
     '| projectId | hub 相对路径 | displayName | remote |',
     '| --- | --- | --- | --- |',
-    ...rows.map((row) => `| ${row.projectId} | ${hubCell(row.hub)} | ${row.displayName ?? basename(row.hub)} | ${row.remote ?? ''} |`),
+    ...rows.map(
+      (row) =>
+        `| ${row.projectId} | ${hubCell(row.hub)} | ${row.displayName ?? basename(row.hub)} | ${row.remote ?? ''} |`,
+    ),
     '<!-- obsidian-mem:registry end -->',
     '',
   ].join('\n')
@@ -157,14 +187,21 @@ test('resolveVaultFile returns an absolute path inside the vault for a nested re
 
 test('resolveVaultFile keeps Unicode path segments intact', async (t) => {
   const { vault, vaultReal } = await fixture(t)
-  const file = await resolveVaultFile(vault, `${PROJECTS_DIR}/演示--1c392abb/Decisions/第一个决定.md`)
+  const file = await resolveVaultFile(
+    vault,
+    `${PROJECTS_DIR}/演示--1c392abb/Decisions/第一个决定.md`,
+  )
   assert.equal(file, join(vaultReal, PROJECTS_DIR, '演示--1c392abb', 'Decisions', '第一个决定.md'))
 })
 
 test('resolveVaultFile rejects a path that is blank, non-string or empty after normalization', async (t) => {
   const { vault } = await fixture(t)
   for (const bad of ['', '   ', './', '.', '///', null, undefined, 42, {}, []]) {
-    await assert.rejects(resolveVaultFile(vault, bad), /path/i, `expected ${JSON.stringify(bad)} to be rejected`)
+    await assert.rejects(
+      resolveVaultFile(vault, bad),
+      /path/i,
+      `expected ${JSON.stringify(bad)} to be rejected`,
+    )
   }
 })
 
@@ -178,7 +215,14 @@ test('resolveVaultFile rejects absolute paths, even inside the vault', async (t)
 test('resolveVaultFile rejects .. traversal at every depth', async (t) => {
   const { root, vault } = await fixture(t)
   await writeFile(join(root, 'outside.md'), 'outside\n')
-  for (const bad of ['..', '../outside.md', 'a/../outside.md', 'a/../../outside.md', `${PROJECTS_DIR}/../../outside.md`, 'a/b/../../../outside.md']) {
+  for (const bad of [
+    '..',
+    '../outside.md',
+    'a/../outside.md',
+    'a/../../outside.md',
+    `${PROJECTS_DIR}/../../outside.md`,
+    'a/b/../../../outside.md',
+  ]) {
     await assert.rejects(resolveVaultFile(vault, bad), /path/i, `expected ${bad} to be rejected`)
   }
   await assert.rejects(resolveVaultFile(vault, '../outside.md', { mustExist: true }), /path/i)
@@ -214,7 +258,10 @@ test('resolveVaultFile honours mustExist and never reports a read failure as a m
   await assert.rejects(resolveVaultFile(vault, 'missing.md', { mustExist: true }), /exist/i)
 
   await writeFile(join(vault, 'present.md'), 'x\n')
-  assert.equal(await resolveVaultFile(vault, 'present.md', { mustExist: true }), join(vaultReal, 'present.md'))
+  assert.equal(
+    await resolveVaultFile(vault, 'present.md', { mustExist: true }),
+    join(vaultReal, 'present.md'),
+  )
 
   // An unreadable directory is a read failure, not an absence: the caller must
   // be able to pause instead of creating a file over a hidden one.
@@ -281,7 +328,11 @@ test('resolveDataRoot lands inside DSH_HOME and defaults to <home>/.dsh/data/obs
 
 test('resolveDataRoot rejects a blank or relative DSH_HOME instead of writing to the cwd', () => {
   for (const bad of ['', '   ', '.dsh', 'relative/data', null, 42, {}]) {
-    assert.throws(() => resolveDataRoot(bad), /dshHome/i, `expected ${JSON.stringify(bad)} to be rejected`)
+    assert.throws(
+      () => resolveDataRoot(bad),
+      /dshHome/i,
+      `expected ${JSON.stringify(bad)} to be rejected`,
+    )
   }
 })
 
@@ -292,7 +343,8 @@ test('isCloudManagedVaultRoot claims only the two known macOS sync roots', async
   const cloudStorage = join(home, 'Library', 'CloudStorage', 'Dropbox', 'dsh-memory')
   const documents = join(home, 'Documents', 'dsh-memory')
   const library = join(home, 'Library')
-  for (const dir of [icloud, cloudStorage, documents, library]) await mkdir(dir, { recursive: true })
+  for (const dir of [icloud, cloudStorage, documents, library])
+    await mkdir(dir, { recursive: true })
 
   assert.equal(await isCloudManagedVaultRoot(await realpath(icloud), { home }), true)
   assert.equal(await isCloudManagedVaultRoot(await realpath(cloudStorage), { home }), true)
@@ -338,7 +390,10 @@ test('a plain git repository is bound through one exclusive four-field pointer',
   assert.equal(binding.vaultRoot, vaultReal)
   assert.equal(binding.vaultExists, true)
   assert.equal(binding.pointerPath, join(repoReal, POINTER_FILENAME))
-  assert.equal(binding.relativeDir, `${PROJECTS_DIR}/${basename(repo)}--${binding.projectId.slice(0, 8)}`)
+  assert.equal(
+    binding.relativeDir,
+    `${PROJECTS_DIR}/${basename(repo)}--${binding.projectId.slice(0, 8)}`,
+  )
   assert.equal(binding.projectDir, join(vaultReal, binding.relativeDir))
 
   // the pointer is a small regular file with exactly four fields (spec §5.2/D3)
@@ -428,7 +483,10 @@ test('sibling worktrees sharing an id but not metadata stop resolution', async (
   const siblingA = await addWorktree(repo, join(root, 'wt-alpha'))
   const siblingB = await addWorktree(repo, join(root, 'wt-beta'))
   await writePointer(repo, pointerFor(ID1, { slug: 'alpha', displayName: 'Alpha' }))
-  await writePointer(siblingA, pointerFor(ID1, { slug: 'alpha-renamed', displayName: 'Alpha Renamed' }))
+  await writePointer(
+    siblingA,
+    pointerFor(ID1, { slug: 'alpha-renamed', displayName: 'Alpha Renamed' }),
+  )
 
   const conflict = await resolveBinding({ cwd: siblingB, vaultRoot: vault })
   assert.equal(conflict.kind, 'conflict')
@@ -460,7 +518,8 @@ test('sibling discovery ignores an inherited GIT_DIR', async (t) => {
   await initRepo(repo)
 
   const binding = await withGitDir(join(vault, 'not-a-repository'), () =>
-    resolveBinding({ cwd: repo, vaultRoot: vault }))
+    resolveBinding({ cwd: repo, vaultRoot: vault }),
+  )
   assert.equal(binding.kind, 'bound')
   assert.equal(binding.pointerCreated, true)
   assert.match(binding.projectId, UUID_V4)
@@ -476,15 +535,24 @@ test('a corrupt sibling pointer stops resolution instead of guessing', async (t)
   const conflict = await resolveBinding({ cwd: fresh, vaultRoot: vault })
   assert.equal(conflict.kind, 'conflict')
   assert.equal(conflict.reason, 'sibling-unreadable')
-  assert.equal(conflict.details.some((entry) => entry.reason === 'pointer-corrupt'), true)
+  assert.equal(
+    conflict.details.some((entry) => entry.reason === 'pointer-corrupt'),
+    true,
+  )
   await assert.rejects(readFile(join(fresh, POINTER_FILENAME)), { code: 'ENOENT' })
 })
 
 const CORRUPT_POINTERS = [
   ['invalid JSON', '{ this is not json'],
   ['a missing field', JSON.stringify({ projectId: ID1, slug: 'demo', schema: 1 })],
-  ['an extra machine-local field', JSON.stringify({ ...pointerFor(ID1), vaultPath: '/Users/someone/Documents/dsh-memory' })],
-  ['a remote field', JSON.stringify({ ...pointerFor(ID1), remote: 'git@github.com:someone/private.git' })],
+  [
+    'an extra machine-local field',
+    JSON.stringify({ ...pointerFor(ID1), vaultPath: '/Users/someone/Documents/dsh-memory' }),
+  ],
+  [
+    'a remote field',
+    JSON.stringify({ ...pointerFor(ID1), remote: 'git@github.com:someone/private.git' }),
+  ],
   ['a non-v4 uuid', JSON.stringify(pointerFor('1c392abb-7b08-32f7-871d-2a379caf9448'))],
   ['an uppercase uuid', JSON.stringify(pointerFor(ID1.toUpperCase()))],
   ['a slug with a path separator', JSON.stringify(pointerFor(ID1, { slug: '../escape' }))],
@@ -613,7 +681,10 @@ test('binding works before the vault root exists and creates nothing inside it',
   const binding = await resolveBinding({ cwd: repo, vaultRoot })
   assert.equal(binding.kind, 'bound')
   assert.equal(binding.vaultExists, false)
-  assert.equal(binding.projectDir, join(await realpath(root), 'brand-new-vault', binding.relativeDir))
+  assert.equal(
+    binding.projectDir,
+    join(await realpath(root), 'brand-new-vault', binding.relativeDir),
+  )
   await assert.rejects(lstat(vaultRoot), { code: 'ENOENT' })
 })
 
@@ -639,7 +710,12 @@ test('identity modes require an existing pointer, and unknown modes are rejected
 
   // There is nothing to fork away from and nothing to confirm yet.
   for (const mode of ['fork', 'retain']) {
-    const refused = await resolveBinding({ cwd: repo, vaultRoot: vault, mode, dataRoot: join(vault, '..', 'data') })
+    const refused = await resolveBinding({
+      cwd: repo,
+      vaultRoot: vault,
+      mode,
+      dataRoot: join(vault, '..', 'data'),
+    })
     assert.equal(refused.kind, 'conflict')
     assert.equal(refused.reason, 'no-pointer')
   }
@@ -647,7 +723,10 @@ test('identity modes require an existing pointer, and unknown modes are rejected
   const local = await resolveBinding({ cwd: repo, vaultRoot: vault, mode: 'local' })
   assert.equal(local.kind, 'bound')
   assert.equal(local.pointerCreated, true)
-  assert.equal(JSON.parse(await readFile(join(repo, POINTER_FILENAME), 'utf8')).projectId, local.projectId)
+  assert.equal(
+    JSON.parse(await readFile(join(repo, POINTER_FILENAME), 'utf8')).projectId,
+    local.projectId,
+  )
 
   for (const mode of ['nonsense', '', 42, {}]) {
     await assert.rejects(resolveBinding({ cwd: repo, vaultRoot: vault, mode }), /mode/i)
@@ -700,7 +779,10 @@ test('two different project ids pointing at one directory fail', async (t) => {
   await writePointer(repo, pointerFor(ID1, { slug: 'alpha', displayName: 'Alpha' }))
   const hub = `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}`
   await writeProjectDir(vault, hub)
-  await writeRegistry(vault, [{ projectId: ID1, hub }, { projectId: ID2, hub }])
+  await writeRegistry(vault, [
+    { projectId: ID1, hub },
+    { projectId: ID2, hub },
+  ])
 
   const conflict = await resolveBinding({ cwd: repo, vaultRoot: vault })
   assert.equal(conflict.kind, 'conflict')
@@ -715,7 +797,10 @@ test('one project id registered against two directories fails', async (t) => {
   const second = `${PROJECTS_DIR}/beta--${ID1.slice(0, 8)}`
   await writeProjectDir(vault, first)
   await writeProjectDir(vault, second)
-  await writeRegistry(vault, [{ projectId: ID1, hub: first }, { projectId: ID1, hub: second }])
+  await writeRegistry(vault, [
+    { projectId: ID1, hub: first },
+    { projectId: ID1, hub: second },
+  ])
 
   const conflict = await resolveBinding({ cwd: repo, vaultRoot: vault })
   assert.equal(conflict.kind, 'conflict')
@@ -765,10 +850,19 @@ test('a symlinked registry path is refused instead of read from outside the vaul
 })
 
 const MALFORMED_REGISTRY_ROWS = [
-  ['a hub whose id suffix is not its own project id', { projectId: ID1, hub: `${PROJECTS_DIR}/alpha--deadbeef` }],
-  ['a non-uuid project id', { projectId: 'not-a-uuid', hub: `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}` }],
+  [
+    'a hub whose id suffix is not its own project id',
+    { projectId: ID1, hub: `${PROJECTS_DIR}/alpha--deadbeef` },
+  ],
+  [
+    'a non-uuid project id',
+    { projectId: 'not-a-uuid', hub: `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}` },
+  ],
   ['a traversal hub path', { projectId: ID1, hub: '../../etc' }],
-  ['a hub path escaping through ..', { projectId: ID1, hub: `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}/../../..` }],
+  [
+    'a hub path escaping through ..',
+    { projectId: ID1, hub: `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}/../../..` },
+  ],
   ['a hub path outside Projects/', { projectId: ID1, hub: `Methods/alpha--${ID1.slice(0, 8)}` }],
 ]
 
@@ -859,7 +953,10 @@ test('a vault without a registry file binds through the derived fixed directory'
   const binding = await resolveBinding({ cwd: repo, vaultRoot: vault })
   assert.equal(binding.kind, 'bound')
   assert.equal(binding.registered, false)
-  assert.equal(binding.relativeDir, `${PROJECTS_DIR}/${binding.slug}--${binding.projectId.slice(0, 8)}`)
+  assert.equal(
+    binding.relativeDir,
+    `${PROJECTS_DIR}/${binding.slug}--${binding.projectId.slice(0, 8)}`,
+  )
   assert.equal(binding.projectDir, join(vaultReal, binding.relativeDir))
 })
 
@@ -891,10 +988,18 @@ test('concurrent first binds in fresh worktrees never leave two project ids', as
       if (pointer !== null) ids.add(pointer.projectId)
       const result = results[index]
       if (result.kind === 'bound') {
-        assert.equal(pointer?.projectId, result.projectId, 'a bound worktree must hold the id it reported')
+        assert.equal(
+          pointer?.projectId,
+          result.projectId,
+          'a bound worktree must hold the id it reported',
+        )
       } else {
         assert.equal(result.kind, 'conflict')
-        assert.equal(pointer, null, `a refused first bind must unwind its own pointer (${result.reason})`)
+        assert.equal(
+          pointer,
+          null,
+          `a refused first bind must unwind its own pointer (${result.reason})`,
+        )
       }
     }
     assert.ok(ids.size <= 1, `round ${round} left ${ids.size} project ids for one repository`)
@@ -907,16 +1012,30 @@ test('concurrent first binds in fresh worktrees never leave two project ids', as
 
 test('lib/vault.js still re-exports the split contracts unchanged', () => {
   const fromPointer = [
-    'POINTER_FILENAME', 'POINTER_SCHEMA', 'MAX_POINTER_BYTES', 'PointerError',
-    'isUuidV4', 'isValidSlug', 'slugify', 'parsePointerBytes', 'readPointer',
-    'createPointerExclusive', 'newPointer', 'samePointer',
+    'POINTER_FILENAME',
+    'POINTER_SCHEMA',
+    'MAX_POINTER_BYTES',
+    'PointerError',
+    'isUuidV4',
+    'isValidSlug',
+    'slugify',
+    'parsePointerBytes',
+    'readPointer',
+    'createPointerExclusive',
+    'newPointer',
+    'samePointer',
   ]
   for (const name of fromPointer) {
     assert.equal(vaultModule[name], pointerModule[name], `vault.${name} must be pointer.${name}`)
   }
   const fromRegistry = [
-    'PROJECTS_DIR', 'PROJECT_DIR_SEPARATOR', 'REGISTRY_RELATIVE_PATH', 'RegistryError',
-    'projectRelativeDir', 'parseRegistryMarkdown', 'readRegistry',
+    'PROJECTS_DIR',
+    'PROJECT_DIR_SEPARATOR',
+    'REGISTRY_RELATIVE_PATH',
+    'RegistryError',
+    'projectRelativeDir',
+    'parseRegistryMarkdown',
+    'readRegistry',
   ]
   for (const name of fromRegistry) {
     assert.equal(vaultModule[name], registryModule[name], `vault.${name} must be registry.${name}`)
@@ -925,8 +1044,18 @@ test('lib/vault.js still re-exports the split contracts unchanged', () => {
     assert.equal(vaultModule[name], gitModule[name], `vault.${name} must be git.${name}`)
   }
   // the pre-split surface that always came from vault.js itself
-  for (const name of ['resolveBinding', 'isCloudManagedVaultRoot', 'resolveVaultRoot', 'resolveVaultFile', 'splitRelativeVaultPath']) {
-    assert.equal(typeof vaultModule[name], 'function', `vault.${name} must still be a function export`)
+  for (const name of [
+    'resolveBinding',
+    'isCloudManagedVaultRoot',
+    'resolveVaultRoot',
+    'resolveVaultFile',
+    'splitRelativeVaultPath',
+  ]) {
+    assert.equal(
+      typeof vaultModule[name],
+      'function',
+      `vault.${name} must still be a function export`,
+    )
   }
   assert.ok(Array.isArray(vaultModule.BIND_MODES), 'vault.BIND_MODES must still be exported')
 })

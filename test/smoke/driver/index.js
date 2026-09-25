@@ -29,7 +29,14 @@
 //   DSH_OBSIDIAN_MEM_SMOKE_KILL     `1` SIGKILL once the completed turn's job is durable
 
 import { createHash, randomUUID } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -151,8 +158,13 @@ const TOOL_NAMES = ['mem_search', 'mem_read', 'mem_write', 'mem_log', 'mem_brief
  */
 async function callTool(ctx, agent, toolName, args) {
   const registry = typeof ctx.get === 'function' ? ctx.get('tools') : undefined
-  const definition = registry === undefined || registry === null ? undefined : registry.get(toolName)
-  if (definition === undefined) return { ok: false, error: { threwName: 'MissingTool', threwCode: 'missing-tool', threwMessage: toolName } }
+  const definition =
+    registry === undefined || registry === null ? undefined : registry.get(toolName)
+  if (definition === undefined)
+    return {
+      ok: false,
+      error: { threwName: 'MissingTool', threwCode: 'missing-tool', threwMessage: toolName },
+    }
   const controller = new AbortController()
   try {
     const value = await definition.execute(args, makeExec(agent, toolName, args, controller))
@@ -177,7 +189,11 @@ async function callTool(ctx, agent, toolName, args) {
  * @returns {Promise<void>}
  */
 async function runScenario(ctx, agent) {
-  record({ name: 'smoke/tools', available: TOOL_NAMES.filter((toolName) => ctx.get('tools')?.get(toolName) !== undefined), expected: TOOL_NAMES.length })
+  record({
+    name: 'smoke/tools',
+    available: TOOL_NAMES.filter((toolName) => ctx.get('tools')?.get(toolName) !== undefined),
+    expected: TOOL_NAMES.length,
+  })
 
   // --- 1. bind the temporary repository to the temporary vault --------------
   const bind = await callTool(ctx, agent, 'mem_admin', { action: 'bind', mode: 'local' })
@@ -235,17 +251,47 @@ async function runScenario(ctx, agent) {
   })
 
   // --- 4. supersede chain ---------------------------------------------------
-  const oldWrite = await callTool(ctx, agent, 'mem_write', { type: 'decision', title: '冒烟决策（旧）', body: '旧结论正文。', status: 'accepted' })
+  const oldWrite = await callTool(ctx, agent, 'mem_write', {
+    type: 'decision',
+    title: '冒烟决策（旧）',
+    body: '旧结论正文。',
+    status: 'accepted',
+  })
   const oldId = oldWrite.ok ? oldWrite.value.id : null
   const oldPath = oldWrite.ok ? oldWrite.value.path : null
-  const newWrite = oldId === null
-    ? { ok: false, error: { threwName: 'Skipped', threwCode: 'no-old-id', threwMessage: 'the old decision was not written' } }
-    : await callTool(ctx, agent, 'mem_write', { type: 'decision', title: '冒烟决策（新）', body: '新结论正文，取代旧结论。', status: 'accepted', supersedes: oldId })
-  const oldRead = oldPath === null ? { ok: false, error: { threwCode: 'no-old-path' } } : await callTool(ctx, agent, 'mem_read', { path: oldPath })
+  const newWrite =
+    oldId === null
+      ? {
+          ok: false,
+          error: {
+            threwName: 'Skipped',
+            threwCode: 'no-old-id',
+            threwMessage: 'the old decision was not written',
+          },
+        }
+      : await callTool(ctx, agent, 'mem_write', {
+          type: 'decision',
+          title: '冒烟决策（新）',
+          body: '新结论正文，取代旧结论。',
+          status: 'accepted',
+          supersedes: oldId,
+        })
+  const oldRead =
+    oldPath === null
+      ? { ok: false, error: { threwCode: 'no-old-path' } }
+      : await callTool(ctx, agent, 'mem_read', { path: oldPath })
   const newId = newWrite.ok ? newWrite.value.id : null
-  const defaultSearch = await callTool(ctx, agent, 'mem_search', { query: '冒烟决策', scope: 'project' })
-  const historySearch = await callTool(ctx, agent, 'mem_search', { query: '冒烟决策', scope: 'project', includeHistory: true })
-  const pathsOf = (result) => (result.ok && Array.isArray(result.value?.hits) ? result.value.hits.map((hit) => hit.path) : [])
+  const defaultSearch = await callTool(ctx, agent, 'mem_search', {
+    query: '冒烟决策',
+    scope: 'project',
+  })
+  const historySearch = await callTool(ctx, agent, 'mem_search', {
+    query: '冒烟决策',
+    scope: 'project',
+    includeHistory: true,
+  })
+  const pathsOf = (result) =>
+    result.ok && Array.isArray(result.value?.hits) ? result.value.hits.map((hit) => hit.path) : []
   const defaultPaths = pathsOf(defaultSearch)
   const historyPaths = pathsOf(historySearch)
   const oldStatus = oldRead.ok ? (oldRead.value?.status ?? null) : null
@@ -279,7 +325,12 @@ async function runScenario(ctx, agent) {
   // A plugin-owned note that a human then edits. Two things must hold: the
   // plugin's own relink keeps the human line, and a `trust:owner` file is never
   // rewritten at all. The latter is the byte-identity check the verifier fails on.
-  const extWrite = await callTool(ctx, agent, 'mem_write', { type: 'doc', title: '外部编辑目标文档', body: '初始正文。', status: 'active' })
+  const extWrite = await callTool(ctx, agent, 'mem_write', {
+    type: 'doc',
+    title: '外部编辑目标文档',
+    body: '初始正文。',
+    status: 'active',
+  })
   const extId = extWrite.ok ? extWrite.value.id : null
   const extPath = extWrite.ok ? extWrite.value.path : null
   const HUMAN_LINE = '人工外部编辑的一行：这一行必须存活。'
@@ -327,9 +378,19 @@ async function runScenario(ctx, agent) {
     const humanAbsolute = join(VAULT_ROOT, humanRelative)
     writeFileSync(humanAbsolute, humanBytes)
     const hashBefore = sha256(readFileSync(humanAbsolute))
-    const attemptUpdate = await callTool(ctx, agent, 'mem_write', { id: humanId, type: 'convention', title: '人写的约定', body: '插件改写。' })
+    const attemptUpdate = await callTool(ctx, agent, 'mem_write', {
+      id: humanId,
+      type: 'convention',
+      title: '人写的约定',
+      body: '插件改写。',
+    })
     const hashAfterUpdate = sha256(readFileSync(humanAbsolute))
-    const attemptSupersede = await callTool(ctx, agent, 'mem_write', { type: 'convention', title: '取代人写约定的候选', body: '候选正文。', supersedes: humanId })
+    const attemptSupersede = await callTool(ctx, agent, 'mem_write', {
+      type: 'convention',
+      title: '取代人写约定的候选',
+      body: '候选正文。',
+      supersedes: humanId,
+    })
     const hashAfterSupersede = sha256(readFileSync(humanAbsolute))
     humanOwned = {
       ok: hashBefore === hashAfterUpdate && hashBefore === hashAfterSupersede,
@@ -341,7 +402,9 @@ async function runScenario(ctx, agent) {
       survivedUpdate: hashBefore === hashAfterUpdate,
       survivedSupersede: hashBefore === hashAfterSupersede,
       updateRefusalCode: attemptUpdate.ok ? null : (attemptUpdate.error?.threwCode ?? null),
-      supersedeRefusalCode: attemptSupersede.ok ? null : (attemptSupersede.error?.threwCode ?? null),
+      supersedeRefusalCode: attemptSupersede.ok
+        ? null
+        : (attemptSupersede.error?.threwCode ?? null),
       bytesOnDisk: readVaultFile(humanRelative)?.length ?? null,
     }
   }
@@ -373,7 +436,8 @@ async function runScenario(ctx, agent) {
     stage: 'brief-tool',
     ok: brief.ok && typeof brief.value?.text === 'string' && brief.value?.truncated === false,
     charCount: brief.ok ? (brief.value?.charCount ?? null) : null,
-    textChars: brief.ok && typeof brief.value?.text === 'string' ? [...brief.value.text].length : null,
+    textChars:
+      brief.ok && typeof brief.value?.text === 'string' ? [...brief.value.text].length : null,
     indexStatus: brief.ok ? (brief.value?.indexState?.status ?? null) : null,
     hotItems: brief.ok ? (brief.value?.hotItems?.length ?? null) : null,
     truncated: brief.ok ? brief.value?.truncated === true : null,
@@ -384,7 +448,9 @@ async function runScenario(ctx, agent) {
   if (process.env.DSH_OBSIDIAN_MEM_SMOKE_LLM_PROBE === '1') await probeLlm(ctx)
 
   // --- 10. a log entry lands in the vault -----------------------------------
-  const log = await callTool(ctx, agent, 'mem_log', { text: '冒烟日志：记录一条完成回合之外的运行事实。' })
+  const log = await callTool(ctx, agent, 'mem_log', {
+    text: '冒烟日志：记录一条完成回合之外的运行事实。',
+  })
   record({
     name: 'smoke/stage',
     stage: 'log-write',
@@ -457,7 +523,9 @@ function pluginLogs(ctx) {
     return buffer
       .map((message) => ({
         type: String(message?.type ?? ''),
-        text: (Array.isArray(message?.args) ? message.args : [message?.args]).map((part) => (typeof part === 'string' ? part : '')).join(' '),
+        text: (Array.isArray(message?.args) ? message.args : [message?.args])
+          .map((part) => (typeof part === 'string' ? part : ''))
+          .join(' '),
       }))
       .filter((message) => message.text.includes('obsidian-mem'))
       .map((message) => ({ type: message.type, text: message.text.slice(0, 300) }))
@@ -485,7 +553,8 @@ function jobView(jobId) {
       outputState: job.output?.state ?? null,
       lastErrorCode: job.lastError?.code ?? null,
       lastErrorName: job.lastError?.name ?? null,
-      lastErrorMessage: typeof job.lastError?.message === 'string' ? job.lastError.message.slice(0, 200) : null,
+      lastErrorMessage:
+        typeof job.lastError?.message === 'string' ? job.lastError.message.slice(0, 200) : null,
       lastErrorAt: job.lastError?.at ?? null,
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
@@ -504,7 +573,10 @@ function serviceVisibility(ctx) {
   const registry = typeof ctx.get === 'function' ? ctx.get('tools') : undefined
   return {
     registered: registry !== undefined && registry !== null,
-    toolsVisible: registry === undefined || registry === null ? null : TOOL_NAMES.filter((toolName) => registry.get(toolName) !== undefined),
+    toolsVisible:
+      registry === undefined || registry === null
+        ? null
+        : TOOL_NAMES.filter((toolName) => registry.get(toolName) !== undefined),
     hasLlm: typeof ctx.get === 'function' ? ctx.get('llm') !== undefined : null,
     hasSessions: typeof ctx.get === 'function' ? ctx.get('sessions') !== undefined : null,
   }
@@ -531,19 +603,35 @@ async function probeLlm(ctx) {
   const provider = process.env.DSH_SMOKE_DISTILL_PROVIDER ?? 'deepseek-official'
   const model = process.env.DSH_SMOKE_DISTILL_MODEL ?? 'deepseek-flash'
   const started = Date.now()
-  const entry = { name: 'smoke/llm-probe', provider, model, finishKind: null, failureCode: null, textChars: 0, chunks: 0 }
+  const entry = {
+    name: 'smoke/llm-probe',
+    provider,
+    model,
+    finishKind: null,
+    failureCode: null,
+    textChars: 0,
+    chunks: 0,
+  }
   try {
     const stream = await llm.stream({
       provider,
       model,
       system: 'Compatibility probe. Answer with one word.',
-      messages: [{ id: randomUUID(), role: 'user', content: [{ type: 'text', text: 'Reply with the single word OK.' }], source: { kind: 'user' } }],
+      messages: [
+        {
+          id: randomUUID(),
+          role: 'user',
+          content: [{ type: 'text', text: 'Reply with the single word OK.' }],
+          source: { kind: 'user' },
+        },
+      ],
       maxTokens: 64,
       signal: AbortSignal.timeout(60000),
     })
     for await (const chunk of stream) {
       entry.chunks += 1
-      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') entry.textChars += chunk.text.length
+      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string')
+        entry.textChars += chunk.text.length
       if (chunk?.type === 'finish') {
         entry.finishKind = chunk.reason?.kind ?? null
         entry.failureCode = chunk.reason?.failure?.code ?? null
@@ -574,9 +662,10 @@ function holdUntilDurable(ctx, agentOf) {
     return
   }
   const started = Date.now()
-  const budgetMs = Number(process.env.DSH_OBSIDIAN_MEM_SMOKE_HOLD_MS ?? '') > 0
-    ? Number(process.env.DSH_OBSIDIAN_MEM_SMOKE_HOLD_MS)
-    : 90_000
+  const budgetMs =
+    Number(process.env.DSH_OBSIDIAN_MEM_SMOKE_HOLD_MS ?? '') > 0
+      ? Number(process.env.DSH_OBSIDIAN_MEM_SMOKE_HOLD_MS)
+      : 90_000
   const deadline = started + budgetMs
   let jobId = null
   let treeAtJob = null
@@ -587,7 +676,10 @@ function holdUntilDurable(ctx, agentOf) {
   // worker's retry is an unref'd timer, so if these never fire, a stranded job
   // is the host's event loop and not the plugin's scheduling.
   for (const delay of [500, 1500, 5000]) {
-    const probe = setTimeout(() => record({ name: 'smoke/unref-timer', delay, ms: Date.now() - started }), delay)
+    const probe = setTimeout(
+      () => record({ name: 'smoke/unref-timer', delay, ms: Date.now() - started }),
+      delay,
+    )
     if (typeof probe.unref === 'function') probe.unref()
   }
   const timer = setInterval(async () => {
@@ -596,7 +688,14 @@ function holdUntilDurable(ctx, agentOf) {
       if (jobs.length > 0) {
         jobId = jobs[0].replace(/\.json$/, '')
         treeAtJob = hashTree()
-        record({ name: 'smoke/hold', ok: true, action: 'job-observed', jobId, ms: Date.now() - started, job: jobView(jobId) })
+        record({
+          name: 'smoke/hold',
+          ok: true,
+          action: 'job-observed',
+          jobId,
+          ms: Date.now() - started,
+          job: jobView(jobId),
+        })
         if (KILL_ON_TURN_END) {
           clearInterval(timer)
           // The job file is durable; now interrupt the process for real.
@@ -608,7 +707,10 @@ function holdUntilDurable(ctx, agentOf) {
       // The pass that touches the job is the observation the smoke otherwise
       // cannot make: a stranded job never leaves `pending`.
       const view = jobView(jobId)
-      const signature = view === null ? null : `${view.state}|${view.attempts}|${view.deferredReason}|${view.lastErrorCode}`
+      const signature =
+        view === null
+          ? null
+          : `${view.state}|${view.attempts}|${view.deferredReason}|${view.lastErrorCode}`
       if (signature !== lastState) {
         lastState = signature
         record({ name: 'smoke/poll', jobId, ms: Date.now() - started, job: view })
@@ -687,7 +789,10 @@ export function apply(ctx) {
     scenario: RUN_SCENARIO,
     waitReceipt: WAIT_RECEIPT,
     killOnTurnEnd: KILL_ON_TURN_END,
-    dshHomeIsTemp: DSH_HOME.startsWith(tmpdir()) || DSH_HOME.startsWith('/tmp/') || DSH_HOME.startsWith('/private/tmp/'),
+    dshHomeIsTemp:
+      DSH_HOME.startsWith(tmpdir()) ||
+      DSH_HOME.startsWith('/tmp/') ||
+      DSH_HOME.startsWith('/private/tmp/'),
   })
 
   // The host wires `ctx.logger` to a level-1 filter, so `warn` (2) and `debug`
@@ -697,21 +802,33 @@ export function apply(ctx) {
   const logger = typeof ctx.get === 'function' ? (ctx.get('logger') ?? ctx.logger) : ctx.logger
   if (logger !== null && logger !== undefined && typeof logger.exporter === 'function') {
     try {
-      ctx.effect(() => logger.exporter({
-        levels: { default: 3 },
-        export: (message) => {
-          const text = (Array.isArray(message?.args) ? message.args : [message?.args])
-            .map((part) => (typeof part === 'string' ? part : ''))
-            .join(' ')
-          // Only this plugin's own diagnostics: the record stays free of any
-          // unrelated host chatter.
-          if (!text.includes('obsidian-mem')) return
-          record({ name: 'smoke/log', level: String(message?.type ?? ''), text: text.slice(0, 400) })
-        },
-      }), 'obsidian-mem-smoke-driver log exporter')
+      ctx.effect(
+        () =>
+          logger.exporter({
+            levels: { default: 3 },
+            export: (message) => {
+              const text = (Array.isArray(message?.args) ? message.args : [message?.args])
+                .map((part) => (typeof part === 'string' ? part : ''))
+                .join(' ')
+              // Only this plugin's own diagnostics: the record stays free of any
+              // unrelated host chatter.
+              if (!text.includes('obsidian-mem')) return
+              record({
+                name: 'smoke/log',
+                level: String(message?.type ?? ''),
+                text: text.slice(0, 400),
+              })
+            },
+          }),
+        'obsidian-mem-smoke-driver log exporter',
+      )
       record({ name: 'smoke/log-exporter', installed: true })
     } catch (error) {
-      record({ name: 'smoke/log-exporter', installed: false, error: describeError(error).threwMessage })
+      record({
+        name: 'smoke/log-exporter',
+        installed: false,
+        error: describeError(error).threwMessage,
+      })
     }
   } else {
     record({ name: 'smoke/log-exporter', installed: false, reason: 'no-exporter-api' })
@@ -727,7 +844,9 @@ export function apply(ctx) {
       const source = event.data?.source
       if (source?.kind !== RECALL_KIND) return
       const content = Array.isArray(event.data?.content) ? event.data.content : []
-      const text = content.map((block) => (block?.type === 'text' ? String(block.text ?? '') : '')).join('')
+      const text = content
+        .map((block) => (block?.type === 'text' ? String(block.text ?? '') : ''))
+        .join('')
       briefsTotal += 1
       if (!firstRequestSeen) briefsBeforeFirstRequest += 1
       // Metadata only: the brief's text is never recorded.
@@ -752,7 +871,11 @@ export function apply(ctx) {
         turn: typeof event.data?.turn === 'number' ? event.data.turn : null,
         reason: typeof event.data?.reason?.kind === 'string' ? event.data.reason.kind : null,
       })
-      if ((WAIT_RECEIPT || KILL_ON_TURN_END) && event.data?.reason?.kind === 'completed' && !holdStarted) {
+      if (
+        (WAIT_RECEIPT || KILL_ON_TURN_END) &&
+        event.data?.reason?.kind === 'completed' &&
+        !holdStarted
+      ) {
         holdStarted = true
         // Deferred one tick so the capture notification path is not re-entered
         // from inside its own append callback.

@@ -38,7 +38,11 @@ function sanitize(text) {
 }
 
 function errorView(error) {
-  return { name: error?.name ?? 'Error', code: error?.code ?? null, message: sanitize(error?.message) }
+  return {
+    name: error?.name ?? 'Error',
+    code: error?.code ?? null,
+    message: sanitize(error?.message),
+  }
 }
 
 /** Append one record; probing must never break the host run. */
@@ -136,19 +140,23 @@ async function callModel(llm, label, { caller, maxTokens = 32, long = false } = 
       provider: PROVIDER,
       model: MODEL,
       system: 'Compatibility probe. Answer with one word.',
-      messages: [{
-        id: 'teardown-1',
-        role: 'user',
-        // The prompt is never recorded; the long variant only exists to keep the
-        // stream open across the teardown.
-        content: [{
-          type: 'text',
-          text: long
-            ? 'List twenty numbered short lines about determinism in software.'
-            : 'Reply with the single word OK.',
-        }],
-        source: { kind: 'user' },
-      }],
+      messages: [
+        {
+          id: 'teardown-1',
+          role: 'user',
+          // The prompt is never recorded; the long variant only exists to keep the
+          // stream open across the teardown.
+          content: [
+            {
+              type: 'text',
+              text: long
+                ? 'List twenty numbered short lines about determinism in software.'
+                : 'Reply with the single word OK.',
+            },
+          ],
+          source: { kind: 'user' },
+        },
+      ],
       maxTokens,
       signal: caller === undefined ? timeout : AbortSignal.any([caller, timeout]),
     })
@@ -182,7 +190,10 @@ function safeGet(ctx, name) {
 }
 
 export function apply(ctx) {
-  record({ rec: 'apply', dshHomeIsTemp: /^\/(?:tmp|private\/tmp|var\/folders)\//.test(process.env.DSH_HOME ?? '') })
+  record({
+    rec: 'apply',
+    dshHomeIsTemp: /^\/(?:tmp|private\/tmp|var\/folders)\//.test(process.env.DSH_HOME ?? ''),
+  })
   visibility(ctx, 'apply')
   let agentRef = null
   let inHandlerProbed = false
@@ -230,7 +241,11 @@ export function apply(ctx) {
     liveWindowProbed = true
     // Two calls, opened in the earliest live window with a budget large enough to
     // straddle the disposal. The only difference is who may abort them.
-    void callModel(llm, 'live-window-worker-signal', { caller: workerController.signal, maxTokens: 1500, long: true })
+    void callModel(llm, 'live-window-worker-signal', {
+      caller: workerController.signal,
+      maxTokens: 1500,
+      long: true,
+    })
     void callModel(llm, 'live-window-private-signal', { maxTokens: 1500, long: true })
   })
   ctx.on('agent/pre-step', async ({ agent, signal }, next) => {

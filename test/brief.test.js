@@ -72,7 +72,13 @@ async function fixture(t, { bootstrap = true } = {}) {
     await rm(root, { recursive: true, force: true, maxRetries: 4 })
   })
   const open = async () => {
-    if (index === null) index = await openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: PROJECT_ID })
+    if (index === null)
+      index = await openIndex({
+        vaultRoot: vault,
+        dataRoot,
+        backend: 'sqlite',
+        projectId: PROJECT_ID,
+      })
     return index
   }
   return { root, vault, dataRoot, home, repo, binding, open }
@@ -88,7 +94,11 @@ async function addNote(env, type, title, body, options = {}) {
   return writeMemory(
     env.binding,
     { type, title, body, ...options.request },
-    { dataRoot: env.dataRoot, home: env.home, ...(options.now === undefined ? {} : { now: options.now }) },
+    {
+      dataRoot: env.dataRoot,
+      home: env.home,
+      ...(options.now === undefined ? {} : { now: options.now }),
+    },
   )
 }
 
@@ -110,7 +120,9 @@ async function brief(env, options = {}) {
     index: await env.open(),
     config: { briefBudgetChars: options.budget ?? BUDGET, hotCapacityChars: HOT_CAPACITY },
     ...(options.mode === undefined ? {} : { mode: options.mode }),
-    ...(options.previousHotItems === undefined ? {} : { previousHotItems: options.previousHotItems }),
+    ...(options.previousHotItems === undefined
+      ? {}
+      : { previousHotItems: options.previousHotItems }),
   })
 }
 
@@ -190,7 +202,12 @@ test('mem_brief returns exactly what buildBrief returns, through the real tool r
   await addHot(env, '进行中', '简报必须同源')
   await addNote(env, 'decision', '调度器改为可插拔后端', '决策正文：调度器变成后端。\n')
 
-  const config = { vaultPath: env.vault, indexBackend: 'sqlite', briefBudgetChars: BUDGET, hotCapacityChars: HOT_CAPACITY }
+  const config = {
+    vaultPath: env.vault,
+    indexBackend: 'sqlite',
+    briefBudgetChars: BUDGET,
+    hotCapacityChars: HOT_CAPACITY,
+  }
   const services = createMemoryServices({
     config,
     dataRoot: env.dataRoot,
@@ -198,13 +215,17 @@ test('mem_brief returns exactly what buildBrief returns, through the real tool r
     home: env.home,
     binding: env.binding,
   })
-  t.after(async () => { await services.close() })
+  t.after(async () => {
+    await services.close()
+  })
 
   const ctx = new Context()
   ctx.provide('systemPrompt', { tools: () => () => {} })
   const fork = ctx.plugin(toolsPlugin)
   await fork
-  t.after(async () => { await fork.dispose().catch(() => {}) })
+  t.after(async () => {
+    await fork.dispose().catch(() => {})
+  })
   registerTools(ctx, services)
 
   const agent = { session: { header: { id: 'sess-brief', cwd: env.repo } } }
@@ -217,7 +238,11 @@ test('mem_brief returns exactly what buildBrief returns, through the real tool r
   })
   assert.equal(viaTool.isError, false, viaTool.error?.message)
 
-  const direct = await buildBrief(env.binding, { index: await services.index({ agent }), config, mode: 'full' })
+  const direct = await buildBrief(env.binding, {
+    index: await services.index({ agent }),
+    config,
+    mode: 'full',
+  })
   assert.deepEqual(viaTool.value, direct)
   assert.ok(viaTool.value.text.includes('简报必须同源'))
 })
@@ -225,9 +250,22 @@ test('mem_brief returns exactly what buildBrief returns, through the real tool r
 test('the brief service honours exec.signal after its I/O, like every other tool', async (t) => {
   const env = await fixture(t)
   await addHot(env, '进行中', '取消必须生效')
-  const config = { vaultPath: env.vault, indexBackend: 'sqlite', briefBudgetChars: BUDGET, hotCapacityChars: HOT_CAPACITY }
-  const services = createMemoryServices({ config, dataRoot: env.dataRoot, cwd: env.repo, home: env.home, binding: env.binding })
-  t.after(async () => { await services.close() })
+  const config = {
+    vaultPath: env.vault,
+    indexBackend: 'sqlite',
+    briefBudgetChars: BUDGET,
+    hotCapacityChars: HOT_CAPACITY,
+  }
+  const services = createMemoryServices({
+    config,
+    dataRoot: env.dataRoot,
+    cwd: env.repo,
+    home: env.home,
+    binding: env.binding,
+  })
+  t.after(async () => {
+    await services.close()
+  })
 
   const agent = { session: { header: { id: 'sess-abort', cwd: env.repo } } }
   // Warm the index first, so the ready barrier answers `ready` without inspecting
@@ -243,15 +281,30 @@ test('the brief service honours exec.signal after its I/O, like every other tool
   )
   // A live signal still produces the same value as the builder.
   const value = await services.brief({}, new AbortController().signal, { agent })
-  assert.deepEqual(value, await buildBrief(env.binding, { index: await services.index({ agent }), config, mode: 'full' }))
+  assert.deepEqual(
+    value,
+    await buildBrief(env.binding, { index: await services.index({ agent }), config, mode: 'full' }),
+  )
 })
 
 test('an unbound working directory is answered with a status, not a fabricated empty brief', async (t) => {
   const env = await fixture(t)
-  const config = { vaultPath: env.vault, indexBackend: 'sqlite', briefBudgetChars: BUDGET, hotCapacityChars: HOT_CAPACITY }
+  const config = {
+    vaultPath: env.vault,
+    indexBackend: 'sqlite',
+    briefBudgetChars: BUDGET,
+    hotCapacityChars: HOT_CAPACITY,
+  }
   // No binding passed and no git repository at `cwd`: the resolution is unbound.
-  const services = createMemoryServices({ config, dataRoot: env.dataRoot, cwd: env.repo, home: env.home })
-  t.after(async () => { await services.close() })
+  const services = createMemoryServices({
+    config,
+    dataRoot: env.dataRoot,
+    cwd: env.repo,
+    home: env.home,
+  })
+  t.after(async () => {
+    await services.close()
+  })
 
   const agent = { session: { header: { id: 'sess-unbound', cwd: env.repo } } }
   const value = await services.brief({}, new AbortController().signal, { agent })
@@ -263,7 +316,9 @@ test('an unbound working directory is answered with a status, not a fabricated e
   ctx.provide('systemPrompt', { tools: () => () => {} })
   const fork = ctx.plugin(toolsPlugin)
   await fork
-  t.after(async () => { await fork.dispose().catch(() => {}) })
+  t.after(async () => {
+    await fork.dispose().catch(() => {})
+  })
   registerTools(ctx, services)
   const result = await ctx.tools.execute({
     callId: 'call-brief-unbound',
@@ -281,7 +336,10 @@ test('buildBrief refuses an unbound binding, an unknown mode and an unusable bud
   const index = await env.open()
   await assert.rejects(() => buildBrief({ kind: 'unbound' }, { index }), RangeError)
   await assert.rejects(() => buildBrief(env.binding, { index, mode: 'partial' }), RangeError)
-  await assert.rejects(() => buildBrief(env.binding, { index, config: { briefBudgetChars: 1 } }), RangeError)
+  await assert.rejects(
+    () => buildBrief(env.binding, { index, config: { briefBudgetChars: 1 } }),
+    RangeError,
+  )
   await assert.rejects(() => buildBrief(env.binding, {}), RangeError)
 })
 
@@ -297,7 +355,10 @@ test('the budget is enforced in Unicode code points, not UTF-16 units, with CJK 
   await addHot(env, '强约束', `🧠 强约束 1 ${'中文约束'.repeat(40)} 🚀`)
   await addHot(env, '进行中', `🧠 进行中 0 ${'中文内容'.repeat(40)} 🚀`)
   await addHot(env, '进行中', `🧠 进行中 1 ${'中文内容'.repeat(40)} 🚀`)
-  await writeUserMemory(env, `${['- 🧪 偏好条目 🧪', ...Array.from({ length: 500 }, (_x, index) => `- 偏好 ${index} 🎯`)].join('\n')}\n`)
+  await writeUserMemory(
+    env,
+    `${['- 🧪 偏好条目 🧪', ...Array.from({ length: 500 }, (_x, index) => `- 偏好 ${index} 🎯`)].join('\n')}\n`,
+  )
 
   const built = await brief(env)
 
@@ -318,14 +379,32 @@ test('under truncation the budget goes to higher-priority blocks first', async (
   // section, so "section included" and "marker present" mean the same thing.
   const hubLines = Array.from(
     { length: 10 },
-    (_x, index) => `- [[${RELATIVE_DIR}/Docs/${'很长的链接目标'.repeat(3)}-${index}|补齐-hub-${String(index).padStart(2, '0')}-${'细节'.repeat(20)}]]`,
+    (_x, index) =>
+      `- [[${RELATIVE_DIR}/Docs/${'很长的链接目标'.repeat(3)}-${index}|补齐-hub-${String(index).padStart(2, '0')}-${'细节'.repeat(20)}]]`,
   )
-  await writeVaultNote(env, `${RELATIVE_DIR}/index.md`, `# Demo Project\n\n## 优先级测试\n\n- [[${RELATIVE_DIR}/Docs/优先级测试|优先级-hub]]\n${hubLines.join('\n')}\n`)
-  await writeVaultNote(env, `${RELATIVE_DIR}/Conventions/index.md`, `# 约定\n\n## 条目\n\n- [[${RELATIVE_DIR}/Conventions/优先级-约定|优先级-约定]]\n- [[${RELATIVE_DIR}/Conventions/补齐-约定|补齐-约定]]\n`)
-  await addNote(env, 'decision', '优先级-决策', '决策正文：只做一件小事。\n', { now: new Date('2026-09-20T09:00:00') })
+  await writeVaultNote(
+    env,
+    `${RELATIVE_DIR}/index.md`,
+    `# Demo Project\n\n## 优先级测试\n\n- [[${RELATIVE_DIR}/Docs/优先级测试|优先级-hub]]\n${hubLines.join('\n')}\n`,
+  )
+  await writeVaultNote(
+    env,
+    `${RELATIVE_DIR}/Conventions/index.md`,
+    `# 约定\n\n## 条目\n\n- [[${RELATIVE_DIR}/Conventions/优先级-约定|优先级-约定]]\n- [[${RELATIVE_DIR}/Conventions/补齐-约定|补齐-约定]]\n`,
+  )
+  await addNote(env, 'decision', '优先级-决策', '决策正文：只做一件小事。\n', {
+    now: new Date('2026-09-20T09:00:00'),
+  })
   await writeUserMemory(env, `- 优先级-偏好-${'内容'.repeat(700)}\n`)
 
-  const order = ['优先级-强约束', '优先级-进行中', '优先级-hub', '优先级-约定', '优先级-决策', '优先级-偏好']
+  const order = [
+    '优先级-强约束',
+    '优先级-进行中',
+    '优先级-hub',
+    '优先级-约定',
+    '优先级-决策',
+    '优先级-偏好',
+  ]
 
   for (const budget of [256, 420, 620, 900, 1300, 2000, 3000, 6000]) {
     const built = await brief(env, { budget })
@@ -355,11 +434,15 @@ test('under truncation the budget goes to higher-priority blocks first', async (
 
   const withNotes = await brief(env, { budget: 3000 })
   assert.ok(withNotes.text.includes('优先级-约定'))
-  assert.ok(withNotes.text.includes('优先级-决策'), 'recent decisions arrive before the optional preferences')
+  assert.ok(
+    withNotes.text.includes('优先级-决策'),
+    'recent decisions arrive before the optional preferences',
+  )
   assert.ok(!withNotes.text.includes('优先级-偏好'))
 
   const full = await brief(env, { budget: 6000 })
-  for (const marker of order) assert.ok(full.text.includes(marker), `${marker} fits at the default budget`)
+  for (const marker of order)
+    assert.ok(full.text.includes(marker), `${marker} fits at the default budget`)
 })
 
 test('truncation drops whole blocks: no half link and no half fact ever reaches the brief', async (t) => {
@@ -368,26 +451,47 @@ test('truncation drops whole blocks: no half link and no half fact ever reaches 
   const hub = await readFile(at(env.vault, `${RELATIVE_DIR}/index.md`), 'utf8')
   const longLines = Array.from(
     { length: 12 },
-    (_x, index) => `- [[${RELATIVE_DIR}/Docs/${'很长的链接目标'.repeat(3)}-${index}|块边界-hub-${String(index).padStart(2, '0')}-${'细节'.repeat(20)}]]`,
+    (_x, index) =>
+      `- [[${RELATIVE_DIR}/Docs/${'很长的链接目标'.repeat(3)}-${index}|块边界-hub-${String(index).padStart(2, '0')}-${'细节'.repeat(20)}]]`,
   )
-  await writeVaultNote(env, `${RELATIVE_DIR}/index.md`, `${hub}\n## 块边界\n\n${longLines.join('\n')}\n`)
-  await writeUserMemory(env, `${Array.from({ length: 12 }, (_x, index) => `- 块边界-偏好-${String(index).padStart(2, '0')}-${'内容'.repeat(15)}`).join('\n')}\n`)
+  await writeVaultNote(
+    env,
+    `${RELATIVE_DIR}/index.md`,
+    `${hub}\n## 块边界\n\n${longLines.join('\n')}\n`,
+  )
+  await writeUserMemory(
+    env,
+    `${Array.from({ length: 12 }, (_x, index) => `- 块边界-偏好-${String(index).padStart(2, '0')}-${'内容'.repeat(15)}`).join('\n')}\n`,
+  )
 
   for (const budget of [500, 700, 1200, 2400]) {
     const built = await brief(env, { budget })
-    assert.equal(occurrences(built.text, '[['), occurrences(built.text, ']]'), `budget ${budget}: every link is closed`)
+    assert.equal(
+      occurrences(built.text, '[['),
+      occurrences(built.text, ']]'),
+      `budget ${budget}: every link is closed`,
+    )
 
     const derived = built.text.split('\n').filter((line) => line.startsWith('> '))
     for (const line of derived) {
-      assert.ok(!line.includes('[[') || line.endsWith(']]'), `budget ${budget}: no unterminated link in ${JSON.stringify(line)}`)
+      assert.ok(
+        !line.includes('[[') || line.endsWith(']]'),
+        `budget ${budget}: no unterminated link in ${JSON.stringify(line)}`,
+      )
     }
     for (let index = 0; index < 12; index += 1) {
       const marker = `块边界-hub-${String(index).padStart(2, '0')}`
       const line = derived.find((candidate) => candidate.includes(marker))
       if (line === undefined) {
-        assert.ok(!built.text.includes(`${marker}-细节`), `budget ${budget}: dropped block ${index} left no fragment`)
+        assert.ok(
+          !built.text.includes(`${marker}-细节`),
+          `budget ${budget}: dropped block ${index} left no fragment`,
+        )
       } else {
-        assert.ok(line.includes(`${marker}-${'细节'.repeat(20)}`), `budget ${budget}: included block ${index} is byte-complete`)
+        assert.ok(
+          line.includes(`${marker}-${'细节'.repeat(20)}`),
+          `budget ${budget}: included block ${index} is byte-complete`,
+        )
       }
     }
   }
@@ -395,7 +499,10 @@ test('truncation drops whole blocks: no half link and no half fact ever reaches 
 
 test('the omitted count equals the number of complete entries the budget could not carry', async (t) => {
   const env = await fixture(t, { bootstrap: false })
-  const preferences = Array.from({ length: 30 }, (_x, index) => `- 省略计数-${String(index).padStart(2, '0')}`)
+  const preferences = Array.from(
+    { length: 30 },
+    (_x, index) => `- 省略计数-${String(index).padStart(2, '0')}`,
+  )
   await writeUserMemory(env, `${preferences.join('\n')}\n`)
 
   const built = await brief(env, { budget: 560 })
@@ -404,9 +511,17 @@ test('the omitted count equals the number of complete entries the budget could n
 
   assert.ok(present.length > 0, 'the fixture fits at least one preference')
   assert.ok(present.length < preferences.length, 'the fixture really overflows the budget')
-  assert.equal(omitted, preferences.length - present.length, 'omitted counts exactly the entries left out')
+  assert.equal(
+    omitted,
+    preferences.length - present.length,
+    'omitted counts exactly the entries left out',
+  )
   assert.match(built.text, new RegExp(`省略 ${omitted} 条完整条目`))
-  assert.deepEqual(present, preferences.slice(0, present.length), 'the included ones keep file order')
+  assert.deepEqual(
+    present,
+    preferences.slice(0, present.length),
+    'the included ones keep file order',
+  )
   assert.ok(codePoints(built.text) <= 560)
 })
 
@@ -415,7 +530,12 @@ test('an index that is not ready is reported as a status, never as an empty memo
   await addHot(env, '进行中', '未就绪时热层仍然可见')
 
   const notReadyIndex = {
-    waitReady: async () => ({ ready: false, reason: 'index-not-ready', backend: 'sqlite', scanning: true }),
+    waitReady: async () => ({
+      ready: false,
+      reason: 'index-not-ready',
+      backend: 'sqlite',
+      scanning: true,
+    }),
     status: () => ({ ready: false, backend: 'sqlite', notes: 0 }),
   }
   const pending = await buildBrief(env.binding, {
@@ -477,33 +597,50 @@ test('cold-log bodies and note bodies stay out of the brief', async (t) => {
 test('the convention index carries only the entries that are still in effect', async (t) => {
   const env = await fixture(t)
   await addNote(env, 'convention', '仍然有效的约定', '正文\n')
-  await addNote(env, 'convention', '已经作废的约定', '正文\n', { request: { status: 'superseded' } })
+  await addNote(env, 'convention', '已经作废的约定', '正文\n', {
+    request: { status: 'superseded' },
+  })
   // A hand-written short link the plugin cannot resolve as a vault-relative path
   // stays in the outline: it is still navigation, and nothing proves it stale.
   const moc = await readFile(at(env.vault, `${RELATIVE_DIR}/Conventions/index.md`), 'utf8')
   await writeVaultNote(
     env,
     `${RELATIVE_DIR}/Conventions/index.md`,
-    moc.replace('<!-- obsidian-mem:generated end -->', '\n- [[短链约定]]\n<!-- obsidian-mem:generated end -->'),
+    moc.replace(
+      '<!-- obsidian-mem:generated end -->',
+      '\n- [[短链约定]]\n<!-- obsidian-mem:generated end -->',
+    ),
   )
 
   const built = await brief(env)
   assert.ok(built.text.includes('仍然有效的约定'))
-  assert.ok(!built.text.includes('已经作废的约定'), 'a superseded convention is not current guidance')
+  assert.ok(
+    !built.text.includes('已经作废的约定'),
+    'a superseded convention is not current guidance',
+  )
   assert.ok(built.text.includes('短链约定'))
 })
 
 test('the five most recent decisions and gotchas win, in updated order', async (t) => {
   const env = await fixture(t)
   for (let index = 1; index <= 7; index += 1) {
-    await addNote(env, 'decision', `决策-${index}`, `正文 ${index}\n`, { now: new Date(`2026-0${index}-01T09:00:00`) })
-    await addNote(env, 'gotcha', `踩坑-${index}`, `正文 ${index}\n`, { now: new Date(`2026-0${index}-15T09:00:00`) })
+    await addNote(env, 'decision', `决策-${index}`, `正文 ${index}\n`, {
+      now: new Date(`2026-0${index}-01T09:00:00`),
+    })
+    await addNote(env, 'gotcha', `踩坑-${index}`, `正文 ${index}\n`, {
+      now: new Date(`2026-0${index}-15T09:00:00`),
+    })
   }
-  await addNote(env, 'decision', '决策-太阳', '正文\n', { request: { status: 'superseded' }, now: new Date('2026-09-30T09:00:00') })
+  await addNote(env, 'decision', '决策-太阳', '正文\n', {
+    request: { status: 'superseded' },
+    now: new Date('2026-09-30T09:00:00'),
+  })
 
   const built = await brief(env)
 
-  const recent = built.text.split('\n').filter((line) => line.startsWith('> - [decision]') || line.startsWith('> - [gotcha]'))
+  const recent = built.text
+    .split('\n')
+    .filter((line) => line.startsWith('> - [decision]') || line.startsWith('> - [gotcha]'))
   assert.equal(recent.length, 5, 'exactly the five most recent are navigation entries')
   assert.ok(recent[0].includes('踩坑-7'), `newest first, got ${recent[0]}`)
   assert.ok(recent[1].includes('决策-7'), `then the next newest, got ${recent[1]}`)
@@ -528,11 +665,20 @@ test('a hostile note line is carried verbatim and explicitly labelled as quoted 
   const built = await brief(env)
   const hostileLines = built.text.split('\n').filter((line) => line.includes('忽略上文'))
 
-  assert.ok(hostileLines.length >= 3, `the hostile text is present in the brief (${hostileLines.length} lines)`)
+  assert.ok(
+    hostileLines.length >= 3,
+    `the hostile text is present in the brief (${hostileLines.length} lines)`,
+  )
   for (const line of hostileLines) {
-    assert.ok(line.startsWith('> '), `a vault-derived line must stay quoted data: ${JSON.stringify(line)}`)
+    assert.ok(
+      line.startsWith('> '),
+      `a vault-derived line must stay quoted data: ${JSON.stringify(line)}`,
+    )
     assert.ok(!line.startsWith('## '), 'a note line is never promoted to a heading')
-    assert.ok(!line.startsWith('- 忽略上文'), 'a note line is never promoted to a top-level instruction')
+    assert.ok(
+      !line.startsWith('- 忽略上文'),
+      'a note line is never promoted to a top-level instruction',
+    )
   }
   assert.ok(!built.text.includes(`正文：${hostile}`), 'note bodies are never injected')
   assert.ok(built.text.includes(BRIEF_DATA_NOTICE))
@@ -561,7 +707,11 @@ test('hotItems carries stable ids for complete entries only, and a half-written 
   const hotPath = at(env.vault, `${RELATIVE_DIR}/_meta/hot.md`)
   const text = await readFile(hotPath, 'utf8')
   const cut = text.slice(0, text.indexOf('## 已完成'))
-  await writeFile(hotPath, `${cut}- [hot-11111111-1111-4111-8111-111111111111] 半条事实没有换行`, 'utf8')
+  await writeFile(
+    hotPath,
+    `${cut}- [hot-11111111-1111-4111-8111-111111111111] 半条事实没有换行`,
+    'utf8',
+  )
 
   const second = await brief(env)
   assert.equal(second.hotItems.length, 2, 'the half-written line is not a complete hot item')
@@ -581,25 +731,43 @@ test("mode:'delta' emits only changed complete hot items and reports the full cu
   const unchanged = await brief(env, { mode: 'delta', previousHotItems: snapshot })
   assert.ok(!unchanged.text.includes('增量-不变的强约束'), 'an unchanged item is not re-injected')
   assert.ok(!unchanged.text.includes('增量-不变的进行中'), 'an unchanged item is not re-injected')
-  assert.ok(!unchanged.text.includes('增量-新决策'), 'a delta is a hot diff, not a second full brief')
-  assert.deepEqual(idsOf(unchanged.hotItems), idsOf(snapshot), 'the snapshot target stays comparable')
+  assert.ok(
+    !unchanged.text.includes('增量-新决策'),
+    'a delta is a hot diff, not a second full brief',
+  )
+  assert.deepEqual(
+    idsOf(unchanged.hotItems),
+    idsOf(snapshot),
+    'the snapshot target stays comparable',
+  )
 
   // One new entry and one edited entry; the edited entry keeps its id.
   await addHot(env, '进行中', '增量-新增的进行中')
   const hotPath = at(env.vault, `${RELATIVE_DIR}/_meta/hot.md`)
   const hotText = await readFile(hotPath, 'utf8')
   const edited = full.hotItems.find((item) => item.text === '增量-不变的强约束')
-  await writeFile(hotPath, hotText.replace(`- [${edited.id}] 增量-不变的强约束`, `- [${edited.id}] 增量-被修改的强约束`), 'utf8')
+  await writeFile(
+    hotPath,
+    hotText.replace(`- [${edited.id}] 增量-不变的强约束`, `- [${edited.id}] 增量-被修改的强约束`),
+    'utf8',
+  )
 
   const delta = await brief(env, { mode: 'delta', previousHotItems: snapshot })
   assert.ok(delta.text.includes('增量-新增的进行中'), 'the new item is injected')
   assert.ok(delta.text.includes('增量-被修改的强约束'), 'the edited item is injected')
   assert.ok(delta.text.includes(edited.id), 'the edited item keeps its id')
-  assert.ok(!delta.text.includes('增量-不变的进行中'), 'the untouched item is still not re-injected')
+  assert.ok(
+    !delta.text.includes('增量-不变的进行中'),
+    'the untouched item is still not re-injected',
+  )
   assert.equal(delta.hotItems.length, 3, 'the delta reports the complete current list')
 
   const after = await brief(env)
-  assert.deepEqual(idsOf(after.hotItems), idsOf(delta.hotItems), 'a session can keep comparing snapshots')
+  assert.deepEqual(
+    idsOf(after.hotItems),
+    idsOf(delta.hotItems),
+    'a session can keep comparing snapshots',
+  )
   assert.ok(codePoints(delta.text) <= BUDGET)
 })
 
@@ -612,7 +780,14 @@ test('a delta that drops entries says how many left, without inventing text for 
 
   const hotPath = at(env.vault, `${RELATIVE_DIR}/_meta/hot.md`)
   const text = await readFile(hotPath, 'utf8')
-  await writeFile(hotPath, text.split('\n').filter((line) => !line.includes(doomed.id)).join('\n'), 'utf8')
+  await writeFile(
+    hotPath,
+    text
+      .split('\n')
+      .filter((line) => !line.includes(doomed.id))
+      .join('\n'),
+    'utf8',
+  )
 
   const delta = await brief(env, { mode: 'delta', previousHotItems: full.hotItems })
   assert.ok(!delta.text.includes('会被移除的进行中'))
@@ -626,7 +801,10 @@ test('a delta that drops entries says how many left, without inventing text for 
 
 test('the truncation signal is truthful in full mode: a cut reports true plus the count', async (t) => {
   const env = await fixture(t, { bootstrap: false })
-  const preferences = Array.from({ length: 40 }, (_x, index) => `- 截断信号-${String(index).padStart(2, '0')}`)
+  const preferences = Array.from(
+    { length: 40 },
+    (_x, index) => `- 截断信号-${String(index).padStart(2, '0')}`,
+  )
   await writeUserMemory(env, `${preferences.join('\n')}\n`)
 
   // Over budget: only the preference lines are units, so the count is exact.
@@ -634,7 +812,11 @@ test('the truncation signal is truthful in full mode: a cut reports true plus th
   const present = preferences.filter((line) => cut.text.includes(line.slice(2)))
   assert.equal(cut.truncated, true, 'a budget cut is reported')
   assert.ok(cut.omitted > 0)
-  assert.equal(cut.omitted, preferences.length - present.length, 'the count is exactly what was left out')
+  assert.equal(
+    cut.omitted,
+    preferences.length - present.length,
+    'the count is exactly what was left out',
+  )
   assert.equal(cut.omitted, omittedOf(cut.text), 'the structured count agrees with the footer')
   assert.match(cut.text, /省略 \d+ 条完整条目/)
   assert.ok(codePoints(cut.text) <= 560)
@@ -647,7 +829,7 @@ test('the truncation signal is truthful in full mode: a cut reports true plus th
   assert.ok(preferences.every((line) => whole.text.includes(line.slice(2))))
 })
 
-test("the truncation signal is truthful in delta mode, so a snapshot is never advanced past a cut", async (t) => {
+test('the truncation signal is truthful in delta mode, so a snapshot is never advanced past a cut', async (t) => {
   const env = await fixture(t)
   await addHot(env, '进行中', `截断-基线-${'内容'.repeat(20)}`)
   const baseline = await brief(env)
@@ -672,7 +854,8 @@ test("the truncation signal is truthful in delta mode, so a snapshot is never ad
   const fits = await brief(env, { mode: 'delta', previousHotItems: baseline.hotItems })
   assert.equal(fits.truncated, false)
   assert.equal(fits.omitted, 0)
-  for (const text of changed) assert.ok(fits.text.includes(text), 'every changed item is injected when it fits')
+  for (const text of changed)
+    assert.ok(fits.text.includes(text), 'every changed item is injected when it fits')
   assert.ok(!fits.text.includes('省略'))
 
   // A delta with nothing to inject is also complete.

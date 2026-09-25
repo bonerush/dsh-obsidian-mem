@@ -88,10 +88,12 @@ function bindingFor(vaultRoot, projectId, slug) {
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t8-'))
   const dataRoot = await mkdtemp(join(tmpdir(), 'obsidian-mem-t8-data-'))
-  t.after(() => Promise.all([
-    rm(root, { recursive: true, force: true, maxRetries: 4 }),
-    rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }),
-  ]))
+  t.after(() =>
+    Promise.all([
+      rm(root, { recursive: true, force: true, maxRetries: 4 }),
+      rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }),
+    ]),
+  )
   const home = join(root, 'home')
   await mkdir(home, { recursive: true })
   const vault = join(root, 'vault')
@@ -117,7 +119,11 @@ test('safeBasename keeps the emitted file name inside the 200-byte budget (R28/R
   // the old `withSuffix` kept the whole tail and blew past the budget.
   const title = `a.${'b'.repeat(300)}`
   const stem = safeBasename(title)
-  assert.equal(Buffer.byteLength(stem, 'utf8'), 197, 'the basename budget leaves room for the .md extension')
+  assert.equal(
+    Buffer.byteLength(stem, 'utf8'),
+    197,
+    'the basename budget leaves room for the .md extension',
+  )
   assert.ok(Buffer.byteLength(`${stem}.md`, 'utf8') <= 200)
 
   const suffixed = safeBasename(title, [stem])
@@ -155,7 +161,10 @@ test('routeNote budgets the emitted vault file name to 200 UTF-8 bytes', () => {
   assert.ok(Buffer.byteLength(filename, 'utf8') <= 200, `${filename} must fit the file-name budget`)
   const decision = routeNote(binding, 'decision', '决'.repeat(300), { adrNumber: 12 })
   const decisionName = decision.slice(decision.lastIndexOf('/') + 1)
-  assert.ok(Buffer.byteLength(decisionName, 'utf8') <= 200, `${decisionName} must fit the file-name budget`)
+  assert.ok(
+    Buffer.byteLength(decisionName, 'utf8') <= 200,
+    `${decisionName} must fit the file-name budget`,
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -166,11 +175,18 @@ test('routeNote maps every memory type to its §6.2 landing place', () => {
   const binding = bindingFor('/tmp/vault', PROJECT_ID, 'alpha')
   assert.match(TODAY, /^\d{4}-\d{2}-\d{2}$/)
   assert.equal(routeNote(binding, 'doc', '设计稿'), `${DOCS}/设计稿.md`)
-  assert.equal(routeNote(binding, 'decision', '调度器', { adrNumber: 7 }), `${DECISIONS}/ADR-7-调度器.md`)
+  assert.equal(
+    routeNote(binding, 'decision', '调度器', { adrNumber: 7 }),
+    `${DECISIONS}/ADR-7-调度器.md`,
+  )
   assert.equal(routeNote(binding, 'decision', '调度器'), `${DECISIONS}/ADR-1-调度器.md`)
   assert.equal(routeNote(binding, 'gotcha', '缓存不失效'), `${PROJECT}/Pitfalls/缓存不失效.md`)
   assert.equal(routeNote(binding, 'convention', '只用 ESM'), `${CONVENTIONS}/只用 ESM.md`)
-  assert.equal(routeNote(binding, 'invariant', '只用 ESM'), `${CONVENTIONS}/只用 ESM.md`, 'invariant is the input alias')
+  assert.equal(
+    routeNote(binding, 'invariant', '只用 ESM'),
+    `${CONVENTIONS}/只用 ESM.md`,
+    'invariant is the input alias',
+  )
   assert.equal(routeNote(binding, 'glossary', '术语'), `${DOCS}/glossary.md`)
   assert.equal(routeNote(binding, 'session-log', 'x', { today: TODAY }), `${LOGS}/${TODAY}.md`)
   assert.equal(routeNote(binding, 'hub', 'x'), `${PROJECT}/index.md`)
@@ -197,7 +213,11 @@ test('routeNote maps every memory type to its §6.2 landing place', () => {
 
 test('writeMemory routes a doc into Docs and registers it in the MOC generated block', async (t) => {
   const { vault, binding, deps } = await fixture(t)
-  const result = await writeMemory(binding, { type: 'doc', title: '写入协议', body: '正文一。' }, deps)
+  const result = await writeMemory(
+    binding,
+    { type: 'doc', title: '写入协议', body: '正文一。' },
+    deps,
+  )
 
   assert.match(result.id, /^doc-[0-9a-f-]{36}$/)
   assert.equal(result.path, `${DOCS}/写入协议.md`)
@@ -231,25 +251,51 @@ test('writeMemory routes a doc into Docs and registers it in the MOC generated b
 
 test('a decision takes the next exclusive ADR number, which is never its identity', async (t) => {
   const { vault, binding, deps } = await fixture(t)
-  const first = await writeMemory(binding, { type: 'decision', title: '调度器', body: '采用 A' }, deps)
+  const first = await writeMemory(
+    binding,
+    { type: 'decision', title: '调度器', body: '采用 A' },
+    deps,
+  )
   assert.equal(first.path, `${DECISIONS}/ADR-1-调度器.md`)
   assert.match(first.id, /^dec-[0-9a-f-]{36}$/)
   assert.equal(parseNote(await readFile(at(vault, first.path))).data.id, first.id)
 
-  const second = await writeMemory(binding, { type: 'decision', title: '缓存', body: '两级缓存' }, deps)
+  const second = await writeMemory(
+    binding,
+    { type: 'decision', title: '缓存', body: '两级缓存' },
+    deps,
+  )
   assert.equal(second.path, `${DECISIONS}/ADR-2-缓存.md`)
 
   // a hand-written ADR with a higher number wins the next allocation
-  await writeFile(at(vault, `${DECISIONS}/ADR-9-手写决策.md`), '---\ntitle: "手写"\n---\n\n人写的。\n')
-  const third = await writeMemory(binding, { type: 'decision', title: '日志', body: '结构化' }, deps)
+  await writeFile(
+    at(vault, `${DECISIONS}/ADR-9-手写决策.md`),
+    '---\ntitle: "手写"\n---\n\n人写的。\n',
+  )
+  const third = await writeMemory(
+    binding,
+    { type: 'decision', title: '日志', body: '结构化' },
+    deps,
+  )
   assert.equal(third.path, `${DECISIONS}/ADR-10-日志.md`)
-  assert.equal(parseNote(await readFile(at(vault, `${DECISIONS}/ADR-9-手写决策.md`))).data.title, '手写')
+  assert.equal(
+    parseNote(await readFile(at(vault, `${DECISIONS}/ADR-9-手写决策.md`))).data.title,
+    '手写',
+  )
 })
 
 test('the same title on the same day yields two distinct ids and two files', async (t) => {
   const { vault, binding, deps } = await fixture(t)
-  const first = await writeMemory(binding, { type: 'decision', title: '调度器', body: '采用 A' }, deps)
-  const second = await writeMemory(binding, { type: 'decision', title: '调度器', body: '采用 B' }, deps)
+  const first = await writeMemory(
+    binding,
+    { type: 'decision', title: '调度器', body: '采用 A' },
+    deps,
+  )
+  const second = await writeMemory(
+    binding,
+    { type: 'decision', title: '调度器', body: '采用 B' },
+    deps,
+  )
 
   assert.notEqual(first.id, second.id)
   assert.notEqual(first.path, second.path)
@@ -262,14 +308,29 @@ test('the same title on the same day yields two distinct ids and two files', asy
 
 test('a convention is one file per entry', async (t) => {
   const { vault, binding, deps } = await fixture(t)
-  const esm = await writeMemory(binding, { type: 'convention', title: '只用 ESM', body: 'no require' }, deps)
-  const dates = await writeMemory(binding, { type: 'convention', title: '日期一律本地日期', body: 'no toISOString' }, deps)
-  const alias = await writeMemory(binding, { type: 'invariant', title: '只用 ESM', body: 'no require' }, deps)
+  const esm = await writeMemory(
+    binding,
+    { type: 'convention', title: '只用 ESM', body: 'no require' },
+    deps,
+  )
+  const dates = await writeMemory(
+    binding,
+    { type: 'convention', title: '日期一律本地日期', body: 'no toISOString' },
+    deps,
+  )
+  const alias = await writeMemory(
+    binding,
+    { type: 'invariant', title: '只用 ESM', body: 'no require' },
+    deps,
+  )
 
   assert.equal(esm.path, `${CONVENTIONS}/只用 ESM.md`)
   assert.equal(dates.path, `${CONVENTIONS}/日期一律本地日期.md`)
   assert.notEqual(alias.path, esm.path, 'a second entry with the same title is a second file')
-  assert.deepEqual((await listMarkdown(at(vault, CONVENTIONS))).filter((name) => name !== 'index.md').length, 3)
+  assert.deepEqual(
+    (await listMarkdown(at(vault, CONVENTIONS))).filter((name) => name !== 'index.md').length,
+    3,
+  )
   assert.equal(parseNote(await readFile(at(vault, esm.path))).data.type, 'convention')
   const moc = await read(vault, `${CONVENTIONS}/index.md`)
   assert.equal(moc.includes(`[[${noExt(esm.path)}|只用 ESM]]`), true)
@@ -310,37 +371,52 @@ test('createMemoryWithId creates exclusively and refuses an existing id', async 
   const uuid = randomUUID()
   const preassignedId = `got-${uuid}`
 
-  const created = await createMemoryWithId(binding, {
-    preassignedId,
-    idempotencyKey: 'distill:sess-1:0',
-    type: 'gotcha',
-    title: '缓存不失效',
-    body: '症状：旧值。',
-  }, deps)
+  const created = await createMemoryWithId(
+    binding,
+    {
+      preassignedId,
+      idempotencyKey: 'distill:sess-1:0',
+      type: 'gotcha',
+      title: '缓存不失效',
+      body: '症状：旧值。',
+    },
+    deps,
+  )
   assert.equal(created.id, preassignedId)
   assert.equal(created.path, `${PROJECT}/Pitfalls/缓存不失效.md`)
   assert.equal((await readNoteById(binding, preassignedId, deps)).frontmatter.id, preassignedId)
 
   // the same persisted id + key replays the original receipt and writes nothing
-  const replay = await createMemoryWithId(binding, {
-    preassignedId,
-    idempotencyKey: 'distill:sess-1:0',
-    type: 'gotcha',
-    title: '缓存不失效',
-    body: '症状：旧值。',
-  }, deps)
+  const replay = await createMemoryWithId(
+    binding,
+    {
+      preassignedId,
+      idempotencyKey: 'distill:sess-1:0',
+      type: 'gotcha',
+      title: '缓存不失效',
+      body: '症状：旧值。',
+    },
+    deps,
+  )
   assert.equal(replay.receipt.txId, created.receipt.txId)
   assert.equal(replay.path, created.path)
   assert.equal((await listMarkdown(at(vault, `${PROJECT}/Pitfalls`))).length, 2)
 
   // a *new* key with an already-used id is a refusal, never an update
-  await assert.rejects(createMemoryWithId(binding, {
-    preassignedId,
-    idempotencyKey: 'distill:sess-1:1',
-    type: 'gotcha',
-    title: '缓存不失效',
-    body: '想覆盖。',
-  }, deps), failsWith('id-taken'))
+  await assert.rejects(
+    createMemoryWithId(
+      binding,
+      {
+        preassignedId,
+        idempotencyKey: 'distill:sess-1:1',
+        type: 'gotcha',
+        title: '缓存不失效',
+        body: '想覆盖。',
+      },
+      deps,
+    ),
+    failsWith('id-taken'),
+  )
   assert.equal((await listMarkdown(at(vault, `${PROJECT}/Pitfalls`))).length, 2)
   assert.equal((await read(vault, created.path)).includes('想覆盖'), false)
 })
@@ -376,7 +452,11 @@ test('two concurrent writes with one title still land two exclusive ADR numbers'
   assert.notEqual(first.id, second.id)
   assert.notEqual(first.path, second.path)
   const numbers = [first.path, second.path].map((path) => /ADR-(\d+)-/.exec(path)[1]).sort()
-  assert.deepEqual(numbers, ['1', '2'], 'the loser of the exclusive create re-allocates instead of overwriting')
+  assert.deepEqual(
+    numbers,
+    ['1', '2'],
+    'the loser of the exclusive create re-allocates instead of overwriting',
+  )
   const names = (await listMarkdown(at(vault, DECISIONS))).filter((name) => name !== 'index.md')
   assert.deepEqual(names.sort(), ['ADR-1-调度器.md', 'ADR-2-调度器.md'])
   for (const result of [first, second]) {
@@ -386,18 +466,22 @@ test('two concurrent writes with one title still land two exclusive ADR numbers'
 
 test('the §6.4 optional properties round-trip and a no-op update writes no bytes', async (t) => {
   const { vault, binding, deps } = await fixture(t)
-  const created = await writeMemory(binding, {
-    type: 'gotcha',
-    title: '缓存不失效',
-    body: '症状 / 根因 / 修复 / 证据',
-    status: 'accepted',
-    confidence: 0.8,
-    assertion: 'observed',
-    review_after: '2027-03-23',
-    source: 'git',
-    session: 'sess-1',
-    tags: ['dsh-mem/gotcha', 'project/alpha', 'topic/cache'],
-  }, deps)
+  const created = await writeMemory(
+    binding,
+    {
+      type: 'gotcha',
+      title: '缓存不失效',
+      body: '症状 / 根因 / 修复 / 证据',
+      status: 'accepted',
+      confidence: 0.8,
+      assertion: 'observed',
+      review_after: '2027-03-23',
+      source: 'git',
+      session: 'sess-1',
+      tags: ['dsh-mem/gotcha', 'project/alpha', 'topic/cache'],
+    },
+    deps,
+  )
   const note = await readNoteById(binding, created.id, deps)
   assert.equal(note.frontmatter.confidence, 0.8)
   assert.equal(note.frontmatter.assertion, 'observed')
@@ -405,10 +489,7 @@ test('the §6.4 optional properties round-trip and a no-op update writes no byte
   assert.equal(note.frontmatter.source, 'git')
   assert.equal(note.frontmatter.session, 'sess-1')
   assert.deepEqual(note.frontmatter.tags, ['dsh-mem/gotcha', 'project/alpha', 'topic/cache'])
-  await assert.rejects(
-    writeMemory(binding, { id: created.id, confidence: 1.5 }, deps),
-    RangeError,
-  )
+  await assert.rejects(writeMemory(binding, { id: created.id, confidence: 1.5 }, deps), RangeError)
 
   // an update that changes nothing is recorded as a no-op on the note: the same
   // bytes, the same mtime, and before/after hashes that agree (R23)
@@ -426,15 +507,19 @@ test('the §6.4 optional properties round-trip and a no-op update writes no byte
 
 test('a low-confidence candidate lands in Inbox with its real type preserved', async (t) => {
   const { vault, binding, deps } = await fixture(t)
-  const candidate = await writeMemory(binding, {
-    type: 'decision',
-    title: '也许该换调度器',
-    body: '低置信候选，待人工分类。',
-    status: 'provisional',
-    confidence: 0.4,
-    assertion: 'inferred',
-    inbox: true,
-  }, deps)
+  const candidate = await writeMemory(
+    binding,
+    {
+      type: 'decision',
+      title: '也许该换调度器',
+      body: '低置信候选，待人工分类。',
+      status: 'provisional',
+      confidence: 0.4,
+      assertion: 'inferred',
+      inbox: true,
+    },
+    deps,
+  )
 
   assert.equal(candidate.path, `${INBOX}/也许该换调度器.md`)
   const note = parseNote(await readFile(at(vault, candidate.path)))
@@ -454,11 +539,19 @@ test('a low-confidence candidate lands in Inbox with its real type preserved', a
   assert.equal(await exists(at(vault, `${DECISIONS}/ADR-1-也许该换调度器.md`)), false)
 
   // parking a candidate burns no ADR number and creates no ADR file
-  const real = await writeMemory(binding, { type: 'decision', title: '调度器', body: '采用 A' }, deps)
+  const real = await writeMemory(
+    binding,
+    { type: 'decision', title: '调度器', body: '采用 A' },
+    deps,
+  )
   assert.equal(real.path, `${DECISIONS}/ADR-1-调度器.md`)
 
   // a gotcha candidate keeps its own id prefix and type in the same way
-  const gotcha = await writeMemory(binding, { type: 'gotcha', title: '缓存可疑', body: '待确认', inbox: true }, deps)
+  const gotcha = await writeMemory(
+    binding,
+    { type: 'gotcha', title: '缓存可疑', body: '待确认', inbox: true },
+    deps,
+  )
   assert.equal(gotcha.path, `${INBOX}/缓存可疑.md`)
   assert.match(gotcha.id, /^got-[0-9a-f-]{36}$/)
   assert.equal(parseNote(await readFile(at(vault, gotcha.path))).data.type, 'gotcha')
@@ -503,7 +596,10 @@ test('an update refuses a note that changed between the scan and the transaction
   }
   const edited = `${await read(vault, note.path)}外部改动。\n`
 
-  await assert.rejects(writeMemory(binding, { id: note.id, body: 'v2' }, racing), failsWith('hash-mismatch'))
+  await assert.rejects(
+    writeMemory(binding, { id: note.id, body: 'v2' }, racing),
+    failsWith('hash-mismatch'),
+  )
   assert.equal(await read(vault, note.path), edited, 'the newer revision is kept, not overwritten')
   assert.equal(edited.includes('外部改动。'), true)
 
@@ -520,7 +616,11 @@ test('supersede writes the new note and updates the old one in both directions',
   const { vault, binding, deps } = await fixture(t)
   const a = await writeMemory(binding, { type: 'decision', title: '调度器', body: '采用 A' }, deps)
   const oldBefore = await read(vault, a.path)
-  const b = await writeMemory(binding, { type: 'decision', title: '调度器', body: '采用 B', supersedes: a.id }, deps)
+  const b = await writeMemory(
+    binding,
+    { type: 'decision', title: '调度器', body: '采用 B', supersedes: a.id },
+    deps,
+  )
 
   assert.notEqual(a.id, b.id)
   assert.notEqual(a.path, b.path)
@@ -547,12 +647,16 @@ test('supersede writes the new note and updates the old one in both directions',
 test('contested keeps both notes and links them without superseding either', async (t) => {
   const { binding, deps } = await fixture(t)
   const a = await writeMemory(binding, { type: 'decision', title: '调度器', body: '采用 A' }, deps)
-  const b = await writeMemory(binding, {
-    type: 'decision',
-    title: '调度器（反方）',
-    body: '采用 B',
-    contestedWith: a.id,
-  }, deps)
+  const b = await writeMemory(
+    binding,
+    {
+      type: 'decision',
+      title: '调度器（反方）',
+      body: '采用 B',
+      contestedWith: a.id,
+    },
+    deps,
+  )
 
   const oldNote = await readNoteById(binding, a.id, deps)
   const newNote = await readNoteById(binding, b.id, deps)
@@ -570,13 +674,25 @@ test('a trust:owner note and an unowned note are never modified', async (t) => {
   const { vault, binding, deps } = await fixture(t)
   const ownedId = `doc-${randomUUID()}`
   const unownedId = `doc-${randomUUID()}`
-  await writeFile(at(vault, `${DOCS}/人写的.md`), `---\nid: "${ownedId}"\ntype: "doc"\ntitle: "人写的"\ntrust: "owner"\n---\n\n人写的内容\n`)
-  await writeFile(at(vault, `${DOCS}/无主.md`), `---\nid: "${unownedId}"\ntype: "doc"\ntitle: "无主"\n---\n\n没有插件收据的内容\n`)
+  await writeFile(
+    at(vault, `${DOCS}/人写的.md`),
+    `---\nid: "${ownedId}"\ntype: "doc"\ntitle: "人写的"\ntrust: "owner"\n---\n\n人写的内容\n`,
+  )
+  await writeFile(
+    at(vault, `${DOCS}/无主.md`),
+    `---\nid: "${unownedId}"\ntype: "doc"\ntitle: "无主"\n---\n\n没有插件收据的内容\n`,
+  )
   const ownedBefore = await read(vault, `${DOCS}/人写的.md`)
   const unownedBefore = await read(vault, `${DOCS}/无主.md`)
 
-  await assert.rejects(writeMemory(binding, { id: ownedId, body: '改' }, deps), failsWith('human-owned'))
-  await assert.rejects(writeMemory(binding, { id: unownedId, body: '改' }, deps), failsWith('ownership-unproven'))
+  await assert.rejects(
+    writeMemory(binding, { id: ownedId, body: '改' }, deps),
+    failsWith('human-owned'),
+  )
+  await assert.rejects(
+    writeMemory(binding, { id: unownedId, body: '改' }, deps),
+    failsWith('ownership-unproven'),
+  )
   assert.equal(await read(vault, `${DOCS}/人写的.md`), ownedBefore)
   assert.equal(await read(vault, `${DOCS}/无主.md`), unownedBefore)
 })
@@ -591,7 +707,11 @@ test('the MOC generated block is the only thing a write touches', async (t) => {
   const withTail = `${await read(vault, mocPath)}\n## 人工章节\n\n人工内容，插件不得改动。\n`
   await writeFile(at(vault, mocPath), withTail)
 
-  const result = await writeMemory(binding, { type: 'doc', title: '写入协议', body: '正文一。' }, deps)
+  const result = await writeMemory(
+    binding,
+    { type: 'doc', title: '写入协议', body: '正文一。' },
+    deps,
+  )
   const after = await read(vault, mocPath)
   const before = splitGenerated(withTail)
   const written = splitGenerated(after)
@@ -619,8 +739,16 @@ test('a human-edited MOC generated block stops the write with a conflict', async
     failsWith('generated-block-conflict'),
   )
 
-  assert.equal(await read(vault, mocPath), tampered, 'the edited block is left exactly as the human wrote it')
-  assert.equal(await exists(at(vault, `${DOCS}/第二篇.md`)), false, 'the refused transaction wrote nothing')
+  assert.equal(
+    await read(vault, mocPath),
+    tampered,
+    'the edited block is left exactly as the human wrote it',
+  )
+  assert.equal(
+    await exists(at(vault, `${DOCS}/第二篇.md`)),
+    false,
+    'the refused transaction wrote nothing',
+  )
   assert.equal(await read(vault, '_meta/user.md'), USER_MD)
 })
 
@@ -637,7 +765,11 @@ test('updateHot appends one entry to the requested section and logs a receipt', 
   const { vault, binding, deps } = await fixture(t)
   const doc = await writeMemory(binding, { type: 'doc', title: '写入协议', body: '正文。' }, deps)
 
-  const receipt = await updateHot(binding, { section: '进行中', text: '接通热层写入', sourceId: doc.id }, deps)
+  const receipt = await updateHot(
+    binding,
+    { section: '进行中', text: '接通热层写入', sourceId: doc.id },
+    deps,
+  )
   assert.equal(receipt.action, 'hot')
   assert.equal(receipt.paths[0], HOT)
 
@@ -662,7 +794,10 @@ test('the hot layer archives only complete 已完成 entries, and leaves fragmen
   hot = hot.replace(/\n+$/, '')
   assert.equal(hot.endsWith('\n'), false, 'the last line is a real fragment')
   await writeFile(at(vault, HOT), hot)
-  assert.ok(codePoints(hot) > HOT_CAPACITY_CHARS * HOT_ARCHIVE_RATIO, 'the write must trigger archival')
+  assert.ok(
+    codePoints(hot) > HOT_CAPACITY_CHARS * HOT_ARCHIVE_RATIO,
+    'the write must trigger archival',
+  )
 
   const receipt = await updateHot(binding, { section: '进行中', text: '新进展' }, deps)
   const after = await read(vault, HOT)
@@ -670,7 +805,11 @@ test('the hot layer archives only complete 已完成 entries, and leaves fragmen
   assert.ok(codePoints(after) <= HOT_CAPACITY_CHARS, 'archival keeps the file inside its hard cap')
   assert.equal(after.includes('已完成的事项'), false, 'the complete entry was moved out')
   assert.equal(after.includes('已归档'), true, 'a pointer replaced it in place')
-  assert.equal(after.includes(handwritten), true, 'a hand-written entry without a plugin marker is never archived')
+  assert.equal(
+    after.includes(handwritten),
+    true,
+    'a hand-written entry without a plugin marker is never archived',
+  )
   assert.equal(after.includes('被截断的条目'), true, 'an unterminated fragment is never archived')
   assert.equal(after.includes('新进展'), true)
 
@@ -720,12 +859,16 @@ test('updateHot replays a repeated idempotencyKey without a second entry', async
 
 test('appendLog creates the day log and one block per session and section', async (t) => {
   const { vault, binding, deps } = await fixture(t)
-  const receipt = await appendLog(binding, {
-    session: 'sess-1',
-    section: '决定',
-    text: '采用可插拔调度器。',
-    idempotencyKey: 'log-1',
-  }, deps)
+  const receipt = await appendLog(
+    binding,
+    {
+      session: 'sess-1',
+      section: '决定',
+      text: '采用可插拔调度器。',
+      idempotencyKey: 'log-1',
+    },
+    deps,
+  )
 
   const logPath = `${LOGS}/${TODAY}.md`
   assert.equal(receipt.action, 'log')
@@ -740,18 +883,32 @@ test('appendLog creates the day log and one block per session and section', asyn
   assert.equal(log.includes('采用可插拔调度器。'), true)
   assert.equal(log.includes('<!-- mem-log:sess-1:决定 -->'), true)
 
-  const second = await appendLog(binding, { session: 'sess-1', section: '下一步', text: '补测试。' }, deps)
+  const second = await appendLog(
+    binding,
+    { session: 'sess-1', section: '下一步', text: '补测试。' },
+    deps,
+  )
   assert.notEqual(second.txId, receipt.txId)
   const grown = await read(vault, logPath)
   assert.equal(grown.includes('## sess-1 · 下一步'), true)
   assert.equal(grown.includes('补测试。'), true)
-  assert.equal(grown.includes('采用可插拔调度器。'), true, 'appending never rewrites the earlier blocks')
+  assert.equal(
+    grown.includes('采用可插拔调度器。'),
+    true,
+    'appending never rewrites the earlier blocks',
+  )
 })
 
 test('appendLog is idempotent per session/seq and per idempotencyKey', async (t) => {
   const { vault, binding, deps } = await fixture(t)
   const logPath = `${LOGS}/${TODAY}.md`
-  const request = { session: 'sess-1', section: '决定', seq: 7, text: '采用 A。', idempotencyKey: 'log-7' }
+  const request = {
+    session: 'sess-1',
+    section: '决定',
+    seq: 7,
+    text: '采用 A。',
+    idempotencyKey: 'log-7',
+  }
   const first = await appendLog(binding, request, deps)
   const before = await read(vault, logPath)
 
@@ -760,7 +917,11 @@ test('appendLog is idempotent per session/seq and per idempotencyKey', async (t)
   assert.equal(await read(vault, logPath), before)
 
   // same session/seq, a different key: the content-level guard still holds
-  const guarded = await appendLog(binding, { session: 'sess-1', section: '决定', seq: 7, text: '采用 A。' }, deps)
+  const guarded = await appendLog(
+    binding,
+    { session: 'sess-1', section: '决定', seq: 7, text: '采用 A。' },
+    deps,
+  )
   assert.notEqual(guarded.txId, first.txId)
   const after = await read(vault, logPath)
   assert.equal(after, before, 'a different key must not duplicate the same session/seq block')
@@ -788,7 +949,9 @@ test('every write leaves _meta/user.md and the receipt log append-only', async (
   assert.equal(log.includes('— log'), true)
   assert.equal(log.includes('— hot'), true)
   // nothing in the vault holds a transaction temp or a lock
-  const stray = (await readdir(at(vault, DOCS))).filter((name) => name.startsWith('.') || name.endsWith('.tmp'))
+  const stray = (await readdir(at(vault, DOCS))).filter(
+    (name) => name.startsWith('.') || name.endsWith('.tmp'),
+  )
   assert.deepEqual(stray, [])
 })
 
@@ -802,7 +965,11 @@ const GENERATED_END = '<!-- obsidian-mem:generated end -->'
 /** Split a note around its generated block, by the bytes themselves. */
 function generatedBlock(text) {
   const block = splitGenerated(text)
-  assert.equal(sha256(block.body), block.declaredHash, 'the declared hash must match the block body')
+  assert.equal(
+    sha256(block.body),
+    block.declaredHash,
+    'the declared hash must match the block body',
+  )
   return block
 }
 
