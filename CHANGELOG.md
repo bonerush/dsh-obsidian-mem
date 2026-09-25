@@ -13,6 +13,34 @@ is a repository, not a release.
 
 ### Added
 
+- **Twelve source files are type-checked, and the set can only grow.** `npm run
+  types` runs `tsc --noEmit` over an explicit `files` list with
+  `checkJs: false`, so each file opts in with a `// @ts-check` marker. The
+  mechanism is not a style preference: a checked root file pulls its imports into
+  the program, and with `checkJs: true` TypeScript reports on those imports too.
+  Measured on a two-file fixture — `checkJs: true` + `files: ['root.js']` reports
+  the imported `child.js`; `checkJs: false` with the marker only in the root does
+  not; move the marker and the reporting follows it. So `files` is a root list, not
+  a boundary, and the marker is the switch.
+  The initial twelve were chosen by measuring each candidate alone: nine report
+  **zero** diagnostics (`lib/git.js`, `lib/index.js`, `lib/naming.js`,
+  `lib/paths.js`, `lib/pointer.js`, `lib/receipts.js`, `lib/registry.js`,
+  `lib/routing.js`, `scripts/verify-pack.mjs`) and three report one each, now
+  fixed: a `null`-narrowed memo in `codex/server.mjs` whose declared type was
+  restored (`TS18047`), an `options = {}` default that contradicted a required
+  JSDoc field in `lib/search.js` (`TS2741`), and a signal name typed as `string`
+  where `child.kill` wants `Signals` in `scripts/run-tests.mjs` (`TS2345`).
+  `skipLibCheck: true` is part of the configuration and is load-bearing: without
+  it those same files report `TS2307` and `TS6200` from inside
+  `@deepseek-ai/dsh-llm`'s own declarations, which is a conflict between
+  third-party types rather than anything in this repository.
+  `test/repo-hygiene.test.js` asserts the marked set and the `files` list are equal
+  in both directions — a marker outside the program would be silently unchecked —
+  and that no shebang has been pushed off line 1, which is what a marker written
+  above one does. Both were proven able to fail: dropping a marker, marking an
+  unlisted file, and moving a marker above a shebang each turn exactly one
+  assertion red.
+
 - **The memory layer now runs under Codex CLI, through an MCP server that reuses
   `lib/` instead of copying it.** `codex/server.mjs` speaks MCP on stdio and
   dispatches the same six operations the DSH tools expose —

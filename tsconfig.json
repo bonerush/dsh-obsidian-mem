@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "strict": false,
+    "target": "ESNext",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "skipLibCheck": true
+  },
+  "files": [
+    "lib/git.js",
+    "lib/index.js",
+    "lib/naming.js",
+    "lib/paths.js",
+    "lib/pointer.js",
+    "lib/receipts.js",
+    "lib/registry.js",
+    "lib/routing.js",
+    "lib/search.js",
+    "scripts/run-tests.mjs",
+    "scripts/verify-pack.mjs",
+    "codex/server.mjs"
+  ]
+}

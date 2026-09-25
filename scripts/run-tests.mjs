@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 // Run the suite with `DSH_HOME` pointed at a throwaway directory (R42).
 //
 // The plugin derives its entire private data root — locks, receipts, the
@@ -106,7 +107,13 @@ child.on('exit', finish)
 // tears down its per-file children and exits **1**, so a forwarded signal usually
 // surfaces as exit 1 rather than the 128+n `finish` would compute. Non-zero either
 // way, which is the part that matters; the line on stderr says a signal caused it.
-for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+/**
+ * Forwarded verbatim, so the names must be ones `child.kill` accepts.
+ *
+ * @type {NodeJS.Signals[]}
+ */
+const FORWARDED_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP']
+for (const signal of FORWARDED_SIGNALS) {
   process.on(signal, () => {
     process.stderr.write(`run-tests: received ${signal}; forwarding it to the suite\n`)
     // The 'stdio: inherit' child handle keeps this process alive while the child

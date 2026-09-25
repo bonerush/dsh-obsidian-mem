@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 // Codex (MCP) adapter for the memory layer this repository ships as a DSH plugin.
 //
 // Why this file exists: DSH and Codex have incompatible extension models. The
@@ -174,6 +175,15 @@ export async function serve(io = {}) {
   const open = io.open ?? openMemory
   const send = (message) => output.write(`${JSON.stringify(message)}\n`)
 
+  /**
+   * The opened layer, or `null` until the first tool call opens it. The declared
+   * type is load-bearing, not decoration: the only assignment lives inside
+   * `openOnce`, so without it TypeScript's control-flow analysis types this
+   * binding as `null` at the `close` call below and rejects the optional chain
+   * (`TS18047`). Measured both ways on the pinned compiler.
+   *
+   * @type {{ services: object, config: object, dataRoot: string, cwd: string }|null}
+   */
   let memory = null
   let workspace = process.env.OBSIDIAN_MEM_CWD ?? null
   let roots = null

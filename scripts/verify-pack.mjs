@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 // Package-manifest verifier for dsh-obsidian-mem (Task 19; R7, R34, R8).
 //
 // `npm run prepack` runs the test suite and then this script, so nothing here
