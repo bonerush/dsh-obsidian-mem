@@ -276,6 +276,37 @@ is a repository, not a release.
   a complete set. `AGENTS.md` rule 6 keeps the requirement and names this file as
   the list's home.
 
+### Remaining from the engineering-harness plan
+
+Stated here rather than left to be discovered, because rule 6 puts the untested
+and unfinished list in this file.
+
+- **`lib/tools.js` is still one 2,006-line file.** The plan's last structural task —
+  splitting it into `tool-schema.js`, `tool-registry.js` and `services.js` behind
+  the four re-exports `lib/tools.js` already publishes — is not done. Its budget
+  was raised from 1,950 to 2,050 to land the diagnostics schema, and that raise is
+  recorded in `test/architecture.test.js` as temporary for exactly this reason.
+  Nothing else here blocks the change: the two packaging guards that must move
+  with it (`scripts/verify-pack.mjs`'s registration scan and `test/pack.test.js`'s
+  synthetic fixture) are named in the plan.
+- **Five of the eight diagnostics categories have no call sites.** `brief`,
+  `bind` and `skill` emit today; `capture`, `distill`, `index`, `job` and
+  `transaction` are accepted by the ring and by the closed output schema but
+  nothing writes them yet, so a window will often be sparse. The READMEs say so.
+  Adding them is additive — no schema or contract change is needed.
+- **CI has never run.** The workflow is committed and its shape is tested locally,
+  but nothing has been pushed, so the `22.22.2` leg of the matrix is unmeasured —
+  and that is the leg that decides whether `engines.node` stays honest. Until
+  GitHub reports it green, the floor is measured on one machine only.
+- **The type ratchet covers twelve files of twenty-eight candidates.** The full
+  per-file counts are in the design at
+  `docs/superpowers/specs/2026-09-25-engineering-harness-design.md` §7.3;
+  `lib/pending.js` alone reports 78 and is why the first tier stopped where it did.
+- **The smoke suite was not re-run.** It needs a model credential and an isolated
+  profile, so nothing in this release has exercised a real DSH session end to end.
+  The repository checks passing says nothing about that, and this entry is the
+  only claim either way.
+
 ### Fixed
 
 - **The callback JSDoc in `lib/hooks.js` and `lib/transaction.js` now parses
