@@ -1,4 +1,4 @@
-// The Codex SessionStart hook: the one automatic thing the Codex side can do.
+// Codex hook adapters for session briefs and prompt-specific memory maps.
 //
 // These cases drive the real script as a process, with the payload shape measured
 // from codex-cli 0.146.0 and a throwaway home, data root, vault and repository —
@@ -20,6 +20,7 @@ import { openMemory } from '../codex/server.mjs'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const HOOK = join(REPO, 'codex', 'session-start.mjs')
+const PROMPT_HOOK = join(REPO, 'codex', 'prompt-submit.mjs')
 const PLUGIN = join(REPO, 'codex', 'marketplace', 'plugins', 'dsh-obsidian-mem')
 
 /**
@@ -64,10 +65,10 @@ function payload(cwd, overrides = {}) {
  * @param {string} input - the raw stdin.
  * @returns {{status: number|null, stdout: string, stderr: string, answer: object|null, lines: string[]}} the run.
  */
-function hook(env, input) {
+function hook(env, input, script = HOOK) {
   const child = { ...process.env, ...env }
   delete child.OBSIDIAN_MEM_CWD
-  const run = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: child })
+  const run = spawnSync(process.execPath, [script], { input, encoding: 'utf8', env: child })
   const lines = run.stdout.split('\n').filter((line) => line !== '')
   return {
     status: run.status,
@@ -160,6 +161,56 @@ test('a bound repository gets the same brief DSH injects, and nothing else on st
   assert.equal(injected.trim(), injected)
 })
 
+test('UserPromptSubmit offers a matching note once per session and stores no prompt text', async () => {
+  const space = world()
+  const receipt = await bind(space)
+  const env = { HOME: space.home, DSH_HOME: space.dsh, OBSIDIAN_MEM_VAULT: space.vault }
+  const submitted = JSON.stringify({
+    ...payload(space.repo),
+    hook_event_name: 'UserPromptSubmit',
+    turn_id: 'turn-1',
+    prompt: '钩子注入的决定',
+  })
+  const first = hook(env, submitted, PROMPT_HOOK)
+  assert.equal(first.status, 0)
+  assert.equal(first.lines.length, 1)
+  assert.equal(first.answer.hookSpecificOutput.hookEventName, 'UserPromptSubmit')
+  assert.match(first.answer.hookSpecificOutput.additionalContext, /mem_read/)
+  assert.ok(first.answer.hookSpecificOutput.additionalContext.includes(receipt.path))
+  assert.doesNotMatch(first.answer.hookSpecificOutput.additionalContext, /Codex 侧用/)
+
+  const repeat = hook(env, submitted, PROMPT_HOOK)
+  assert.equal(repeat.status, 0)
+  assert.deepEqual(repeat.answer, { continue: true })
+  const stateDir = join(space.dsh, 'data', 'obsidian-mem', 'prompt-recall')
+  const files = readdirSync(stateDir)
+  assert.equal(files.length, 1)
+  const saved = JSON.parse(readFileSync(join(stateDir, files[0]), 'utf8'))
+  assert.deepEqual(Object.keys(saved), ['paths'])
+  assert.deepEqual(saved.paths, [receipt.path])
+  assert.doesNotMatch(JSON.stringify(saved), /Codex 侧用/)
+})
+
+test('UserPromptSubmit is quiet for an unbound directory or malformed input', () => {
+  const space = world()
+  const env = { HOME: space.home, DSH_HOME: space.dsh, OBSIDIAN_MEM_VAULT: space.vault }
+  const unbound = hook(
+    env,
+    JSON.stringify({
+      ...payload(space.repo),
+      hook_event_name: 'UserPromptSubmit',
+      prompt: 'FTS5 中文索引',
+    }),
+    PROMPT_HOOK,
+  )
+  assert.equal(unbound.status, 0)
+  assert.deepEqual(unbound.answer, { continue: true })
+  assert.equal(existsSync(space.dsh), false)
+  const malformed = hook(env, 'not JSON', PROMPT_HOOK)
+  assert.equal(malformed.status, 0)
+  assert.deepEqual(malformed.answer, { continue: true })
+})
+
 test('a bound project is skipped on resume, and an unbound directory always', async () => {
   const space = world()
   const env = { HOME: space.home, DSH_HOME: space.dsh, OBSIDIAN_MEM_VAULT: space.vault }
@@ -223,6 +274,7 @@ test('the plugin ships its hook at the path Codex discovers, and not in the mani
   assert.equal(handler.type, 'command')
   assert.match(handler.command, /session-start\.mjs$/)
   assert.equal(handler.timeout, 15)
+  assert.match(config.hooks.UserPromptSubmit[0].hooks[0].command, /prompt-submit\.mjs$/)
   assert.equal(typeof handler.statusMessage, 'string')
   // An absolute path, because Codex copies the plugin into
   // ~/.codex/plugins/cache/… and a relative one would resolve inside that copy.

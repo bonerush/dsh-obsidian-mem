@@ -1,8 +1,6 @@
 #!/usr/bin/env node
-// Prepare the local Codex marketplace that ships the three portable halves of this
-// plugin: the skill (`skills/obsidian-mem/SKILL.md`, Agent Skills format), the MCP
-// server (`codex/server.mjs`, which reuses `lib/`), and the SessionStart hook
-// (`codex/session-start.mjs`, which injects the same brief DSH's pre-step injects).
+// Prepare the local Codex marketplace: skill, MCP server, SessionStart brief,
+// and UserPromptSubmit prompt recall. Both hooks reuse the shared memory layer.
 //
 // Why a generator: Codex *materializes* a plugin — `codex plugin add` copies the
 // plugin directory into `~/.codex/plugins/cache/<marketplace>/<plugin>/`, so a
@@ -52,7 +50,7 @@ export function mcpConfig() {
 }
 
 /**
- * The `SessionStart` hook Codex reads out of the plugin directory.
+ * The hooks Codex reads out of the plugin directory.
  *
  * Two measured facts shape this object, and both were surprises worth writing
  * down (probe transcript in CHANGELOG.md):
@@ -89,6 +87,18 @@ export function hooksConfig() {
           ],
         },
       ],
+      UserPromptSubmit: [
+        {
+          hooks: [
+            {
+              type: 'command',
+              command: `node ${join(HERE, 'prompt-submit.mjs')}`,
+              timeout: 15,
+              statusMessage: 'obsidian-mem: finding relevant project notes',
+            },
+          ],
+        },
+      ],
     },
   }
 }
@@ -103,6 +113,7 @@ export function problems() {
   if (!existsSync(SKILL_FILE)) found.push(`missing skill: ${SKILL_FILE}`)
   if (!existsSync(join(HERE, 'server.mjs'))) found.push('missing codex/server.mjs')
   if (!existsSync(join(HERE, 'session-start.mjs'))) found.push('missing codex/session-start.mjs')
+  if (!existsSync(join(HERE, 'prompt-submit.mjs'))) found.push('missing codex/prompt-submit.mjs')
   if (!existsSync(join(HERE, 'marketplace', '.agents', 'plugins', 'marketplace.json'))) {
     found.push('missing marketplace/.agents/plugins/marketplace.json')
   }
@@ -146,7 +157,7 @@ export function main({
       }
     }
     if (stale) return 1
-    log('prepare --check: ok (6 tools, skill, .mcp.json and the SessionStart hook)')
+    log('prepare --check: ok (6 tools, skill, .mcp.json and both hooks)')
     return 0
   }
 

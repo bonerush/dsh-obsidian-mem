@@ -181,6 +181,7 @@ function bed(t, options = {}) {
     resolveBinding,
     index,
     buildBrief,
+    ...(options.search === undefined ? {} : { search: options.search }),
     config,
     // An injected capture seam, so a case can pin down what the disposal flush
     // does with a rejection without building a queue on disk.
@@ -203,11 +204,11 @@ function bed(t, options = {}) {
     disposed(agent = agentFor()) {
       ctx.emit('agent/disposed', { agent })
     },
-    preStep(agent = agentFor(), next, signal) {
+    preStep(agent = agentFor(), next, signal, { messages = [], turn = 1, step = 1 } = {}) {
       return ctx.waterfall(
         'agent/pre-step',
-        { agent, messages: [], turn: 1, step: 1, signal: signal ?? new AbortController().signal },
-        next ?? (async () => ({ kind: 'enter', messages: [] })),
+        { agent, messages, turn, step, signal: signal ?? new AbortController().signal },
+        next ?? (async () => ({ kind: 'enter', messages })),
       )
     },
   }
@@ -216,6 +217,9 @@ function bed(t, options = {}) {
 /** The plugin-authored messages of one decision — the only ones this task adds. */
 const recalled = (decision) =>
   (decision.messages ?? []).filter((message) => message?.source?.kind === RECALL_SOURCE.kind)
+
+const promptMaps = (decision) =>
+  (decision.messages ?? []).filter((message) => message?.source?.form === 'prompt-recall')
 
 /** A `buildBrief` that always answers with the mutable `hot` view under test. */
 function hotDrivenBrief(
@@ -291,6 +295,65 @@ test('the first pre-step injects exactly one recall message, the second none', a
   assert.equal(h.calls.buildBrief[0].options.mode, 'full')
   assert.deepEqual(h.calls.buildBrief[0].binding, BINDING)
   assert.equal(h.calls.buildBrief[0].options.index, h.calls.index[0].handle)
+})
+
+test('a real user turn receives one relevant project map and never repeats its path', async (t) => {
+  const path = `${RELATIVE_DIR}/Decisions/FTS5-中文索引.md`
+  const calls = []
+  const h = bed(t, {
+    search: async (args) => {
+      calls.push(args)
+      return [{ path, title: 'FTS5 中文索引', scoreSignals: ['title-contains', 'token-hits:5'] }]
+    },
+  })
+  const agent = h.start()
+  const message = {
+    id: 'human-1',
+    role: 'user',
+    content: [{ type: 'text', text: '如何修复 FTS5 中文索引？' }],
+    source: { kind: 'user' },
+  }
+  const first = await h.preStep(agent, undefined, undefined, { messages: [message], turn: 1 })
+  assert.equal(promptMaps(first).length, 1)
+  assert.match(promptMaps(first)[0].content[0].text, /FTS5-中文索引\.md/)
+  assert.deepEqual(promptMaps(first)[0].source, {
+    kind: 'plugin:obsidian-mem',
+    form: 'prompt-recall',
+  })
+  assert.equal(calls[0].scope, 'project')
+  assert.equal(recalled(first).length, 2)
+
+  const repeatedStep = await h.preStep(agent, undefined, undefined, {
+    messages: [message],
+    turn: 1,
+    step: 2,
+  })
+  assert.equal(promptMaps(repeatedStep).length, 0)
+  assert.equal(calls.length, 1)
+
+  const nextTurn = await h.preStep(agent, undefined, undefined, { messages: [message], turn: 2 })
+  assert.equal(promptMaps(nextTurn).length, 0)
+  assert.equal(calls.length, 2, 'new turns search, but a shown path is suppressed')
+})
+
+test('a plugin message never triggers prompt recall', async (t) => {
+  let searched = 0
+  const h = bed(t, {
+    search: async () => {
+      searched += 1
+      return []
+    },
+  })
+  const agent = h.start()
+  const message = {
+    id: 'injected',
+    role: 'user',
+    content: [{ type: 'text', text: 'FTS5 中文索引' }],
+    source: { kind: 'plugin:other' },
+  }
+  const decision = await h.preStep(agent, undefined, undefined, { messages: [message] })
+  assert.equal(promptMaps(decision).length, 0)
+  assert.equal(searched, 0)
 })
 
 test('the injected message is a user-role recall carrying the brief verbatim', async (t) => {

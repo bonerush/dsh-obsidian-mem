@@ -58,6 +58,7 @@ const LAYERS = {
   receipts: 2,
   pending: 3,
   search: 3,
+  'prompt-recall': 3,
   transaction: 3,
   vault: 4,
   lint: 5,
@@ -102,7 +103,10 @@ const BUDGETS = {
   'lib/distill.js': 950,
   'lib/frontmatter.js': 1100,
   'lib/git.js': 300,
-  'lib/hooks.js': 1050,
+  // Raised from 1050 for one per-turn prompt map beside the existing brief
+  // state machine. The retrieval policy lives in prompt-recall.js; these lines
+  // are the host decision assembly and its shared budget, not a second policy.
+  'lib/hooks.js': 1100,
   'lib/hot.js': 600,
   'lib/index-db.js': 2200,
   'lib/index.js': 150,
@@ -116,6 +120,7 @@ const BUDGETS = {
   'lib/registry.js': 500,
   'lib/routing.js': 500,
   'lib/search.js': 200,
+  'lib/prompt-recall.js': 150,
   // Raised from 1950 when the diagnostics action's schema landed here. This file
   // is the one the split is for, so the raise is explicitly temporary: the next
   // structural change reduces it to a façade and lowers this number with it.
