@@ -91,7 +91,13 @@ const BUDGETS = {
   'lib/debug.js': 200,
   'lib/assets.js': 600,
   'lib/brief.js': 1150,
-  'lib/capture.js': 1900,
+  // Raised from 1900 when the diagnostics call sites landed here. The alternative
+  // was to move the emissions into a module of their own, which would have meant
+  // re-exporting each of the ten skip reasons and the six queue outcomes — the
+  // decision points are what is being recorded, and they are in this file. The
+  // size rule is registered rather than waived, which is the whole point of it:
+  // the next raise has to argue with this line.
+  'lib/capture.js': 2050,
   'lib/config.js': 300,
   'lib/distill.js': 950,
   'lib/frontmatter.js': 1100,

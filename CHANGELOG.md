@@ -46,12 +46,32 @@ is a repository, not a release.
   change fails a test instead of shipping. Nothing in the channel can change an
   outcome either — a throwing logger, a throwing clock and a broken injected seam
   are all tested to leave the caller's result untouched.
-  Events are emitted today for three of the eight categories: `brief` (injected,
-  hint-only or none — the case a developer cannot see any other way), `bind`
-  refusals with their code, and the `skill` sync outcome. `capture`, `distill`,
-  `index`, `job` and `transaction` are accepted by the ring and by the closed
-  output schema but have no call sites yet, which the READMEs say plainly rather
-  than implying a completeness this change does not have.
+  **All eight categories emit.** `brief` (injected, hint-only or none — the case
+  a developer cannot see any other way) and `bind` refusals came first; this round
+  added the five that were accepted by the ring and by the closed output schema
+  but had no call sites: `capture`, `distill`, `index`, `job` and `transaction`.
+
+  `capture` is the one that needed a new seam rather than a new call.
+  `enqueueTurn` returned a bare `null` from ten different conditions —
+  `autoCapture: false`, a turn that is not a completed root turn end, a missing
+  session or project id, a projection with no user message, a turn the durable
+  floor already covers — so "a turn ended and nothing was captured" was one
+  indistinguishable outcome. It now takes an advisory `onSkip(reason)` sink and
+  names each one; the sink is called through a catch, so a broken one still
+  returns the pre-existing `null` and the capture is enqueued anyway, which is
+  asserted rather than assumed. `distill` records whether the model produced
+  nothing (`no-memory`), the run was a `dry-run`, or items were `applied`, with
+  the bounded duration; `job` records `completed`, `failed`, `retry`, `deferred`
+  with `no-binding`, and the three retry outcomes of the `jobs` action; `index`
+  records `open-failed` (the refusal `indexFor` used to swallow), a per-item
+  `refresh-failed` with its code, and the pass's `refreshed`/`none` summary;
+  `transaction` records the `txId` of a committed write or a coded refusal.
+
+  What reaches the ring is unchanged and is still the point: one wrapper around
+  the three write paths records only `txId`/`code`/`projectId`, so a refusal that
+  names the note it refused still does not put the note in the window. The new
+  tests inject `SENTINEL-BODY-<uuid>` through real capture, distillation and write
+  paths and require it to be absent from the serialised snapshot.
   `DSH_OBSIDIAN_MEM_DEBUG=1` also emits each event through the host logger, at
   `info` rather than `debug` on measurement: the host's exporter uses
   `levels: { default: 2 }` and drops anything above the threshold, so `debug` would
@@ -328,11 +348,6 @@ split into `tool-schema.js`, `tool-registry.js` and `services.js` behind an
 unchanged façade — **is done**, and is written up under *Changed*. What follows is
 what is still open.
 
-- **Five of the eight diagnostics categories have no call sites.** `brief`,
-  `bind` and `skill` emit today; `capture`, `distill`, `index`, `job` and
-  `transaction` are accepted by the ring and by the closed output schema but
-  nothing writes them yet, so a window will often be sparse. The READMEs say so.
-  Adding them is additive — no schema or contract change is needed.
 - **CI has never run.** The workflow is committed and its shape is tested locally,
   but nothing has been pushed, so the `22.22.2` leg of the matrix is unmeasured —
   and that is the leg that decides whether `engines.node` stays honest. Until

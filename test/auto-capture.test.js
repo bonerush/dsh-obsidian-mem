@@ -42,6 +42,7 @@ import {
   processQueue,
   retryJob,
 } from '../lib/capture.js'
+import { createDiagnostics } from '../lib/debug.js'
 import { registerHooks } from '../lib/hooks.js'
 import { applyCandidate, createMemoryWithId } from '../lib/memory.js'
 import {
@@ -52,6 +53,7 @@ import {
   writeJobAtomic,
   writeResultReceipt,
 } from '../lib/pending.js'
+import { createMemoryServices } from '../lib/tools.js'
 import { bootstrapVault, parseNote } from '../lib/vault.js'
 
 // ---------------------------------------------------------------------------
@@ -1764,4 +1766,272 @@ test('a pass that outlives the plugin tree defers the rest of the queue instead 
   assert.equal(remaining[0].state, 'pending')
   assert.equal((await readReceipts(f)).length, 1)
   assert.equal((await memoryNotes(f)).length, 1)
+})
+
+// ---------------------------------------------------------------------------
+// Task 10: the decisions the diagnostics ring records, at the real seams
+// ---------------------------------------------------------------------------
+
+/** Every recorded event of one category, in order. */
+function eventsOf(diagnostics, name) {
+  return diagnostics.snapshot().events.filter((event) => event.event === name)
+}
+
+/** A session whose committed log is the four events of one finished turn. */
+function finishedTurn(sessionId = SESSION_ID, text = '把调度器改成可插拔后端') {
+  const events = [
+    { seq: 0, type: 'turn/start', data: { turn: 1 } },
+    {
+      seq: 1,
+      type: 'user/message',
+      data: { role: 'user', content: [{ type: 'text', text }], source: { kind: 'user' } },
+    },
+    {
+      seq: 2,
+      type: 'assistant/message',
+      data: {
+        turn: 1,
+        step: 1,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: '已实现' }],
+          source: { kind: 'model' },
+        },
+      },
+    },
+    { seq: 3, type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
+  ]
+  return {
+    events,
+    session: {
+      header: { id: sessionId, cwd: '/work/demo' },
+      snapshotEvents: (from = 0, to) => events.slice(from, to ?? events.length),
+      requestContext: () => ({ provider: 'deepseek-official', model: 'deepseek-flash' }),
+    },
+  }
+}
+
+test('a capture that cannot bind records why, and never records the turn', async (t) => {
+  const f = await fixture(t)
+  const diagnostics = createDiagnostics()
+  const sentinel = 'SENTINEL-BODY-' + randomUUID()
+  const capture = createCapture({
+    queueRoot: f.queueRoot,
+    config: baseConfig(),
+    resolveBinding: async () => null,
+    warn: () => {},
+    diagnostics,
+  })
+  const { events, session } = finishedTurn(SESSION_ID, sentinel)
+  capture.sessionEvent(session, events[3])
+  await capture.settle()
+
+  const decisions = eventsOf(diagnostics, 'capture')
+  assert.equal(decisions.length, 1)
+  assert.equal(decisions[0].outcome, 'skipped-unbound')
+  assert.equal(JSON.stringify(diagnostics.snapshot()).includes(sentinel), false)
+})
+
+test('each reason a turn is not captured is named, and a broken sink costs nothing', async (t) => {
+  const f = await fixture(t)
+  const diagnostics = createDiagnostics()
+  const { events, session } = finishedTurn()
+  const sink = (reason) => diagnostics.event('capture', { outcome: reason })
+
+  // Off by configuration: the switch is read before a single byte is written.
+  await enqueueTurn({
+    session,
+    event: events[3],
+    binding: f.binding,
+    queueRoot: f.queueRoot,
+    config: baseConfig({ autoCapture: false }),
+    onSkip: sink,
+  })
+  // A turn with no user message has nothing to remember. Only the projection can
+  // see that, and 'nothing was captured' without the reason is the guess this
+  // channel exists to replace.
+  await enqueueTurn({
+    session: { ...session, snapshotEvents: () => [events[0]] },
+    event: events[3],
+    binding: f.binding,
+    queueRoot: f.queueRoot,
+    config: baseConfig(),
+    onSkip: sink,
+  })
+  // A sink that throws must not cost the capture: this call still enqueues.
+  const job = await enqueueTurn({
+    session,
+    event: events[3],
+    binding: f.binding,
+    queueRoot: f.queueRoot,
+    config: baseConfig(),
+    onSkip: () => {
+      throw new Error('the sink is broken')
+    },
+  })
+  assert.equal(typeof job?.jobId, 'string')
+
+  const capture = createCapture({
+    queueRoot: f.queueRoot,
+    config: baseConfig(),
+    resolveBinding: async () => f.binding,
+    warn: () => {},
+    diagnostics,
+  })
+  await capture.recover()
+  capture.sessionEvent(session, events[3])
+  await capture.settle()
+
+  // The third call enqueued the turn, so the capture seam sees it as processed.
+  assert.deepEqual(
+    eventsOf(diagnostics, 'capture').map((event) => event.outcome),
+    ['auto-capture-off', 'no-user-messages', 'already-processed'],
+  )
+})
+
+test('a captured turn records the job it created, with its project', async (t) => {
+  const f = await fixture(t)
+  const diagnostics = createDiagnostics()
+  const capture = createCapture({
+    queueRoot: f.queueRoot,
+    config: baseConfig(),
+    resolveBinding: async () => f.binding,
+    warn: () => {},
+    diagnostics,
+  })
+  const { events, session } = finishedTurn()
+  await capture.recover()
+  capture.sessionEvent(session, events[3])
+  await capture.settle()
+
+  const [decision] = eventsOf(diagnostics, 'capture')
+  assert.equal(decision.outcome, 'captured')
+  assert.equal(decision.projectId, PROJECT_ID)
+  assert.match(String(decision.jobId), /^job-/)
+})
+
+test('an applied job records the job, the distillation and the index refresh', async (t) => {
+  const f = await fixture(t)
+  const diagnostics = createDiagnostics()
+  const job = validatedJob([itemFixture()])
+  await writeJobAtomic(f.queueRoot, job)
+  const summary = await processQueue(queueOptions(f, { diagnostics }))
+  assert.equal(summary.completed, 1)
+
+  const jobs = eventsOf(diagnostics, 'job')
+  assert.deepEqual(
+    jobs.map((event) => event.outcome),
+    ['completed'],
+  )
+  assert.equal(jobs[0].jobId, job.jobId)
+  assert.equal(jobs[0].projectId, PROJECT_ID)
+
+  const distilled = eventsOf(diagnostics, 'distill')
+  assert.equal(distilled.length, 1)
+  assert.equal(distilled[0].outcome, 'applied')
+  assert.equal(distilled[0].jobId, job.jobId)
+  assert.equal(Number.isInteger(distilled[0].ms), true)
+
+  // This pass has no index seam at all, which is worth distinguishing from 'the
+  // refresh failed' — the two look identical from the vault.
+  assert.deepEqual(
+    eventsOf(diagnostics, 'index').map((event) => event.outcome),
+    ['none'],
+  )
+})
+
+test('a failed attempt records the code and the attempt count, never the model text', async (t) => {
+  const f = await fixture(t)
+  const diagnostics = createDiagnostics()
+  const sentinel = 'SENTINEL-BODY-' + randomUUID()
+  await writeJobAtomic(f.queueRoot, jobFixture({ state: 'pending', output: null, attempts: 0 }))
+  // The model answers with something the validated barrier must refuse, so this
+  // exercises the real failure path rather than an injected fault.
+  const summary = await processQueue(
+    queueOptions(f, {
+      diagnostics,
+      llm: stubLlm(sentinel),
+      config: baseConfig({ distill: { maxRetries: 1 } }),
+    }),
+  )
+  assert.equal(summary.failed, 1)
+
+  const failed = eventsOf(diagnostics, 'job')
+  assert.equal(failed.length, 1)
+  assert.equal(failed[0].outcome, 'failed')
+  assert.equal(failed[0].attempts, 1)
+  assert.equal(typeof failed[0].code, 'string')
+  assert.equal(JSON.stringify(diagnostics.snapshot()).includes(sentinel), false)
+})
+
+test('a job that cannot bind is recorded as deferred, not as failed', async (t) => {
+  const f = await fixture(t)
+  const diagnostics = createDiagnostics()
+  await writeJobAtomic(f.queueRoot, validatedJob([itemFixture({ evidenceSeqs: [1, 2, 3] })]))
+  const summary = await processQueue(queueOptions(f, { diagnostics, resolveBinding: () => null }))
+  assert.equal(summary.deferred, 1)
+
+  const deferred = eventsOf(diagnostics, 'job')
+  assert.equal(deferred.length, 1)
+  assert.equal(deferred[0].outcome, 'deferred')
+  assert.equal(deferred[0].code, 'no-binding')
+})
+
+test('a write records its committed transaction, and a refusal is rethrown unchanged', async (t) => {
+  const f = await fixture(t)
+  const diagnostics = createDiagnostics()
+  const services = createMemoryServices({
+    config: baseConfig({ vaultPath: f.vault }),
+    dataRoot: f.dataRoot,
+    home: f.home,
+    cwd: '/work/demo',
+    binding: f.binding,
+    diagnostics,
+  })
+  const sentinel = 'SENTINEL-BODY-' + randomUUID()
+  const written = await services.write(
+    { type: 'decision', title: '可插拔调度后端', body: sentinel },
+    undefined,
+    {},
+  )
+  const [committed] = eventsOf(diagnostics, 'transaction')
+  assert.equal(committed.outcome, 'committed')
+  assert.equal(committed.txId, written.receipt.txId)
+  assert.equal(committed.projectId, PROJECT_ID)
+  assert.equal(JSON.stringify(diagnostics.snapshot()).includes(sentinel), false)
+
+  // A refusal reaches the caller unchanged; the ring only says that it happened.
+  // 'code' is present only when the refusal carries one, which is the honest
+  // shape — an invented code would be worse than a missing one.
+  await assert.rejects(
+    services.write({ type: 'not-a-type', title: 'x', body: 'y' }, undefined, {}),
+    /type/,
+  )
+  const last = eventsOf(diagnostics, 'transaction').at(-1)
+  assert.equal(last.outcome, 'refused')
+  assert.equal(last.projectId, PROJECT_ID)
+})
+
+test('a refused job retry is visible without reading the queue', async (t) => {
+  const f = await fixture(t)
+  const diagnostics = createDiagnostics()
+  const services = createMemoryServices({
+    config: baseConfig({ vaultPath: f.vault }),
+    dataRoot: f.dataRoot,
+    home: f.home,
+    cwd: '/work/demo',
+    binding: f.binding,
+    diagnostics,
+  })
+  const result = await services.admin(
+    { action: 'jobs', retry: true, jobId: 'job-absent' },
+    undefined,
+    {},
+  )
+  assert.equal(result.result.status, 'refused')
+
+  const retry = eventsOf(diagnostics, 'job')
+  assert.equal(retry.length, 1)
+  assert.equal(retry[0].outcome, 'retry-missing')
+  assert.equal(retry[0].jobId, 'job-absent')
 })
