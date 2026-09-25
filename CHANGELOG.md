@@ -13,6 +13,24 @@ is a repository, not a release.
 
 ### Added
 
+- **Prompt-scoped recall now runs in DSH and Codex.** Both adapters use
+  `lib/prompt-recall.js` and the existing project-scoped search service. A new
+  user prompt can receive up to three strongly matching note paths and titles
+  within 360 Unicode characters; note bodies require an explicit `mem_read`.
+  Directory indexes, weak matches and paths already offered in the session are
+  skipped. DSH invokes the policy from `agent/pre-step` for a real user message
+  and spends only the remaining `briefBudgetChars`; Codex adds a
+  `UserPromptSubmit` command hook. Its per-session shown-path file lives under
+  the data root, contains only relative paths, and is bounded to 64 entries.
+  Both adapters fail open. Codex still has no automatic distillation or write.
+
+  Red tests first failed for the absent shared module, DSH map, and Codex hook;
+  the targeted suites now pass with a real temporary vault and hook subprocess.
+  In an isolated `CODEX_HOME`, codex-cli 0.146.0's `hooks/list` discovered both
+  hooks with their intended event names, commands and 15-second timeouts, with
+  no warnings or errors. The new hook's delivery to a live model has not yet
+  been verified.
+
 - **The Codex side injects the recall brief at session start now, exactly as DSH
   does.** `codex/session-start.mjs` is a `SessionStart` hook: Codex hands it the
   session as JSON on stdin and adds what it answers with —

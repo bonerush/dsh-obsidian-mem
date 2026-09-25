@@ -11,13 +11,15 @@ installed there. Its layers travel unevenly:
 | **Protocol** — the vault layout, the `.obsidian-mem` pointer, the note frontmatter, routing, evidence/supersede rules | ships as an Agent Skills skill | `codex plugin add dsh-obsidian-mem@dsh-obsidian-mem-local` |
 | **Adapter** — the six `mem_*` tools over the same `lib/` | ships as an MCP server in the same plugin | the plugin's `.mcp.json` |
 | **Recall injection** — the brief, before the first model call | ships as a `SessionStart` hook in the same plugin | the plugin's `hooks/hooks.json`, approved once — see *Install* |
+| **Relevant-note map** — paths and titles for a new user prompt | ships as a `UserPromptSubmit` hook using the same search policy as DSH | the same approved `hooks/hooks.json` |
 | **Distillation** — turning finished turns into notes | **not portable** | MCP offers tools, not turn boundaries; a note is written when the agent decides to write one |
 
 There is exactly **one copy of the memory layer**. The MCP server is
-`codex/server.mjs` and the hook is `codex/session-start.mjs`; both import `lib/`
-from this checkout rather than vendoring a second copy, and the hook composes no
-text of its own — it injects `brief.text` from `lib/brief.js`, the same field the
-DSH pre-step injects. A fix in `lib/` reaches both harnesses.
+`codex/server.mjs` and the hooks are `codex/session-start.mjs` and
+`codex/prompt-submit.mjs`; all import `lib/` from this checkout rather than
+vendoring a second copy. The first hook injects `brief.text` from `lib/brief.js`;
+the second uses `lib/prompt-recall.js`, also used by DSH. A fix in `lib/` reaches
+both harnesses.
 
 ## Install
 
@@ -42,11 +44,11 @@ relative path out of the plugin would break the moment it is installed. Both
 generated files therefore name this checkout by absolute path. They are
 git-ignored; re-run `prepare.mjs` after moving the checkout.
 
-**Then approve the hook, once.** Start a session and Codex opens its startup hooks
+**Then approve the hooks.** Start a session and Codex opens its startup hooks
 review — a hook it has not seen before reads *"hooks are new or changed"* and
 *"hooks need review before they can run"*, listed by source. Approve
-`dsh-obsidian-mem`'s and the brief is injected from then on. Until you do, an
-untrusted hook is skipped **in silence**: no error, no context, no memory. This is
+`dsh-obsidian-mem`'s and recall can run from then on. Until you do, an
+untrusted hook is skipped **in silence**: no error and no context. This is
 measured, not assumed — a trusted run leaves an index under a fresh `DSH_HOME`
 and an untrusted one leaves the directory empty (`test/codex-hooks.test.js`
 carries the script half of that pair; `CHANGELOG.md` carries the transcript).
@@ -63,8 +65,8 @@ If you want the tools without the skill, skip the marketplace entirely:
 codex mcp add obsidian-mem --env DSH_HOME="$HOME/.dsh" -- node "$PWD/codex/server.mjs"
 ```
 
-This variant has **no hook**: a hook belongs to a plugin, so registered this way
-the agent must call `mem_brief` itself and nothing is injected for you.
+This variant has **no hooks**: they belong to a plugin, so the agent must call
+`mem_brief` and `mem_search` itself.
 
 ## The `SessionStart` hook
 
@@ -95,16 +97,37 @@ to stderr, where they belong, and only when something actually went wrong; set
 it off, remove `hooks/hooks.json` from the installed copy or uninstall the plugin —
 nothing else in the plugin depends on it.
 
+## The `UserPromptSubmit` hook
+
+On a new prompt in a bound repository, `codex/prompt-submit.mjs` searches only
+that project's current notes. A sufficiently relevant result adds up to three
+paths and short titles, within 360 Unicode characters. It never injects a note
+body; use `mem_read` for the cited path. Weak matches, directory indexes and
+paths already offered in this session are skipped. The hook is quiet for an
+unbound repository, an empty prompt, or a search failure.
+
+Codex runs the hook in a new process for each prompt. A private, bounded file
+under `$DSH_HOME/data/obsidian-mem/prompt-recall/` remembers only paths already
+offered for that session; the filename hashes the session id. The full prompt
+and note bodies are not stored there. This adapter does not write notes to the
+vault.
+
+The payload fields and `hookSpecificOutput.additionalContext` follow the
+[Codex hook contract](https://developers.openai.com/codex/hooks). This checkout
+was discovered as `userPromptSubmit` by codex-cli 0.146.0 in an isolated
+`CODEX_HOME`; the hook was untrusted there, so that probe established discovery
+and schema, not delivery to a live model.
+
 ## Verify
 
 ```sh
 node codex/prepare.mjs --check          # 6 tools, skill and both generated files
 node --test test/codex-mcp.test.js      # a real handshake, write and search over stdio
-node --test test/codex-hooks.test.js    # the hook: injection, skipping, fail-open
+node --test test/codex-hooks.test.js    # both hooks: injection, skipping, fail-open
 ```
 
 Both test files drive the real thing as a subprocess — the server over stdio, the
-hook through a `SessionStart` payload on stdin — with a throwaway `DSH_HOME`,
+hooks through `SessionStart` and `UserPromptSubmit` payloads on stdin — with a throwaway `DSH_HOME`,
 vault, home directory and git repository, so they never touch your vault, your
 `~/.dsh` or `~/.codex`.
 
@@ -141,11 +164,10 @@ vault whichever harness is writing.
 
 ## What behaves differently
 
-- **The brief is automatic; nothing else is.** A session that starts in a bound
-  repository gets its recall injected before the first model call, whether or not
-  the model asks. Everything after that is the agent's choice: the skill tells it
-  to write what matters, and no turn is distilled — MCP has no turn boundary to
-  hang that on. A session where the agent writes nothing still remembers nothing.
+- **Recall is automatic; writing is the agent's choice.** A bound repository gets
+  the session brief at startup and may get relevant paths on each new prompt.
+  No finished turn is distilled under Codex; a session where the agent writes
+  nothing still remembers nothing new.
 - **The working directory comes from the client.** Codex launches a plugin's MCP
   server with the plugin directory as its cwd, so the server asks for
   `roots/list` and uses the first root. A client that does not answer within two
@@ -167,6 +189,6 @@ codex mcp remove obsidian-mem                            # if you used the light
 ```
 
 Removing the plugin deletes Codex's copy in `~/.codex/plugins/cache/` — which
-takes the `SessionStart` hook with it, so the next session injects nothing. The
+takes both hooks with it, so the next session injects nothing. The
 vault and `$DSH_HOME/data/obsidian-mem` are untouched — that is the point of
 keeping memory in plain Markdown.

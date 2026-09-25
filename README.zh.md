@@ -29,8 +29,7 @@ repository                                vault (~/Documents/dsh-memory)
   约）是纯 Markdown，与 DSH 无关。随包发布的技能 `skills/obsidian-mem/SKILL.md`
   遵循 Agent Skills 格式，所以在别的 harness 里也能用——[`codex/`](./codex/README.md)
   把这份协议**连同同样那六个操作**装进 Codex CLI，走的是一个复用 `lib/`（而不是复
-  制一份）的 MCP server，另加一个在首次模型调用前注入同一份简报的 `SessionStart`
-  钩子。
+  制一份）的 MCP server，另加会话简报与每次新提问的相关笔记索引钩子。
 - **适配层**是 DSH 专属的：六个 `mem_*` 工具、一个放在仓库之外的 `node:sqlite`
   搜索索引，以及对已完成回合的自动蒸馏。召回注入已经不在这一层：两个 harness 现在
   用同一个 `buildBrief` 合成它，各自用自己 harness 的扩展点投递。
@@ -148,6 +147,7 @@ dsh --profile web --dump-config | grep -n obsidian-mem
 | 行已挂载 | `dsh --profile web --dump-config \| grep obsidian-mem` |
 | 项目已绑定 | `mem_admin(action="projects")` 会报告解析结果。一个**没有** `.obsidian-mem` 的 Git 仓库由它的**第一次写入**完成绑定：`mem_write` 或 `mem_log` 会生成 slug、以独占方式创建指针文件、引导生成骨架并注册项目，然后继续执行——而且这次绑定对同一会话里的下一次调用就可见。已存在的指针文件从不会被覆盖或修复；任何拒绝（指针文件损坏或 schema 未知、同级 worktree 不可读、注册表不可读、云托管仓库）都会连原因一起报告，而不是硬造一个绑定。读取永不触发绑定：在没有指针文件的仓库上，`mem_search` 和 `mem_read` 始终只读；一个**不在** Git 里的目录在 `mem_admin(action="bind", mode="local")` 之前也保持只读。 |
 | 召回注入一次 | 会话的第一次请求会带一条 `obsidian-mem` 召回消息（≤ `briefBudgetChars`） |
+| 提示相关笔记 | 已绑定项目的新用户提问可能收到最多三条笔记路径和标题（≤ 360 字符）；用 `mem_read` 读取全文 |
 | 中文搜索可用 | 写一条笔记，然后用 `mem_search` 搜一个两字中文词 |
 | 仓库文件是真的 | `ls "$vault/Projects/"`——纯 Markdown，卸载插件后照样能读 |
 
@@ -202,7 +202,7 @@ dsh --profile web --dump-config | grep -n obsidian-mem
 | `enabled` | `true` | boolean | `false` 什么都不挂载。 |
 | `vaultPath` | `~/Documents/dsh-memory` | 非空路径；`~` 会被展开 | 仓库根目录。必须是本地磁盘。 |
 | `initGitOnCreate` | `true` | boolean | **只**对本插件刚创建的仓库目录执行 `git init`，且仅在 `git` 可用时。从不 commit，从不设置 remote。 |
-| `injectBrief` | `true` | boolean | 会话的第一步是否拿到召回消息。 |
+| `injectBrief` | `true` | boolean | 是否注入会话简报和逐轮相关笔记索引。 |
 | `briefBudgetChars` | `6000` | 整数 256–20000 | 单次注入的硬上限，单位是 Unicode 码点。 |
 | `hotCapacityChars` | `9000` | 整数 1024–50000 | `_meta/hot.md` 的容量。是存储容量，*不是*注入预算。 |
 | `hotArchiveRatio` | `0.67` | 开区间 (0,1) | 填充率高于此值时，插件在写入前先归档已完成条目。 |

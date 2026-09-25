@@ -15,8 +15,9 @@
 //   * automatic distillation — DSH hooks `agent/turn-stopping` and calls the
 //     model; MCP offers tools, not turn boundaries. In Codex a note is written
 //     when the agent decides to write one.
-//   * recall injection at session start — DSH injects the brief in a pre-step;
-//     here the agent has to call `mem_brief` itself (the shipped skill says so).
+//   * recall injection is supplied by the plugin's SessionStart and
+//     UserPromptSubmit hooks, not by this MCP server. An MCP-only installation
+//     still asks the agent to call `mem_brief` and `mem_search` itself.
 //   * the six tool *descriptions* below are Codex-side prose. The parameter
 //     schemas are derived from `TOOL_PARAMETERS`, so they cannot drift, and a
 //     test asserts the six names match `TOOL_NAMES` exactly.

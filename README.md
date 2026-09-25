@@ -31,8 +31,8 @@ Two layers, on purpose:
   shipped skill `skills/obsidian-mem/SKILL.md` follows the Agent Skills format,
   so it works in another harness too — [`codex/`](./codex/README.md) installs that
   protocol *and* the same six operations into Codex CLI, through an MCP server that
-  reuses `lib/` rather than copying it, plus a `SessionStart` hook that injects
-  the same brief before the first model call.
+  reuses `lib/` rather than copying it, plus hooks for the session brief and a
+  small relevant-note map on each new user prompt.
 - **Adapter** is DSH-specific: six `mem_*` tools, a `node:sqlite` search index kept
   outside the vault, and automatic distillation of completed turns. The recall
   injection left that list: both harnesses compose it from the same `buildBrief`,
@@ -157,6 +157,7 @@ Start a session in any Git repository and ask, or just check the tools are there
 | Row mounted | `dsh --profile web --dump-config \| grep obsidian-mem` |
 | Project bound | `mem_admin(action="projects")` reports the resolution. A Git repository with **no** `.obsidian-mem` is bound by its **first write**: `mem_write` or `mem_log` generates the slug, creates the pointer exclusively, bootstraps the skeleton and registers the project, then proceeds — and the binding is visible to the next call in the same session. An existing pointer is never overwritten or repaired, and a refusal (a corrupt or unknown-schema pointer, an unreadable sibling worktree, an unreadable registry, a cloud-managed vault) is reported with its reason instead of minting. Reads never bind: `mem_search` and `mem_read` stay read-only on a pointerless repository, and a directory that is **not** in Git stays read-only until `mem_admin(action="bind", mode="local")`. |
 | Recall injected once | the first request of a session carries one `obsidian-mem` recall message (≤ `briefBudgetChars`) |
+| Relevant notes offered | a bound project's new user turn may receive up to three note paths and titles (≤ 360 characters); read the full note with `mem_read` |
 | CJK search works | write a note, then `mem_search` a two-character Chinese word |
 | Vault files are real | `ls "$vault/Projects/"` — plain Markdown, readable with the plugin uninstalled |
 
@@ -215,7 +216,7 @@ explanation instead of doing nothing.
 | `enabled` | `true` | boolean | `false` mounts nothing. |
 | `vaultPath` | `~/Documents/dsh-memory` | non-blank path; `~` is expanded | The vault root. Must be local disk. |
 | `initGitOnCreate` | `true` | boolean | `git init` **only** on a vault directory this plugin just created, and only if `git` is available. Never commits, never sets a remote. |
-| `injectBrief` | `true` | boolean | Whether the first step of a session gets the recall message. |
+| `injectBrief` | `true` | boolean | Whether the session brief and per-turn relevant-note map are injected. |
 | `briefBudgetChars` | `6000` | integer 256–20000 | Hard ceiling for one injection, in Unicode code points. |
 | `hotCapacityChars` | `9000` | integer 1024–50000 | Capacity of `_meta/hot.md`. Storage capacity, *not* injection budget. |
 | `hotArchiveRatio` | `0.67` | open interval (0,1) | Above this fill level the plugin archives 已完成 entries before writing. |

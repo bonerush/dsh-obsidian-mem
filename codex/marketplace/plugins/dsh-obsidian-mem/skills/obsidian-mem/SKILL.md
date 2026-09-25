@@ -5,12 +5,12 @@ description: "Project memory as plain Markdown in a dedicated Obsidian vault, ru
 
 # Obsidian project memory
 
-A project's long-term memory is plain Markdown in a directory the user opened as an Obsidian vault. The protocol below is harness-independent; under Codex it may be the *only* thing that exists, because no plugin is running. Read this skill before writing into the vault, and again before you claim a fact is "remembered".
+A project's long-term memory is plain Markdown in a directory the user opened as an Obsidian vault. The protocol below is harness-independent. Read this skill before writing into the vault, and again before you claim a fact is "remembered".
 
 ## 1. What Codex changes
 
 - **The six `mem_*` tools are optional.** They exist only when the companion MCP server for this vault is installed and registered — installing the Codex plugin adds both that server and this skill — and then they are the same six names with the same meanings as under DSH (§8). If they are not in your tool list, §9 does the same work with `rg`, your file-read tool and edits.
-- **Nothing is automatic.** No finished turn is distilled, no recall is injected at session start, no index is built. Call `mem_brief` when you start work on a project — or read `_meta/hot.md` yourself when the server is absent — and call `mem_log`/`mem_write`, or edit the Markdown, when something is worth keeping. Nothing does either for you.
+- **Recall is automatic with the installed plugin.** `SessionStart` injects the project brief and `UserPromptSubmit` may offer a short map of relevant note titles and paths. Open the cited note with `mem_read` before relying on its contents. The hooks are absent in an MCP-only setup; then call `mem_brief` yourself or read `_meta/hot.md`. No finished turn is distilled automatically under Codex: call `mem_log`/`mem_write`, or edit Markdown, when something is worth keeping.
 - **Nothing here touches DSH.** No DSH configuration is read or written, DSH need not be installed, and the vault depends on neither harness.
 
 ## 2. The binding: `.obsidian-mem`
