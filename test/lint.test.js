@@ -37,7 +37,7 @@ import {
 import { promoteNote, writeMemory } from '../lib/memory.js'
 import { readPendingJobs, writeJobAtomic } from '../lib/pending.js'
 import { createMemoryServices } from '../lib/tools.js'
-import { bootstrapVault, resolveBinding, vaultIdentity, withVaultLock } from '../lib/vault.js'
+import { bootstrapVault, newTransactionId, resolveBinding, runTransaction, vaultIdentity, withVaultLock } from '../lib/vault.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -736,6 +736,43 @@ test('bind mode retain updates only the confirmed remote hint', async (t) => {
   assert.equal(refused.kind, 'conflict')
   assert.equal(refused.reason, 'registry-hash-mismatch')
   assert.equal(await readFile(registryPath, 'utf8'), tampered)
+  await f.index.close()
+})
+
+// The refusal path of `retain` had no test, and the missing test is the only
+// reason the defect survived: the catch block names `TransactionError`, but
+// `lib/vault.js` only *re-exports* that class — a re-export never puts the name
+// in this module's scope. So whenever the registry transaction failed for a
+// reason that was not a `BootstrapError`, the `||` short-circuit did not save
+// it and the caller got a `ReferenceError` where the documented refusal was
+// promised. Reproduced with a real unresolved transaction: a fault-injected
+// write to the project index, then an external edit to that same file, which is
+// the state `reconcile` refuses to resolve on its own.
+test('a retain whose registry transaction cannot run refuses instead of naming an unbound error', async (t) => {
+  const f = await fixture(t)
+  await git(f.repo, ['remote', 'add', 'origin', 'https://example.invalid/demo.git'])
+
+  const indexRelative = projectPath(f, 'index.md')
+  const indexPath = join(f.vault, ...indexRelative.split('/'))
+  const before = await readFile(indexPath, 'utf8')
+  await assert.rejects(
+    runTransaction(f.binding, {
+      txId: newTransactionId(),
+      updates: [{ path: indexRelative, hash: sha256(before), contents: `${before}\n注入后未完成\n` }],
+    }, { dataRoot: f.dataRoot, home: f.home, failAfter: 'old-status' }),
+    { code: 'injected-failure' },
+  )
+  // The human edits the same note in Obsidian before recovery runs. That edit is
+  // what turns a resumable transaction into one a human owes a decision on.
+  const external = `${before}\n外部编辑\n`
+  await writeFile(indexPath, external)
+
+  const refused = await resolveBinding({ cwd: f.repo, vaultRoot: f.vault, mode: 'retain', home: f.home, dataRoot: f.dataRoot })
+  assert.equal(refused.kind, 'conflict', JSON.stringify(refused))
+  assert.equal(refused.reason, 'recovery-required')
+  assert.match(refused.message, /unresolved transaction/)
+  // The refusal reports the conflict; it never touches the file the human owns.
+  assert.equal(await readFile(indexPath, 'utf8'), external)
   await f.index.close()
 })
 

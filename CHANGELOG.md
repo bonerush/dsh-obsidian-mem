@@ -123,6 +123,24 @@ is a repository, not a release.
 
 ### Fixed
 
+- **A `retain` whose registry transaction failed threw `ReferenceError:
+  TransactionError is not defined` instead of the refusal it documents.**
+  `lib/vault.js` re-exports `TransactionError` — "every importer keeps going
+  through this module" — but a re-export puts a name in the export namespace and
+  not in the module's own scope, and the `catch` that decides between a refusal
+  and a rethrow tested `error instanceof TransactionError`. The `||` beside
+  `error instanceof BootstrapError` hid it for the one error type that was
+  genuinely in scope, so the only path that broke was the bind-conflict path the
+  catch exists for. Introduced with the catch in `8c988dd` and never covered: no
+  test asked a `retain` to survive a failed transaction. Found by ESLint's
+  `no-undef` on the first run over the tree — one finding in 58 files — which is
+  the engineering-gate work this entry's neighbours will describe. Regression
+  test: `test/lint.test.js`, where a real unresolved transaction (a
+  fault-injected write to the project index, then an external edit to that same
+  file) now yields `{kind: 'conflict', reason: 'recovery-required'}` and leaves
+  the externally edited file byte-identical. Before the fix that test failed with
+  exactly the `ReferenceError` above, at `lib/vault.js:504`.
+
 - **Every turn in a bound project failed on DSH 0.1.7 with `format v4 message
   requires a producer-owned source kind`.** Recall injection stamps a `source` on
   the `user/message` it inserts, and `lib/hooks.js` stamped the retired
