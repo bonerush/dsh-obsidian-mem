@@ -1,0 +1,26 @@
+# Markdown is never formatted.
+#
+# README.md and README.zh.md carry equal authority and their git blob hashes are
+# recorded in README.i18n.yaml (AGENTS.md rule 7). Reformatting either side would
+# silently invalidate that record and turn a mechanical change into one that
+# needs the bilingual pair re-checked by hand.
+*.md
+
+# Test fixtures are data, not code.
+#
+# test/fixtures/search/corpus/ is copied verbatim into a throwaway vault and
+# exercises frontmatter parsing, CJK filenames, control characters and unsafe
+# operators. Formatting it would edit the test's input.
+test/fixtures/**
+
+# Smoke run records are evidence of a run that happened; they are read, never
+# rewritten.
+test/smoke/records/**
+
+# Investigation output and local tooling state.
+research/
+scratch/
+.codegraph/
+
+# npm owns this file.
+package-lock.json
