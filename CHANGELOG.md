@@ -216,6 +216,50 @@ is a repository, not a release.
 
 ### Changed
 
+- **`lib/tools.js` is a 22-line façade instead of a 2,006-line file, and the
+  three jobs it held are three modules.** Task 11 of the harness plan named this
+  as the structural change the other eleven tasks only made safe, and it is the
+  only place this round moved code rather than adding it:
+
+  | Module | Lines | Owns |
+  |---|---|---|
+  | `lib/tool-schema.js` | 847 | the parameter specs, the closed output schemas, and the argument rules every `execute` shares |
+  | `lib/tool-registry.js` | 198 | the six `defineTool` definitions and `registerTools` |
+  | `lib/services.js` | 1,024 | service lifetimes, binding/index caches, admin dispatch, projections |
+  | `lib/tools.js` | 22 | four re-exports and nothing else |
+
+  **Nothing outside `lib/` changed an import.** `lib/index.js`, `codex/server.mjs`
+  and all nine test files still do `import … from './tools.js'` (or
+  `'../lib/tools.js'`), which is the point: a façade both entry points already
+  import *is* the seam, so the move is invisible to them and a future move will be
+  too. Two new tests hold that: `test/tools-facade.test.js` asserts that the
+  façade exports exactly the four published names, that each one is the *same
+  value* the owning module holds rather than a structurally equal copy, and that
+  the DSH runtime and the Codex `listTools()` describe the same six tools; the
+  pack fixture asserts that dropping a re-export fails the package check.
+  Measured, not asserted: removing the `registerTools` re-export fails the whole
+  file at import time, and rebuilding `TOOL_NAMES` as a local `Object.freeze([...])`
+  — which compiles, type-checks and behaves identically — fails on reference
+  identity with `TOOL_NAMES must be re-exported, not rebuilt`.
+
+  The package verifier moved with it, because a check that reads the old path
+  reports success about a file that no longer contains a registration:
+  `scripts/verify-pack.mjs` now scans `lib/tool-registry.js` for the six
+  `name: 'mem_x'` sites **and** reads `lib/tools.js` for the four re-exports, as
+  two separate checks that fail for two different reasons. The verification
+  output says so: `6 tools registered and 4 names published`.
+
+  The move also made one deliberate asymmetry visible enough to write down. The
+  MCP adapter closes the argument root (`additionalProperties: false`) and the DSH
+  runtime leaves it open, which is the entire reason `assertKnownArguments` exists
+  — DSH hands an undeclared key to `execute`, the adapter refuses it at the
+  schema. That difference is now asserted per tool instead of being rediscovered;
+  so is the adapter's habit of always writing `required`, which DSH omits when it
+  is empty. `test/architecture.test.js` records the new layers
+  (`tool-schema` L3, `tool-registry` L4, `services` L8, the façade L9, `index` L10)
+  and the four budgets, on the same rule as every other file: the façade's budget
+  is 100 lines, which *replaces* the temporary 2,050 rather than extending it.
+
 - **Every vault path is ASCII now: the directory names, and the file names the
   plugin fixes itself.** `项目/`→`Projects/`, `文档/`→`Docs/`, `决策/`→`Decisions/`,
   `约定/`→`Conventions/`, `踩坑/`→`Pitfalls/`, `日志/`→`Daily/`, `收件箱/`→`Inbox/`,
@@ -279,16 +323,11 @@ is a repository, not a release.
 ### Remaining from the engineering-harness plan
 
 Stated here rather than left to be discovered, because rule 6 puts the untested
-and unfinished list in this file.
+and unfinished list in this file. The plan's structural task — `lib/tools.js`
+split into `tool-schema.js`, `tool-registry.js` and `services.js` behind an
+unchanged façade — **is done**, and is written up under *Changed*. What follows is
+what is still open.
 
-- **`lib/tools.js` is still one 2,006-line file.** The plan's last structural task —
-  splitting it into `tool-schema.js`, `tool-registry.js` and `services.js` behind
-  the four re-exports `lib/tools.js` already publishes — is not done. Its budget
-  was raised from 1,950 to 2,050 to land the diagnostics schema, and that raise is
-  recorded in `test/architecture.test.js` as temporary for exactly this reason.
-  Nothing else here blocks the change: the two packaging guards that must move
-  with it (`scripts/verify-pack.mjs`'s registration scan and `test/pack.test.js`'s
-  synthetic fixture) are named in the plan.
 - **Five of the eight diagnostics categories have no call sites.** `brief`,
   `bind` and `skill` emit today; `capture`, `distill`, `index`, `job` and
   `transaction` are accepted by the ring and by the closed output schema but

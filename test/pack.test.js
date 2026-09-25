@@ -22,8 +22,53 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const VERIFIER = resolve(REPO_ROOT, 'scripts/verify-pack.mjs')
 const TARBALL_VERIFIER = resolve(REPO_ROOT, 'scripts/verify-tarball.mjs')
 
-/** The six tool names `lib/tools.js` registers; the verifier checks the entry ships them. */
+/**
+ * The six tool names the shipped surface registers, and the four names the façade
+ * publishes them through.
+ *
+ * Both halves exist in the fixture because the verifier checks both: the
+ * registration sites live in `lib/tool-registry.js` and the re-exports in
+ * `lib/tools.js` since Task 11, and a fixture that only wrote one of the two
+ * files would be testing a package layout this plugin no longer has.
+ */
 const TOOL_NAMES = ['mem_search', 'mem_read', 'mem_write', 'mem_log', 'mem_brief', 'mem_admin']
+
+/** The four published names, and the module each one is re-exported from. */
+const FACADE = [
+  ['TOOL_NAMES', './tool-schema.js'],
+  ['TOOL_PARAMETERS', './tool-schema.js'],
+  ['registerTools', './tool-registry.js'],
+  ['createMemoryServices', './services.js'],
+]
+
+/**
+ * A `lib/tool-registry.js` with one `name: '…'` registration site per tool.
+ *
+ * @param {string[]} [names] - the tools to register.
+ * @returns {string} the module's contents.
+ */
+function registrySource(names = TOOL_NAMES) {
+  return names.map((name) => `  name: '${name}',\n`).join('')
+}
+
+/**
+ * A `lib/tools.js` façade. By default it is the real one's three re-export
+ * statements; `omit` drops a name so a case can break exactly that.
+ *
+ * @param {string[]} [omit] - published names to leave out.
+ * @returns {string} the module's contents.
+ */
+function facadeSource(omit = []) {
+  const byModule = new Map()
+  for (const [name, module] of FACADE) {
+    if (omit.includes(name)) continue
+    byModule.set(module, [...(byModule.get(module) ?? []), name])
+  }
+  const lines = [...byModule].map(
+    ([module, names]) => `export { ${names.join(', ')} } from '${module}'`,
+  )
+  return `${lines.join('\n')}\n`
+}
 
 /**
  * The smallest manifest that satisfies every mandatory check.
@@ -77,7 +122,8 @@ function verify(t, options = {}) {
   const omit = new Set(options.omit ?? [])
   const assets = {
     'lib/index.js': "export const name = 'obsidian-mem'\n",
-    'lib/tools.js': TOOL_NAMES.map((name) => `  name: '${name}',\n`).join(''),
+    'lib/tools.js': facadeSource(),
+    'lib/tool-registry.js': registrySource(),
     'skills/obsidian-mem/SKILL.md': '---\nname: obsidian-mem\n---\n',
     'cordis.patch.yml': '- insert: []\n',
     'dsh.plugin.json': `${JSON.stringify(options.plugin ?? basePluginManifest(), null, 2)}\n`,
@@ -179,26 +225,26 @@ test('a directory entry is expanded, so forbidden files under lib are refused', 
   assert.match(rerun.stdout + rerun.stderr, /lib\/pending\/queue\.json/)
 })
 
-test('a missing plugin entry or a dropped tool fails', (t) => {
+test('a missing plugin entry, a missing registry or a dropped tool fails', (t) => {
   const missingEntry = verify(t, { omit: ['lib/index.js'] })
   assert.notEqual(missingEntry.status, 0)
   assert.match(missingEntry.stdout + missingEntry.stderr, /lib\/index\.js/)
 
+  // The registration module is its own required file now: shipping the façade
+  // without it is a package whose six names resolve to nothing.
+  const missingRegistry = verify(t, { omit: ['lib/tool-registry.js'] })
+  assert.notEqual(missingRegistry.status, 0)
+  assert.match(missingRegistry.stdout + missingRegistry.stderr, /lib\/tool-registry\.js is missing/)
+
   const pkg = baseManifest()
   const droppedTool = verify(t, { pkg })
-  assert.equal(droppedTool.status, 0)
-  write(
-    droppedTool.root,
-    'lib/tools.js',
-    TOOL_NAMES.slice(0, 5)
-      .map((name) => `  name: '${name}',\n`)
-      .join(''),
-  )
+  assert.equal(droppedTool.status, 0, droppedTool.stdout + droppedTool.stderr)
+  write(droppedTool.root, 'lib/tool-registry.js', registrySource(TOOL_NAMES.slice(0, 5)))
   const rerun = spawnSync(process.execPath, [VERIFIER, '--root', droppedTool.root], {
     encoding: 'utf8',
   })
   assert.notEqual(rerun.status, 0)
-  assert.match(rerun.stdout + rerun.stderr, /mem_admin/)
+  assert.match(rerun.stdout + rerun.stderr, /no longer registers mem_admin/)
 })
 
 test('an unstated Node floor fails', (t) => {
@@ -210,7 +256,7 @@ test('an unstated Node floor fails', (t) => {
 })
 
 // The regression that made this check worth tightening: a bare substring search
-// over `lib/tools.js` passes on the module's own header comment and on its
+// over the registry passes on the module's own header comment and on the
 // exported `TOOL_NAMES` list, so it kept passing with every registration deleted.
 // These two cases pin the shapes that must be distinguished.
 test('the tool check requires a registration site, not a mention', (t) => {
@@ -221,7 +267,7 @@ test('the tool check requires a registration site, not a mention', (t) => {
   // in an exported list — while `mem_admin` has no `name: '…'` registration.
   write(
     run.root,
-    'lib/tools.js',
+    'lib/tool-registry.js',
     [
       '// The six tools: mem_search, mem_read, mem_write, mem_log, mem_brief, mem_admin.',
       `export const TOOL_NAMES = Object.freeze([${TOOL_NAMES.map((name) => `'${name}'`).join(', ')}])`,
@@ -236,14 +282,37 @@ test('the tool check requires a registration site, not a mention', (t) => {
 test('a seventh registration fails, because the surface is capped at six', (t) => {
   const run = verify(t)
   assert.equal(run.status, 0, run.stdout + run.stderr)
-  write(
-    run.root,
-    'lib/tools.js',
-    [...TOOL_NAMES, 'mem_extra'].map((name) => `  name: '${name}',\n`).join(''),
-  )
+  write(run.root, 'lib/tool-registry.js', registrySource([...TOOL_NAMES, 'mem_extra']))
   const extra = spawnSync(process.execPath, [VERIFIER, '--root', run.root], { encoding: 'utf8' })
   assert.notEqual(extra.status, 0)
   assert.match(extra.stdout + extra.stderr, /mem_extra/)
+})
+
+// Task 11's own failure mode, and the reason the façade is checked separately
+// from the registrations: all six tools can be registered correctly while
+// `lib/tools.js` publishes none of them, because both entry points import
+// through the façade. The package installs, the plugin loads, the surface is
+// empty — nothing above this line would notice.
+test('a façade that stops publishing a name fails, even with every tool registered', (t) => {
+  const run = verify(t)
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+  write(run.root, 'lib/tools.js', facadeSource(['registerTools']))
+  const trimmed = spawnSync(process.execPath, [VERIFIER, '--root', run.root], { encoding: 'utf8' })
+  assert.notEqual(trimmed.status, 0)
+  assert.match(trimmed.stdout + trimmed.stderr, /no longer re-exports registerTools/)
+  // …and the registrations it would have published are still all there.
+  assert.doesNotMatch(trimmed.stdout + trimmed.stderr, /no longer registers/)
+})
+
+test('a local copy of a published name does not satisfy the façade check', (t) => {
+  const run = verify(t)
+  assert.equal(run.status, 0, run.stdout + run.stderr)
+  // A second, structurally-equal `TOOL_NAMES` is exactly what the façade must not
+  // grow: it compiles, it passes type checking, and it drifts.
+  write(run.root, 'lib/tools.js', `export const TOOL_NAMES = []\n${facadeSource(['TOOL_NAMES'])}`)
+  const copied = spawnSync(process.execPath, [VERIFIER, '--root', run.root], { encoding: 'utf8' })
+  assert.notEqual(copied.status, 0, 'a declared copy is not a re-export')
+  assert.match(copied.stdout + copied.stderr, /no longer re-exports TOOL_NAMES/)
 })
 
 // ---------------------------------------------------------------------------

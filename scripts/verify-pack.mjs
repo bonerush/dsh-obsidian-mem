@@ -24,8 +24,10 @@
 //   4. No entry — including every file a directory entry would pull in — is a
 //      scratch/research/docs/test tree, a dependency tree, a probe record, a
 //      vault-internal `_meta/` path, or pending queue data.
-//   5. The declared Node floor is present and well formed, and `lib/tools.js`
-//      still registers the six `mem_*` tools the surface promises.
+//   5. The declared Node floor is present and well formed, and the six `mem_*`
+//      tools the surface promises are still registered — in `lib/tool-registry.js`,
+//      which is where Task 11 put the registration sites — and still reachable
+//      through `lib/tools.js`, the façade both entry points import.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -81,27 +83,74 @@ const REQUIRED_ASSETS = [
 const TOOL_NAMES = ['mem_search', 'mem_read', 'mem_write', 'mem_log', 'mem_brief', 'mem_admin']
 
 /**
- * A tool *registration site* in `lib/tools.js`, as that module writes it:
- * `name: 'mem_search'` inside a `defineTool({...})` call.
+ * The four names `lib/tools.js` has to publish, and why each one is load-bearing.
+ *
+ * This is the half the registration scan cannot see. Every tool can be declared,
+ * registered and correct while the façade publishes none of them, because
+ * `lib/index.js` (the DSH plugin) and `codex/server.mjs` (the MCP adapter) both
+ * import *through the façade*. The failure mode is quiet in the worst way: the
+ * package installs, the plugin loads, and the surface is empty.
+ */
+const FACADE_EXPORTS = [
+  ['TOOL_NAMES', 'the list every caller derives the surface from'],
+  ['TOOL_PARAMETERS', 'the argument contract the schemas are compiled from'],
+  ['registerTools', 'the DSH registration entry point'],
+  ['createMemoryServices', 'the Codex/MCP service entry point'],
+]
+
+/**
+ * A tool *registration site* in `lib/tool-registry.js`, as that module writes
+ * it: `name: 'mem_search'` inside a `defineTool({...})` call.
  *
  * Matched in this shape and not as a bare string, because the module's own
- * header comment and its exported `TOOL_NAMES` list both name all six tools — a
- * substring search would keep passing with every registration deleted, which is
- * a check that proves nothing. Measured: exactly six sites match and no other
- * line in the file does.
+ * header comment and the `TOOL_NAMES` list in `lib/tool-schema.js` both name all
+ * six tools — a substring search would keep passing with every registration
+ * deleted, which is a check that proves nothing. Measured: exactly six sites
+ * match and no other line in the file does.
+ *
+ * The scan follows the registration, not the package layout: Task 11 moved these
+ * sites out of `lib/tools.js`, and a verifier that kept reading the old path
+ * would have gone on reporting success against a file that no longer holds a
+ * single registration.
  */
 const REGISTRATION_SITE = /name:\s*'mem_[a-z]+'/g
 
 /**
  * The tool names actually registered in one source text.
  *
- * @param {string} source - the contents of `lib/tools.js`.
+ * @param {string} source - the contents of `lib/tool-registry.js`.
  * @returns {Set<string>} the names found at registration sites.
  */
 function registeredToolNames(source) {
   const names = new Set()
   for (const match of source.matchAll(REGISTRATION_SITE)) {
     names.add(match[0].replace(/^name:\s*'/, '').replace(/'$/, ''))
+  }
+  return names
+}
+
+/**
+ * The names a façade source text re-exports, as `export { a, b } from './x.js'`.
+ *
+ * Only re-exports count: a local `const TOOL_NAMES = [...]` is a second copy of
+ * the contract rather than the façade's promise to publish it, and the two are
+ * worth telling apart — a copy drifts, a re-export cannot. `as` is honoured
+ * because `export { x as y }` publishes `y`.
+ *
+ * @param {string} source - the contents of `lib/tools.js`.
+ * @returns {Set<string>} the published names.
+ */
+function facadeExports(source) {
+  const names = new Set()
+  for (const match of source.matchAll(/export\s*\{([^}]*)\}\s*from\s*'\.\/[a-z-]+\.js'/g)) {
+    for (const entry of match[1].split(',')) {
+      const name = entry
+        .trim()
+        .split(/\s+as\s+/)
+        .pop()
+        .trim()
+      if (name) names.add(name)
+    }
   }
   return names
 }
@@ -274,26 +323,42 @@ export function verifyPack(root) {
   // 5. The shipped tool surface is still the six tools the design promises.
   //
   // Both directions are checked: a dropped registration and a seventh tool. The
-  // surface is capped at six on purpose (`lib/tools.js` header, spec §9), so an
-  // extra registration is as much a packaging regression as a missing one.
-  const toolsPath = join(root, 'lib/tools.js')
-  if (existsSync(toolsPath)) {
-    const registered = registeredToolNames(readFileSync(toolsPath, 'utf8'))
+  // surface is capped at six on purpose (spec §9), so an extra registration is as
+  // much a packaging regression as a missing one.
+  for (const [path, what] of [
+    ['lib/tool-registry.js', 'the six registration sites'],
+    ['lib/tools.js', 'the public entry point'],
+  ]) {
+    if (!existsSync(join(root, path))) problems.push(`${path} is missing on disk (${what})`)
+  }
+
+  const registryPath = join(root, 'lib/tool-registry.js')
+  if (existsSync(registryPath)) {
+    const registered = registeredToolNames(readFileSync(registryPath, 'utf8'))
     for (const name of TOOL_NAMES) {
       if (!registered.has(name))
         problems.push(
-          `lib/tools.js no longer registers ${name} (no name: '${name}' registration site)`,
+          `lib/tool-registry.js no longer registers ${name} (no name: '${name}' registration site)`,
         )
     }
     for (const name of registered) {
       if (!TOOL_NAMES.includes(name)) {
         problems.push(
-          `lib/tools.js registers ${name}, which is not one of the six tools (the surface is deliberately capped)`,
+          `lib/tool-registry.js registers ${name}, which is not one of the six tools (the surface is deliberately capped)`,
         )
       }
     }
-  } else {
-    problems.push('lib/tools.js is missing on disk (the six-tool surface)')
+  }
+
+  // 5b. …and still reachable. A registration in a module nobody re-exports is a
+  // tool the plugin never mounts, so the façade is checked as its own contract
+  // rather than assumed from the scan above.
+  const facadePath = join(root, 'lib/tools.js')
+  if (existsSync(facadePath)) {
+    const published = facadeExports(readFileSync(facadePath, 'utf8'))
+    for (const [name, why] of FACADE_EXPORTS) {
+      if (!published.has(name)) problems.push(`lib/tools.js no longer re-exports ${name} (${why})`)
+    }
   }
 
   return problems
@@ -323,7 +388,7 @@ function main() {
   }
   process.stdout.write(`verify-pack: OK ${root}\n`)
   process.stdout.write(
-    `  version ${readJson(join(root, 'package.json')).version}, files allowlist ${readJson(join(root, 'package.json')).files.length} entries, ${REQUIRED_ASSETS.length} required assets present and covered, ${TOOL_NAMES.length} tools registered\n`,
+    `  version ${readJson(join(root, 'package.json')).version}, files allowlist ${readJson(join(root, 'package.json')).files.length} entries, ${REQUIRED_ASSETS.length} required assets present and covered, ${TOOL_NAMES.length} tools registered and ${FACADE_EXPORTS.length} names published\n`,
   )
   return 0
 }

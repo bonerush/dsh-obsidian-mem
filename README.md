@@ -550,10 +550,14 @@ then a static check that `package.json` and `dsh.plugin.json` agree on version,
 plugin identity and entry point, that the `files` allowlist covers the assets the
 tarball must carry (including `skills/obsidian-mem/SKILL.md`), that nothing in the
 allowlist could pack `scratch/`, `research/`, `docs/`, `test/`, `node_modules/`,
-probe records or pending queue data, and that `lib/tools.js` still carries a
+probe records or pending queue data, that `lib/tool-registry.js` still carries a
 `name: 'mem_x'` registration site for each of the six tools — and no seventh,
-because the surface is capped on purpose. It never edits a configuration file and
-never launches Obsidian.
+because the surface is capped on purpose — and that `lib/tools.js` still
+re-exports all four names both entry points import (`TOOL_NAMES`,
+`TOOL_PARAMETERS`, `registerTools`, `createMemoryServices`). The two checks are
+separate because they fail separately: every tool can be registered correctly and
+still be invisible if the façade stops publishing it. It never edits a
+configuration file and never launches Obsidian.
 
 `npm pack` itself runs `prepack`, so a plain `npm pack --dry-run` runs the whole
 suite before printing the manifest — pass `--ignore-scripts` when you only want

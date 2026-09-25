@@ -499,8 +499,11 @@ npm pack --dry-run --ignore-scripts      # manifest only
 `package.json` 和 `dsh.plugin.json` 在版本、插件身份和入口上是否一致，`files` 白
 名单是否覆盖 tarball 必须携带的资产（包括 `skills/obsidian-mem/SKILL.md`），白名
 单里有没有任何东西会打包进 `scratch/`、`research/`、`docs/`、`test/`、
-`node_modules/`、探针记录或 pending 队列数据，以及 `lib/tools.js` 是否仍为六个工
-具各自保留一处 `name: 'mem_x'` 注册点——而且没有第七个，因为这个面是刻意封顶的。
+`node_modules/`、探针记录或 pending 队列数据，`lib/tool-registry.js` 是否仍为六
+个工具各自保留一处 `name: 'mem_x'` 注册点——而且没有第七个，因为这个面是刻意封顶
+的——以及 `lib/tools.js` 是否仍转出两个入口都要的四个名字（`TOOL_NAMES`、
+`TOOL_PARAMETERS`、`registerTools`、`createMemoryServices`）。两项检查分开是
+因为它们会分别失败：六个工具可以注册得完全正确，却因为门面不再转出而全部不可见。
 它从不编辑配置文件，也从不启动 Obsidian。
 
 `npm pack` 自身会跑 `prepack`，所以一条简单的 `npm pack --dry-run` 会先跑完整套

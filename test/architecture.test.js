@@ -1,11 +1,17 @@
 // Task 5: module boundaries and file size as tests, not as intentions.
 //
 // The design measured this repository before proposing anything: `lib/` has no
-// import cycles and its 24 modules already fall into ten layers with every edge
-// pointing strictly downward. Four files are large because each is cohesive (a
-// single measurement of the import graph shows `index-db.js` depending on two
-// modules, `transaction.js` on three), which is why the structural work is a
-// fitness function rather than a reorganisation.
+// import cycles and its 28 modules already fall into eleven layers with every
+// edge pointing strictly downward. Several files are large because each is
+// cohesive (a single measurement of the import graph shows `index-db.js`
+// depending on two modules, `transaction.js` on three), which is why the
+// structural work is a fitness function rather than a reorganisation.
+//
+// That held through the one structural change the plan did make: `lib/tools.js`
+// was 2,006 lines holding three jobs, and Task 11 gave each job its own module
+// behind an unchanged façade. The three new names below are not an exception to
+// the layer rule but an application of it — `tools` now sits *above* the parts
+// it re-exports, which is the only position from which a façade can exist.
 //
 // The lists below are a *reviewed snapshot*, not an algorithm's output. That is
 // the whole point: the check fails when a new module appears, when an edge points
@@ -60,8 +66,20 @@ const LAYERS = {
   hot: 6,
   brief: 7,
   hooks: 8,
-  tools: 8,
-  index: 9,
+  // The tool contract reads `DEFAULT_LIMIT` from `index-db` (L2) and nothing
+  // else, which puts it at L3; the registrations import the contract and nothing
+  // else, which puts them at L4. Both were inside `tools.js` before Task 11.
+  'tool-schema': 3,
+  'tool-registry': 4,
+  // The service layer calls `buildBrief`, so it sits above `brief`; that single
+  // edge is what fixes its layer, and it is the reason the split is L8/L9/L10
+  // rather than three files at the old `tools` layer.
+  services: 8,
+  // The façade: it imports its three parts and nothing else, so it has to be
+  // above all of them. A module that re-exports is not a peer of what it
+  // re-exports, which is exactly what the strict-downward rule encodes.
+  tools: 9,
+  index: 10,
 }
 
 /**
@@ -95,7 +113,14 @@ const BUDGETS = {
   // Raised from 1950 when the diagnostics action's schema landed here. This file
   // is the one the split is for, so the raise is explicitly temporary: the next
   // structural change reduces it to a façade and lowers this number with it.
-  'lib/tools.js': 2050,
+  // The four modules Task 11 produced, on the same rule as every other entry.
+  // Before the split this was one 2,006-line file whose budget had been raised
+  // to 2,050 with a note saying the raise was temporary; the façade is 22 lines,
+  // so the number that replaces it is 100 rather than another raise.
+  'lib/tools.js': 100,
+  'lib/tool-schema.js': 900,
+  'lib/tool-registry.js': 250,
+  'lib/services.js': 1100,
   'lib/transaction.js': 2200,
   'lib/vault.js': 1750,
 }

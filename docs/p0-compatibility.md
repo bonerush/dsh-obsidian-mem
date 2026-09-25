@@ -383,7 +383,7 @@ run-teardown-probe: OK (13 assertion(s))
 2. **生命周期卸载（fiber disposer / 插件卸载 / `agent/disposed`）不是调用方取消。** 把卸载翻译成 `finish.kind='aborted'` 会把宿主生命周期记成模型失败，消耗 R43 的尝试上限。插件侧的正确形状是：卸载时**停止调度**，让在飞调用自然收尾（或由进程退出把它留给下一次恢复），只有真正的取消才 `abort()`。
 3. **在飞的 `llm.stream()` 会跨过插件树处置继续产出**（本机 7190 ms，处置后 4.7 s 收尾）。因此"让在飞调用自然收尾"是可行的；但**进程退出**仍会丢失它——此时 job 保持 `pending`，由下一次恢复接手（这是既有的崩溃契约）。
 4. **一次 headless 运行在 turn 结束后的存活窗口只有秒级**（本机 `turn-end` → disposer ≈ 2.4–3.4 s，且 disposer 之前定时器会被推迟）。因此"回合结束后再等一个 debounce/backoff 才发起的模型调用"在一次性运行的宿主里**必然赶不上**；能完成的路径只有"存活窗口内发起 + 不在卸载时自杀"。
-5. **处置之后 `services.close()` 已经跑过**（`lib/tools.js` 的 fiber effect）。此时仍可能发生的 apply 是纯文件工作（事务引擎、receipt、floor、job 删除），索引刷新会重新打开一个 handle 并在进程退出时释放；索引刷新失败只记在 receipt 的 `index` 字段上，绝不回滚已提交的 vault 事务（既有约束 6）。
+5. **处置之后 `services.close()` 已经跑过**（`lib/tool-registry.js` 的 fiber effect；Task 11 之前这段代码在 `lib/tools.js`）。此时仍可能发生的 apply 是纯文件工作（事务引擎、receipt、floor、job 删除），索引刷新会重新打开一个 handle 并在进程退出时释放；索引刷新失败只记在 receipt 的 `index` 字段上，绝不回滚已提交的 vault 事务（既有约束 6）。
 6. 本节的**非**结论：本机没有测"多帧持久日志恢复"、"Obsidian GUI"、"跨进程锁竞争"；也不给跨环境结论——本节只声明本机测量。
 
 ### 9.5 安全与清理
