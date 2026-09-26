@@ -508,6 +508,19 @@ what is still open.
 
 ### Fixed
 
+- **The distillation prompt now names the `status` vocabulary, and cannot drift
+  from the validator again.** Two of the three enumerated fields were spelled out in
+  `SYSTEM_PROMPT` and `status` was not, while `validateItem` refuses any status
+  outside `STATUSES` — so the model had to guess an enum the plugin would reject.
+  Measured on a real home: an output was refused with `distill item 2: status must
+  be one of active, proposed, … (got "completed")`, and every candidate in it was
+  discarded with it. All three vocabularies (`type`, `assertion`, `status`) are now
+  interpolated from the exported `DISTILL_TYPES`/`ASSERTIONS`/`STATUSES`, so a value
+  added to one is a value the model is told about in the same edit. Red first: the
+  new case in `test/distill.test.js` drives one bad value per enumerated field
+  through `validateDistillation`, reads the accepted list back out of the refusal
+  message, and requires the prompt to name every value in it — it failed with "the
+  prompt never names the status value active" and passes after.
 - **An explicit `mem_admin(action="jobs", retry=true)` now wakes the queue worker
   instead of waiting for something unrelated to.** `retryJob` revived the job and
   stopped there, and a pass arms its next timer only while work is already waiting

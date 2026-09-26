@@ -41,6 +41,7 @@ import { test } from 'node:test'
 
 import {
   DistillError,
+  SYSTEM_PROMPT,
   distillCandidates,
   distillSettings,
   runPendingJob,
@@ -219,6 +220,36 @@ test('the brief example: a doc item is refused with a message naming the type', 
       () => validateDistillation(json([decisionItem({ type })]), JOB, CONFIG),
       throwsCode('type'),
     )
+  }
+})
+
+test('the system prompt names every enum the validator refuses to guess', () => {
+  // The refusal message is the contract: it spells out the vocabulary the
+  // validator accepts. Reading that list back and requiring the prompt to name
+  // every value is what keeps the prompt from becoming a second, drifting copy of
+  // the validator. A real job died on exactly this: `status` was the one
+  // enumerated field the prompt left unnamed, and the model answered "completed".
+  for (const [field, code] of [
+    ['type', 'type'],
+    ['assertion', 'schema'],
+    ['status', 'schema'],
+  ]) {
+    let refusal = null
+    assert.throws(
+      () => validateDistillation(json([decisionItem({ [field]: 'not-a-value' })]), JOB, CONFIG),
+      (error) => {
+        refusal = error
+        return throwsCode(code)(error)
+      },
+      `a bad ${field} must be refused`,
+    )
+    const named = /must be one of ([^(]+?) \(got/.exec(refusal.message)
+    assert.notEqual(named, null, `${field}: the refusal names its vocabulary`)
+    const allowed = named[1].split(',').map((value) => value.trim())
+    assert.ok(allowed.length >= 3, `${field}: the refusal named ${allowed.length} values`)
+    for (const value of allowed) {
+      assert.ok(SYSTEM_PROMPT.includes(value), `the prompt never names the ${field} value ${value}`)
+    }
   }
 })
 
