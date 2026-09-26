@@ -508,6 +508,25 @@ what is still open.
 
 ### Fixed
 
+- **An explicit `mem_admin(action="jobs", retry=true)` now wakes the queue worker
+  instead of waiting for something unrelated to.** `retryJob` revived the job and
+  stopped there, and a pass arms its next timer only while work is already waiting
+  — `processQueue` returns `nextDueAt: null` for a queue whose only job is terminal
+  — so a revived job sat untouched until the next captured turn or a plugin reload.
+  Measured on a real home: two revived jobs stayed untouched through four minutes of
+  polling with the host otherwise idle. `registerHooks` now announces the worker it
+  builds through a new `onQueueWorker` dep, `lib/index.js` hands that worker to the
+  services as a late-bound `kickQueueWorker`, and `jobsAction` calls it exactly once
+  after a successful revive — never for a listing, a refusal, or a job id that names
+  nothing. Red first: the new case in `test/integration-write-read.test.js` drives
+  the real `apply()` assembly, writes a terminally failed job into the
+  `DSH_HOME`-derived queue and fails with "no diagnostics event named job-revive-1
+  within 5000 ms" without the kick, because a pass is observable only through the
+  decision it records; it also caught the first attempt, where the kicker reached
+  `createMemoryServices` but not the module-level `jobsAction` that owns the retry.
+  `test/lint.test.js` pins the contract at the service seam: one kick per
+  successful retry, none for a listing, a refusal or a missing id, and a
+  non-function `kickQueueWorker` is refused where it is supplied.
 - **`mem_admin(action="jobs")` reports why a job failed instead of `null`.** The
   queue stores `lastError` as an object — `{code, message, at}` — because the
   reason, the line and the time are each useful to a reader of the job file, while

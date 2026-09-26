@@ -1061,12 +1061,15 @@ test('jobs lists the queue and retries only on an explicit request', async (t) =
   const f = await fixture(t)
   await writeJobAtomic(f.queueRoot, jobDocument())
   const config = validateConfig({ vaultPath: f.vault })
+  /** Every wake-up the services asked the queue worker for, in order. */
+  const kicks = []
   const services = createMemoryServices({
     config,
     dataRoot: f.dataRoot,
     cwd: f.repo,
     home: f.home,
     binding: f.binding,
+    kickQueueWorker: () => kicks.push('kick'),
   })
   t.after(() => services.close())
 
@@ -1109,19 +1112,41 @@ test('jobs lists the queue and retries only on an explicit request', async (t) =
 
   const untouched = await readPendingJobs(f.queueRoot)
   assert.equal(untouched.jobs[0].state, 'failed')
+  // Both listings above are reads: neither may have woken the worker.
+  assert.deepEqual(kicks, [])
 
   const retried = await services.admin({ action: 'jobs', jobId: 'job-1', retry: true })
   assert.equal(retried.result.status, 'retried')
   assert.equal(retried.result.jobs[0].state, 'pending')
   assert.equal(retried.result.jobs[0].attempts, 0)
+  // A revived job is due immediately, but nothing else would wake the worker: a
+  // pass arms its next timer only while work is waiting, so the explicit retry is
+  // the one caller that has to ask for a pass — and it asks exactly once.
+  assert.deepEqual(kicks, ['kick'])
 
   // Retrying a job that did not exhaust its attempts is refused, not silently reset.
   const refused = await services.admin({ action: 'jobs', jobId: 'job-1', retry: true })
   assert.equal(refused.result.status, 'refused')
   assert.match(refused.result.message, /retry-not-failed/)
+  assert.deepEqual(kicks, ['kick'], 'a refused retry wakes nothing')
 
   const missing = await services.admin({ action: 'jobs', jobId: 'nope', retry: true })
   assert.equal(missing.result.status, 'refused')
+  assert.deepEqual(kicks, ['kick'], 'a retry that named no job wakes nothing')
+
+  // A value that is not a function is refused where it is supplied, not at the
+  // first retry — the one moment it would otherwise matter.
+  assert.throws(
+    () =>
+      createMemoryServices({
+        config,
+        dataRoot: f.dataRoot,
+        cwd: f.repo,
+        home: f.home,
+        kickQueueWorker: 'nope',
+      }),
+    /kickQueueWorker/,
+  )
 })
 
 test('the weekly hint is due only when the last report is older than seven days', async (t) => {

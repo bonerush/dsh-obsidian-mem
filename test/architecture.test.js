@@ -131,7 +131,12 @@ const BUDGETS = {
   'lib/tools.js': 100,
   'lib/tool-schema.js': 900,
   'lib/tool-registry.js': 250,
-  'lib/services.js': 1100,
+  // Raised from 1100 when the explicit-retry wake-up landed here: `kickQueueWorker`
+  // is threaded through the option record and the one action that owns retrying, so
+  // a revived job runs now rather than at the next unrelated capture. The retry and
+  // the wake-up it asks for are one decision, which is why they stay in one file
+  // instead of the kick moving out to the assembly.
+  'lib/services.js': 1120,
   'lib/transaction.js': 2200,
   'lib/vault.js': 1750,
 }

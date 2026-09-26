@@ -20,7 +20,7 @@
 // plugin (`~/.dsh/profiles/node_modules/@deepseek-ai/*` symlinks).
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -33,6 +33,8 @@ import toolsPlugin from '@deepseek-ai/dsh-tools'
 
 import { validateConfig } from '../lib/config.js'
 import { apply } from '../lib/index.js'
+import { resolveDataRoot } from '../lib/paths.js'
+import { queueRootFor, readPendingJobs, writeJobAtomic } from '../lib/pending.js'
 import { createMemoryServices, registerTools } from '../lib/tools.js'
 import { bootstrapVault, resolveBinding } from '../lib/vault.js'
 
@@ -176,6 +178,49 @@ function value(result, label) {
     `${label}: ${result.error?.message ?? JSON.stringify(result)}`,
   )
   return result.value
+}
+
+/** The plugin's decision ring, as `mem_admin(action="diagnostics")` reports it. */
+async function diagnosticsEvents(ctx, f) {
+  const listed = value(
+    await call(ctx, 'mem_admin', { action: 'diagnostics' }, { cwd: f.repo }),
+    'diagnostics',
+  )
+  return listed.result.events
+}
+
+/**
+ * What the worker has recorded about one job, or null while it has said nothing.
+ *
+ * `outcome` matters: the services record the retry itself (`job/retried`) in this
+ * same ring, so a lookup by job id alone answers with the request rather than the
+ * pass it was supposed to wake.
+ */
+async function jobEvent(ctx, f, jobId, outcome) {
+  const events = await diagnosticsEvents(ctx, f)
+  return (
+    events.find(
+      (event) => event.jobId === jobId && (outcome === undefined || event.outcome === outcome),
+    ) ?? null
+  )
+}
+
+/**
+ * The same, polled to a deadline.
+ *
+ * Nothing awaits a queue-worker pass — the plugin starts it and returns — so the
+ * only honest way to observe one is to wait for the decision it records.
+ */
+async function waitForJobEvent(ctx, f, jobId, outcome, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const found = await jobEvent(ctx, f, jobId, outcome)
+    if (found !== null) return found
+    if (Date.now() >= deadline) {
+      assert.fail(`no diagnostics event named ${jobId} within ${timeoutMs} ms`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -865,4 +910,72 @@ test('apply hands one DSH_HOME-derived data root to the transaction engine and t
     true,
     'the index lives under the same derived data root',
   )
+})
+
+test('an explicit job retry wakes the host worker, so a revived job really runs', async (t) => {
+  const f = await fixture(t)
+  const ctx = await bareBed(t)
+  // `apply` derives the queue from `DSH_HOME` in exactly one place, so this case
+  // points that variable at the fixture first and then asks the same function where
+  // the queue is, instead of guessing the layout a second time.
+  const dshHome = join(f.root, 'dsh-home')
+  await mkdir(dshHome, { recursive: true })
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = dshHome
+  t.after(() => {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+  })
+  const queueRoot = queueRootFor(resolveDataRoot())
+  // A terminally failed job whose project this data root has never registered: the
+  // only thing a pass can do with it is defer it, which is what makes the pass
+  // itself visible in the decision ring.
+  const jobId = 'job-revive-1'
+  await writeJobAtomic(queueRoot, {
+    jobId,
+    sessionId: 'sess-revive',
+    projectId: randomUUID(),
+    fromSeq: 1,
+    toSeq: 2,
+    state: 'failed',
+    attempts: 3,
+    lastError: {
+      code: 'truncated',
+      message: 'truncated: the output is incomplete',
+      at: '2026-09-25T00:00:00.000Z',
+    },
+    createdAt: '2026-09-25T00:00:00.000Z',
+    allowedEvents: [],
+    safeInput: 'safe input',
+  })
+
+  const dispose = apply(ctx, { vaultPath: f.vault })
+  t.after(() => dispose())
+
+  // A terminally failed job is never retried by a pass, and a pass with nothing
+  // left to wait for arms no timer — so nothing may touch this job until something
+  // wakes the worker. Asserted rather than assumed: a stray pass here would make
+  // the positive half of this case pass for the wrong reason.
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  assert.equal(await jobEvent(ctx, f, jobId), null)
+
+  const retried = value(
+    await call(ctx, 'mem_admin', { action: 'jobs', jobId, retry: true }, { cwd: f.repo }),
+    'retry',
+  )
+  assert.equal(retried.result.status, 'retried')
+  assert.equal(retried.result.failed, 0)
+  assert.equal(retried.result.jobs[0].state, 'pending')
+  // The reason survives the revive, and the listing renders the stored object.
+  assert.equal(retried.result.jobs[0].lastError, 'truncated: the output is incomplete')
+
+  // Nothing in this case captures a turn or reloads the plugin, so a decision the
+  // worker records about this job can only have come from the retry waking it.
+  const event = await waitForJobEvent(ctx, f, jobId, 'deferred', 5000)
+  assert.equal(event.outcome, 'deferred')
+  assert.equal(event.code, 'no-binding')
+
+  const { jobs } = await readPendingJobs(queueRoot)
+  assert.equal(jobs[0].state, 'deferred')
+  assert.equal(jobs[0].deferredReason, 'no-binding')
 })
