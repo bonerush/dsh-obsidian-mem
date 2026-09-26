@@ -508,6 +508,24 @@ what is still open.
 
 ### Fixed
 
+- **`mem_admin(action="jobs")` reports why a job failed instead of `null`.** The
+  queue stores `lastError` as an object — `{code, message, at}` — because the
+  reason, the line and the time are each useful to a reader of the job file, while
+  `JOB_SCHEMA` declares a single string. The view was built with a string-only
+  check, so a terminally failed job listed as `lastError: null` and the reason —
+  the one thing this action exists to show — was visible only by reading
+  `$DSH_HOME/data/obsidian-mem/pending/*.json` by hand. `normalizeJobError` in
+  `lib/pending.js` is now the one place the two shapes meet; it prepends the code
+  only when the stored message does not already carry it, because a stored
+  `message` is `describeError`'s output and the naive join prints
+  `too-many-items: too-many-items: …`. Red first: the new assertion in
+  `test/lint.test.js` read `null` for a job document carrying the object the
+  writer actually stores (45 tests pass in the two touched files afterwards);
+  `test/pending.test.js` covers the remaining shapes — bare message, code only,
+  legacy string, empty, `null` and a non-object. The README pair also names the
+  configuration gap behind a queue that never drains: a session imported from
+  another harness has no recorded route, so imported history waits for
+  `distill.provider`/`model` to be set.
 - **The callback JSDoc in `lib/hooks.js` and `lib/transaction.js` now parses
   under TypeScript 7 as well as 5.9.** Five `@param {function(string): T}` type
   expressions used the Closure dialect, which TypeScript 7.0.2 — today's

@@ -34,6 +34,7 @@ import {
   loadPending,
   loadProcessedRecords,
   markJob,
+  normalizeJobError,
   processedRecordPath,
   queueRootFor,
   readPendingJobs,
@@ -228,6 +229,33 @@ test('markJob patches one job atomically, preserves its identity, and refuses a 
 
 test('queueRootFor places the queue under the one plugin data root', () => {
   assert.equal(queueRootFor('/data/obsidian-mem'), join('/data/obsidian-mem', 'pending'))
+})
+
+// The two shapes this has to survive are both real: `capture.js` writes an object
+// whose `message` is `describeError`'s output and therefore already carries the
+// code, and an older or hand-written job file may carry the bare string. Printing
+// the code twice would misreport the reason, and printing nothing is the defect
+// this normalizer exists to close.
+test('normalizeJobError renders every stored shape as one line, never a doubled code', () => {
+  assert.equal(
+    normalizeJobError({
+      code: 'too-many-items',
+      message: 'too-many-items: the model returned 15 items',
+      at: '2026-09-25T09:45:27.499Z',
+    }),
+    'too-many-items: the model returned 15 items',
+  )
+  assert.equal(
+    normalizeJobError({ code: 'aborted', message: 'the stream ended' }),
+    'aborted: the stream ended',
+  )
+  assert.equal(normalizeJobError({ code: 'aborted', message: '' }), 'aborted')
+  assert.equal(normalizeJobError({ message: 'unprintable error' }), 'unprintable error')
+  assert.equal(normalizeJobError('MISSING_CREDENTIAL'), 'MISSING_CREDENTIAL')
+  assert.equal(normalizeJobError(''), null)
+  assert.equal(normalizeJobError(null), null)
+  assert.equal(normalizeJobError(undefined), null)
+  assert.equal(normalizeJobError(42), null)
 })
 
 // ---------------------------------------------------------------------------

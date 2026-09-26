@@ -1080,6 +1080,32 @@ test('jobs lists the queue and retries only on an explicit request', async (t) =
   assert.equal(listed.result.failed, 1)
   assert.equal(listed.result.jobs[0].state, 'failed')
   assert.equal(listed.result.jobs[0].attempts, 3)
+  assert.equal(listed.result.jobs[0].lastError, 'MISSING_CREDENTIAL')
+
+  // The queue stores the reason as an object — `{code, message, at}` — because all
+  // three are useful to a reader of the job file, while the tool schema declares
+  // one string. A failed job whose reason the listing hides is the one thing this
+  // action exists for, so both stored shapes have to come out as that string.
+  await writeJobAtomic(
+    f.queueRoot,
+    jobDocument({
+      jobId: 'job-2',
+      lastError: {
+        code: 'too-many-items',
+        message: 'too-many-items: the model returned 15 items, beyond distill.maxItems=12',
+        at: '2026-09-25T09:45:27.499Z',
+      },
+    }),
+  )
+  const withObject = await services.admin({ action: 'jobs', retry: false })
+  const second = withObject.result.jobs.find((job) => job.jobId === 'job-2')
+  assert.equal(second.state, 'failed')
+  assert.equal(
+    second.lastError,
+    'too-many-items: the model returned 15 items, beyond distill.maxItems=12',
+    'the code a stored message already carries is reported once, not twice',
+  )
+  assert.equal(withObject.result.failed, 2)
 
   const untouched = await readPendingJobs(f.queueRoot)
   assert.equal(untouched.jobs[0].state, 'failed')
