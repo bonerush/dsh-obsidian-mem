@@ -22,6 +22,7 @@ const DEFAULTS = {
   initGitOnCreate: true,
   injectBrief: true,
   briefBudgetChars: 6000,
+  recallBudgetChars: 900,
   hotCapacityChars: 9000,
   hotArchiveRatio: 0.67,
   autoCapture: true,
@@ -110,6 +111,7 @@ test('validateConfig is idempotent on an already-validated object', () => {
 
 const INTEGER_BOUNDS = [
   ['briefBudgetChars', 256, 20000],
+  ['recallBudgetChars', 256, 20000],
   ['hotCapacityChars', 1024, 50000],
   ['captureIdleMs', 1000, 3600000],
 ]

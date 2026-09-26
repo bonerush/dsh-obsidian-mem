@@ -33,7 +33,9 @@ import {
   SYSTEM_PROMPT_TEXT,
   registerHooks,
 } from '../lib/hooks.js'
-import { registerTools } from '../lib/tools.js'
+import { createMemoryServices, registerTools } from '../lib/tools.js'
+import { validateConfig } from '../lib/config.js'
+import { writeMemory } from '../lib/memory.js'
 import { bootstrapVault } from '../lib/vault.js'
 
 /** Fixed, valid UUIDv4 identity (version nibble `4`, variant nibble `8`). */
@@ -42,6 +44,8 @@ const SESSION_ID = 'session-9d4a4c1e-2f1a-4f4e-8b3a-000000000001'
 const CWD = '/work/demo'
 const RELATIVE_DIR = `Projects/demo--${PROJECT_ID.slice(0, 8)}`
 const BUDGET = 6000
+/** The per-turn recall ceiling `validateConfig` supplies (config.recallBudgetChars). */
+const RECALL_BUDGET = 900
 
 /** The six tools this plugin registers, sorted for set comparison. */
 const SIX = Object.freeze([
@@ -158,7 +162,12 @@ function bed(t, options = {}) {
     // (or a throwing stub) to pin down what the failure path does with it.
     Object.defineProperty(ctx, 'logger', { configurable: true, get: () => options.logger })
   }
-  const config = { briefBudgetChars: BUDGET, injectBrief: true, ...(options.config ?? {}) }
+  const config = {
+    briefBudgetChars: BUDGET,
+    recallBudgetChars: RECALL_BUDGET,
+    injectBrief: true,
+    ...(options.config ?? {}),
+  }
   const resolveBinding =
     options.resolveBinding ??
     (async (cwd) => {
@@ -334,6 +343,42 @@ test('a real user turn receives one relevant project map and never repeats its p
   const nextTurn = await h.preStep(agent, undefined, undefined, { messages: [message], turn: 2 })
   assert.equal(promptMaps(nextTurn).length, 0)
   assert.equal(calls.length, 2, 'new turns search, but a shown path is suppressed')
+})
+
+test('a full-size brief does not starve the per-turn recall on the first turn', async (t) => {
+  // The production shape this pins down: the one-shot brief spends essentially
+  // the whole session budget (measured 5,896 of 6,000 code points), and the
+  // recall used to be handed "whatever is left" — which on turn 1 is nothing.
+  // Replayed over 154 real prompts, that starved the recall to a 0.6% firing
+  // rate on turn 1 against 22.1% on later turns.
+  const path = RELATIVE_DIR + '/Conventions/绑定指针只在仓库根.md'
+  const h = bed(t, {
+    buildBrief: async () => briefValue({ text: 'x'.repeat(BUDGET - 100) }),
+    search: async () => [
+      {
+        path,
+        title: '绑定指针只在仓库根',
+        snippet: '身份是 projectId，路径只是标签',
+        scoreSignals: ['title-contains', 'token-hits:5'],
+      },
+    ],
+  })
+  const agent = h.start()
+  const first = await h.preStep(agent, undefined, undefined, {
+    messages: [
+      {
+        id: 'human-1',
+        role: 'user',
+        content: [{ type: 'text', text: '绑定指针 projectId 是怎么定的？' }],
+        source: { kind: 'user' },
+      },
+    ],
+    turn: 1,
+  })
+  const maps = promptMaps(first)
+  assert.equal(maps.length, 1, 'the recall still arrives beside a full-size brief')
+  assert.match(maps[0].content[0].text, /绑定指针只在仓库根\.md/)
+  assert.ok([...maps[0].content[0].text].length <= RECALL_BUDGET)
 })
 
 test('a plugin message never triggers prompt recall', async (t) => {
@@ -1034,6 +1079,90 @@ test('a real vault and the shipped buildBrief produce one budgeted brief and not
 
   const second = await h.preStep(agent)
   assert.equal(second.messages.length, 0)
+})
+
+test('a real vault, brief and search hand the first turn the matched excerpt', async (t) => {
+  // The one shape no stub in this file reproduces: the shipped `buildBrief`, the
+  // shipped index, the shipped service `search` and the shipped `promptRecall`
+  // over a single real vault. It is the DSH half of the end-to-end measurement
+  // the prompt-recall spec said unit tests could not supply.
+  const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t12-e2e-'))
+  const home = join(root, 'home')
+  const briefData = join(root, 'data-brief')
+  const serviceData = join(root, 'data-services')
+  const repo = join(root, 'repo')
+  const vault = join(root, 'vault')
+  await mkdir(home, { recursive: true })
+  await mkdir(briefData, { recursive: true })
+  await mkdir(serviceData, { recursive: true })
+  await mkdir(repo, { recursive: true })
+  const binding = { ...BINDING, vaultRoot: vault, repoRoot: repo }
+  await bootstrapVault(binding, { dataRoot: briefData, home })
+  await writeMemory(
+    binding,
+    {
+      type: 'decision',
+      title: 'FTS5 中文索引的分词口径',
+      body: '把中文查询切成 bigram 再拼进 FTS5 MATCH，否则两字词搜不到。\n',
+    },
+    { dataRoot: briefData, home },
+  )
+  let index = null
+  const services = createMemoryServices({
+    config: validateConfig({ vaultPath: vault, initGitOnCreate: false }),
+    dataRoot: serviceData,
+    cwd: repo,
+    home,
+    binding,
+  })
+  t.after(async () => {
+    if (index !== null) await index.close().catch(() => {})
+    await services.close()
+    await rm(root, { recursive: true, force: true, maxRetries: 4 })
+  })
+  const open = async () => {
+    if (index === null)
+      index = await openIndex({
+        vaultRoot: vault,
+        dataRoot: briefData,
+        backend: 'sqlite',
+        projectId: PROJECT_ID,
+        home,
+      })
+    return index
+  }
+
+  const h = bed(t, {
+    resolveBinding: async () => binding,
+    index: async () => open(),
+    buildBrief,
+    search: (args, signal, exec) => services.search(args, signal, exec),
+    // The production ratio, not a padded one: the brief is meant to fill its
+    // budget, and it is exactly that which used to leave the map nothing. With
+    // the old "whatever the brief left" expression this case fails, because 400
+    // minus a full brief is under the policy's 90-code-point floor.
+    config: { briefBudgetChars: 400 },
+  })
+  const agent = h.start()
+  const first = await h.preStep(agent, undefined, undefined, {
+    messages: [
+      {
+        id: 'human-1',
+        role: 'user',
+        content: [{ type: 'text', text: 'FTS5 中文索引的分词口径是什么？' }],
+        source: { kind: 'user' },
+      },
+    ],
+    turn: 1,
+  })
+
+  const maps = promptMaps(first)
+  assert.equal(maps.length, 1, 'the recall is delivered on the very first turn')
+  const map = maps[0].content[0].text
+  assert.ok(map.includes('FTS5 中文索引的分词口径'), 'the map names the matching note')
+  assert.ok(map.includes('bigram'), 'and carries the excerpt the index computed for this query')
+  assert.ok([...map].length <= RECALL_BUDGET, 'the map respects its own ceiling')
+  assert.equal(recalled(first).length, 2, 'brief and map, each inside its own budget')
 })
 
 // ---------------------------------------------------------------------------

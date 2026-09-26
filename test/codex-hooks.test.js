@@ -161,7 +161,7 @@ test('a bound repository gets the same brief DSH injects, and nothing else on st
   assert.equal(injected.trim(), injected)
 })
 
-test('UserPromptSubmit offers a matching note once per session and stores no prompt text', async () => {
+test('UserPromptSubmit offers a matching note with its excerpt once per session', async () => {
   const space = world()
   const receipt = await bind(space)
   const env = { HOME: space.home, DSH_HOME: space.dsh, OBSIDIAN_MEM_VAULT: space.vault }
@@ -177,7 +177,9 @@ test('UserPromptSubmit offers a matching note once per session and stores no pro
   assert.equal(first.answer.hookSpecificOutput.hookEventName, 'UserPromptSubmit')
   assert.match(first.answer.hookSpecificOutput.additionalContext, /mem_read/)
   assert.ok(first.answer.hookSpecificOutput.additionalContext.includes(receipt.path))
-  assert.doesNotMatch(first.answer.hookSpecificOutput.additionalContext, /Codex 侧用/)
+  // The excerpt the index computed for this query travels with the path, so the
+  // turn does not depend on a second voluntary `mem_read` call.
+  assert.match(first.answer.hookSpecificOutput.additionalContext, /Codex 侧用/)
 
   const repeat = hook(env, submitted, PROMPT_HOOK)
   assert.equal(repeat.status, 0)
@@ -188,6 +190,8 @@ test('UserPromptSubmit offers a matching note once per session and stores no pro
   const saved = JSON.parse(readFileSync(join(stateDir, files[0]), 'utf8'))
   assert.deepEqual(Object.keys(saved), ['paths'])
   assert.deepEqual(saved.paths, [receipt.path])
+  // The excerpt reaches the model, never the state file: persistence stays
+  // paths-only, exactly as before.
   assert.doesNotMatch(JSON.stringify(saved), /Codex 侧用/)
 })
 

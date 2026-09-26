@@ -13,6 +13,13 @@ is a repository, not a release.
 
 ### Added
 
+- **Per-turn recall has its own ceiling, `recallBudgetChars` (default 900).**
+  Retrieval used to spend whatever the one-shot session brief left of
+  `briefBudgetChars`, which starved exactly the first turn — see *Changed* below
+  for the measurement. The two injections are now bounded separately, so one step
+  carries at most `briefBudgetChars + recallBudgetChars`. The range check is
+  256–20000, the same as the brief's.
+
 - **Prompt-scoped recall now runs in DSH and Codex.** Both adapters use
   `lib/prompt-recall.js` and the existing project-scoped search service. A new
   user prompt can receive up to three strongly matching note paths and titles
@@ -324,6 +331,47 @@ is a repository, not a release.
   `main` is the published history. It remains unpublished to npm and untagged.
 
 ### Changed
+
+- **A relevant turn now receives the matched excerpt, and no longer waits for
+  the session brief to finish.** Both numbers below come from replaying the 154
+  real user prompts of the two bound repos through the shipped policy and the
+  shipped index, on a throwaway copy of the vault:
+
+  * **Turn 1 was starved.** The production brief spends essentially the whole
+    session budget (measured in this repository's own bound project: 5,896 of
+    6,000 code points), so the map was handed the 104 left over — which fits
+    nothing. Against the old code, **0.6% of prompts produced a map on turn 1**
+    (1 of 154) against **22.1%** (34 of 154) once the brief was out of the way.
+    With `recallBudgetChars` the same replay yields **22.1%** (34 of 154) with no
+    turn-1 penalty at all, at an average of 1.7 notes and 484 code points per map.
+  * **A pointer is not memory.** Across 277 DSH sessions and 31,718 tool calls,
+    `mem_read` was dispatched 18 times: following a pointer is a second voluntary
+    tool call, and the model almost never makes it. Each line now carries the
+    excerpt `lib/index-db.js` already computes *for that query* — `buildSnippet`
+    centres a ±60-code-point window on the matching needle — flattened to one
+    line and clamped to 200 code points. `_meta/hot.md` is skipped, because the
+    brief already injects the hot layer.
+
+  The boundaries that did not move: the map is still quoted vault data and never
+  a command, `mem_read` is still the way to a full note, `useful()` still refuses
+  weak matches (the replay's 22.1% is a firing rate, not a widening), and the
+  Codex per-session state file still stores **paths only** — the excerpt reaches
+  the model and never the disk. The two tests that asserted "never copies its
+  body" were rewritten deliberately, and the Codex one keeps its `doesNotMatch`
+  assertion against the saved state, which is the invariant that actually
+  mattered.
+
+  **Red first, then a deliberate regression.** `MAX_SNIPPET_CHARS` did not exist
+  and the full-size-brief case produced no map. Two new DSH cases and the
+  existing Codex case pin the behaviour: one drives the real waterfall over a
+  real `mktemp -d` vault with the shipped `buildBrief`, the shipped index and
+  the shipped service `search`, and asserts the first turn receives the excerpt;
+  `test/codex-hooks.test.js` drives the real hook script as a subprocess and
+  asserts the excerpt reaches `additionalContext` while the saved state stays
+  paths-only. Reverting the one changed line to the old
+  `briefBudgetChars - spent` expression makes **both** DSH cases fail and nothing
+  else, which is the evidence that they test the mechanism rather than the
+  fixture. The suite is green at 652 tests.
 
 - **`lib/tools.js` is a 22-line façade instead of a 2,006-line file, and the
   three jobs it held are three modules.** Task 11 of the harness plan named this
