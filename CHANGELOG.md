@@ -13,18 +13,26 @@ is a repository, not a release.
 
 ### Added
 
+- **The diagnostic report is available as an npm command.** Run
+  `dsh-obsidian-mem-diagnose --output <file.json>`, inspect the JSON, and attach
+  it manually to an Issue. The package and real-archive checks require the CLI
+  entry. The report has a 256 KiB ceiling and never uploads itself. The full
+  local gate passed. An offline installation of the real tarball ran
+  its npm binary and produced a private JSON report with `package-files: pass`;
+  `plugin-smoke: unavailable` reflects the absence of optional DSH host peers
+  in that isolated install. A live host session has not been exercised for this
+  change.
+
 - **A closed disk format for future user diagnostic reports.**
   `lib/diagnostic-codec.js` projects the existing in-process events into reviewed
   outcomes, coarse error codes, counts and per-run identifier aliases. Tests
   verify that conversation-like fields, paths and original IDs are absent from
-  the serialized result. This commit adds the codec only; the journal and user
-  command are not yet wired or shipped.
+  the serialized result.
 
 - **A bounded local diagnostic journal is available for the host entries.**
   Run files use private permissions, keep at most 200 events, and expire after
   seven days of inactivity. Reader tests cover corrupt records, symlink
-  substitution, concurrent processes and the latest config summary. The DSH
-  and Codex entries are not connected to this journal in this commit.
+  substitution, concurrent processes and the latest config summary.
 
 - **Both host entries now write their content-free decisions into the journal.**
   DSH constructs it only for an enabled plugin; Codex uses its existing data
@@ -37,8 +45,7 @@ is a repository, not a release.
   creates a private JSON file, and maps plugin smoke failures to fixed codes
   while still reporting Node, FTS5, package, journal and queue metadata.
   Tests confirm that an unreadable conversation-like queue file is counted
-  without parsing its content. The npm binary registration and user docs follow
-  in the packaging change.
+  without parsing its content.
 
 - **Recall now answers "did it fire?" through `mem_admin(action="diagnostics")`.**
   A new `recall` event records one decision per user turn — `fired`,

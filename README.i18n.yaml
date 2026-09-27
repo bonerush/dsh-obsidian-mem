@@ -15,5 +15,5 @@
 # `<a id="…">` anchors only on the headings a link targets rather than on all of them.
 # Both anchors that exist are spelled with the English slug, so one anchor resolves
 # from either language.
-README.md: 2146667c9a1d515c7456113642ebe0ff0bbd24db
-README.zh.md: d61e067a9fb2218095e4721f88463bb7c4ea6232
+README.md: d462e014723921bb1d3df6f918a55c47516155de
+README.zh.md: 621791446052553e1b831f65079a0d96859ed181

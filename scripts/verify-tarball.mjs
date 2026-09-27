@@ -26,6 +26,7 @@ const DEFAULT_ROOT = resolve(HERE, '..')
 export const REQUIRED_ENTRIES = [
   ['package/package.json', 'the manifest npm publishes'],
   ['package/lib/index.js', 'the plugin entry point'],
+  ['package/lib/diagnose-cli.js', 'the standalone diagnostic command'],
   ['package/skills/obsidian-mem/SKILL.md', 'the portable methodology skill'],
   ['package/cordis.patch.yml', 'the bundle patch that mounts the row'],
   ['package/dsh.plugin.json', 'the ecosystem metadata'],

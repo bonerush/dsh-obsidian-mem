@@ -83,6 +83,7 @@ function baseManifest() {
     name: 'dsh-obsidian-mem',
     version: '0.1.0',
     main: 'lib/index.js',
+    bin: { 'dsh-obsidian-mem-diagnose': './lib/diagnose-cli.js' },
     engines: { node: '>=22.22.2' },
     files: [
       'lib',
@@ -122,6 +123,7 @@ function verify(t, options = {}) {
   const omit = new Set(options.omit ?? [])
   const assets = {
     'lib/index.js': "export const name = 'obsidian-mem'\n",
+    'lib/diagnose-cli.js': "#!/usr/bin/env node\nprocess.stdout.write('diagnose fixture')\n",
     'lib/tools.js': facadeSource(),
     'lib/tool-registry.js': registrySource(),
     'skills/obsidian-mem/SKILL.md': '---\nname: obsidian-mem\n---\n',
@@ -169,6 +171,18 @@ test('a skill asset listed but absent on disk fails', (t) => {
   const run = verify(t, { omit: ['skills/obsidian-mem/SKILL.md'] })
   assert.notEqual(run.status, 0)
   assert.match(run.stdout + run.stderr, /skills\/obsidian-mem\/SKILL\.md/)
+})
+
+test('the diagnostic command must be present at the declared bin target', (t) => {
+  const missing = verify(t, { omit: ['lib/diagnose-cli.js'] })
+  assert.notEqual(missing.status, 0)
+  assert.match(missing.stdout + missing.stderr, /lib\/diagnose-cli\.js/)
+
+  const pkg = baseManifest()
+  pkg.bin['dsh-obsidian-mem-diagnose'] = '../outside.js'
+  const escaping = verify(t, { pkg })
+  assert.notEqual(escaping.status, 0)
+  assert.match(escaping.stdout + escaping.stderr, /bin/)
 })
 
 test('an entry that is absolute or escapes the package root fails', (t) => {

@@ -61,6 +61,19 @@ test('the standalone command writes a private, inspectable JSON report', (t) => 
   assert.equal(JSON.stringify(report).includes('SENTINEL-ENV-SECRET'), false)
 })
 
+test('the npm-style symlink invokes the command', (t) => {
+  const { root, dsh } = world(t)
+  const binary = join(root, 'dsh-obsidian-mem-diagnose')
+  const output = join(root, 'linked-report.json')
+  symlinkSync(CLI, binary)
+  const run = spawnSync(process.execPath, [binary, '--output', output], {
+    encoding: 'utf8',
+    env: { ...process.env, DSH_HOME: dsh },
+  })
+  assert.equal(run.status, 0, run.stderr)
+  assert.equal(JSON.parse(readFileSync(output, 'utf8')).format, 'dsh-obsidian-mem-diagnostics')
+})
+
 test('the command exports aliases and never raw conversation-like bytes', (t) => {
   const { root, dsh, dataRoot } = world(t)
   const journal = openDiagnosticJournal({
@@ -142,4 +155,34 @@ test('the pending check counts files without parsing their contents', async (t) 
   assert.equal(report.checks.find((check) => check.id === 'pending-files').count, 1)
   assert.equal(JSON.stringify(report).includes('SENTINEL-UNPARSEABLE-PENDING'), false)
   assert.equal(JSON.stringify(report).includes(root), false)
+})
+
+test('the package check requires the declared binary and matching plugin manifest', async (t) => {
+  const { root, dataRoot } = world(t)
+  const packageRoot = join(root, 'package')
+  mkdirSync(join(packageRoot, 'lib'), { recursive: true })
+  writeFileSync(join(packageRoot, 'lib', 'index.js'), '')
+  writeFileSync(join(packageRoot, 'lib', 'diagnose-cli.js'), '')
+  writeFileSync(
+    join(packageRoot, 'package.json'),
+    JSON.stringify({ name: 'dsh-obsidian-mem', version: '0.1.0' }),
+  )
+  let report = await buildDiagnosticReport({ dataRoot, packageRoot, smoke: async () => true })
+  assert.equal(report.checks.find((check) => check.id === 'package-files').status, 'fail')
+
+  writeFileSync(
+    join(packageRoot, 'package.json'),
+    JSON.stringify({
+      name: 'dsh-obsidian-mem',
+      version: '0.1.0',
+      main: 'lib/index.js',
+      bin: { 'dsh-obsidian-mem-diagnose': './lib/diagnose-cli.js' },
+    }),
+  )
+  writeFileSync(
+    join(packageRoot, 'dsh.plugin.json'),
+    JSON.stringify({ id: 'dsh-obsidian-mem', version: '0.1.0', main: 'lib/index.js' }),
+  )
+  report = await buildDiagnosticReport({ dataRoot, packageRoot, smoke: async () => true })
+  assert.equal(report.checks.find((check) => check.id === 'package-files').status, 'pass')
 })

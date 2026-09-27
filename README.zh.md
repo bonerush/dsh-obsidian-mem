@@ -241,7 +241,7 @@ dsh --profile web --dump-config | grep -n obsidian-mem
 | `mem_write` | `type`、`title`、`body`（必填）；`tags`、`status`、`confidence`、`assertion`、`supersedes`、`id`、`idempotencyKey` | 写项目文档和记忆的权威途径。不带 `id` 时**创建**一条带新 id 的笔记；带已存在的 `id` 时更新。取代会校验旧 id，并把链接的两端都写上。 |
 | `mem_log` | `text`（必填）；`session`、`section`、`idempotencyKey` | 往今天的日志追加一条幂等条目；`section: "hot"` 则改为写热记忆文件的进行中区域。 |
 | `mem_brief` | — | 返回会话注入过的那份召回简报，方便你重读或审计预算。 |
-| `mem_admin` | `action`（必填）：`lint`、`index`、`bind`、`projects`、`promote`、`jobs`、`diagnostics`；外加 `report`、`prune`（仅 lint）、`rebuild`（index）、`mode`（bind：`show`\|`local`\|`fork`\|`retain`）、`path`（promote）、`jobId`/`retry`（jobs） | 低频维护。`lint` 默认只读，除非你传 `report: true`（写一条带日期的报告笔记）和/或 `prune: true`（删除过期快照）——这两者刻意保持独立。`diagnostics` 是唯一什么都不读的动作：它返回**本进程**自己的决策环——最多 200 条事件，取值来自封闭集合 `capture`、`distill`、`index`、`bind`、`job`、`transaction`、`brief`、`skill`（八类现在都会写入），每条带一个结局与机器标识，永不包含笔记正文、标题或提示词。因此一个窗口能回答那些否则必须靠复现才能回答的问题：一个已结束的回合为什么没被捕获（`capture` 事件给出原因）、蒸馏是真的没产出还是根本没跑（`distill`、`job`）、索引有没有跟上一次写入（`index`）、一次写入是提交了还是带着错误码被拒绝（`transaction`）。它不需要绑定、不读仓库，所以在其他所有动作都拒绝时它仍能回答；进程退出后它即清空——需要跨重启保存的东西请用 `jobs` 与收据。设 `DSH_OBSIDIAN_MEM_DEBUG=1` 可额外把每条事件以 `info` 级写进宿主日志；宿主是否显示这一行由宿主决定，不由本插件决定。 |
+| `mem_admin` | `action`（必填）：`lint`、`index`、`bind`、`projects`、`promote`、`jobs`、`diagnostics`；外加 `report`、`prune`（仅 lint）、`rebuild`（index）、`mode`（bind：`show`\|`local`\|`fork`\|`retain`）、`path`（promote）、`jobId`/`retry`（jobs） | 低频维护。`lint` 默认只读，除非你传 `report: true`（写一条带日期的报告笔记）和/或 `prune: true`（删除过期快照）——这两者刻意保持独立。`diagnostics` 是唯一什么都不读的动作：它返回**本进程**自己的决策环——最多 200 条事件，取值来自封闭集合 `capture`、`distill`、`index`、`bind`、`job`、`transaction`、`brief`、`skill`、`recall`（九类现在都会写入），每条带一个结局与机器标识，永不包含笔记正文、标题或提示词。因此一个窗口能回答那些否则必须靠复现才能回答的问题：一个已结束的回合为什么没被捕获（`capture` 事件给出原因）、蒸馏是真的没产出还是根本没跑（`distill`、`job`）、索引有没有跟上一次写入（`index`）、一次写入是提交了还是带着错误码被拒绝（`transaction`）。它不需要绑定、不读仓库，所以在其他所有动作都拒绝时它仍能回答；进程退出后它即清空——上文所述的独立本地日志会为用户自行生成的报告保留缩减后的事件。设 `DSH_OBSIDIAN_MEM_DEBUG=1` 可额外把每条事件以 `info` 级写进宿主日志；宿主是否显示这一行由宿主决定，不由本插件决定。 |
 
 `mem_write` 的 type 这样路由：
 
@@ -296,11 +296,50 @@ $DSH_HOME/data/obsidian-mem/
 ├── transactions/   journal for crash recovery
 ├── receipts/       per-write and per-job receipts
 ├── pending/        queued distillation jobs (0700/0600)
+├── diagnostics/    不含正文的限量决策日志 (0700/0600)
 └── processed/      per-session processed floor (0700/0600)
 ```
 
 把 `DSH_HOME` 指向一个隔离目录，插件就永远写不进你真正的 `~/.dsh`——测试套件就是
 这么跑的，你试任何新东西时也该这么做。
+
+---
+
+<a id="diagnostic-report-for-an-issue"></a>
+## 用于 Issue 的诊断报告
+
+如果安装方式把本包的 npm 命令加入了可执行路径，可自行生成报告：
+
+```sh
+dsh-obsidian-mem-diagnose --output ./obsidian-mem-diagnostics.json
+```
+
+在源码目录下，`node lib/diagnose-cli.js --output ./obsidian-mem-diagnostics.json`
+运行的是同一命令。即使宿主插件加载失败，命令仍可执行基础检查。它不会上传文件、修改
+DSH 配置或读取真实 vault；必须明确指定输出路径，且拒绝覆盖已有文件。生成的 JSON 权
+限为 `0600`，大小不超过 256 KiB。请先用文本编辑器打开检查，再自行附到 Issue。
+**[公开 GitHub 仓库的附件](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files)任何人都能查看**，包括未登录 GitHub 的人；事件时间可能透露
+你使用插件的时段。
+
+报告包含插件和 Node 版本、操作系统类型与架构、有日志时可取得的非身份性配置开关、
+固定格式的自检状态，以及近期决策事件。事件只保留时间、类别、获准的结果或粗粒度错
+误码、计数，以及 `p1`、`j1` 这样的每次运行内别名。命令只数 pending 目录中的 job
+文件项，不打开文件；它检查 Node、内存 FTS5、随包文件、诊断日志状态，并在一次性
+home 和 vault 中检查 `mem_admin` 的诊断结果结构。它**无法**证明真实 vault、模型路
+由、宿主会话钩子或队列任务内容正常。证据缺失、不完整或损坏时标为 `unavailable` 或
+`partial`；没有日志不代表先前的调用成功。
+如果没有安装可选的 DSH 宿主包，隔离插件自检可能标为 `unavailable`，基础报告仍能生成。
+
+启用的 DSH 插件和 Codex 适配器默认把缩减后的事件流写到本机
+`$DSH_HOME/data/obsidian-mem/diagnostics/`，目录和文件权限分别为 `0700`、
+`0600`。每个进程最多保留 200 条事件、128 KiB。下次插件启动时清除最后写入已超过
+七天的运行文件；导出会忽略过期文件，插件停止期间没有后台清理。进程内的
+`mem_admin(action="diagnostics")` 决策环仍独立存在。日志写入失败不改变原调用的结果。
+
+日志和报告**不会包含对话文本、提示词、模型输出、笔记正文或标题、工具参数、宿主原
+始日志、pending job 正文、配置文件、凭据、环境变量值、路径、原始项目/job/事务
+ID、主机名或仓库 remote**。命令不会发起网络请求。这些边界约束的是新增的诊断通
+路；自动蒸馏的模型调用边界见下文。
 
 ---
 
