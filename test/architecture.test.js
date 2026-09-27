@@ -44,6 +44,7 @@ const LAYERS = {
   // `debug.js` imports nothing from `lib/`, so it sits at the bottom with the
   // other leaves; everything that records through it points downward.
   debug: 0,
+  'diagnostic-codec': 1,
   config: 0,
   naming: 0,
   paths: 0,
@@ -90,6 +91,7 @@ const LAYERS = {
  */
 const BUDGETS = {
   'lib/debug.js': 200,
+  'lib/diagnostic-codec.js': 200,
   'lib/assets.js': 600,
   'lib/brief.js': 1150,
   // Raised from 1900 when the diagnostics call sites landed here. The alternative

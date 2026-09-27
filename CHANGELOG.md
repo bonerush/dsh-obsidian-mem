@@ -13,6 +13,13 @@ is a repository, not a release.
 
 ### Added
 
+- **A closed disk format for future user diagnostic reports.**
+  `lib/diagnostic-codec.js` projects the existing in-process events into reviewed
+  outcomes, coarse error codes, counts and per-run identifier aliases. Tests
+  verify that conversation-like fields, paths and original IDs are absent from
+  the serialized result. This commit adds the codec only; the journal and user
+  command are not yet wired or shipped.
+
 - **Recall now answers "did it fire?" through `mem_admin(action="diagnostics")`.**
   A new `recall` event records one decision per user turn — `fired`,
   `no-query`, `no-hits`, `below-floor`, `all-seen`, `budget`, `aborted` or
