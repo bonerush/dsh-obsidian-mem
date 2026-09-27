@@ -9,7 +9,45 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 
-import { createDiagnostics, recordDiagnostic } from '../lib/debug.js'
+import {
+  DIAGNOSTIC_FIELDS,
+  EVENT_NAMES,
+  createDiagnostics,
+  recordDiagnostic,
+} from '../lib/debug.js'
+import { ADMIN_OUTPUT } from '../lib/tool-schema.js'
+
+/** The diagnostics arm of \`mem_admin\`'s output schema, reached the way a caller does. */
+const DIAGNOSTICS_ARM = ADMIN_OUTPUT.oneOf.find(
+  (arm) => arm.properties.action.const === 'diagnostics',
+)
+
+test("the ring's allowlists and the output schema cannot drift apart", () => {
+  // Both sets are closed, and they are the same fact written twice: the ring
+  // refuses a name it does not know, and the schema refuses to *return* one it
+  // does not list. Divergence is silent in the unit tests and fatal in the tool —
+  // \`mem_admin(action="diagnostics")\` failed its own output validation the first
+  // time a \`recall\` event reached the ring, because neither the schema's enum nor
+  // its two count fields had been extended with it.
+  const eventSchema = DIAGNOSTICS_ARM.properties.result.properties.events.items
+  const listed = eventSchema.properties.event.enum
+  for (const name of EVENT_NAMES) {
+    assert.ok(listed.includes(name), 'the schema does not list the event ' + name)
+  }
+  assert.equal(listed.length, EVENT_NAMES.length, 'the schema lists nothing the ring cannot record')
+  for (const field of DIAGNOSTIC_FIELDS) {
+    assert.ok(field in eventSchema.properties, 'the schema has no property ' + field)
+  }
+  // `seq`, `at` and `event` are the ring's own three keys; everything else the
+  // schema publishes has to be a field the ring can actually write.
+  const own = ['seq', 'at', 'event']
+  for (const key of Object.keys(eventSchema.properties)) {
+    assert.ok(
+      own.includes(key) || DIAGNOSTIC_FIELDS.includes(key),
+      'the schema publishes ' + key + ', which the ring never writes',
+    )
+  }
+})
 
 /** A logger that records what it was asked to write. */
 function fakeLogger() {

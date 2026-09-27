@@ -588,6 +588,24 @@ what is still open.
 
 ### Fixed
 
+- **`mem_admin(action="diagnostics")` failed its own output validation as soon as
+  a `recall` event existed.** The diagnostics channel has two closed sets, and
+  they are the same fact written twice: `lib/debug.js` refuses to *record* a name
+  or field it does not know, and `lib/tool-schema.js` refuses to *return* one it
+  does not list. The previous change extended the first and not the second, so the
+  ring accepted the event and the tool rejected the whole snapshot —
+  `"value" must match exactly one oneOf branch (matched 0)`. Found by the first
+  live `mem_admin(action="diagnostics")` after a restart, which is exactly the
+  surface neither unit suite covers: the ring tests call the ring, and the hook
+  tests inject their own ring, so nothing compared the two lists.
+
+  The schema's `event` enum and its `hits`/`chars` properties now carry the
+  `recall` event, and `test/debug.test.js` holds the two sets equal in both
+  directions: every name the ring records must be in the enum, every field it
+  writes must be a property, and the schema may publish nothing the ring cannot
+  write beyond its own `seq`/`at`/`event`. Red first: the guard failed with
+  "the schema does not list the event recall".
+
 - **Distillation no longer writes a second note for a fact the vault already
   holds.** Every distilled candidate asks one question before it creates anything:
   does the bound project already have a note with this title? The lookup is
