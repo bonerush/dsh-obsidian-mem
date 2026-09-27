@@ -94,6 +94,31 @@ test('only allowlisted names and scalar fields are recorded', () => {
   assert.equal(events[0].code, 'recovery-required')
 })
 
+test('the recall event records a decision and counts, never the query or a path', () => {
+  // Recall could not answer 'did it fire?' from its own diagnostics: the `brief`
+  // event is recorded whenever the *brief* is injected, whatever the map did.
+  const diagnostics = createDiagnostics({ now: fixedClock })
+  diagnostics.event('recall', {
+    outcome: 'below-floor',
+    hits: 8,
+    chars: 0,
+    prompt: 'SENTINEL-PROMPT',
+    path: 'Projects/x/Docs/secret.md',
+  })
+  diagnostics.event('recall', { outcome: 'fired', hits: -1, chars: 1.5 })
+  const { events } = diagnostics.snapshot()
+  assert.equal(events.length, 2, 'recall is an allowlisted category')
+  assert.equal(events[0].outcome, 'below-floor')
+  assert.equal(events[0].hits, 8)
+  assert.equal(events[0].chars, 0)
+  assert.equal(events[1].hits, undefined, 'a negative count is dropped')
+  assert.equal(events[1].chars, undefined, 'a fractional count is dropped')
+  const serialised = JSON.stringify(events)
+  for (const sentinel of ['SENTINEL-PROMPT', 'secret.md']) {
+    assert.equal(serialised.includes(sentinel), false, sentinel + ' must not reach the ring')
+  }
+})
+
 test('a sentinel body cannot survive the round trip through a real write path', () => {
   const sentinel = 'SENTINEL-BODY-' + randomUUID()
   const diagnostics = createDiagnostics({ now: fixedClock })

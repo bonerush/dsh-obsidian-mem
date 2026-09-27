@@ -99,7 +99,7 @@ export async function runHook(raw, io = {}) {
           search: memory.services.search,
           seenPaths: seen,
         })
-        if (map !== null) {
+        if (map.text !== null) {
           answer = {
             hookSpecificOutput: {
               hookEventName: 'UserPromptSubmit',

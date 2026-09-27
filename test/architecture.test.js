@@ -119,8 +119,15 @@ const BUDGETS = {
   'lib/receipts.js': 450,
   'lib/registry.js': 500,
   'lib/routing.js': 500,
-  'lib/search.js': 200,
-  'lib/prompt-recall.js': 150,
+  // Raised from 200 for the title-twin lookup: the duplicate rule needs the same
+  // tokenizer and the same project-scoped search as `mem_search`, and putting it
+  // anywhere else would either duplicate the tokenizer or point a layer upward.
+  'lib/search.js': 250,
+  // Raised from 150 for the decision object and the measured floor. The policy
+  // now answers *why* it was silent (`RECALL_OUTCOMES`), which is what makes the
+  // firing rate readable from `mem_admin(action="diagnostics")` instead of from
+  // parsed session transcripts, and it carries the floor cap the replay chose.
+  'lib/prompt-recall.js': 220,
   // Raised from 1950 when the diagnostics action's schema landed here. This file
   // is the one the split is for, so the raise is explicitly temporary: the next
   // structural change reduces it to a façade and lowers this number with it.

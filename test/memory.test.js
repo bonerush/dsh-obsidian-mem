@@ -18,7 +18,13 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { HOT_ARCHIVE_RATIO, HOT_CAPACITY_CHARS, updateHot } from '../lib/hot.js'
-import { appendLog, createMemoryWithId, readNoteById, writeMemory } from '../lib/memory.js'
+import {
+  appendLog,
+  applyCandidate,
+  createMemoryWithId,
+  readNoteById,
+  writeMemory,
+} from '../lib/memory.js'
 import { routeNote, mocPathFor } from '../lib/routing.js'
 import { bootstrapVault, findReceipt, parseNote, safeBasename } from '../lib/vault.js'
 
@@ -991,3 +997,55 @@ function splitGenerated(text) {
     suffix: text.slice(endAt + GENERATED_END.length),
   }
 }
+
+// ---------------------------------------------------------------------------
+// A distilled candidate that duplicates a note already in the vault
+// ---------------------------------------------------------------------------
+
+test('a candidate whose title twins an existing note is skipped, never written twice', async (t) => {
+  const env = await fixture(t)
+  const seeded = await writeMemory(
+    env.binding,
+    { type: 'gotcha', title: '召回额度按简报剩余计费', body: '首轮只剩 104 码点。\n' },
+    env.deps,
+  )
+  const before = await listMarkdown(at(env.vault, `${PROJECT}/Pitfalls`))
+  // The twin the policy hands back: the note already covering this fact.
+  const twin = {
+    id: seeded.id,
+    path: seeded.path,
+    title: '召回额度按简报剩余计费，首轮必然饿死',
+    score: 0.8,
+  }
+  const result = await applyCandidate(
+    env.binding,
+    { sessionId: 'sess-1' },
+    { type: 'gotcha', title: '提示召回按简报剩余额度计费，首轮必然饿死', body: '同一件事。\n' },
+    { ...env.deps, findDuplicate: async () => twin },
+  )
+  assert.equal(result.skipped, true)
+  assert.equal(result.id, seeded.id, 'the receipt names the note that already covers the fact')
+  assert.equal(result.path, seeded.path)
+  assert.deepEqual(
+    await listMarkdown(at(env.vault, `${PROJECT}/Pitfalls`)),
+    before,
+    'no second note was written',
+  )
+
+  // The control: without the lookup the very same route does write, which is what
+  // makes the assertion above about the twin rather than about the fixture.
+  const control = await applyCandidate(
+    env.binding,
+    { sessionId: 'sess-1' },
+    {
+      type: 'gotcha',
+      title: '另一个不相干的踩坑标题啊',
+      body: '另一件事。\n',
+      preassignedId: `got-${randomUUID()}`,
+      idempotencyKey: 'control:1',
+    },
+    env.deps,
+  )
+  assert.notEqual(control.skipped, true)
+  assert.equal((await listMarkdown(at(env.vault, `${PROJECT}/Pitfalls`))).length, before.length + 1)
+})

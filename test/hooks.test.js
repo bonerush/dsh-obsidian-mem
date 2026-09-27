@@ -22,6 +22,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { buildBrief } from '../lib/brief.js'
+import { createDiagnostics } from '../lib/debug.js'
 import { updateHot } from '../lib/hot.js'
 import { openIndex } from '../lib/index-db.js'
 import { apply } from '../lib/index.js'
@@ -191,6 +192,7 @@ function bed(t, options = {}) {
     index,
     buildBrief,
     ...(options.search === undefined ? {} : { search: options.search }),
+    ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
     config,
     // An injected capture seam, so a case can pin down what the disposal flush
     // does with a rejection without building a queue on disk.
@@ -379,6 +381,41 @@ test('a full-size brief does not starve the per-turn recall on the first turn', 
   assert.equal(maps.length, 1, 'the recall still arrives beside a full-size brief')
   assert.match(maps[0].content[0].text, /绑定指针只在仓库根\.md/)
   assert.ok([...maps[0].content[0].text].length <= RECALL_BUDGET)
+})
+
+test('the recall decision reaches the diagnostics ring', async (t) => {
+  // Without this the plugin cannot answer "did recall fire?" about itself: the
+  // `brief` event is recorded whenever the brief is injected, whatever the map
+  // did. Measured live, the answer for this repository was zero firings across
+  // four turns and the diagnostics could not say so.
+  const diagnostics = createDiagnostics()
+  const h = bed(t, {
+    diagnostics,
+    search: async () => [
+      {
+        path: 'Projects/demo--1c392abb/Decisions/x.md',
+        title: '不相关',
+        scoreSignals: ['token-hits:1'],
+      },
+    ],
+  })
+  const agent = h.start()
+  await h.preStep(agent, undefined, undefined, {
+    messages: [
+      {
+        id: 'human-1',
+        role: 'user',
+        content: [{ type: 'text', text: '请详细规划一个完全不相关的长任务' }],
+        source: { kind: 'user' },
+      },
+    ],
+    turn: 1,
+  })
+  const recall = diagnostics.snapshot().events.filter((event) => event.event === 'recall')
+  assert.equal(recall.length, 1, 'one decision per turn')
+  assert.equal(recall[0].outcome, 'below-floor')
+  assert.equal(recall[0].hits, 1)
+  assert.equal(recall[0].chars, 0)
 })
 
 test('a plugin message never triggers prompt recall', async (t) => {

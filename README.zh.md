@@ -268,6 +268,11 @@ dsh --profile web --dump-config | grep -n obsidian-mem
 (5) 以 `decision` / `gotcha` / `convention` 笔记幂等地落地。被中止和报错的回合只
 被记录，永不成为结论；`doc` 和 `glossary` 笔记只能通过 `mem_write` 创建。
 
+标题在已绑定项目里已存在的候选会被**跳过**，而不是写第二遍：判定用的是与
+`mem_search` 相同的项目范围、相同的分词器，并收窄到候选自己的类型；跳过时会在该
+job 的回执里点出已经覆盖这条事实的那条笔记。显式 supersede 不受此限——那是唯一
+一种"在已有标题旁边再写一条"本来就是目的的情形。
+
 先这样开始：
 
 ```yaml

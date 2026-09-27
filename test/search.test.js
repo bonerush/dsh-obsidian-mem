@@ -44,7 +44,13 @@ import {
   openIndex,
   planQuery,
 } from '../lib/index-db.js'
-import { readNote, searchNotes } from '../lib/search.js'
+import {
+  TITLE_TWIN_OVERLAP,
+  findTitleTwin,
+  readNote,
+  searchNotes,
+  titleOverlap,
+} from '../lib/search.js'
 import { newTransactionId, runTransaction } from '../lib/vault.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -1544,4 +1550,36 @@ test('both backends take the same path prefix when a later path holds a non-BMP 
     assert.equal(hits.truncated, true)
     assert.equal(hits.rowsExamined, 1)
   }
+})
+
+test('titleOverlap measures how much two titles share', () => {
+  // The two pairs a reader finds by inspecting this repository's own vault: a
+  // distilled pitfall duplicating an agent-written one, and a distilled ADR
+  // restating another. Both must clear the twin threshold; unrelated same-type
+  // titles must not.
+  const pitfall = titleOverlap(
+    '提示召回按简报剩余额度计费，首轮必然饿死',
+    '召回额度按简报剩余计费，首轮必然饿死',
+  )
+  assert.ok(pitfall >= TITLE_TWIN_OVERLAP, `the duplicated pitfall scores ${pitfall}`)
+  const adr = titleOverlap(
+    'ADR-35-召回投递：自带索引摘录加独立逐轮上限',
+    'ADR-36-ADR-35：召回投递改为自带索引摘录',
+  )
+  assert.ok(adr > 0.5, `a reworded ADR still scores ${adr}`)
+  assert.ok(titleOverlap('调度器后端选型', '重试策略的退避上限') < 0.3)
+  assert.equal(titleOverlap('', '调度器后端选型'), 0, 'an empty title shares nothing')
+})
+
+test('findTitleTwin stays inside the bound project and the same type', async (t) => {
+  const h = await harness(t)
+  const index = await h.open()
+  await ready(index)
+  // The corpus deliberately carries one title in two projects, which is exactly
+  // the case a cross-project match would get wrong.
+  const twin = await findTitleTwin(index, { title: Q.threeCharCjk + '后端选型', type: 'decision' })
+  assert.equal(twin.path, N.alphaDecision, "the twin is this project's note, not beta's")
+  assert.notEqual(twin.path, N.betaDecision)
+  assert.equal(await findTitleTwin(index, { title: '调度器后端选型', type: 'gotcha' }), null)
+  assert.equal(await findTitleTwin(index, { title: '重试策略的退避上限', type: 'decision' }), null)
 })

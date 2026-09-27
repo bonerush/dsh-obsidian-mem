@@ -43,6 +43,7 @@ import {
   retryJob,
 } from '../lib/capture.js'
 import { createDiagnostics } from '../lib/debug.js'
+import { openIndex } from '../lib/index-db.js'
 import { registerHooks } from '../lib/hooks.js'
 import { applyCandidate, createMemoryWithId } from '../lib/memory.js'
 import {
@@ -505,6 +506,37 @@ test('a validated job applies through createMemoryWithId: one note, one MOC line
   assert.equal(receipts[0].items.length, 1)
   assert.equal(receipts[0].items[0].id, items[0].preassignedId)
   assert.equal(receipts[0].items[0].path, notes[0].path)
+})
+
+test('a candidate duplicating an existing note is skipped, and the job still completes', async (t) => {
+  // The end-to-end shape of the duplicate rule: a real job through the real
+  // apply path, with a real index behind the lookup. Measured on this
+  // repository's own vault, 42 same-type pairs are near duplicates and this is
+  // the path that produced them.
+  const f = await fixture(t)
+  const seeded = await seedDecision(f, { title: '调度器后端选型' })
+  const index = await openIndex({
+    vaultRoot: f.vault,
+    dataRoot: f.dataRoot,
+    backend: 'sqlite',
+    projectId: f.binding.projectId,
+    home: f.home,
+  })
+  t.after(() => index.close().catch(() => {}))
+  await index.waitReady(undefined, 10_000)
+
+  const job = validatedJob([itemFixture({ title: '调度器后端选型（重写）' })])
+  await writeJobAtomic(f.queueRoot, job)
+  const summary = await processQueue(queueOptions(f, { index: async () => index }))
+
+  assert.equal(summary.completed, 1)
+  assert.equal(summary.failed, 0)
+  const notes = await memoryNotes(f)
+  assert.equal(notes.length, 1, 'the duplicate was not written a second time')
+  assert.equal(notes[0].note.data.id, seeded.id)
+  const [receipt] = await readReceipts(f)
+  assert.equal(receipt.result, 'applied')
+  assert.equal(receipt.items[0].id, seeded.id)
 })
 
 test('an empty result writes a no-memory receipt and touches nothing', async (t) => {

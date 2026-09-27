@@ -287,6 +287,13 @@ numbers, and (5) applied idempotently as `decision` / `gotcha` / `convention`
 notes. Aborted and errored turns are recorded but never become conclusions;
 `doc` and `glossary` notes are only ever created through `mem_write`.
 
+A candidate whose title already exists in the bound project is **skipped**, not
+written twice: the lookup is the same project scope and the same tokenizer as
+`mem_search`, narrowed to the candidate's own type, and a skip names the note
+that already covers the fact in the job's receipt. Superseding a note explicitly
+is exempt — that is the one case where writing beside an existing title is the
+point.
+
 Start with:
 
 ```yaml

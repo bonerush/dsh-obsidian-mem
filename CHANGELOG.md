@@ -13,6 +13,20 @@ is a repository, not a release.
 
 ### Added
 
+- **Recall now answers "did it fire?" through `mem_admin(action="diagnostics")`.**
+  A new `recall` event records one decision per user turn — `fired`,
+  `no-query`, `no-hits`, `below-floor`, `all-seen`, `budget`, `aborted` or
+  `search-failed` — with the hit count and the injected size in code points.
+  `promptRecall` returns that decision instead of `null`, so both adapters can
+  record it; the Codex adapter and every caller check `text !== null` now.
+
+  This closes a hole measured live: on a real session the diagnostics showed one
+  `brief injected` line and nothing about retrieval, because `brief` is recorded
+  whenever the *brief* is injected whatever the map did — the answer was only
+  recoverable by parsing the session transcript. `test/debug.test.js` pins the new
+  event and its two count fields to the same content-free allowlist as the rest:
+  a prompt and a path pushed alongside them still never reach the ring.
+
 - **Per-turn recall has its own ceiling, `recallBudgetChars` (default 900).**
   Retrieval used to spend whatever the one-shot session brief left of
   `briefBudgetChars`, which starved exactly the first turn — see *Changed* below
@@ -332,6 +346,24 @@ is a repository, not a release.
 
 ### Changed
 
+- **A long prompt no longer raises the bar above four token hits.** The floor was
+  `max(3, ceil(0.3 × queryTokens))` with the query capped at 16 tokens, so its top
+  bucket demanded five token hits — and the extra tokens of a long
+  natural-language prompt are mostly function-word bigrams that can never match a
+  note. Measured through the shipped policy over the same 154 real prompts, by
+  setting the cap back to the old value and replaying: **22.1% of prompts
+  produced a map before, 56.5% after**, at 1.9 notes and 595 code points per map.
+  The floor never drops below three, so a weak match still stays silent.
+
+  The additions were read before the change was kept. Of the 53 prompts the cap
+  adds, the overwhelming majority pair a note with a prompt that is on topic for
+  it — `README edits are paired EN/ZH` for code-review turns, `CodeGraph MCP is
+  the preferred lookup` for search-and-retrieval work, and, for 「请修复这个三个
+  问题并且提交，随后 push 到 main」, the vault's own 「修复流程：改完提交并 push 到
+  main，以 CI 绿 + 全量 check」. A minority are topical neighbours rather than
+  answers (`Project figures are being restyled` for a prompt about agent skills),
+  and they are the reason the cap is four and not lower.
+
 - **A relevant turn now receives the matched excerpt, and no longer waits for
   the session brief to finish.** Both numbers below come from replaying the 154
   real user prompts of the two bound repos through the shipped policy and the
@@ -555,6 +587,33 @@ what is still open.
   wikilink is clickable, because the vault was never opened in Obsidian.
 
 ### Fixed
+
+- **Distillation no longer writes a second note for a fact the vault already
+  holds.** Every distilled candidate asks one question before it creates anything:
+  does the bound project already have a note with this title? The lookup is
+  `lib/search.js`'s `findTitleTwin` — the same project scope, the same
+  superseded/archived exclusions and the same tokenizer as `mem_search`, narrowed
+  to the candidate's own type — and the comparison is the **overlap coefficient**
+  of the two titles' tokens, not Jaccard: a distilled title is usually a reworded
+  superset, and Jaccard punishes the length difference, scoring the pair this was
+  measured on 0.60 against overlap's 0.80.
+
+  Measured on this repository's own vault: **42 same-type pairs** are near
+  duplicates, and the two a reader finds first — a distilled pitfall beside the
+  agent-written one, and a distilled ADR restating another — score 0.80 and 0.72.
+  The threshold is 0.8, at the top of that gap, because the errors are not
+  symmetric: a missed twin leaves a duplicate, a false twin silently discards a
+  distilled fact.
+
+  A skip is reported, never silent: the receipt names the note that already covers
+  the fact, and a `distill` diagnostic records `outcome: "duplicate"`. The check
+  is skipped for an explicit supersede — its target is by definition the note being
+  replaced — and it **fails open**: a wiring whose index handle only refreshes, or
+  a lookup that throws, applies the candidate exactly as before and records
+  `duplicate-check-failed` instead of refusing the write. Red first: the new
+  `applyCandidate` case failed on the missing `skipped` result, and the new
+  end-to-end case failed with `2 !== 1` notes until the seam was wired; commenting
+  the one wiring line out makes it fail again and nothing else.
 
 - **The distillation prompt now names the `status` vocabulary, and cannot drift
   from the validator again.** Two of the three enumerated fields were spelled out in

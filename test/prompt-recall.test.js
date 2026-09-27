@@ -85,6 +85,73 @@ test("a caller's smaller ceiling binds, so the configured range is honest", asyn
   assert.ok(result.paths.length < 2, 'the second note does not fit and is skipped, not truncated')
 })
 
+test('a recall decision reports why it was silent, and how much it saw', async () => {
+  // The plugin could not previously answer "did recall fire?" from its own
+  // diagnostics: the `brief` event fires whenever the *brief* is injected,
+  // whatever the map did. The decision is now part of the returned value, so the
+  // adapters can record it.
+  const below = await promptRecall({
+    prompt: '请详细规划一个完全不相关的长任务',
+    search: async () => [
+      { path, title: '不相关', scoreSignals: ['token-hits:1'] },
+      { path: path.replace('FTS5', 'FTS5-b'), title: '也不相关', scoreSignals: ['token-hits:1'] },
+    ],
+  })
+  assert.equal(below.outcome, 'below-floor')
+  assert.equal(below.text, null)
+  assert.equal(below.hits, 2)
+  assert.equal(below.chars, 0)
+  assert.deepEqual(below.paths, [])
+
+  const tooShort = await promptRecall({ prompt: '好', search: async () => [] })
+  assert.equal(tooShort.outcome, 'no-query')
+
+  const empty = await promptRecall({ prompt: '如何修复 FTS5 中文索引？', search: async () => [] })
+  assert.equal(empty.outcome, 'no-hits')
+  assert.equal(empty.hits, 0)
+
+  const fired = await promptRecall({
+    prompt: '如何修复 FTS5 中文索引？',
+    search: async () => [
+      { path, title: 'FTS5 中文索引', snippet: '片段', scoreSignals: ['title-contains'] },
+    ],
+  })
+  assert.equal(fired.outcome, 'fired')
+  assert.equal(fired.hits, 1)
+  assert.equal(fired.chars, [...fired.text].length)
+  assert.deepEqual(fired.paths, [path])
+})
+
+test('every acceptable note already shown is all-seen, not below-floor', async () => {
+  const result = await promptRecall({
+    prompt: '如何修复 FTS5 中文索引？',
+    seenPaths: new Set([path]),
+    search: async () => [{ path, title: 'FTS5 中文索引', scoreSignals: ['title-contains'] }],
+  })
+  assert.equal(result.outcome, 'all-seen')
+  assert.equal(result.text, null)
+})
+
+test('a long prompt does not raise the floor above four token hits', async () => {
+  // Measured over the 148 real prompts that produce a query: the ratio term tops
+  // out at a floor of 5 for a 16-token query, and that bucket rejected hits at
+  // four token hits that a reader judges relevant — 22.3% of prompts fired,
+  // against 58.1% with the floor capped at four. The floor still never drops
+  // below three, so a weak match stays silent.
+  const long = '甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉'
+  const weak = await promptRecall({
+    prompt: long,
+    search: async () => [{ path, title: '弱命中', scoreSignals: ['token-hits:3'] }],
+  })
+  assert.equal(weak.outcome, 'below-floor', 'three token hits is still not enough')
+
+  const strong = await promptRecall({
+    prompt: long,
+    search: async () => [{ path, title: '强命中', scoreSignals: ['token-hits:4'] }],
+  })
+  assert.equal(strong.outcome, 'fired', 'four token hits clears the capped floor')
+})
+
 test('the resident hot layer is never offered back as recall', async () => {
   const hot = 'Projects/demo--1c392abb/_meta/hot.md'
   const result = await promptRecall({
@@ -113,26 +180,30 @@ test('weak matches, already shown paths, and tiny prompts stay silent', async ()
     ]
   }
   assert.equal(
-    await promptRecall({
-      prompt: '请详细规划一个完全不相关的长任务',
-      search,
-      maxChars: RECALL_BUDGET,
-    }),
+    (
+      await promptRecall({
+        prompt: '请详细规划一个完全不相关的长任务',
+        search,
+        maxChars: RECALL_BUDGET,
+      })
+    ).text,
     null,
   )
   assert.equal(calls, 1)
-  assert.equal(await promptRecall({ prompt: '好', search }), null)
+  assert.equal((await promptRecall({ prompt: '好', search })).text, null)
   assert.equal(calls, 1)
 
   const strongSearch = async () => [
     { path, title: 'FTS5 中文索引', scoreSignals: ['title-contains', 'token-hits:5'] },
   ]
   assert.equal(
-    await promptRecall({
-      prompt: 'FTS5 中文索引',
-      search: strongSearch,
-      seenPaths: new Set([path]),
-    }),
+    (
+      await promptRecall({
+        prompt: 'FTS5 中文索引',
+        search: strongSearch,
+        seenPaths: new Set([path]),
+      })
+    ).text,
     null,
   )
 })
