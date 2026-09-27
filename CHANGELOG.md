@@ -37,8 +37,18 @@ is a repository, not a release.
   `plugin-smoke: pass`, with three events in the window and nothing dropped,
   corrupt or expired. That session ran with `autoCapture: false`, so it created
   no queue directory and `pending-files` stayed `unavailable` rather than
-  reporting a count. The Codex entry's journal is still covered by tests only;
-  no live Codex session has exercised it.
+  reporting a count.
+
+  The installed path was then exercised for real on the machine that wrote this
+  change: after a restart, the host that mounts this checkout with `link:` under
+  the default `~/.dsh` home reported all seven checks `pass` — `data-root`,
+  `diagnostic-journal` and `pending-files` (`count: 0`) included — over the four
+  events that session wrote (`skill: unchanged`, `recall: below-floor` with 8
+  hits, `brief: injected`, `brief: none`). Those four are exactly what the
+  in-process `mem_admin(action="diagnostics")` ring answered for the same
+  session, which is the one record with two views the design asks for. The Codex
+  entry's journal is still covered by tests only; no live Codex session has
+  exercised it.
 
 - **A closed disk format for future user diagnostic reports.**
   `lib/diagnostic-codec.js` projects the existing in-process events into reviewed
