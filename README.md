@@ -42,6 +42,10 @@ Two layers, on purpose:
 > This plugin is careful about what it refuses, but it is young. What follows is
 > what this release writes down, not a claim to be exhaustive; `CHANGELOG.md`
 > keeps the running record of what has been verified and what has not.
+>
+> When something misbehaves, the package can produce a report you attach to an
+> Issue yourself: generate it, read the JSON, then attach it. See
+> [Diagnostic report for an Issue](#diagnostic-report-for-an-issue).
 
 ---
 
@@ -589,6 +593,11 @@ sandbox.
 | A repository refuses to write | A remote-URL mismatch, a different `projectId` for the same directory, a sibling worktree with conflicting metadata, or an unreadable sibling. The refusal names the reason and leaves the pointer exactly as it was — it never repairs or replaces one. | `mem_admin(action="bind", mode="show")` reports the situation; `mode="retain"` or `mode="fork"` is the explicit fix. A stale worktree needs `git worktree prune`. |
 | A plain directory stays read-only | It is not inside a Git repository, so the plugin will not add it to long-term memory on its own — an implicit first write binds Git repositories only. | `mem_admin(action="bind", mode="local")` to bind it explicitly; the binding is live for the same session. |
 | Memory is silently absent for a session | Any non-`bound` resolution means "no memory for this session" — by design, it never throws and never guesses. Reads never bind a repository, and a Git repository with no pointer is bound by its first write; a repository whose pointer or registry the plugin refuses to trust stays unbound until that is resolved. | Check `mem_admin(action="projects")` and the pointer file, then write once (a Git repository) or run `mem_admin(action="bind", mode="local")` (any directory) — both take effect in the same session. |
+
+If a symptom is not in this table, or the fix above did not work, generate the
+diagnostic report and attach the JSON to an Issue — see
+[Diagnostic report for an Issue](#diagnostic-report-for-an-issue). The command
+never uploads anything: you inspect the file and attach it yourself.
 
 ---
 
