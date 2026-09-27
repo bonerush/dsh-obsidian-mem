@@ -611,6 +611,13 @@ test('mem_admin(action="diagnostics") answers through the real seam without a va
   t.after(() => services.close?.())
   registerTools(ctx, services)
   diagnostics.event('job', { outcome: 'applied', attempts: 1 })
+  // Every category the ring can record has to survive the *output* schema, and
+  // `recall` is the one that did not: the ring accepted it, the schema's closed
+  // enum had never heard of it, and `mem_admin(action="diagnostics")` refused the
+  // whole snapshot with "must match exactly one oneOf branch (matched 0)". This
+  // case is the comparison neither `test/debug.test.js` (which calls the ring) nor
+  // `test/hooks.test.js` (which injects its own ring) was making.
+  diagnostics.event('recall', { outcome: 'below-floor', hits: 8, chars: 0 })
 
   const result = await call(ctx, 'mem_admin', { action: 'diagnostics' })
   assert.equal(result.isError, false, result.error?.message)
@@ -624,9 +631,13 @@ test('mem_admin(action="diagnostics") answers through the real seam without a va
     'size',
   ])
   assert.equal(result.value.result.window.capacity, 200)
-  assert.equal(result.value.result.events.length, 1)
+  assert.equal(result.value.result.events.length, 2)
   assert.equal(result.value.result.events[0].event, 'job')
   assert.equal(result.value.result.events[0].outcome, 'applied')
+  assert.equal(result.value.result.events[1].event, 'recall')
+  assert.equal(result.value.result.events[1].outcome, 'below-floor')
+  assert.equal(result.value.result.events[1].hits, 8)
+  assert.equal(result.value.result.events[1].chars, 0)
 
   // An irrelevant argument is refused exactly like every other action's.
   const refused = await call(ctx, 'mem_admin', { action: 'diagnostics', path: 'x.md' })
