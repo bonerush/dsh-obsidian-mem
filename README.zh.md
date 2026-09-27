@@ -37,6 +37,9 @@ repository                                vault (~/Documents/dsh-memory)
 > **在开启自动写入之前，先读[诚实边界](#honest-limits)。**
 > 本插件对自己拒绝什么很谨慎，但它还很年轻。下面写的是本版本愿意写下来的边界，不声
 > 称穷尽；`CHANGELOG.md` 里是"验证过什么、还没验证什么"的持续记录。
+>
+> 出问题时，本包可以生成一份由你自己附到 Issue 上的报告：先生成，读一遍 JSON，再
+> 自行附上。见[用于 Issue 的诊断报告](#diagnostic-report-for-an-issue)。
 
 ---
 
@@ -527,6 +530,10 @@ Obsidian 里冲突。要补上这个缺口，要么在仓库侧读 `types.json`�
 | 一个代码库拒绝写入 | remote URL 不匹配、同一个目录对应了不同的 `projectId`、同级 worktree 元数据冲突，或者同级不可读。拒绝信息会说明原因，并让指针文件保持原样——它从不修复或替换指针文件。 | `mem_admin(action="bind", mode="show")` 报告现状；`mode="retain"` 或 `mode="fork"` 是显式的修正手段。过期的 worktree 需要 `git worktree prune`。 |
 | 一个普通目录保持只读 | 它不在 Git 仓库里，所以插件不会自行把它纳入长期记忆——隐式的第一次写入只绑定 Git 仓库。 | 用 `mem_admin(action="bind", mode="local")` 显式绑定它；绑定在同一会话里立即生效。 |
 | 某个会话的记忆悄悄缺席 | 任何非 `bound` 的解析结果都意味着“这个会话没有记忆”——这是设计使然，它从不抛错，也从不猜。读取永不绑定代码库；没有指针文件的 Git 仓库由它的第一次写入完成绑定；指针文件或注册表不被插件信任的代码库会保持未绑定，直到问题解决。 | 检查 `mem_admin(action="projects")` 和指针文件，然后写一次（Git 仓库）或跑 `mem_admin(action="bind", mode="local")`（任何目录）——两者都在同一会话内生效。 |
+
+如果症状不在上表，或者按上表的做法仍未解决，请生成诊断报告并把 JSON 附到 Issue
+上——见[用于 Issue 的诊断报告](#diagnostic-report-for-an-issue)。命令不会自动上传：
+文件由你自己检查、自行附上。
 
 ---
 
