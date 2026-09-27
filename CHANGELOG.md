@@ -32,6 +32,14 @@ is a repository, not a release.
   and the original tool outcome intact. Host-seam tests use temporary homes and
   confirm the vault and pending queue are untouched by journal startup.
 
+- **A standalone JSON report command and isolated self-check are implemented.**
+  The command accepts an explicit output path, refuses an existing destination,
+  creates a private JSON file, and maps plugin smoke failures to fixed codes
+  while still reporting Node, FTS5, package, journal and queue metadata.
+  Tests confirm that an unreadable conversation-like queue file is counted
+  without parsing its content. The npm binary registration and user docs follow
+  in the packaging change.
+
 - **Recall now answers "did it fire?" through `mem_admin(action="diagnostics")`.**
   A new `recall` event records one decision per user turn — `fired`,
   `no-query`, `no-hits`, `below-floor`, `all-seen`, `budget`, `aborted` or

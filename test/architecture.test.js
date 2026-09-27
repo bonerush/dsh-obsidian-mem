@@ -46,6 +46,10 @@ const LAYERS = {
   debug: 0,
   'diagnostic-codec': 1,
   'diagnostic-journal': 2,
+  // The standalone report probes the complete plugin through dynamic imports;
+  // it sits above the host entry rather than becoming an import of that entry.
+  'diagnostic-report': 11,
+  'diagnose-cli': 12,
   config: 0,
   naming: 0,
   paths: 0,
@@ -96,6 +100,8 @@ const BUDGETS = {
   'lib/debug.js': 250,
   'lib/diagnostic-codec.js': 200,
   'lib/diagnostic-journal.js': 300,
+  'lib/diagnostic-report.js': 350,
+  'lib/diagnose-cli.js': 100,
   'lib/assets.js': 600,
   'lib/brief.js': 1150,
   // Raised from 1900 when the diagnostics call sites landed here. The alternative
