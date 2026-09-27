@@ -45,6 +45,7 @@ const LAYERS = {
   // other leaves; everything that records through it points downward.
   debug: 0,
   'diagnostic-codec': 1,
+  'diagnostic-journal': 2,
   config: 0,
   naming: 0,
   paths: 0,
@@ -92,6 +93,7 @@ const LAYERS = {
 const BUDGETS = {
   'lib/debug.js': 200,
   'lib/diagnostic-codec.js': 200,
+  'lib/diagnostic-journal.js': 300,
   'lib/assets.js': 600,
   'lib/brief.js': 1150,
   // Raised from 1900 when the diagnostics call sites landed here. The alternative

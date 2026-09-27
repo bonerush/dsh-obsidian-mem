@@ -20,6 +20,12 @@ is a repository, not a release.
   the serialized result. This commit adds the codec only; the journal and user
   command are not yet wired or shipped.
 
+- **A bounded local diagnostic journal is available for the host entries.**
+  Run files use private permissions, keep at most 200 events, and expire after
+  seven days of inactivity. Reader tests cover corrupt records, symlink
+  substitution, concurrent processes and the latest config summary. The DSH
+  and Codex entries are not connected to this journal in this commit.
+
 - **Recall now answers "did it fire?" through `mem_admin(action="diagnostics")`.**
   A new `recall` event records one decision per user turn — `fired`,
   `no-query`, `no-hits`, `below-floor`, `all-seen`, `budget`, `aborted` or
