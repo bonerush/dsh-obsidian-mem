@@ -13,6 +13,57 @@ is a repository, not a release.
 
 ### Added
 
+- **The diagnostic report is available as an npm command.** Run
+  `dsh-obsidian-mem-diagnose --output <file.json>`, inspect the JSON, and attach
+  it manually to an Issue. The package and real-archive checks require the CLI
+  entry. The report has a 256 KiB ceiling and never uploads itself. The full
+  local gate passed.
+
+  The packed command has now been exercised three ways. An offline installation
+  of the real tarball by itself ran its npm binary and produced a private JSON
+  report with `package-files: pass`, while `plugin-smoke` stayed `unavailable`:
+  that install has no optional DSH host peers, and the check reports the missing
+  evidence instead of a pass. Installing the same tarball with
+  `@deepseek-ai/dsh-tools` and `@deepseek-ai/cordis` present turned that one
+  check into `plugin-smoke: pass`. A real host session then closed the loop: in
+  a throwaway `DSH_HOME` on Node v25.9.0 with DSH `0.1.7-rc.2`, the tarball's
+  installed package was mounted with `link:` in a `headless` profile and one
+  real session ran against a throwaway vault. The host wrote
+  `data/obsidian-mem/diagnostics/<uuid>.jsonl` — directory `0700`, run file
+  `0600`, a header carrying the config summary and three events
+  (`skill: synced`, `brief: hint-only`, `capture: skipped-unbound`) whose only
+  fields are `seq`, `at`, `event` and `outcome`. Reading that home back with the
+  packed command gave `data-root: pass`, `diagnostic-journal: pass` and
+  `plugin-smoke: pass`, with three events in the window and nothing dropped,
+  corrupt or expired. That session ran with `autoCapture: false`, so it created
+  no queue directory and `pending-files` stayed `unavailable` rather than
+  reporting a count. The Codex entry's journal is still covered by tests only;
+  no live Codex session has exercised it.
+
+- **A closed disk format for future user diagnostic reports.**
+  `lib/diagnostic-codec.js` projects the existing in-process events into reviewed
+  outcomes, coarse error codes, counts and per-run identifier aliases. Tests
+  verify that conversation-like fields, paths and original IDs are absent from
+  the serialized result.
+
+- **A bounded local diagnostic journal is available for the host entries.**
+  Run files use private permissions, keep at most 200 events, and expire after
+  seven days of inactivity. Reader tests cover corrupt records, symlink
+  substitution, concurrent processes and the latest config summary.
+
+- **Both host entries now write their content-free decisions into the journal.**
+  DSH constructs it only for an enabled plugin; Codex uses its existing data
+  root. A failed journal open or append leaves the in-process diagnostic ring
+  and the original tool outcome intact. Host-seam tests use temporary homes and
+  confirm the vault and pending queue are untouched by journal startup.
+
+- **A standalone JSON report command and isolated self-check are implemented.**
+  The command accepts an explicit output path, refuses an existing destination,
+  creates a private JSON file, and maps plugin smoke failures to fixed codes
+  while still reporting Node, FTS5, package, journal and queue metadata.
+  Tests confirm that an unreadable conversation-like queue file is counted
+  without parsing its content.
+
 - **Recall now answers "did it fire?" through `mem_admin(action="diagnostics")`.**
   A new `recall` event records one decision per user turn — `fired`,
   `no-query`, `no-hits`, `below-floor`, `all-seen`, `budget`, `aborted` or

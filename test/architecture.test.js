@@ -44,6 +44,12 @@ const LAYERS = {
   // `debug.js` imports nothing from `lib/`, so it sits at the bottom with the
   // other leaves; everything that records through it points downward.
   debug: 0,
+  'diagnostic-codec': 1,
+  'diagnostic-journal': 2,
+  // The standalone report probes the complete plugin through dynamic imports;
+  // it sits above the host entry rather than becoming an import of that entry.
+  'diagnostic-report': 11,
+  'diagnose-cli': 12,
   config: 0,
   naming: 0,
   paths: 0,
@@ -89,7 +95,13 @@ const LAYERS = {
  * rule as every other file rather than with extra headroom.
  */
 const BUDGETS = {
-  'lib/debug.js': 200,
+  // The optional support sink adds one failure-isolated observer to the existing
+  // ring. It stays here so every call site still passes only one diagnostics seam.
+  'lib/debug.js': 250,
+  'lib/diagnostic-codec.js': 200,
+  'lib/diagnostic-journal.js': 300,
+  'lib/diagnostic-report.js': 350,
+  'lib/diagnose-cli.js': 100,
   'lib/assets.js': 600,
   'lib/brief.js': 1150,
   // Raised from 1900 when the diagnostics call sites landed here. The alternative
@@ -109,7 +121,9 @@ const BUDGETS = {
   'lib/hooks.js': 1100,
   'lib/hot.js': 600,
   'lib/index-db.js': 2200,
-  'lib/index.js': 150,
+  // Both enabled entry points construct the private journal beside their ring;
+  // this small assembly step belongs here, after the disabled early return.
+  'lib/index.js': 200,
   'lib/lint.js': 1450,
   'lib/memory.js': 1400,
   'lib/naming.js': 250,

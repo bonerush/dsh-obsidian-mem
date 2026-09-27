@@ -18,18 +18,33 @@
 // no test writes under `~/.codex` or into the user's vault.
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { jsonSchemaFor, listTools } from '../codex/server.mjs'
+import { jsonSchemaFor, listTools, openMemory } from '../codex/server.mjs'
+import { readDiagnosticJournal } from '../lib/diagnostic-journal.js'
 import { mcpConfig, problems } from '../codex/prepare.mjs'
 import { TOOL_NAMES, TOOL_PARAMETERS } from '../lib/tools.js'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SERVER = join(REPO, 'codex', 'server.mjs')
+
+test('the Codex adapter persists its content-free diagnostic decisions', async (t) => {
+  const { home, dsh, vault, repo } = world()
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const memory = openMemory({ home, dshHome: dsh, vaultPath: vault, cwd: repo })
+  t.after(() => memory.services.close())
+  memory.diagnostics.event('job', { outcome: 'failed', body: 'SENTINEL-CODEX-BODY' })
+  const report = readDiagnosticJournal({ dataRoot: memory.dataRoot })
+  assert.equal(
+    report.events.some((event) => event.event === 'job'),
+    true,
+  )
+  assert.equal(JSON.stringify(report).includes('SENTINEL-CODEX-BODY'), false)
+})
 
 /**
  * A throwaway world: home, data root, vault and a git repository to bind.

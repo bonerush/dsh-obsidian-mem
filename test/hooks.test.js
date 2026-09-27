@@ -23,6 +23,7 @@ import { test } from 'node:test'
 
 import { buildBrief } from '../lib/brief.js'
 import { createDiagnostics } from '../lib/debug.js'
+import { readDiagnosticJournal } from '../lib/diagnostic-journal.js'
 import { updateHot } from '../lib/hot.js'
 import { openIndex } from '../lib/index-db.js'
 import { apply } from '../lib/index.js'
@@ -1239,7 +1240,8 @@ test('apply() wires the hooks without touching the vault, and the six tools stil
 
   // A real session in a directory that is not bound: the first pre-step must
   // attach nothing and leave no trace — no `.obsidian-mem` pointer, no vault,
-  // no data root. `resolveBinding(mode:'show')` is what guarantees that.
+  // no queue or vault. The enabled plugin does create its private support
+  // journal under the data root, independent of repository binding.
   const agent = agentFor({ cwd })
   ctx.emit('agent/session-start', { agent, source: 'startup' })
   const decision = await ctx.waterfall(
@@ -1251,5 +1253,23 @@ test('apply() wires the hooks without touching the vault, and the six tools stil
   assert.equal(decision.messages.length, 0)
   assert.equal(existsSync(join(cwd, '.obsidian-mem')), false, 'a session must not mint a pointer')
   assert.equal(existsSync(vault), false, 'a session must not create the configured vault')
-  assert.equal(existsSync(join(root, 'data')), false, 'a session must not create the data root')
+  const dataRoot = join(root, 'data', 'obsidian-mem')
+  assert.equal(existsSync(join(dataRoot, 'pending')), false)
+  assert.equal(
+    readDiagnosticJournal({ dataRoot }).events.some((event) => event.event === 'brief'),
+    true,
+  )
+})
+
+test('disabled apply creates no support journal', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-disabled-'))
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = root
+  t.after(async () => {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    await rm(root, { recursive: true, force: true })
+  })
+  assert.equal(apply({}, { enabled: false }), undefined)
+  assert.equal(existsSync(join(root, 'data', 'obsidian-mem', 'diagnostics')), false)
 })

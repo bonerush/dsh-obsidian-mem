@@ -257,7 +257,7 @@ with an error that says the field was dropped by design.
 | `mem_write` | `type`, `title`, `body` (required); `tags`, `status`, `confidence`, `assertion`, `supersedes`, `id`, `idempotencyKey` | The authoritative way to write project documents and memories. Without `id` it **creates** a note with a fresh id; with an existing `id` it updates. Superseding verifies the old id and writes both sides of the link. |
 | `mem_log` | `text` (required); `session`, `section`, `idempotencyKey` | Appends one idempotent entry to today's log; `section: "hot"` targets the hot file's 进行中 zone instead. |
 | `mem_brief` | — | Returns the same recall brief the session injected, so you can re-read or audit the budget. |
-| `mem_admin` | `action` (required): `lint`, `index`, `bind`, `projects`, `promote`, `jobs`, `diagnostics`; plus `report`, `prune` (lint only), `rebuild` (index), `mode` (bind: `show`\|`local`\|`fork`\|`retain`), `path` (promote), `jobId`/`retry` (jobs) | Low-frequency maintenance. `lint` is read-only unless you pass `report: true` (writes a dated report note) and/or `prune: true` (deletes aged snapshots) — the two are independent on purpose. `diagnostics` is the one action that reads nothing: it returns this process's own ring of decisions — at most 200 events, drawn from the closed set `capture`, `distill`, `index`, `bind`, `job`, `transaction`, `brief`, `skill` (all eight emit today), each with an outcome and machine identifiers and never a note body, a title or a prompt. A window therefore answers the questions that otherwise need a reproduction: why a finished turn was not captured (the `capture` event names the reason), whether distillation produced nothing or was never attempted (`distill`, `job`), whether the index followed a write (`index`), and whether a write was committed or refused with a code (`transaction`). It needs no binding and no vault, so it still answers when every other action refuses, and it empties when the process exits — use `jobs` and the receipts for anything that has to survive a restart. Set `DSH_OBSIDIAN_MEM_DEBUG=1` to additionally emit each event through the host logger at `info` level; whether the host shows that line is the host's decision, not this plugin's. |
+| `mem_admin` | `action` (required): `lint`, `index`, `bind`, `projects`, `promote`, `jobs`, `diagnostics`; plus `report`, `prune` (lint only), `rebuild` (index), `mode` (bind: `show`\|`local`\|`fork`\|`retain`), `path` (promote), `jobId`/`retry` (jobs) | Low-frequency maintenance. `lint` is read-only unless you pass `report: true` (writes a dated report note) and/or `prune: true` (deletes aged snapshots) — the two are independent on purpose. `diagnostics` is the one action that reads nothing: it returns this process's own ring of decisions — at most 200 events, drawn from the closed set `capture`, `distill`, `index`, `bind`, `job`, `transaction`, `brief`, `skill`, `recall` (all nine emit today), each with an outcome and machine identifiers and never a note body, a title or a prompt. A window therefore answers the questions that otherwise need a reproduction: why a finished turn was not captured (the `capture` event names the reason), whether distillation produced nothing or was never attempted (`distill`, `job`), whether the index followed a write (`index`), and whether a write was committed or refused with a code (`transaction`). It needs no binding and no vault, so it still answers when every other action refuses, and it empties when the process exits — the separate local journal above preserves reduced events for the user-run report. Set `DSH_OBSIDIAN_MEM_DEBUG=1` to additionally emit each event through the host logger at `info` level; whether the host shows that line is the host's decision, not this plugin's. |
 
 `mem_write` types route like this:
 
@@ -317,12 +317,60 @@ $DSH_HOME/data/obsidian-mem/
 ├── transactions/   journal for crash recovery
 ├── receipts/       per-write and per-job receipts
 ├── pending/        queued distillation jobs (0700/0600)
+├── diagnostics/    bounded content-free decision journal (0700/0600)
 └── processed/      per-session processed floor (0700/0600)
 ```
 
 Set `DSH_HOME` to an isolated directory and the plugin can never write into your
 real `~/.dsh` — that is how the test suite runs, and how you should try anything
 new.
+
+---
+
+## Diagnostic report for an Issue
+
+When the installed package exposes its npm binary, generate a report yourself:
+
+```sh
+dsh-obsidian-mem-diagnose --output ./obsidian-mem-diagnostics.json
+```
+
+From a checkout, `node lib/diagnose-cli.js --output ./obsidian-mem-diagnostics.json`
+runs the same command. It works even if the host plugin fails to load. The command
+never uploads the file, edits DSH configuration or reads a real vault. It requires
+an explicit output path and refuses to overwrite an existing file. The completed
+JSON has mode `0600` and a 256 KiB limit. Open it in a text editor and review it
+before attaching it to an Issue. **[Attachments to a public GitHub repository](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files) can
+be viewed by anyone**, including people without a GitHub account; event times
+may reveal when you used the plugin.
+
+The report contains the plugin and Node versions, OS type and architecture,
+non-identifying configuration switches when a journal is available, fixed self-check
+statuses, and recent decision events. Events have times, categories, approved
+outcomes or coarse error codes, counts and per-run aliases such as `p1` or `j1`.
+The command counts pending job files by directory entry without opening them. It
+checks Node and in-memory FTS5, package files, local journal health, and the
+`mem_admin` diagnostics contract in a disposable home and vault. It does **not**
+check your real vault, model route, host session hooks or the contents of queued
+jobs. Unavailable, incomplete or damaged evidence is marked `unavailable` or
+`partial`; a missing journal is not proof that earlier calls succeeded.
+Without the optional DSH host packages, the isolated plugin check can be
+`unavailable` while the basic report still succeeds.
+
+The enabled DSH plugin and Codex adapter record this reduced event stream locally
+by default under `$DSH_HOME/data/obsidian-mem/diagnostics/`, with mode
+`0700`/`0600`. Each process keeps at most 200 events and 128 KiB. On the next
+plugin start, run files idle for over seven days are removed; export ignores
+expired files, and no background cleanup runs while the plugin is stopped. The
+in-process `mem_admin(action="diagnostics")` ring remains separate. A journal
+failure does not change a plugin call's outcome.
+
+The journal and report **never include conversation text, prompts, model output,
+note bodies or titles, tool arguments, raw host logs, pending job bodies,
+configuration files, credentials, environment variable values, paths, original
+project/job/transaction IDs, hostnames or repository remotes**. The command makes
+no network request. These exclusions apply to the diagnostic route; automatic
+distillation follows the model-call boundary below.
 
 ---
 

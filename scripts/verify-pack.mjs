@@ -72,6 +72,7 @@ const FORBIDDEN_NAMES = [
 /** Assets the tarball must carry, and the reason each one is mandatory. */
 const REQUIRED_ASSETS = [
   ['lib/index.js', 'the plugin entry point'],
+  ['lib/diagnose-cli.js', 'the standalone diagnostic command'],
   ['skills/obsidian-mem/SKILL.md', 'the portable methodology skill'],
   ['cordis.patch.yml', 'the bundle patch that mounts the row'],
   ['dsh.plugin.json', 'the marketplace manifest'],
@@ -246,6 +247,9 @@ export function verifyPack(root) {
     problems.push(
       `entry disagreement: package.json main ${JSON.stringify(pkg.main)} is not dsh.plugin.json main ${JSON.stringify(plugin.main)}`,
     )
+  }
+  if (pkg.bin?.['dsh-obsidian-mem-diagnose'] !== './lib/diagnose-cli.js') {
+    problems.push('package.json bin.dsh-obsidian-mem-diagnose must target ./lib/diagnose-cli.js')
   }
 
   const floor = pkg.engines?.node
