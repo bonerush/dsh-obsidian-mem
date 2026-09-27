@@ -266,3 +266,24 @@ test('recordDiagnostic absorbs a broken diagnostics object', () => {
     ),
   )
 })
+
+test('a failing disk sink cannot change the ring result', () => {
+  let calls = 0
+  let seen
+  const diagnostics = createDiagnostics({
+    now: fixedClock,
+    sink: {
+      record(record) {
+        calls += 1
+        seen = record
+        throw new Error('SENTINEL-SINK-FAILED')
+      },
+    },
+  })
+  diagnostics.event('job', { outcome: 'failed', body: 'SENTINEL-BODY' })
+  assert.equal(calls, 1)
+  assert.equal(JSON.stringify(seen).includes('SENTINEL-BODY'), false)
+  assert.equal(diagnostics.snapshot().events.length, 1)
+  assert.equal(diagnostics.snapshot().events[0].outcome, 'failed')
+  assert.equal(JSON.stringify(diagnostics.snapshot()).includes('SENTINEL-BODY'), false)
+})

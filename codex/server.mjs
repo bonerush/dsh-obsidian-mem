@@ -35,6 +35,7 @@ import { fileURLToPath } from 'node:url'
 
 import { validateConfig } from '../lib/config.js'
 import { createDiagnostics } from '../lib/debug.js'
+import { openDiagnosticJournal } from '../lib/diagnostic-journal.js'
 import { resolveDataRoot } from '../lib/paths.js'
 import { TOOL_NAMES, TOOL_PARAMETERS, createMemoryServices } from '../lib/tools.js'
 
@@ -115,12 +116,19 @@ export function openMemory(options = {}) {
   const vaultPath = options.vaultPath ?? process.env.OBSIDIAN_MEM_VAULT
   const config = validateConfig(vaultPath === undefined ? {} : { vaultPath })
   const dataRoot = resolveDataRoot(options.dshHome ?? process.env.DSH_HOME ?? undefined)
+  let sink = null
+  try {
+    sink = openDiagnosticJournal({ dataRoot, config })
+  } catch {
+    // The MCP tool remains usable when its optional support journal is unavailable.
+  }
   // One ring per server, with its own sink: this process has no Cordis logger, so
   // emission goes to stderr and only when the env flag is set. The DSH side keeps
   // its own instance, which is why the tool's answer is always about the process
   // the caller is actually talking to.
   const diagnostics = createDiagnostics({
     logger: { info: (line) => process.stderr.write(line + '\n') },
+    sink,
   })
   return {
     services: createMemoryServices({ config, dataRoot, cwd, home, diagnostics }),

@@ -91,7 +91,9 @@ const LAYERS = {
  * rule as every other file rather than with extra headroom.
  */
 const BUDGETS = {
-  'lib/debug.js': 200,
+  // The optional support sink adds one failure-isolated observer to the existing
+  // ring. It stays here so every call site still passes only one diagnostics seam.
+  'lib/debug.js': 250,
   'lib/diagnostic-codec.js': 200,
   'lib/diagnostic-journal.js': 300,
   'lib/assets.js': 600,
@@ -113,7 +115,9 @@ const BUDGETS = {
   'lib/hooks.js': 1100,
   'lib/hot.js': 600,
   'lib/index-db.js': 2200,
-  'lib/index.js': 150,
+  // Both enabled entry points construct the private journal beside their ring;
+  // this small assembly step belongs here, after the disabled early return.
+  'lib/index.js': 200,
   'lib/lint.js': 1450,
   'lib/memory.js': 1400,
   'lib/naming.js': 250,

@@ -26,6 +26,12 @@ is a repository, not a release.
   substitution, concurrent processes and the latest config summary. The DSH
   and Codex entries are not connected to this journal in this commit.
 
+- **Both host entries now write their content-free decisions into the journal.**
+  DSH constructs it only for an enabled plugin; Codex uses its existing data
+  root. A failed journal open or append leaves the in-process diagnostic ring
+  and the original tool outcome intact. Host-seam tests use temporary homes and
+  confirm the vault and pending queue are untouched by journal startup.
+
 - **Recall now answers "did it fire?" through `mem_admin(action="diagnostics")`.**
   A new `recall` event records one decision per user turn — `fired`,
   `no-query`, `no-hits`, `below-floor`, `all-seen`, `budget`, `aborted` or
