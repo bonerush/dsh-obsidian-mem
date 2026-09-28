@@ -244,12 +244,12 @@ Obsidian 应用程序代码。
 | `captureIdleMs` | `90000` | 整数 1000–3600000 | 被捕获的回合进入蒸馏前的空闲去抖时间。 |
 | `distill.provider` | `""` | string | 模型路由。必须和 `model` 一起设置，或者两个都留空（留空 = 复用会话最近记录的路由）。从别的 harness 导入的会话没有这条路由，所以导入的历史会一直停在 `deferred`，直到设了这一项。 |
 | `distill.model` | `""` | string | 见上。 |
-| `distill.maxItems` | `12` | 整数 1–50 | 一次蒸馏最多接受多少个候选。 |
+| `distill.maxItems` | `12` | 整数 1–50 | 一次蒸馏最多接受多少个候选。同一个数字会写进 system prompt，模型因此知道超过多少条会被拒绝；超限是整批拒绝，绝不裁剪。 |
 | `distill.minConfidence` | `0.75` | number 0–1 | 低于此值的候选进入 `Inbox/`，而不是成为记忆笔记。 |
 | `distill.maxInputChars` | `24000` | 整数 256–100000 | 那次模型调用的输入上限。 |
 | `distill.maxOutputTokens` | `4000` | 整数 128–32000 | 那次调用的输出上限。 |
 | `distill.timeoutMs` | `60000` | 整数 1000–300000 | 单次调用超时。 |
-| `distill.maxRetries` | `3` | 整数 0–10 | job 变成终态 `failed` 之前的指数退避重试次数。 |
+| `distill.maxRetries` | `3` | 整数 0–10 | **总尝试次数**，不是额外重试次数：`3` = 一次尝试加两次指数退避重试，之后 job 变成终态 `failed` 并保留原始输出。 |
 | `distill.dryRun` | `false` | boolean | 只写回执：不写记忆笔记、不更新 MOC、不更新热记忆。**从这里开始。** |
 | `indexBackend` | `auto` | `auto` \| `sqlite` \| `scan` | FTS5 不可用时，`auto` 回退到 scan 后端并报告此事；`sqlite` 则直接大声失败。 |
 | `ignoreGlobs` | `[]` | 仓库/代码库相对路径的 glob 列表 | 只支持 `*`、`**`、`?` 和普通路径字符。花括号、字符类、取反和转义在启动时就被**拒绝**，而不是静默匹配错。绝对路径和 `..` 被拒绝。被安全策略排除的路径无法再被包含回来。 |
@@ -553,6 +553,7 @@ Obsidian 里冲突。要补上这个缺口，要么在仓库侧读 `types.json`�
 | 搜索没有结果，或提示 not-ready | 索引缺失、不可读，或者仍在扫描。 | `mem_admin(action="index")` 查看状态，`mem_admin(action="index", rebuild=true)` 重建。仓库不受影响。 |
 | 一个蒸馏 job 是 `failed` | 模型调用或校验失败达到 `maxRetries` 次。job 会保留原因。 | `mem_admin(action="jobs")` 查看，然后 `mem_admin(action="jobs", jobId="…", retry=true)`。 |
 | 一个 job 停在 `deferred` | 没有可用的模型路由、代码库未绑定，或者模型输出被校验拒绝（`truncated`、`too-many-items`）而 job 正在退避。它在每个空闲窗口重试。 | 设置 `distill.provider` + `distill.model`、绑定项目，或者针对这两个拒绝码调大 `distill.maxOutputTokens` / `distill.maxItems`。 |
+| 一个 job 因 `too-many-items` 进入终态 `failed` | 模型返回的条数超过上限，整批被拒（不是裁剪）。原始输出仍在（`outputState: raw-durable`），所以把 `distill.maxItems` 抬到高于 `lastError` 里报的条数后，**不需要重新调用模型**：重试会重新校验那份已存的文本。 | 先调大 `distill.maxItems`，再 `mem_admin(action="jobs", jobId="…", retry=true)`。不调大就重试，等于用同一份字节对同一个上限再校验一次，必然再失败。 |
 | DSH 在写入中途崩溃 | 未完成的事务被记在 `$DSH_HOME/data/obsidian-mem/transactions/` 下。 | 重启会话：恢复会在新的写入之前运行。如果崩溃期间文件被外部编辑过，两个版本都会被保留并报告——没有任何内容被覆盖。 |
 | `lock-corrupt` | 仓库的写锁文件（`$DSH_HOME/data/obsidian-mem/locks/vault-<hash>.lock`）存在但不可读——通常是零长度或被截断，因为进程在创建它和写入记录之间被杀掉。插件从不把不可读的锁当作“没人持有”，也从不抢占它，所以每次写入都会等完超时，然后以这个错误码拒绝。 | 读出错误里给出的路径，手工（`rm`）删掉**那一个文件**，然后重试。不需要清理别的：锁会在下一次写入时重建，仓库内容也不依赖它。 |
 | `lock-timeout` | 另一个活着的进程持有仓库的写锁，或者某个进程死了但它持有的锁记录仍可读、其 pid 尚未被观察到消失。 | 等其他会话结束再重试。如果你确定持有者已死，一旦记录的 pid 消失，锁会被自动打破——在可能还有 `dsh` 进程在跑时，不要手工删除一个可读的锁。 |

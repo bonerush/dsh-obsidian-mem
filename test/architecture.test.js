@@ -129,7 +129,13 @@ const BUDGETS = {
   // the next raise has to argue with this line.
   'lib/capture.js': 2050,
   'lib/config.js': 300,
-  'lib/distill.js': 950,
+  // Raised from 950 for the configurable item-count ceiling. The prompt must name
+  // the ceiling the validator enforces (`too-many-items` refused a whole batch of
+  // 21 against 16 because it did not), and a ceiling that comes from config cannot
+  // be a literal in a module constant: it costs one exported slot, one substitution
+  // helper and their JSDoc. The alternative — a second prompt string beside the
+  // validator's vocabulary — is the drift this file's tests exist to prevent.
+  'lib/distill.js': 975,
   'lib/frontmatter.js': 1100,
   'lib/git.js': 300,
   // Raised from 1050 for one per-turn prompt map beside the existing brief

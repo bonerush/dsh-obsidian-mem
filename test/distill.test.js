@@ -41,9 +41,11 @@ import { test } from 'node:test'
 
 import {
   DistillError,
+  MAX_ITEMS_SLOT,
   SYSTEM_PROMPT,
   distillCandidates,
   distillSettings,
+  distillerPrompt,
   runPendingJob,
   validateDistillation,
 } from '../lib/distill.js'
@@ -251,6 +253,43 @@ test('the system prompt names every enum the validator refuses to guess', () => 
       assert.ok(SYSTEM_PROMPT.includes(value), `the prompt never names the ${field} value ${value}`)
     }
   }
+})
+
+test('the system prompt names the item-count ceiling the validator refuses to exceed', () => {
+  // The enum case above keeps the prompt from drifting from the *vocabularies*
+  // it must name. This one extends the same rule to the one numeric budget that
+  // refuses the whole batch: a real job returned 21 well-formed items against a
+  // ceiling of 16 and spent all three attempts on `too-many-items`, because the
+  // prompt never told the model how many items it was allowed to return.
+  //
+  // The contract is read back from the refusal rather than written out twice:
+  // `too-many-items: the model returned N items, beyond distill.maxItems=M`.
+  const settings = { ...distillSettings(CONFIG), maxItems: 3 }
+  let refusal = null
+  assert.throws(
+    () =>
+      validateDistillation(
+        json([decisionItem(), decisionItem(), decisionItem(), decisionItem()]),
+        JOB,
+        settings,
+      ),
+    (error) => {
+      refusal = error
+      return throwsCode('too-many-items')(error)
+    },
+  )
+  const echoed = /beyond distill\.maxItems=(\d+)/.exec(refusal.message)
+  assert.notEqual(echoed, null, 'the refusal echoes the ceiling it applied')
+  // Asserted against the prompt the model is actually sent, not the exported
+  // template: the template carries the slot name on purpose, and a check on it
+  // would pass while the call went out with that slot still in it.
+  const sent = distillerPrompt(settings)
+  assert.ok(sent.includes(echoed[1]), `the prompt never names the item-count ceiling ${echoed[1]}`)
+  assert.equal(
+    sent.includes(MAX_ITEMS_SLOT),
+    false,
+    'the sent prompt must not carry the unsubstituted slot',
+  )
 })
 
 test('an item with an extra field is refused (no free-form smuggling)', () => {
@@ -786,6 +825,10 @@ test('one model call: explicit route, bounded input/output, no tool schema at al
   assert.equal(request.maxTokens, CONFIG.distill.maxOutputTokens)
   assert.match(request.system, /JSON/)
   assert.match(request.system, /Do not request tools/)
+  // The ceiling is configurable, so the request must carry the substituted form:
+  // a system prompt still holding the slot name would tell the model nothing.
+  assert.match(request.system, new RegExp(`at most ${CONFIG.distill.maxItems} items`))
+  assert.equal(request.system.includes(MAX_ITEMS_SLOT), false)
   assert.equal(request.messages.length, 1)
   assert.equal(request.messages[0].role, 'user')
   assert.equal(typeof request.messages[0].id, 'string')

@@ -42,6 +42,38 @@ is a repository, not a release.
 
 ### Fixed
 
+- **The distillation prompt now names the item-count ceiling it will be refused
+  for exceeding.** The validator refuses a whole batch larger than
+  `distill.maxItems` (`too-many-items`), but the system prompt never said how many
+  items were allowed: it interpolated the `type`/`assertion`/`status`
+  vocabularies and nothing else. A real job returned 21 well-formed items against
+  a ceiling of 16, passed every other check, and spent all three attempts on that
+  one refusal. `SYSTEM_PROMPT` now reserves a `maxItems` slot and the new
+  `distillerPrompt(settings)` substitutes the configured number at the call site,
+  so the prompt cannot carry a ceiling the validator does not apply.
+
+  Red first: the new case
+  `the system prompt names the item-count ceiling the validator refuses to exceed`
+  reads the ceiling back out of the refusal message
+  (`beyond distill.maxItems=N`), asserts the prompt actually sent names `N`, and
+  asserts the unsubstituted slot never reaches the model. It failed on the old
+  code with `the prompt never names the item-count ceiling 3`, and the existing
+  request-shape case now also pins `at most 12 items` with `maxItems` absent from
+  the sent text. `test/distill.test.js` is 64/64. The file's size budget is
+  registered as 950 → 975 in `test/architecture.test.js` with the reason: a
+  configurable ceiling cannot be a literal in a module constant.
+
+  Verified live on 2026-09-29, not only in tests: the ceiling was raised to 21 in
+  the profile patch, the plugin row hot-reloaded (a fresh `skill` event opened a
+  new diagnostics run), and `mem_admin(action="jobs", jobId="…", retry=true)`
+  settled `job-95018bdb…` — the job that had been terminally `failed` since
+  09-27 — as `result: applied`, **21 items applied, 0 refused, `index:
+  refreshed`, in 14 ms with no model call**, because a `raw-durable` retry
+  re-validates the stored text. The vault gained exactly those 21 notes
+  (341 → 362 in-project `.md`, `_meta/log.md` 4987 → 5197 lines) and the index
+  absorbed them (488 → 517 `notes_fts` rows). The profile patch keeps the raised
+  value with the incident recorded inline.
+
 - **The graph's browser module chain now loads through the host routes.** The
   renderer imports `graph-palette.js`, but the default asset routes omitted that
   file, producing a 404 and a blank graph after refresh. The route now serves it;
