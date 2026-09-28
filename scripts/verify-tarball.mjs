@@ -27,6 +27,12 @@ export const REQUIRED_ENTRIES = [
   ['package/package.json', 'the manifest npm publishes'],
   ['package/lib/index.js', 'the plugin entry point'],
   ['package/lib/diagnose-cli.js', 'the standalone diagnostic command'],
+  ['package/lib/client.js', 'the optional browser entry'],
+  ['package/lib/graph-renderer.js', 'the cached graph labels and viewport renderer'],
+  ['package/lib/graph-data.js', 'the graph-only topology projection'],
+  ['package/lib/graph-links.js', 'the graph link parser and resolver'],
+  ['package/lib/graph-worker.js', 'the graph force simulator'],
+  ['package/lib/graph-worker.LICENSE', 'the bundled D3 license notices'],
   ['package/skills/obsidian-mem/SKILL.md', 'the portable methodology skill'],
   ['package/cordis.patch.yml', 'the bundle patch that mounts the row'],
   ['package/dsh.plugin.json', 'the ecosystem metadata'],
@@ -45,6 +51,7 @@ export const REQUIRED_ENTRIES = [
  */
 export const FORBIDDEN_PREFIXES = [
   'package/test/',
+  'package/client/',
   'package/.github/',
   'package/docs/',
   'package/research/',

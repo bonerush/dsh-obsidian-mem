@@ -13,6 +13,72 @@ is a repository, not a release.
 
 ### Added
 
+- **A called memory now shows which file it was.** The pulse ring and the moving
+  edge particle said *that* something was read; the node is now also treated like
+  a highlighted node, so its label stays opaque and pinned to the base size at any
+  zoom, and the canvas caption lists up to three file names. Verified with the
+  shipped renderer in a Node harness: with ambient labels hidden at scale 0.44 a
+  node carrying fresh activity still draws its label, and removing the
+  `s.active.has(node.id)` clause makes that case fail (`test/graph-renderer.test.js`).
+
+- **A memory graph tab for DSH's native right sidebar via Better Sidebar.**
+  The browser view resolves Obsidian's colour slots from the host theme, draws internal Markdown and wiki links, supports
+  project/all scopes, and briefly pulses notes and branches used by `mem_read`
+  or an injected relevant-note map. The host route is read-only and local
+  same-origin; activity is bounded and process-local. SQLite and scan graph
+  projections, route fencing, activity, and tab registration have automated
+  tests. The view follows the installed Obsidian 1.13.7 core graph's controls,
+  renderer rules and D3 fallback force model, with the core default palette;
+  the extracted-source hashes and adaptation boundaries are recorded in
+  `docs/obsidian-graph-source.md`. Pinned D3 browser assets and their ISC
+  notices ship locally, with a read-only freshness check in the suite.
+
+  On 2026-09-28 the installed DSH web profile rendered 461 nodes in Chrome;
+  `[type:decision]` filtering left 109 nodes, and reset restored 461 nodes and
+  the original slider defaults. An isolated seven-note temporary vault ran
+  the real registered `mem_read` tool through the service, activity route and
+  browser view: its connected branch showed particles and the node showed
+  an expanding ring, then returned to idle. This does not verify a live LLM
+  choosing that tool or the recall animation during a live agent turn.
+  Canvas 2D replaces Obsidian's Pixi/WASM renderer; the graph is capped at
+  500 nodes, and attachment filtering is disabled.
+
+  A second comparison found omitted administrative bridges and historical
+  notes, plus differences in relative links, YAML links, escaped table aliases,
+  bracketed aliases, literal backticks in filenames and repeated `.md`
+  extensions. The graph now includes those relationships and uncreated targets
+  while administrative notes remain outside recall; the existing-files-only
+  filter works. Parser-version migration refreshes cached links even when the
+  notes themselves have not changed. After a restart, Chrome's rendered graph
+  and Obsidian's runtime metadata agreed on 478 nodes, 503 directed edges and
+  component sizes of 471 plus seven isolates; their sorted edge-set SHA-256
+  hashes matched. These figures cover the current Markdown vault with tags and
+  attachments excluded, not every possible Obsidian search or attachment mode.
+
+  Labels now follow `xQ.getDisplayText/getTextStyle` and the installed Pixi
+  text cache: file basenames, the full font fallback chain, natural glyph
+  widths, word wrapping and resolution 2. Six Chinese/English samples at
+  three node font sizes matched the original `PIXI.Text` cache pixel for
+  pixel in Chrome. The renderer caches labels through zoom, culls offscreen
+  geometry, batches equal-style links and stops after 60 idle frames;
+  interaction and memory activity wake it. Source-matched wheel scaling
+  includes `deltaMode` conversion. Regression cases failed before their
+  fixes and passed afterwards; detailed browser measurements and their
+  limits are recorded in `docs/obsidian-graph-source.md`.
+
+  Clicks no longer leave a permanent label highlight. Ordinary labels resume
+  Obsidian's square-root zoom scaling after the pointer leaves; only hover and
+  drag retain the original minimum text size below scale 1. The click/unhover
+  regression failed before the change and passed afterwards. Measuring the
+  installed browser canvas gave a 0.8166 shrink ratio and a 1.4871 enlargement
+  ratio, within the renderer's 1% zoom stopping tolerance of the source rules.
+
+  At the user's subsequent request, the initial type-colour groups were removed
+  and the Wasp palette was replaced with Obsidian's core `app.css` defaults for
+  both light and dark modes: neutral nodes and lines, purple hover/recall cues,
+  and faint uncreated targets. Custom colour groups remain available. The
+  renderer, browser registration and route tests passed after this change.
+
 - **The diagnostic report is available as an npm command.** Run
   `dsh-obsidian-mem-diagnose --output <file.json>`, inspect the JSON, and attach
   it manually to an Issue. The package and real-archive checks require the CLI
@@ -407,6 +473,24 @@ is a repository, not a release.
 
 ### Changed
 
+- **The graph now takes its colours from the host theme through Obsidian's own
+  slots.** The renderer resolves the eleven `.graph-view.color-*` values from the
+  computed style of hidden probes, exactly as Obsidian's `testCSS` does, and the
+  browser half binds Obsidian's `--graph-*` variables to this host's
+  `--dsw-alias-*` tokens. A theme switch therefore repaints the graph with no other
+  change. Measured in Chrome on 2026-09-28: dark resolves nodes `rgb(179,179,179)`,
+  text `rgb(218,218,218)` and lines `rgb(67,69,74)`; light resolves nodes
+  `rgb(92,92,92)`.
+
+- **Labels rasterize at 50% of Obsidian's `14 + node size / 4`, and the factor is
+  now a setting.** This is a deliberate deviation requested by the user, not an
+  attempt at parity: the graph lives in a narrow sidebar, where the original size
+  reads as oversized next to a fitted graph. The display section gained a
+  **标题文字大小** slider (0.4–1.6, step 0.05, default 0.5) that drives the raster
+  font size, so the reduction is adjustable rather than hard-coded. Position, the
+  `sqrt(scale)` scaling, the fade threshold and the pinned size of a highlighted
+  node are unchanged and are measured in `docs/obsidian-graph-source.md`.
+
 - **A long prompt no longer raises the bar above four token hits.** The floor was
   `max(3, ceil(0.3 × queryTokens))` with the query capped at 16 tokens, so its top
   bucket demanded five token hits — and the extra tokens of a long
@@ -648,6 +732,28 @@ what is still open.
   wikilink is clickable, because the vault was never opened in Obsidian.
 
 ### Fixed
+
+- **The graph painted the light palette inside a dark DSH.** The panel keyed its
+  two palettes off `.dark` and `[data-theme=dark]`; this host marks dark mode as
+  `body[data-ds-dark-theme]`, so the selectors never matched and a dark UI got the
+  white canvas described above. The palette is now resolved from the theme tokens
+  themselves, which removes the class-name coupling rather than adding a third
+  selector to keep in step.
+
+- **Every graph line was nearly invisible.** The line slot was bound to
+  `--dsw-alias-border-l2`, and this host's border tokens are translucent
+  (`#ffffff1f`, i.e. 12% alpha, on the dark theme). Multiplied by the slot's own
+  opacity this put edges at roughly a tenth of the intended contrast. The line now
+  uses `--dsw-alias-label-dimmed`, a solid grey that matches Obsidian's
+  `--color-base-35` roles in both themes.
+
+- **A changed graph asset kept running the previous build until the host
+  restarted.** `registerGraphRoute` read `graph-renderer.js` and
+  `graph-worker.js` once at registration and served that buffer forever, so edits
+  under `lib/` were invisible to the browser no matter how often the page was
+  reloaded. Both are now read per request, and
+  `test/graph-route.test.js` rewrites a temporary asset between two fetches to
+  pin it: with the cached handler that case fails, with this one it passes.
 
 - **`mem_admin(action="diagnostics")` failed its own output validation as soon as
   a `recall` event existed.** The diagnostics channel has two closed sets, and

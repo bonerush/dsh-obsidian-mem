@@ -193,6 +193,7 @@ function bed(t, options = {}) {
     index,
     buildBrief,
     ...(options.search === undefined ? {} : { search: options.search }),
+    ...(options.onRecall === undefined ? {} : { onRecall: options.onRecall }),
     ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
     config,
     // An injected capture seam, so a case can pin down what the disposal flush
@@ -1170,11 +1171,13 @@ test('a real vault, brief and search hand the first turn the matched excerpt', a
     return index
   }
 
+  const recalledPaths = []
   const h = bed(t, {
     resolveBinding: async () => binding,
     index: async () => open(),
     buildBrief,
     search: (args, signal, exec) => services.search(args, signal, exec),
+    onRecall: (sessionId, paths) => recalledPaths.push({ sessionId, paths }),
     // The production ratio, not a padded one: the brief is meant to fill its
     // budget, and it is exactly that which used to leave the map nothing. With
     // the old "whatever the brief left" expression this case fails, because 400
@@ -1201,6 +1204,10 @@ test('a real vault, brief and search hand the first turn the matched excerpt', a
   assert.ok(map.includes('bigram'), 'and carries the excerpt the index computed for this query')
   assert.ok([...map].length <= RECALL_BUDGET, 'the map respects its own ceiling')
   assert.equal(recalled(first).length, 2, 'brief and map, each inside its own budget')
+  assert.equal(recalledPaths.length, 1)
+  assert.equal(recalledPaths[0].sessionId, SESSION_ID)
+  assert.equal(recalledPaths[0].paths.length, 1)
+  assert.match(recalledPaths[0].paths[0], /FTS5 中文索引的分词口径/)
 })
 
 // ---------------------------------------------------------------------------

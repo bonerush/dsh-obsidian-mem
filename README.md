@@ -165,6 +165,47 @@ Start a session in any Git repository and ask, or just check the tools are there
 | CJK search works | write a note, then `mem_search` a two-character Chinese word |
 | Vault files are real | `ls "$vault/Projects/"` — plain Markdown, readable with the plugin uninstalled |
 
+### Memory graph in the DSH sidebar
+
+On DSH `0.1.7-rc.2` with `dsh-better-sidebar` `0.21.1`, open the native right
+sidebar and choose **+ → 记忆图谱 (Memory graph)**. The settings button opens
+the same four sections as Obsidian's graph: filters, colour groups, display and
+forces. Under filters, **Scope** switches all memory/current project; all memory
+is the initial view.
+Colours are resolved the way Obsidian's graph resolves them: the eleven
+`.graph-view.color-*` slots are read from the host theme, so the view follows the
+DSH light/dark theme exactly as Obsidian's graph follows its own. The defaults are
+neutral nodes and lines with an accent highlight for hover and memory access;
+colour groups start empty. Labels are rasterized at 50% of Obsidian's
+`14 + node size / 4` because this graph lives in a narrow sidebar, and the display
+section's **标题文字大小** slider moves that factor between 0.4 and 1.6; position,
+`sqrt(scale)` scaling and the pinned size of a hovered node are unchanged.
+Lines resolve wikilinks, Markdown links, embeds and YAML
+wikilinks with Obsidian's filename and relative-path rules. Scroll to zoom, drag the canvas or a node,
+and hover to reveal its label and connected branch. Colour groups support note
+type queries such as `[type:decision]`. The view displays at most 500 nodes,
+prioritising connected hubs and branches. All-memory scope includes historical
+notes, unresolved targets and the administrative Markdown links that connect
+projects. Administrative notes remain excluded from memory retrieval; the graph
+exposes only their labels and relationships. **Existing files only** hides
+unresolved targets. Attachments are outside this Markdown view and remain disabled.
+
+When this DSH process successfully calls `mem_read`, or injects a relevant-note
+map into a turn, the matching node and adjacent links pulse briefly, and that
+node's file name stays on screen at any zoom so the cue names what was read. These cues
+are per session and kept in memory only; reloading the host clears them. The
+graph endpoint is read-only and accepts same-origin requests from the local DSH
+web UI. Without Better Sidebar, the six memory tools continue to work.
+
+The browser assets are re-read on every request, so a change under `lib/` reaches
+the page on reload instead of waiting for the host to restart.
+
+The interface and force/rendering rules were adapted by inspecting the installed
+Obsidian graph source. Canvas drawing uses its node-size, label-fade and
+zoom rules; the worker uses the same D3 fallback force model. The package bundles
+pinned upstream D3 code and its ISC notices, with no CDN request or additional
+runtime dependency. No Obsidian application code is included in the package.
+
 ---
 
 ## Configuration

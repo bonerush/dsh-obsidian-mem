@@ -26,6 +26,8 @@ export default [
       // Investigation output, not code.
       'research/**',
       'scratch/**',
+      // Pinned upstream D3 distribution; our worker source is linted in client/.
+      'lib/graph-worker.js',
     ],
   },
   js.configs.recommended,

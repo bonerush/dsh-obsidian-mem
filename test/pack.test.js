@@ -124,6 +124,12 @@ function verify(t, options = {}) {
   const assets = {
     'lib/index.js': "export const name = 'obsidian-mem'\n",
     'lib/diagnose-cli.js': "#!/usr/bin/env node\nprocess.stdout.write('diagnose fixture')\n",
+    'lib/client.js': '// browser fixture\n',
+    'lib/graph-renderer.js': '// worker fixture\n',
+    'lib/graph-data.js': '// graph topology fixture\n',
+    'lib/graph-links.js': '// graph link fixture\n',
+    'lib/graph-worker.js': '// worker fixture\n',
+    'lib/graph-worker.LICENSE': 'ISC\n',
     'lib/tools.js': facadeSource(),
     'lib/tool-registry.js': registrySource(),
     'skills/obsidian-mem/SKILL.md': '---\nname: obsidian-mem\n---\n',

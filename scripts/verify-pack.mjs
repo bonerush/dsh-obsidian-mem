@@ -73,6 +73,12 @@ const FORBIDDEN_NAMES = [
 const REQUIRED_ASSETS = [
   ['lib/index.js', 'the plugin entry point'],
   ['lib/diagnose-cli.js', 'the standalone diagnostic command'],
+  ['lib/client.js', 'the optional Better Sidebar browser entry'],
+  ['lib/graph-renderer.js', 'the cached graph labels and viewport renderer'],
+  ['lib/graph-data.js', 'the graph-only topology projection'],
+  ['lib/graph-links.js', 'the graph link parser and resolver'],
+  ['lib/graph-worker.js', 'the browser force simulator'],
+  ['lib/graph-worker.LICENSE', 'the bundled D3 license notices'],
   ['skills/obsidian-mem/SKILL.md', 'the portable methodology skill'],
   ['cordis.patch.yml', 'the bundle patch that mounts the row'],
   ['dsh.plugin.json', 'the marketplace manifest'],

@@ -51,6 +51,20 @@ const LAYERS = {
   'diagnostic-report': 11,
   'diagnose-cli': 12,
   config: 0,
+  // Browser-only code and the bounded activity/HTTP helpers do not import
+  // another repository module; the host entry composes them at L10.
+  client: 1,
+  // The colour-slot table has no repository imports at all; the Canvas renderer
+  // reads its slots through it, which is the one edge that puts the renderer above
+  // it instead of beside it.
+  'graph-palette': 0,
+  'graph-renderer': 1,
+  'graph-worker': 0,
+  'graph-activity': 0,
+  'graph-route': 0,
+  'graph-links': 0,
+  // Graph-only metadata reads and projection import path/link leaves; recall owns the index.
+  'graph-data': 1,
   naming: 0,
   paths: 0,
   pointer: 0,
@@ -118,9 +132,23 @@ const BUDGETS = {
   // Raised from 1050 for one per-turn prompt map beside the existing brief
   // state machine. The retrieval policy lives in prompt-recall.js; these lines
   // are the host decision assembly and its shared budget, not a second policy.
-  'lib/hooks.js': 1100,
+  // One post-commit recall cue is deliberately adjacent to the commit point.
+  'lib/hooks.js': 1150,
   'lib/hot.js': 600,
-  'lib/index-db.js': 2200,
+  // The graph projection uses the existing SQLite links table and scan records;
+  // keeping the two backend branches here avoids a second index implementation.
+  'lib/index-db.js': 2300,
+  // The loader owns React controls; the renderer owns cached labels, culling
+  // and frame scheduling. Neither the renderer nor Worker imports React.
+  'lib/client.js': 600,
+  'lib/graph-renderer.js': 700,
+  // The eleven-slot table, its two CSS forms and the probe read, split out of the
+  // renderer when the label-size work pushed that file past its budget.
+  'lib/graph-palette.js': 160,
+  // Upstream minified D3 plus the reviewed source in client/graph-worker.js.
+  'lib/graph-worker.js': 150,
+  'lib/graph-activity.js': 100,
+  'lib/graph-route.js': 200,
   // Both enabled entry points construct the private journal beside their ring;
   // this small assembly step belongs here, after the disabled early return.
   'lib/index.js': 200,

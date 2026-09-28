@@ -1,0 +1,209 @@
+{
+  "date": "2026-09-28",
+  "reference": "Obsidian 1.13.7 core graph and its bundled PIXI.Text",
+  "topology_comparison": {
+    "scope": "all Markdown nodes including isolates and uncreated targets; tags and attachments excluded",
+    "before": {
+      "nodes": 461,
+      "edges": 456,
+      "components": [308, 139, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    },
+    "obsidian_metadata_reference": {
+      "nodes": 478,
+      "edges": 503,
+      "components": [471, 1, 1, 1, 1, 1, 1, 1],
+      "edge_sha256": "9c07ea0dfa6288859506da55291867f28444123e355e173b43539b0e41e2abee"
+    },
+    "obsidian_rendered_nodes": 478,
+    "installed_dsh_after": {
+      "nodes": 478,
+      "edges": 503,
+      "uncreated_nodes": 4,
+      "components": [471, 1, 1, 1, 1, 1, 1, 1],
+      "edge_sha256": "9c07ea0dfa6288859506da55291867f28444123e355e173b43539b0e41e2abee"
+    },
+    "existing_files_filter": {
+      "enabled_nodes": 474,
+      "disabled_nodes": 478
+    },
+    "hash_encoding": "SHA-256(JSON.stringify(sorted(edges.map(pair => JSON.stringify(pair))))); pair contains source and target paths; paths are not stored in this report"
+  },
+  "displayed_label_zoom": {
+    "measured": "drawImage destination width divided by cached-label CSS width on the installed DSH main canvas",
+    "baseline_text_scale": 1.0091267434944589,
+    "after_wheel_120": 0.8240718884798831,
+    "after_wheel_minus_360": 1.5007056375207473,
+    "shrink_ratio": 0.8166188179952919,
+    "expected_shrink_ratio": 0.816496580927726,
+    "enlarge_ratio": 1.4871329564847546,
+    "expected_enlarge_ratio": 1.5,
+    "zoom_stop_ratio_tolerance": 0.01
+  },
+  "final_gate": {
+    "stage": "before the subsequent default-palette-only change",
+    "command": "npm run check",
+    "exit_code": 0,
+    "tests_passed": 714,
+    "tests_failed": 0,
+    "pack_verified": true,
+    "tarball_entries": 50,
+    "tarball_lib_modules": 40,
+    "git_diff_check_exit_code": 0
+  },
+  "default_palette_change": {
+    "reference": "Obsidian core app.css .theme-light/.theme-dark and .graph-view colour variables",
+    "initial_colour_groups": 0,
+    "rendered_nodes": 478,
+    "browser_light": {
+      "background": "#ffffff",
+      "menu": "#f6f6f6",
+      "text": "#222222",
+      "node": "#5c5c5c",
+      "line": "#d4d4d4",
+      "highlight": "hsl(257,88.88%,70.95%)",
+      "unresolved": "#ababab"
+    },
+    "browser_dark": {
+      "background": "#1e1e1e",
+      "menu": "#262626",
+      "text": "#dadada",
+      "node": "#b3b3b3",
+      "line": "#3f3f3f",
+      "highlight": "#8a5cf5",
+      "unresolved": "#666666"
+    },
+    "renderer_client_route_tests": { "pass": 8, "fail": 0 },
+    "lint_exit_code": 0,
+    "format_check_exit_code": 0,
+    "git_diff_check_exit_code": 0,
+    "full_suite_rerun": false
+  },
+  "scenario": {
+    "browser": "local Chrome",
+    "temporary_notes": 500,
+    "canvas_css_px": [
+      800,
+      760
+    ],
+    "device_pixel_ratio": 2,
+    "wheel_interval_ms": 25,
+    "wheel_deltas": {
+      "first_80": -12,
+      "last_80": 12
+    },
+    "tail_ms": 300
+  },
+  "font_cache_comparisons": [
+    {
+      "name": "Chinese",
+      "weight": 0,
+      "fontSize": 16,
+      "dsh": [
+        1664,
+        38
+      ],
+      "obsidian": [
+        1664,
+        38
+      ],
+      "differentChannels": 0,
+      "alphaDifferences": 0
+    },
+    {
+      "name": "English",
+      "weight": 0,
+      "fontSize": 16,
+      "dsh": [
+        574,
+        76
+      ],
+      "obsidian": [
+        574,
+        76
+      ],
+      "differentChannels": 0,
+      "alphaDifferences": 0
+    },
+    {
+      "name": "Chinese",
+      "weight": 20,
+      "fontSize": 17.43693177121688,
+      "dsh": [
+        1814,
+        42
+      ],
+      "obsidian": [
+        1814,
+        42
+      ],
+      "differentChannels": 0,
+      "alphaDifferences": 0
+    },
+    {
+      "name": "English",
+      "weight": 20,
+      "fontSize": 17.43693177121688,
+      "dsh": [
+        546,
+        126
+      ],
+      "obsidian": [
+        546,
+        126
+      ],
+      "differentChannels": 0,
+      "alphaDifferences": 0
+    },
+    {
+      "name": "Chinese",
+      "weight": 99,
+      "fontSize": 21.5,
+      "dsh": [
+        2236,
+        50
+      ],
+      "obsidian": [
+        2236,
+        50
+      ],
+      "differentChannels": 0,
+      "alphaDifferences": 0
+    },
+    {
+      "name": "English",
+      "weight": 99,
+      "fontSize": 21.5,
+      "dsh": [
+        538,
+        150
+      ],
+      "obsidian": [
+        538,
+        150
+      ],
+      "differentChannels": 0,
+      "alphaDifferences": 0
+    }
+  ],
+  "draw_callback_before": {
+    "frames": 269,
+    "avgMs": 2.364684016731149,
+    "p95Ms": 4.200000047683716,
+    "slowFrames": 6,
+    "textCalls": 56500,
+    "imageCalls": 0
+  },
+  "draw_callback_after": {
+    "frames": 256,
+    "avgMs": 0.3667968767695129,
+    "p95Ms": 0.8999999761581421,
+    "slowFrames": 0,
+    "textCalls": 0,
+    "imageCalls": 912
+  },
+  "limits": [
+    "Measures JavaScript draw callbacks, not GPU time or total application FPS.",
+    "Source-matched wheel mapping changes the visible range for the same input.",
+    "Synthetic notes and the current machine only; not a universal browser benchmark."
+  ]
+}
