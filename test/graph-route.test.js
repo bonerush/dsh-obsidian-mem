@@ -11,6 +11,47 @@ import { registerGraphRoute } from '../lib/graph-route.js'
 
 const SESSION = 'session-graph-test'
 
+test('every module imported by the renderer is served by the registered routes', async (t) => {
+  const routes = new Map()
+  const dispose = registerGraphRoute({
+    webServer: {
+      register: (route) => {
+        routes.set(route.path, route)
+        return () => routes.delete(route.path)
+      },
+    },
+  })
+  t.after(dispose)
+  const server = createServer((request, response) => {
+    const route = routes.get(request.url)
+    if (route) return route.handler(request, response)
+    response.writeHead(404)
+    response.end('missing asset route')
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  t.after(() => server.close())
+  const origin = 'http://127.0.0.1:' + server.address().port
+  const visited = new Set()
+  const load = async (url) => {
+    if (visited.has(url)) return
+    visited.add(url)
+    const response = await fetch(url)
+    assert.equal(response.status, 200, 'the browser must be able to load ' + new URL(url).pathname)
+    assert.match(response.headers.get('content-type'), /javascript/u)
+    const source = await response.text()
+    for (const match of source.matchAll(/\bfrom\s*['"]([^'"]+)['"]/gu)) {
+      await load(new URL(match[1], url).href)
+    }
+    assert.equal(
+      (await fetch(url, { headers: { origin: 'https://evil.example' } })).status,
+      403,
+      'every imported module keeps the same-origin fence',
+    )
+  }
+  await load(origin + '/obsidian-mem/graph-renderer.js')
+})
+
 test('graph route serves only same-origin requests for a live session', async (t) => {
   const routes = new Map()
   const activity = createGraphActivity()

@@ -33,10 +33,18 @@ function surface() {
   const frames = new Map()
   const events = new Map()
   const workers = []
+  const resizeObservers = []
   let sequence = 0
   let clock = 1000
   const theme = { dark: false, observers: [] }
+  const motion = {
+    matches: false,
+    listeners: new Set(),
+    addEventListener: (_name, callback) => motion.listeners.add(callback),
+    removeEventListener: (_name, callback) => motion.listeners.delete(callback),
+  }
   const view = {
+    matchMedia: () => motion,
     devicePixelRatio: 2,
     requestAnimationFrame(callback) {
       frames.set(++sequence, callback)
@@ -67,6 +75,7 @@ function surface() {
     ResizeObserver: class {
       constructor(callback) {
         this.callback = callback
+        resizeObservers.push(this)
       }
       observe() {
         this.callback()
@@ -113,10 +122,34 @@ function surface() {
   }
   function makeCanvas() {
     const calls = []
+    let width = 300
+    let height = 150
     const context = new Proxy(
       {
         calls,
         font: '',
+        createLinearGradient(...args) {
+          const gradient = {
+            kind: 'linear',
+            stops: [],
+            addColorStop(...stop) {
+              this.stops.push(stop)
+            },
+          }
+          calls.push({ name: 'createLinearGradient', args })
+          return gradient
+        },
+        createRadialGradient(...args) {
+          const gradient = {
+            kind: 'radial',
+            stops: [],
+            addColorStop(...stop) {
+              this.stops.push(stop)
+            },
+          }
+          calls.push({ name: 'createRadialGradient', args })
+          return gradient
+        },
         measureText(text) {
           const size = Number(this.font.match(/([\d.]+)px/)?.[1] ?? 16)
           return {
@@ -129,7 +162,14 @@ function surface() {
       {
         get(target, key) {
           if (key in target) return target[key]
-          return (...args) => calls.push({ name: key, args })
+          return (...args) =>
+            calls.push({
+              name: key,
+              args,
+              alpha: target.globalAlpha,
+              fillStyle: target.fillStyle,
+              strokeStyle: target.strokeStyle,
+            })
         },
         set(target, key, value) {
           calls.push({ name: 'set:' + String(key), args: [value] })
@@ -144,6 +184,20 @@ function surface() {
       parentElement: host,
       clientWidth: 800,
       clientHeight: 700,
+      get width() {
+        return width
+      },
+      set width(value) {
+        width = value
+        calls.push({ name: 'resize:width', args: [value] })
+      },
+      get height() {
+        return height
+      },
+      set height(value) {
+        height = value
+        calls.push({ name: 'resize:height', args: [value] })
+      },
       getContext: () => context,
       getBoundingClientRect: () => ({ left: 0, top: 0 }),
       addEventListener: (name, callback) => events.set(name, callback),
@@ -199,9 +253,93 @@ function surface() {
     emit,
     wheel,
     step,
+    now: () => clock,
+    advance(milliseconds) {
+      clock += milliseconds
+      step()
+    },
+    motion,
+    setReduced(matches) {
+      motion.matches = matches
+      for (const callback of motion.listeners) callback()
+    },
     textCalls,
+    resize: () => resizeObservers[0].callback(),
   }
 }
+
+test('sidebar resize keeps the last graph until the replacement frame is drawn', () => {
+  const s = surface()
+  s.renderer.update(s.model([s.node('one')]))
+  s.emit(['one'], [0, 0])
+  s.wheel(0)
+  for (let i = 0; i < 100; i += 1) s.step()
+  assert.equal(s.frames.size, 0, 'the graph has stopped drawing before the resize')
+  const calls = s.contexts[0].calls
+  const mark = calls.length
+  s.canvas.clientWidth = 640
+  s.canvas.clientHeight = 480
+  s.resize()
+  s.resize()
+  assert.equal(
+    calls.slice(mark).some((call) => call.name.startsWith('resize:')),
+    false,
+    'ResizeObserver must not erase the bitmap before the next draw callback',
+  )
+  assert.equal(s.frames.size, 1, 'resize notifications share one replacement frame')
+  s.step()
+  assert.equal(s.canvas.width, 1280)
+  assert.equal(s.canvas.height, 960)
+  assert.ok(
+    calls.slice(mark).some((call) => call.name === 'arc'),
+    'the resized graph is redrawn',
+  )
+  s.renderer.destroy()
+})
+
+test('unchanged sidebar dimensions do not clear the graph bitmap again', () => {
+  const s = surface()
+  s.renderer.update(s.model([s.node('one')]))
+  s.emit(['one'], [0, 0])
+  s.wheel(0)
+  s.step()
+  const calls = s.contexts[0].calls
+  const mark = calls.length
+  s.resize()
+  s.step()
+  assert.equal(
+    calls.slice(mark).some((call) => call.name.startsWith('resize:')),
+    false,
+    'assigning even the same canvas width or height clears its bitmap',
+  )
+  s.renderer.destroy()
+})
+
+test('large hubs and small nodes follow the same Obsidian zoom curve', () => {
+  const s = surface()
+  const model = s.model([s.node('hub'), s.node('leaf')])
+  model.degree.set('hub', 120)
+  s.renderer.update(model)
+  s.emit(['hub', 'leaf'], [0, 0, 100, 0])
+  s.wheel(0)
+  for (let i = 0; i < 70; i += 1) s.step()
+  const radii = () => s.contexts[0].calls.filter((call) => call.name === 'arc').slice(-2)
+  assert.deepEqual(
+    radii().map((call) => call.args[2]),
+    [30, 8],
+  )
+  s.wheel(240)
+  for (let i = 0; i < 70; i += 1) s.step()
+  const smaller = radii().map((call) => call.args[2])
+  assert.ok(Math.abs(smaller[0] - 20) < 0.1, 'the large hub shrinks from 30 to about 20px')
+  assert.ok(Math.abs(smaller[1] - 16 / 3) < 0.03, 'the small node shrinks by the same ratio')
+  s.wheel(-480)
+  for (let i = 0; i < 70; i += 1) s.step()
+  const larger = radii().map((call) => call.args[2])
+  assert.ok(Math.abs(larger[0] - 45) < 0.25, 'the large hub grows beyond its 30px base cap')
+  assert.ok(Math.abs(larger[1] - 12) < 0.07, 'the small node grows by the same ratio')
+  s.renderer.destroy()
+})
 
 test('graph labels keep Obsidian filename text, font stack and natural glyph width', () => {
   const s = surface()
@@ -217,11 +355,11 @@ test('graph labels keep Obsidian filename text, font stack and natural glyph wid
   assert.equal(calls[0].args.length, 3, 'text must never be squeezed with fillText(maxWidth)')
   assert.ok(s.contexts.some((context) => context.font.includes('"Microsoft YaHei Light"')))
   assert.ok(s.contexts.some((context) => context.font.includes('"Inter"')))
-  // The one deliberate deviation: app.js uses `14 + getSize() / 4`; this panel
-  // rasterizes at half of it by default. A degree-0 node has getSize() 8, so 8px.
+  // app.js uses `14 + getSize() / 4`; this panel defaults to the user's 85%.
+  // A degree-0 node has getSize() 8, so its base font is 13.6px.
   assert.ok(
-    s.contexts.some((context) => / 8px /u.test(context.font)),
-    'a degree-0 node rasterizes at 8px: 50% of the original 14 + 8 / 4',
+    s.contexts.some((context) => / 13[.]6px /u.test(context.font)),
+    'a degree-0 node rasterizes at 13.6px: 85% of the original 14 + 8 / 4',
   )
   s.renderer.destroy()
 })
@@ -243,17 +381,75 @@ test('word wrapping preserves whole words at the original 300px base width', () 
   s.renderer.destroy()
 })
 
-test('zoom reuses rasterized labels instead of shaping every label every frame', () => {
+test('zoom retains enough label pixels and reuses them within a resolution tier', () => {
   const s = surface()
   s.renderer.update(s.model([s.node('one')]))
   s.emit(['one'], [0, 0])
   s.wheel(0)
   s.step()
+  const mark = s.contexts[0].calls.length
+  s.wheel(-1000)
+  for (let i = 0; i < 70; i += 1) s.step()
+  const draws = s.contexts[0].calls.slice(mark).filter((call) => call.name === 'drawImage')
+  assert.ok(draws.length > 10)
+  for (const { args } of draws) {
+    assert.ok(args[0].width >= args[3] * 2, 'label width covers the displayed device pixels')
+    assert.ok(args[0].height >= args[4] * 2, 'label height covers the displayed device pixels')
+  }
   const count = s.textCalls().length
-  s.wheel(-180)
-  for (let i = 0; i < 30; i += 1) s.step()
-  assert.equal(s.textCalls().length, count)
+  assert.ok(count <= 3, 'zoom raises resolution in bounded tiers, not every animation frame')
+  s.wheel(40)
+  for (let i = 0; i < 70; i += 1) s.step()
+  assert.equal(s.textCalls().length, count, 'a small zoom within the tier reuses the same bitmap')
   assert.ok(s.contexts[0].calls.filter((call) => call.name === 'drawImage').length > 10)
+  s.renderer.destroy()
+})
+
+test('moving to a denser screen refreshes cached labels without changing their CSS size', () => {
+  const s = surface()
+  s.renderer.update(s.model([s.node('one')]))
+  s.emit(['one'], [0, 0])
+  s.wheel(0)
+  s.step()
+  const drawn = () => s.contexts[0].calls.filter((call) => call.name === 'drawImage').at(-1).args
+  const original = drawn()
+  s.canvas.ownerDocument.defaultView.devicePixelRatio = 3
+  s.resize()
+  s.step()
+  const refreshed = drawn()
+  assert.ok(refreshed[0].width >= refreshed[3] * 3, 'width covers the denser screen')
+  assert.ok(refreshed[0].height >= refreshed[4] * 3, 'height covers the denser screen')
+  assert.equal(refreshed[3], original[3])
+  assert.equal(refreshed[4], original[4])
+  s.renderer.destroy()
+})
+
+test('labels stay visible when sharper replacements exceed one frame of work', () => {
+  const s = surface()
+  const ids = Array.from({ length: 60 }, (_, i) => 'node-' + i)
+  s.renderer.update(s.model(ids.map((id) => s.node(id))))
+  s.emit(
+    ids,
+    ids.flatMap(() => [0, 0]),
+  )
+  s.wheel(0)
+  s.step()
+  s.step()
+  const calls = s.contexts[0].calls
+  const mark = calls.length
+  s.wheel(-120)
+  s.step()
+  assert.equal(
+    calls.slice(mark).filter((call) => call.name === 'drawImage').length,
+    ids.length,
+    'existing labels stay visible while the 50-label raster budget is exhausted',
+  )
+  s.step()
+  assert.equal(
+    s.textCalls().length,
+    120,
+    'all labels have their sharper replacement by the next frame',
+  )
   s.renderer.destroy()
 })
 
@@ -277,7 +473,7 @@ test('a clicked label resumes Obsidian zoom scaling after the pointer leaves', (
   for (let i = 0; i < 70; i += 1) s.step()
   const enlarged = s.contexts[0].calls.filter((call) => call.name === 'drawImage').at(-1)
   assert.ok(enlarged.args[3] > original * 1.49, 'zooming in enlarges ordinary text')
-  assert.equal(s.textCalls().length, 1, 'zoom transforms the same cached glyphs')
+  assert.ok(s.textCalls().length <= 2, 'zoom only refreshes glyphs when resolution increases')
   s.renderer.destroy()
 })
 
@@ -394,9 +590,133 @@ test('the title-size setting scales the label raster', () => {
   // A degree-0 node has getSize() 8, so the original raster is 16px and this is 19.2px.
   assert.ok(
     s.contexts.some((context) => / 19[.]2px /u.test(context.font)),
-    'the slider factor overrides the 0.5 default and reaches the raster',
+    'the slider factor overrides the 0.85 default and reaches the raster',
   )
   s.renderer.destroy()
+})
+
+test('recall cues end after 2.6 seconds and model refreshes cannot replay an old event', (t) => {
+  const s = surface()
+  t.after(() => s.renderer.destroy())
+  t.mock.method(Date, 'now', () => s.now())
+  const model = s.model([s.node('one')])
+  model.active = [{ path: 'one.md', at: s.now(), cursor: 1 }]
+  s.renderer.update(model)
+  s.emit(['one'], [0, 0])
+  s.wheel(0)
+  s.advance(250)
+  assert.equal(s.canvas.attributes['data-active-count'], '1')
+  s.advance(2500)
+  assert.equal(s.canvas.attributes['data-active-count'], '0', 'the finite cue has completed')
+  s.renderer.update({ ...model })
+  s.step()
+  assert.equal(s.canvas.attributes['data-active-count'], '0', 'a repeated event remains finished')
+  model.active = [{ path: 'one.md', at: s.now(), cursor: 2 }]
+  s.renderer.update(model)
+  s.advance(250)
+  assert.equal(
+    s.canvas.attributes['data-active-count'],
+    '1',
+    'a new read of the same note plays again',
+  )
+  s.advance(2800)
+  for (let i = 0; i < 65; i += 1) s.step()
+  assert.equal(s.frames.size, 0, 'rendering becomes idle after the cue releases')
+})
+
+test('a delayed activity poll starts one sweep at receipt and lights only the note that was read', (t) => {
+  const s = surface()
+  t.after(() => s.renderer.destroy())
+  t.mock.method(Date, 'now', () => s.now())
+  const model = s.model([s.node('neighbor'), s.node('called')])
+  model.graph.edges = [{ source: 'neighbor', target: 'called' }]
+  model.active = [{ path: 'called.md', at: s.now() - 650, cursor: 1 }]
+  s.renderer.update(model)
+  s.emit(['neighbor', 'called'], [-180, 0, 180, 0])
+  s.wheel(0)
+  const calls = s.contexts[0].calls
+  s.advance(250)
+  const sweep = calls.find((call) => call.name === 'createLinearGradient')
+  assert.ok(sweep, 'a polling delay does not skip the opening sweep')
+  assert.ok(
+    sweep.args[0] > sweep.args[2],
+    'the sweep starts at the called target and runs toward its neighbor',
+  )
+  let circle
+  const accented = []
+  for (const call of calls) {
+    if (call.name === 'arc') circle = call.args
+    if (
+      call.name === 'fill' &&
+      call.fillStyle === LIGHT_SLOTS['color-fill-highlight'].color &&
+      call.alpha > 0.5
+    )
+      accented.push(circle.slice(0, 2))
+  }
+  assert.deepEqual(
+    accented,
+    [[580, 350]],
+    'a relationship cue does not imply the neighbor was read',
+  )
+  calls.length = 0
+  s.advance(1200)
+  assert.equal(
+    calls.filter((call) => call.name === 'createLinearGradient').length,
+    0,
+    'the edge sweep does not loop',
+  )
+})
+
+test('recall label opacity and pinned size release gently while ambient labels are hidden', (t) => {
+  const s = surface()
+  t.after(() => s.renderer.destroy())
+  t.mock.method(Date, 'now', () => s.now())
+  const model = s.model([s.node('one')])
+  model.display.text = 1
+  s.renderer.update(model)
+  s.emit(['one'], [0, 0])
+  s.wheel(120)
+  for (let i = 0; i < 70; i += 1) s.step()
+  model.active = [{ path: 'one.md', at: s.now(), cursor: 1 }]
+  s.renderer.update(model)
+  const calls = s.contexts[0].calls
+  s.advance(400)
+  const held = calls.filter((call) => call.name === 'drawImage').at(-1)
+  assert.equal(held.alpha, 1)
+  calls.length = 0
+  s.advance(1900)
+  const releasing = calls.find((call) => call.name === 'drawImage')
+  assert.ok(
+    releasing && releasing.alpha > 0 && releasing.alpha < 0.8,
+    'the title fades instead of disappearing at expiry',
+  )
+  assert.ok(releasing.args[3] < held.args[3], 'pinned text returns toward the ordinary zoom size')
+})
+
+test('reduced motion has static recall geometry and removes its preference listener on destroy', (t) => {
+  const s = surface()
+  t.after(() => s.renderer.destroy())
+  t.mock.method(Date, 'now', () => s.now())
+  s.setReduced(true)
+  const model = s.model([s.node('one')])
+  model.active = [{ path: 'one.md', at: s.now(), cursor: 1 }]
+  s.renderer.update(model)
+  s.emit(['one'], [0, 0])
+  s.wheel(0)
+  const calls = s.contexts[0].calls
+  calls.length = 0
+  s.advance(300)
+  const first = calls.filter((call) => call.name === 'arc').map((call) => call.args)
+  calls.length = 0
+  s.advance(600)
+  assert.deepEqual(
+    calls.filter((call) => call.name === 'arc').map((call) => call.args),
+    first,
+  )
+  assert.equal(calls.filter((call) => call.name === 'createLinearGradient').length, 0)
+  assert.equal(s.motion.listeners.size, 1)
+  s.renderer.destroy()
+  assert.equal(s.motion.listeners.size, 0)
 })
 
 test('the viewport skips offscreen labels and geometry during zoom', () => {

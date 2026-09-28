@@ -61,12 +61,12 @@ test('browser bundle registers one memory graph tab through Better Sidebar', asy
     'no bespoke colour variables survive beside the Obsidian slots',
   )
   // The renderer reads `display.label`; the panel has to offer it, with the
-  // reduction decided on 2026-09-28 as the default.
+  // default requested by the user on 2026-09-28.
   assert.ok(
     script.includes("slider('标题文字大小', 'label', display, setDisplay"),
     'the display section exposes the title-size slider',
   )
-  assert.ok(script.includes('label: 0.5'), 'the title-size default is 0.5')
+  assert.ok(script.includes('label: 0.85'), 'the title-size default is 0.85')
   exports.apply(ctx)
   assert.equal(tab.id, 'obsidian-mem:graph')
   assert.equal(tab.single, true)

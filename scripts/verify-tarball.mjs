@@ -29,6 +29,8 @@ export const REQUIRED_ENTRIES = [
   ['package/lib/diagnose-cli.js', 'the standalone diagnostic command'],
   ['package/lib/client.js', 'the optional browser entry'],
   ['package/lib/graph-renderer.js', 'the cached graph labels and viewport renderer'],
+  ['package/lib/graph-palette.js', 'the graph theme color slots'],
+  ['package/lib/graph-recall.js', 'the finite graph recall feedback'],
   ['package/lib/graph-data.js', 'the graph-only topology projection'],
   ['package/lib/graph-links.js', 'the graph link parser and resolver'],
   ['package/lib/graph-worker.js', 'the graph force simulator'],

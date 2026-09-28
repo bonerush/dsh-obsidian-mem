@@ -126,6 +126,8 @@ function verify(t, options = {}) {
     'lib/diagnose-cli.js': "#!/usr/bin/env node\nprocess.stdout.write('diagnose fixture')\n",
     'lib/client.js': '// browser fixture\n',
     'lib/graph-renderer.js': '// worker fixture\n',
+    'lib/graph-palette.js': '// graph palette fixture\n',
+    'lib/graph-recall.js': '// graph recall fixture\n',
     'lib/graph-data.js': '// graph topology fixture\n',
     'lib/graph-links.js': '// graph link fixture\n',
     'lib/graph-worker.js': '// worker fixture\n',

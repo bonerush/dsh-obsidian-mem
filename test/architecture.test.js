@@ -58,6 +58,9 @@ const LAYERS = {
   // reads its slots through it, which is the one edge that puts the renderer above
   // it instead of beside it.
   'graph-palette': 0,
+  // The finite recall clock and Canvas cue painting are independent leaves;
+  // keeping them below the renderer preserves its geometry and label budget.
+  'graph-recall': 0,
   'graph-renderer': 1,
   'graph-worker': 0,
   'graph-activity': 0,
@@ -145,6 +148,7 @@ const BUDGETS = {
   // The eleven-slot table, its two CSS forms and the probe read, split out of the
   // renderer when the label-size work pushed that file past its budget.
   'lib/graph-palette.js': 160,
+  'lib/graph-recall.js': 200,
   // Upstream minified D3 plus the reviewed source in client/graph-worker.js.
   'lib/graph-worker.js': 150,
   'lib/graph-activity.js': 100,

@@ -75,6 +75,8 @@ const REQUIRED_ASSETS = [
   ['lib/diagnose-cli.js', 'the standalone diagnostic command'],
   ['lib/client.js', 'the optional Better Sidebar browser entry'],
   ['lib/graph-renderer.js', 'the cached graph labels and viewport renderer'],
+  ['lib/graph-palette.js', 'the graph theme color slots'],
+  ['lib/graph-recall.js', 'the finite graph recall feedback'],
   ['lib/graph-data.js', 'the graph-only topology projection'],
   ['lib/graph-links.js', 'the graph link parser and resolver'],
   ['lib/graph-worker.js', 'the browser force simulator'],

@@ -1,0 +1,115 @@
+{
+  "date": "2026-09-28",
+  "reference": {
+    "archive": "/Applications/Obsidian.app/Contents/Resources/obsidian.asar",
+    "rawAppSha256": "cc6d0c363cba3935207fb70e7d78736c9f0c2024545787871095288a1b185851",
+    "formattedAppSha256": "30dbf34c6c548bc8a4402d5b8bb854b62f474d356ce283b8a321143f682b66fe",
+    "symbols": [
+      "xQ.getSize",
+      "xQ.render",
+      "setScale",
+      "onResize",
+      "updateZoom",
+      "renderCallback"
+    ]
+  },
+  "scenario": {
+    "browser": "Codex in-app browser",
+    "generatedNodes": 240,
+    "edges": 239,
+    "widthChanges": 48,
+    "widthChangeIntervalMs": 20,
+    "shrinkWheelDeltaY": 240,
+    "enlargeWheelDeltaY": -480,
+    "realVaultAccessed": false
+  },
+  "before": {
+    "version": "before",
+    "resize": {
+      "resizeCallbacks": 48,
+      "blankAfterResize": 48,
+      "bitmapResets": 96
+    },
+    "base": {
+      "hub": 15.29993449435453,
+      "leaf": 4.079982531827874
+    },
+    "smaller": {
+      "hub": 10.205441293625958,
+      "leaf": 2.721451011633589
+    },
+    "larger": {
+      "hub": 22.75502378130293,
+      "leaf": 6.068006341680782
+    },
+    "ratios": {
+      "hubShrink": 0.6670251625842992,
+      "leafShrink": 0.6670251625842992,
+      "hubGrow": 1.4872628238832806,
+      "leafGrow": 1.4872628238832808
+    },
+    "errors": []
+  },
+  "after": {
+    "version": "after",
+    "resize": {
+      "resizeCallbacks": 48,
+      "blankAfterResize": 0,
+      "bitmapResets": 48
+    },
+    "base": {
+      "hub": 15.349137581305543,
+      "leaf": 4.0931033550148115
+    },
+    "smaller": {
+      "hub": 10.237256066860603,
+      "leaf": 2.7299349511628273
+    },
+    "larger": {
+      "hub": 22.82592201072194,
+      "leaf": 6.086912536192517
+    },
+    "ratios": {
+      "hubShrink": 0.6669596915548566,
+      "leafShrink": 0.6669596915548566,
+      "hubGrow": 1.4871143013613177,
+      "leafGrow": 1.4871143013613177
+    },
+    "errors": []
+  },
+  "rendererRegressions": {
+    "command": "node --test test/graph-renderer.test.js",
+    "before": {
+      "pass": 11,
+      "fail": 2
+    },
+    "after": {
+      "pass": 13,
+      "fail": 0
+    }
+  },
+  "limits": [
+    "Counts a cleared bitmap after each resize callback, not the number of frames visibly presented by the compositor.",
+    "The reported constant-size large node was not reproduced in this generated graph.",
+    "Does not test the user's original page or a real vault."
+  ],
+  "fullGate": {
+    "command": "npm run check",
+    "exitCode": 0,
+    "testsPassed": 727,
+    "testsFailed": 0,
+    "lint": "pass",
+    "format": "pass",
+    "types": "pass",
+    "verifyPack": "pass",
+    "verifyTarball": "pass",
+    "tarballEntries": 51,
+    "libModules": 41
+  },
+  "servedRenderer": {
+    "sourceSha256": "cfbc5d1b312224426a90621a9eea912dfe515aed5aaf366fe532a83d8dd5040f",
+    "servedSha256": "cfbc5d1b312224426a90621a9eea912dfe515aed5aaf366fe532a83d8dd5040f",
+    "origin": "http://127.0.0.1:3080",
+    "existingPageReloaded": false
+  }
+}

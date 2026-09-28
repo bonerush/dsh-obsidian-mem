@@ -1,0 +1,126 @@
+{
+  "date": "2026-09-28",
+  "blackScreen": {
+    "cause": "graph-palette.js was absent from the default registered browser asset routes",
+    "beforeHttpStatus": 404,
+    "afterHttpStatus": 200,
+    "regressionCommand": "node --test test/graph-route.test.js",
+    "before": {
+      "pass": 2,
+      "fail": 1
+    },
+    "after": {
+      "pass": 3,
+      "fail": 0
+    },
+    "originalFixtureGap": "The resize fixture manually served the palette and did not cover the native route list."
+  },
+  "generatedFixture": {
+    "nodes": 240,
+    "edges": 239,
+    "realVaultAccessed": false,
+    "currentAssetsAndApi": "registerGraphRoute handlers",
+    "oldRenderer": "Saved pre-resize-fix renderer; current client default is 0.85 for both pages",
+    "resize": {
+      "version": "after",
+      "resize": {
+        "resizeCallbacks": 48,
+        "blankAfterResize": 0,
+        "bitmapResets": 48
+      },
+      "base": {
+        "hub": 15.360730242966087,
+        "leaf": 4.096194731457623
+      },
+      "smaller": {
+        "hub": 10.240289782590674,
+        "leaf": 2.7307439420241795
+      },
+      "larger": {
+        "hub": 22.83250377446481,
+        "leaf": 6.088667673190616
+      },
+      "ratios": {
+        "hubShrink": 0.6666538387574288,
+        "leafShrink": 0.6666538387574288,
+        "hubGrow": 1.4864204639567942,
+        "leafGrow": 1.4864204639567942
+      },
+      "errors": []
+    },
+    "labelBefore": {
+      "version": "clarity-before",
+      "devicePixelRatio": 1,
+      "visibleLabels": 1,
+      "minPixelCoverage": 0.7101987881434799,
+      "samples": [
+        {
+          "sourceWidth": 184,
+          "sourceHeight": 44,
+          "cssWidth": 259.0823908345319,
+          "cssHeight": 61.954484764779366,
+          "pixelCoverage": 0.7101987881434799
+        }
+      ],
+      "errors": []
+    },
+    "labelAfter": {
+      "version": "clarity-after",
+      "devicePixelRatio": 1,
+      "visibleLabels": 1,
+      "minPixelCoverage": 1.4211923232588535,
+      "samples": [
+        {
+          "sourceWidth": 368,
+          "sourceHeight": 88,
+          "cssWidth": 258.93750900382054,
+          "cssHeight": 61.91983910960926,
+          "pixelCoverage": 1.4211923232588535
+        }
+      ],
+      "errors": []
+    }
+  },
+  "regressions": {
+    "commandBefore": "node --test test/graph-client.test.js test/graph-renderer.test.js",
+    "before": {
+      "pass": 11,
+      "fail": 4
+    },
+    "commandAfter": "node --test test/graph-client.test.js test/graph-renderer.test.js test/graph-route.test.js",
+    "after": {
+      "pass": 19,
+      "fail": 0
+    },
+    "addedAfterBeforeRun": "50-label raster budget keeps older text visible while replacements are pending"
+  },
+  "nativeHost": {
+    "origin": "http://127.0.0.1:3080",
+    "observedRenderedNodes": 495,
+    "observedLabelSliderDefault": 0.85,
+    "observation": "Existing Chrome sidebar and static module responses only",
+    "rendererSourceSha256": "ab8b55d53ee3388c4283ce3ecfa7e61ccb711ab4f7ce5d58434ce35b14858d58",
+    "rendererServedSha256": "ab8b55d53ee3388c4283ce3ecfa7e61ccb711ab4f7ce5d58434ce35b14858d58",
+    "paletteSourceSha256": "33f740e20bba07652cc03cf252463f4ed695d92f302c218618b0ccf0f35f909f",
+    "paletteServedSha256": "33f740e20bba07652cc03cf252463f4ed695d92f302c218618b0ccf0f35f909f"
+  },
+  "fullGate": {
+    "command": "npm run check",
+    "exitCode": 0,
+    "testsPassed": 730,
+    "testsFailed": 0,
+    "lint": "pass",
+    "format": "pass",
+    "types": "pass",
+    "verifyPack": "pass",
+    "verifyTarball": "pass",
+    "tarballEntries": 51,
+    "libModules": 41
+  },
+  "limits": [
+    "Pixel coverage is raster pixels divided by displayed device pixels, not a subjective score for every font.",
+    "Browser label measurements used generated data at devicePixelRatio 1; regressions also cover 2 and 3.",
+    "Native observation confirms loading and the default control; the real vault was not used as test data.",
+    "The reported original constant-size large node was not reproduced."
+  ]
+}

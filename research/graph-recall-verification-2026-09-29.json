@@ -1,0 +1,111 @@
+{
+  "date": "2026-09-29",
+  "design": {
+    "durationMs": 2600,
+    "entranceMs": 180,
+    "sweepMs": 880,
+    "releaseMs": 600,
+    "defaultLabelScale": 0.85,
+    "localReceiptClock": "performance.now",
+    "reducedMotion": "static emphasis, no edge travel"
+  },
+  "regression": {
+    "rendererBefore": {
+      "pass": 15,
+      "fail": 4
+    },
+    "rendererAfter": {
+      "pass": 19,
+      "fail": 0
+    },
+    "routeBefore": {
+      "pass": 2,
+      "fail": 1,
+      "cause": "graph-recall.js not registered"
+    },
+    "focusedAfter": {
+      "pass": 51,
+      "fail": 0
+    }
+  },
+  "fullGate": {
+    "command": "npm run check",
+    "exitCode": 0,
+    "testsPassed": 734,
+    "testsFailed": 0,
+    "lint": "pass",
+    "format": "pass",
+    "types": "configured ratchet pass",
+    "verifyPack": "pass",
+    "verifyTarball": "pass",
+    "archiveEntries": 52,
+    "libModules": 42
+  },
+  "browser": {
+    "surface": "Codex in-app browser",
+    "origin": "http://127.0.0.1:3082",
+    "generatedNotes": 12,
+    "realVaultAsTestData": false,
+    "readPath": "registered mem_read definition -> createMemoryServices -> graph activity -> registered graph route -> shipped client/renderer/Worker",
+    "observedCaption": "记忆关系图谱，正在调用 3 条记忆：架构决策、命名约定、踩坑记录",
+    "observedExpiryCaption": "可缩放的记忆关系图谱，12 个节点",
+    "sidebarFrameWidth": 420,
+    "reducedMotionControl": "checked through test-page matchMedia seam; no OS preference modified",
+    "consoleWarnings": [],
+    "consoleErrors": [],
+    "screenshots": [
+      "graph-recall-production.png",
+      "graph-recall-production-sidebar.png"
+    ]
+  },
+  "assets": [
+    {
+      "name": "graph-renderer.js",
+      "sourceSha256": "6e5f7d93ddfcc8c86e175717a46b87400c7bafd816824c8266d5749574121adb",
+      "served": {
+        "http://127.0.0.1:3082": {
+          "status": 200,
+          "sha256": "6e5f7d93ddfcc8c86e175717a46b87400c7bafd816824c8266d5749574121adb"
+        },
+        "http://127.0.0.1:3080": {
+          "status": 200,
+          "sha256": "6e5f7d93ddfcc8c86e175717a46b87400c7bafd816824c8266d5749574121adb"
+        }
+      }
+    },
+    {
+      "name": "graph-palette.js",
+      "sourceSha256": "33f740e20bba07652cc03cf252463f4ed695d92f302c218618b0ccf0f35f909f",
+      "served": {
+        "http://127.0.0.1:3082": {
+          "status": 200,
+          "sha256": "33f740e20bba07652cc03cf252463f4ed695d92f302c218618b0ccf0f35f909f"
+        },
+        "http://127.0.0.1:3080": {
+          "status": 200,
+          "sha256": "33f740e20bba07652cc03cf252463f4ed695d92f302c218618b0ccf0f35f909f"
+        }
+      }
+    },
+    {
+      "name": "graph-recall.js",
+      "sourceSha256": "7f0e0b213c9dae37bb202fb39049e3638fe8d842ebc17a9fc91c2ea632d07c5f",
+      "served": {
+        "http://127.0.0.1:3082": {
+          "status": 200,
+          "sha256": "7f0e0b213c9dae37bb202fb39049e3638fe8d842ebc17a9fc91c2ea632d07c5f"
+        },
+        "http://127.0.0.1:3080": {
+          "status": 200,
+          "sha256": "7f0e0b213c9dae37bb202fb39049e3638fe8d842ebc17a9fc91c2ea632d07c5f"
+        }
+      }
+    }
+  ],
+  "limits": [
+    "Browser reads used a temporary generated vault and invoked the registered tool definition directly; they do not establish a real agent recall or prompt delivery.",
+    "Reduced-motion geometry and listener cleanup are asserted by the renderer regression; the browser control supplies a test-only matchMedia preference.",
+    "Native host verification covered static asset responses only.",
+    "The originally reported constant-size hub was not reproduced; its Obsidian zoom regression remains passing."
+  ]
+}

@@ -11,15 +11,79 @@ is a repository, not a release.
 
 ## Unreleased
 
+### Changed
+
+- **Recall feedback now uses a finite focus cue.** A read note lights with a
+  stationary soft halo, its incident edges sweep outward once, and its title
+  releases opacity and pinned size over the final 600 ms of a 2.6-second cue.
+  Neighbor nodes are not marked as read. The cue starts when the polling client
+  receives the event, uses monotonic time, and does not replay on an unchanged
+  model refresh. Reduced-motion preferences retain static emphasis without edge
+  travel; the listener and event state are disposed with the renderer.
+
+  Four renderer regressions failed against the previous implementation (15 pass,
+  4 fail) and pass with the new one (19 pass, 0 fail). The browser-module route
+  regression also failed on the new helper's missing route before it was added;
+  focused renderer, client, route, architecture and package checks then passed
+  all 51 tests. The recall helper is a separate browser leaf within its 200-line
+  budget, keeping the renderer within 700 lines; the package and archive contracts
+  require both the helper and palette. Design references and motion timings are
+  recorded in `docs/obsidian-graph-source.md`.
+
+  Final verification on 2026-09-29: `npm run check` passed all **734 tests**,
+  lint, formatting, the configured type ratchet and both package contracts
+  (52 archive entries, 42 lib modules). The in-app browser loaded the shipped
+  renderer through the registered routes with 12 temporary notes and the real
+  `mem_read` service/activity path: single/continuous reads, expiry, sidebar
+  resize and the reduced-motion preference control were checked without console
+  warnings or errors. The restarted native host served renderer, palette and
+  recall-helper bytes matching source. Measurements and limits are in
+  `research/graph-recall-verification-2026-09-29.json`.
+
+### Fixed
+
+- **The graph's browser module chain now loads through the host routes.** The
+  renderer imports `graph-palette.js`, but the default asset routes omitted that
+  file, producing a 404 and a blank graph after refresh. The route now serves it;
+  a regression fetches the renderer and its imports through the real registered
+  handlers, including the same-origin fence. It failed on that 404 before the
+  change and passes afterwards. The earlier resize fixture manually supplied the
+  palette and did not cover this failure; it now uses the real plugin routes.
+  After reloading the local web host, Chrome rendered 495 nodes and the label-size
+  control showed 0.85. The final `npm run check` passed all 730 tests and package
+  checks. Measurements are in `research/graph-loading-label-verification-2026-09-28.json`.
+
+- **Zoomed labels retain enough pixels for the current screen.** Their cached
+  raster resolution now increases in powers of two with zoom and device pixel
+  ratio instead of stretching a fixed resolution-2 image. Labels reuse the
+  sharper cache within a tier; existing text stays visible while the per-frame
+  raster budget fills. The font default is now **0.85**, as requested, in both
+  the panel and renderer fallback. Default-size, zoom-resolution and denser-screen
+  regressions failed before the change and pass afterwards; hover, recall and
+  square-root scaling regressions also pass.
+
+- **Resizing the graph sidebar no longer exposes a cleared Canvas frame.**
+  Resize notifications now schedule drawing; bitmap dimensions change inside
+  that drawing callback, and unchanged dimensions are not assigned again.
+  Two renderer regressions failed before the fix and passed after it. In an
+  isolated browser page using the shipped client and Worker with 240 generated
+  nodes, 48 consecutive width changes left the bitmap blank after all 48 resize
+  callbacks before the fix and after none of them afterwards.
+
+  The reported constant-size large node was not reproduced in this fixture:
+  large and small nodes both shrank to about 0.667 of their initial radius and
+  grew to about 1.487, matching Obsidian's square-root zoom rule within its 1%
+  interpolation tolerance. A regression now covers a hub whose base radius
+  reaches the 30-unit cap, including zooming beyond that base cap. This does not
+  establish what caused the user's original large-node symptom.
+
 ### Added
 
-- **A called memory now shows which file it was.** The pulse ring and the moving
-  edge particle said *that* something was read; the node is now also treated like
-  a highlighted node, so its label stays opaque and pinned to the base size at any
-  zoom, and the canvas caption lists up to three file names. Verified with the
-  shipped renderer in a Node harness: with ambient labels hidden at scale 0.44 a
-  node carrying fresh activity still draws its label, and removing the
-  `s.active.has(node.id)` clause makes that case fail (`test/graph-renderer.test.js`).
+- **A called memory shows which file it was.** Its label stays visible during the
+  cue even when ambient labels are hidden, and the canvas caption lists up to
+  three file names. Verified with the shipped renderer in a Node harness at
+  reduced zoom (`test/graph-renderer.test.js`); the finite release described above
+  replaces the original pulse-ring and moving-particle presentation.
 
 - **A memory graph tab for DSH's native right sidebar via Better Sidebar.**
   The browser view resolves Obsidian's colour slots from the host theme, draws internal Markdown and wiki links, supports
@@ -55,11 +119,12 @@ is a repository, not a release.
   hashes matched. These figures cover the current Markdown vault with tags and
   attachments excluded, not every possible Obsidian search or attachment mode.
 
-  Labels now follow `xQ.getDisplayText/getTextStyle` and the installed Pixi
+  The initial label port followed `xQ.getDisplayText/getTextStyle` and the installed Pixi
   text cache: file basenames, the full font fallback chain, natural glyph
   widths, word wrapping and resolution 2. Six Chinese/English samples at
   three node font sizes matched the original `PIXI.Text` cache pixel for
-  pixel in Chrome. The renderer caches labels through zoom, culls offscreen
+  pixel in Chrome. The higher-resolution zoom cache described above intentionally
+  extends this initial resolution-2 behaviour. The renderer caches labels through zoom, culls offscreen
   geometry, batches equal-style links and stops after 60 idle frames;
   interaction and memory activity wake it. Source-matched wheel scaling
   includes `deltaMode` conversion. Regression cases failed before their
