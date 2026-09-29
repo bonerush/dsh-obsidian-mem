@@ -24,7 +24,7 @@ import {
 } from '../scripts/changelog-order.mjs'
 import { checkStagedSources } from '../scripts/check-staged.mjs'
 import { currentHooksPath, HOOKS_PATH, main as installHooks } from '../scripts/install-hooks.mjs'
-import { setTarball } from '../scripts/marketplace-entry.mjs'
+import { authHint, setTarball } from '../scripts/marketplace-entry.mjs'
 import { judge, main as verifyChangelog, unreleasedSection } from '../scripts/verify-changelog.mjs'
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -453,3 +453,85 @@ test('the marketplace step names the secret it needs instead of leaking a 401', 
   assert.match(run.stderr, /fine-grained token/)
   assert.doesNotMatch(run.stderr, /Bad credentials/)
 })
+
+test('authHint turns the misleading push denial into the permission to grant', () => {
+  // GitHub answers 403 both for "wrong credential" and for "right credential,
+  // missing permission", and its git message reads like the first while usually
+  // being the second. The release this ran in failed on exactly that message.
+  const real =
+    'git push failed: remote: Permission to bonerush/awesome-dsh-plugin.git denied to bonerush.\n' +
+    'fatal: unable to access ...: The requested URL returned error: 403'
+  const hinted = authHint(real)
+  assert.match(hinted, /Contents: Read and write/)
+  assert.match(hinted, /Pull requests: Read and write/)
+  assert.match(hinted, /gh secret set MARKETPLACE_TOKEN/)
+  assert.ok(hinted.startsWith(real), 'the original failure is kept, not replaced')
+  // A failure that is not about permission must not grow a permission hint.
+  const other = 'fatal: could not read from remote repository'
+  assert.equal(authHint(other), other)
+})
+
+test(
+  'the write probe must be cleaned up by release id, never by tag',
+  {
+    skip:
+      process.env.MARKETPLACE_PROBE_LIVE !== '1'
+        ? 'set MARKETPLACE_PROBE_LIVE=1 to exercise the live fork'
+        : false,
+  },
+  () => {
+    // Two things are measured here, and both were wrong once. `gh api --raw-field`
+    // sends every value as a string, so `draft=true` arrives as `"true"` and the API
+    // answers 422; a boolean needs `--field`. And `DELETE .../releases/tags/<tag>`
+    // answers 404 for a *draft*, so a by-tag cleanup fails silently and leaves the
+    // probe release behind — it has to be deleted by id.
+    //
+    // Opt-in because it talks to GitHub and needs a credential; a suite that needs
+    // the network is a suite that fails for the wrong reason.
+    const fork = 'bonerush/awesome-dsh-plugin'
+    const tag = `write-probe-test-${Date.now()}`
+    const gh = (args) =>
+      JSON.parse(
+        execFileSync('gh', ['api', ...args], {
+          encoding: 'utf8',
+          env: { ...process.env },
+        }).trim() || '{}',
+      )
+    const created = gh([
+      '--method',
+      'POST',
+      `repos/${fork}/releases`,
+      '-f',
+      `tag_name=${tag}`,
+      '-f',
+      `name=${tag}`,
+      '-F',
+      'draft=true',
+    ])
+    assert.equal(typeof created.id, 'number', 'the draft is created and reports an id')
+    assert.equal(created.draft, true)
+    try {
+      // The by-tag form must be recorded as unusable for drafts, not assumed.
+      let byTagFailed = false
+      try {
+        gh(['--method', 'DELETE', `repos/${fork}/releases/tags/${tag}`])
+      } catch {
+        byTagFailed = true
+      }
+      const survivors = gh([`repos/${fork}/releases?per_page=100`]).filter(
+        (release) => release.tag_name === tag,
+      ).length
+      assert.equal(
+        byTagFailed && survivors === 1,
+        true,
+        'by-tag deletion does not remove a draft, which is why the script deletes by id',
+      )
+    } finally {
+      gh(['--method', 'DELETE', `repos/${fork}/releases/${created.id}`])
+    }
+    const left = gh([`repos/${fork}/releases?per_page=100`]).filter(
+      (release) => release.tag_name === tag,
+    ).length
+    assert.equal(left, 0, 'by-id deletion removes it, and the fork is left clean')
+  },
+)

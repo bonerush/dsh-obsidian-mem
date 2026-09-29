@@ -131,7 +131,11 @@ function localToken() {
 function api(path, auth, options = {}) {
   const args = ['api', '--method', options.method ?? 'GET', path]
   for (const [key, value] of Object.entries(options.body ?? {})) {
-    args.push('-f', `${key}=${value}`)
+    // `--raw-field` sends every value as a string, so a boolean arrives as
+    // `"true"` and the API refuses it with `For 'properties/draft', "true" is not
+    // a boolean`. `--field` parses the value as JSON, which is what a boolean
+    // needs; nothing in this script passes a string that would be misread as JSON.
+    args.push(typeof value === 'boolean' ? '-F' : '-f', `${key}=${value}`)
   }
   try {
     const out = run('gh', args, { env: { GH_TOKEN: auth } })
@@ -140,6 +144,96 @@ function api(path, auth, options = {}) {
     if (options.allow404 === true && /HTTP 404/.test(error.message)) return null
     throw error
   }
+}
+
+/**
+ * Whether the credential may write to a repository, asked before any work is done.
+ *
+ * A fine-grained token exposes no scope list to compare against — `X-OAuth-Scopes`
+ * is a classic-token header — so the only way to learn this is to attempt a write.
+ * The probe is a draft release on the fork, and a draft is a real release object:
+ * it exercises `contents: write` on exactly the repository the branch will be
+ * pushed to, and it is deleted again. The earlier failure mode was worse in every
+ * way — clone, edit, validate with the list's own tooling, commit, and only then
+ * a 403 from `git push` reading `Permission … denied to <user>`, which sounds like
+ * the wrong account rather than a missing permission.
+ *
+ * The delete is by release **id**, never by tag: `DELETE
+ * /repos/{owner}/{repo}/releases/tags/{tag}` answers 404 for a *draft*, so a
+ * by-tag cleanup fails silently and leaves the probe behind. Measured on a
+ * disposable draft: by tag → `Not Found` and the draft survives; by id → gone.
+ *
+ * @param {string} fork - `owner/name` of the fork to probe.
+ * @param {string} auth - the token.
+ * @throws {Error} when the write is refused, with the permission to grant.
+ */
+function probeWrite(fork, auth) {
+  const tag = `write-probe-${Date.now()}`
+  let id = null
+  try {
+    const created = api(`repos/${fork}/releases`, auth, {
+      method: 'POST',
+      body: { tag_name: tag, name: tag, body: 'permission probe', draft: true },
+    })
+    id = typeof created.id === 'number' ? created.id : null
+    if (id === null) {
+      throw new Error(`the probe release was created without an id: ${JSON.stringify(created)}`)
+    }
+    api(`repos/${fork}/releases/${id}`, auth, { method: 'DELETE' })
+    id = null
+  } catch (error) {
+    // A refused write is the case this function exists for; anything else is a
+    // real failure and keeps its own message. Either way the draft must not be
+    // left behind, which is why the cleanup is attempted before rethrowing.
+    let cleanup = ''
+    if (id !== null) {
+      try {
+        api(`repos/${fork}/releases/${id}`, auth, { method: 'DELETE' })
+        cleanup = ' The probe release was deleted.'
+      } catch {
+        cleanup = ` A draft release named ${tag} could not be deleted; remove it by hand.`
+      }
+    }
+    if (!/HTTP 4\d\d/.test(error.message)) throw error
+    throw new Error(
+      `the token cannot write to ${fork} (${error.message}). ` +
+        'Fine-grained tokens must be granted Contents: Read and write (also needed to ' +
+        'open the pull request, together with Pull requests: Read and write) on that ' +
+        'repository. A 404 here is the same problem with no way to say 403.' +
+        cleanup,
+      { cause: error },
+    )
+  }
+}
+
+/**
+ * Turn a push failure into something that names the cause.
+ *
+ * GitHub answers 403 both for "this credential is not allowed in here" and for
+ * "this credential is allowed in here but lacks a permission", and the git
+ * message it produces — `Permission to <owner>/<repo>.git denied to <user>` —
+ * reads like the first while usually being the second. A fine-grained token
+ * exposes no scope list to compare against (`X-OAuth-Scopes` is a classic-token
+ * header), so the only way to find out is to attempt a write, which is what
+ * failed; this makes that failure say what to do about it.
+ *
+ * Exported because the wording is the contract: a release that stops here has to
+ * tell the next reader which permission to grant.
+ *
+ * @param {string} message - the git failure.
+ * @returns {string} the message to raise, with a hint when 403 is the cause.
+ */
+export function authHint(message) {
+  if (!/403|Permission to .* denied/.test(message)) return message
+  return (
+    `${message}\n` +
+    'The token authenticated but was not allowed to write this branch. For a ' +
+    'fine-grained token that means GitHub -> Settings -> Developer settings -> ' +
+    'Personal access tokens -> the token -> Repository permissions, with ' +
+    '`Contents: Read and write` (pushing the branch) and `Pull requests: Read and ' +
+    'write` (opening the pull request), granted on the fork. Regenerate, then ' +
+    'store it again with `gh secret set MARKETPLACE_TOKEN`.'
+  )
 }
 
 /**
@@ -281,6 +375,10 @@ export async function main(options = {}) {
     process.stdout.write(`creating the fork ${fork}\n`)
     api(`repos/${UPSTREAM}/forks`, marketplace, { method: 'POST' })
   }
+  // Before the clone, the edit, the validation and the commit: if this credential
+  // cannot write the fork, none of that can be published, and knowing it early is
+  // the difference between one actionable line and a 403 after two minutes of work.
+  if (options.dryRun !== true) probeWrite(fork, marketplace)
 
   const branch = `tarball-${tag}`
   // The entry file is named for the *listed plugin's* owner and repository, not
@@ -346,7 +444,11 @@ export async function main(options = {}) {
       '-m',
       `Point the tarball at ${tag}\n\n${problems}\n\n${url}`,
     ])
-    run('git', ['-C', work, 'push', '--quiet', '--force', 'origin', `HEAD:${branch}`])
+    try {
+      run('git', ['-C', work, 'push', '--quiet', '--force', 'origin', `HEAD:${branch}`])
+    } catch (error) {
+      throw new Error(authHint(error.message), { cause: error })
+    }
 
     const body =
       `Points the entry's \`tarball:\` at the ${tag} release asset.\n\n` +

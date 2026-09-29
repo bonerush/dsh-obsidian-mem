@@ -11,6 +11,28 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Fixed
+
+- **The marketplace step now learns about a read-only token before it does any
+  work, and says what to grant.** The first real release through it failed at the
+  very end — clone, edit, validate with the list's own tooling, commit, then a 403
+  from `git push` reading `Permission … denied to <user>`, which sounds like the
+  wrong account rather than a missing permission. A fine-grained token exposes no
+  scope list to compare against (`X-OAuth-Scopes` is a classic-token header), so
+  the script now probes `contents: write` with a draft release on the fork, before
+  the clone, and names the two permissions to grant. `authHint` does the same for
+  a push that fails anyway.
+
+  Two defects were found while building the probe, both by running it: `gh api
+  --raw-field` sends every value as a string, so `draft=true` reached the API as
+  `"true"` and was refused with 422 (a boolean needs `--field`); and `DELETE
+  /repos/{owner}/{repo}/releases/tags/{tag}` answers 404 for a *draft*, so the
+  by-tag cleanup failed silently and left the probe release behind — it is deleted
+  by id now, and the cleanup is attempted before the error is rethrown. That second
+  one is pinned by an opt-in test (`MARKETPLACE_PROBE_LIVE=1`) that measures both
+  the by-tag failure and the by-id success against the real fork, because a
+  measurement of a live API is the only thing that can pin it.
+
 ## 0.1.6 — 2026-09-29
 
 ### Added
