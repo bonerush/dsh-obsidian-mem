@@ -13,6 +13,21 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Fixed
 
+- **The release workflow re-tagged an already-published version, and then would
+  never have bumped again.** Two defects, both found by running it rather than by
+  reading it. First: "does this version carry a tag?" was asked with
+  `git rev-parse`, but a checkout fetches no tags, so after `v0.1.1` was published
+  by hand the next run decided the version was untagged and died on `git tag` with
+  exit 128. Second, and worse: the same branch then took over every subsequent
+  push, so a repository whose declared version was already tagged would only
+  re-tag it and never release the next patch. The check now asks
+  `git ls-remote --tags origin` and is idempotent, the push is classified into one
+  of two branches through an explicit result rather than an `if:` chain, and each
+  branch owns its own Release. Verified against a throwaway bare remote: with the
+  tag present remotely the run classifies as a bump (`resolved=false`), with the
+  tag deleted it classifies as a bootstrap (`resolved=true`), and the bootstrap
+  branch tags nothing when the tag is already there.
+
 - **The first release out of the automated path skipped its own bootstrap.** The
   workflow only tags a version that carries no tag, and that step was written as
   the *else* of the guard that skips a release commit. On the very push that
@@ -21,8 +36,7 @@ release artifact. The versioning policy is in the README, under Development.
   released `0.1.2` instead. `v0.1.1` was then tagged at the commit whose
   `package.json` says 0.1.1, so the number now names the content it always
   described, and this file lists 0.1.1 above 0.1.2 because that is the order the
-  numbers run in. Both tags and both Releases exist; the bootstrap step itself
-  still has not run on a runner.
+  numbers run in. Both tags and both Releases exist.
 
 ## 0.1.1 — 2026-09-29
 

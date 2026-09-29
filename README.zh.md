@@ -618,19 +618,22 @@ monorepo 发布、不随本插件发布，所以在这里那一条命令*就是*
 workflow 依次做这些事：
 
 1. `npm run check`——在即将发布的那个提交上跑完整闸门。
-2. 若 `package.json` 当前声明的版本还没有 tag，就直接为它发布。这是引导路径，
-   `v0.1.1` 就是这么发出去的。
-3. 当 `lib/` 有改动、而 `## Unreleased` 里没有真实条目时**拒绝这次 push**：
-   「每次 push 都发一版」也必须给下一段留下可写的内容。
-4. 递增补丁号，把 `## Unreleased` 的内容移到 `## <version> — <date>` 下，同步
-   `dsh.plugin.json` 与 Codex server 的身份串，以 `chore(release): <version>` 提交，
-   打上 `v<version>` 标签，并用那段 changelog 发布 Release。
+2. 向远端询问 `package.json` 里的版本是否已经有 tag，据此给这次 push 分类。
+   `actions/checkout` 不抓取 tag，所以这个问题在本地无法回答。
+3. 若没有：给该版本打 tag、原样发布、结束。这是引导分支，手工准备好的 `0.1` 或 `1`
+   就是靠它发布的，而不会被反手降成下一个补丁号。
+4. 若有：跳过 `chore(release):` 提交；当 `lib/` 有改动而 `## Unreleased` 里没有真实
+   条目时拒绝这次 push；然后把 `## Unreleased` 的内容移到
+   `## <version> — <date>` 下，递增补丁号，同步 `dsh.plugin.json` 与 Codex server 的
+   身份串，以 `chore(release): <version>` 提交、打 tag，并用那段 changelog 发布 Release。
 
-发布之后 `## Unreleased` 是空的，这是有意的；随手把条目写上，否则下一次 push 会失败。
-发布提交以 `chore(release):` 开头，会被跳过——它已经没有可发布的内容了。
+发布之后 `## Unreleased` 是空的，这是有意的；随手把条目写上，否则下一次 push 会被拒绝。
 
-这个 workflow 和这套策略都还没有在真实的 GitHub runner 上跑过：其中的内联脚本是在
-`CHANGELOG.md`、`dsh.plugin.json`、`codex/server.mjs` 的副本上验证的，YAML 也能正常解析。
+这个 workflow 已经在真实的 GitHub runner 上跑过：它发布了 `v0.1.2`；而 `v0.1.1`
+是人工在声明它的那个提交上发布的，所以引导分支本身仍未被执行过。跑起来之后发现了两个
+缺陷，都记在 `CHANGELOG.md` 的 Unreleased 里：`actions/checkout` 不会抓取 tag，所以
+判定必须去问远端；而「给未发布的版本打 tag」那条分支，不能同时成为已发布版本唯一能走的
+分支，否则补丁号再也不会递增。
 
 贡献规则、代码风格和不可谈判的约束在 [`AGENTS.md`](./AGENTS.md)。实测的宿主事实
 在 [`docs/p0-compatibility.md`](./docs/p0-compatibility.md)。

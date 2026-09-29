@@ -3,26 +3,33 @@
 # This repository publishes no npm package. A release is a git tag plus a GitHub
 # Release, and this workflow mints both. The owner's rule is "a push is a
 # release": `0.0.1` for a push, `0.1` for a notable feature, `1` for a breaking
-# change. The first two are therefore mechanical and happen here; a major bump is
-# a person editing `package.json` before the push, because nothing can infer
-# "breaking" from a diff.
+# change. The first two are mechanical and happen here; a major bump is a person
+# editing `package.json` before the push, because nothing can infer "breaking"
+# from a diff.
 #
-# Three decisions are load-bearing:
+# Every push lands in exactly one of two branches, and the classification is
+# explicit rather than inferred from an `if:` chain:
 #
-#   * **The bootstrap runs before the skip guard.** A version with no tag wants a
-#     tag whether a human or this workflow produced the commit, and that is the
-#     only way the first release can come out of this file at all.
-#   * **The skip guard exists because a release commit has nothing left to release.**
-#     A bump commit moves every entry out of `## Unreleased` — that is what the
-#     changelog gate below demands — so a second pass would have nothing to write
-#     into the next section and would bump an already-released number again.
-#   * **The changelog gate runs before the bump.** The open question under the
-#     owner's rule is what "a release every push" does to a changelog whose gate
-#     refuses an empty `## Unreleased` for any `lib/` change. The answer taken
-#     here is not to weaken the gate: a push into `main` must leave a real entry
-#     behind, the workflow says so in one line, and the push is refused rather
-#     than published under a number nobody documented. `[skip ci]` is not used,
-#     because it would also skip the bootstrap above.
+#   * **bootstrap** — `package.json` names a version that has no tag yet. That
+#     version is tagged and released as it stands, and the job stops. This is how
+#     the first release can come out of this file at all, and how a version a
+#     person prepared by hand (0.1, or 1) becomes a release without the workflow
+#     bumping it back down to the next patch.
+#   * **bump** — the declared version is already tagged, so this push releases
+#     the *next* patch. A release commit is excluded here, because it has nothing
+#     left to release: it moves every entry out of `## Unreleased`.
+#
+# Why the guard cannot simply be "skip release commits": once a version is
+# tagged, bumping is the only branch left, so a guard that excluded both would
+# leave a push with nothing to do at all. The bootstrap branch is what makes the
+# guard safe.
+#
+# The changelog token is buy-in, not an oversight: the owner asked for a release
+# every push, and the repository's gate refuses a `lib/` change with no entry
+# under `## Unreleased`. Rather than weaken the gate, a push into `main` must
+# leave a real entry behind and the job refuses the push in one line when it does
+# not. `[skip ci]` is not used for the release commit, because it would also skip
+# the run that would otherwise tag a hand-prepared version.
 name: release
 
 on:
@@ -53,8 +60,9 @@ jobs:
 
       # The token has to be part of the remote URL. With the default credential
       # helper a push made with a token is attributed to github-actions[bot],
-      # `GITHUB_TOKEN` is suppressed on it, and the `version` guard below would
-      # then see "no tag for this version" on every run and bump forever.
+      # which suppresses `GITHUB_TOKEN` on the resulting push event — measured on
+      # this repository: the 0.1.2 release commit fired no second run. That is the
+      # behaviour wanted here, and spelling out the token keeps it deliberate.
       - name: Point origin at the token
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -64,27 +72,57 @@ jobs:
       # and the tests have to pass before a number is attached to the tree.
       - run: npm run check
 
-      - name: Release the current version when it carries no tag
-        id: bootstrap
+      # A checkout carries no tags, so "does this version already have one?" has
+      # to ask the remote. `resolved` is what the later gates read, so a bootstrap
+      # run never also bumps.
+      - name: Classify this push
+        id: classify
         run: |
           version="$(node -p 'require("./package.json").version')"
-          if git rev-parse -q --verify "refs/tags/v${version}" > /dev/null; then
-            echo "tagged=v${version}" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v${version}" > /dev/null 2>&1; then
+            echo "resolved=false" >> "$GITHUB_OUTPUT"
+            echo "this push releases the next patch: v${version} is already tagged"
           else
-            echo "tagged=" >> "$GITHUB_OUTPUT"
+            echo "resolved=true" >> "$GITHUB_OUTPUT"
+            echo "this push releases the declared version as it stands: v${version} has no tag"
           fi
 
-      - name: Tag the version the repository already declares
-        if: steps.bootstrap.outputs.tagged != ''
+      # Idempotent on purpose. The first version of this step only tested whether
+      # a tag existed and then created it unconditionally, so once v0.1.1 was
+      # published by hand the next run saw the tag, took this branch, and died on
+      # `git tag` with exit 128.
+      - name: Tag the version the repository already declares, and release it
+        if: steps.classify.outputs.resolved == 'true'
         env:
-          TAG: ${{ steps.bootstrap.outputs.tagged }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git tag -a "$TAG" -m "dsh-obsidian-mem $TAG"
-          git push origin "$TAG"
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").version')"
+          tag="v${version}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" > /dev/null 2>&1; then
+            echo "${tag} is already tagged; nothing to do"
+            exit 0
+          fi
+          git tag -a "$tag" -m "dsh-obsidian-mem ${tag}"
+          git push origin "$tag"
+          notes="$(mktemp)"
+          node -e '
+            const fs = require("node:fs")
+            const [file, version] = process.argv.slice(1)
+            const lines = fs.readFileSync(file, "utf8").split("\n")
+            const start = lines.findIndex((line) => line.startsWith("## " + version + " "))
+            if (start === -1) throw new Error("no changelog section for " + version)
+            const rest = lines.slice(start + 1)
+            const end = rest.findIndex((line) => /^## /.test(line))
+            fs.writeFileSync(file, (end === -1 ? rest : rest.slice(0, end)).join("\n").trim() + "\n")
+          ' CHANGELOG.md "$version" > "$notes"
+          gh release create "$tag" --title "dsh-obsidian-mem ${tag}" --notes-file "$notes"
 
+      # A release commit has nothing left to release, so it is the one push that
+      # does not produce a version of its own.
       - name: Stop before a release commit re-releases itself
         id: guard
-        if: steps.bootstrap.outputs.tagged == ''
+        if: steps.classify.outputs.resolved == 'false'
         run: |
           if [[ "${{ github.event.head_commit.message }}" == chore\(release\):* ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -92,9 +130,7 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # The gate the repository already enforces in CI, asked here as the release
-      # precondition. `node scripts/verify-changelog.mjs --staged` reads the
-      # changelog out of the index, so the entry has to be staged to be judged.
+      # The repository's own gate, asked here as the release precondition.
       - name: Require a real changelog entry for this push
         if: steps.guard.outputs.skip == 'false'
         env:
@@ -106,8 +142,10 @@ jobs:
             exit 1
           fi
 
-      - name: Bump the patch, cut the section, commit and tag
+      - name: Bump the patch, cut the section, commit, tag and release
         if: steps.guard.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           today="$(date -u +%F)"
@@ -153,15 +191,6 @@ jobs:
           git tag -a "v${next}" -m "dsh-obsidian-mem v${next}"
           git push origin "HEAD:${branch}" "v${next}"
 
-      - name: Publish the release
-        if: steps.bootstrap.outputs.tagged != '' || steps.guard.outputs.skip == 'false'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.bootstrap.outputs.tagged }}
-        run: |
-          set -euo pipefail
-          if [ -n "$TAG" ]; then version="${TAG#v}"; else version="$(node -p 'require("./package.json").version')"; fi
-          gh release view "v${version}" > /dev/null 2>&1 && exit 0
           notes="$(mktemp)"
           node -e '
             const fs = require("node:fs")
@@ -172,5 +201,6 @@ jobs:
             const rest = lines.slice(start + 1)
             const end = rest.findIndex((line) => /^## /.test(line))
             fs.writeFileSync(file, (end === -1 ? rest : rest.slice(0, end)).join("\n").trim() + "\n")
-          ' CHANGELOG.md "$version" > "$notes"
-          gh release create "v${version}" --title "dsh-obsidian-mem v${version}" --notes-file "$notes"
+          ' CHANGELOG.md "$next" > "$notes"
+          gh release view "v${next}" > /dev/null 2>&1 || \
+            gh release create "v${next}" --title "dsh-obsidian-mem v${next}" --notes-file "$notes"

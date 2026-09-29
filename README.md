@@ -700,22 +700,28 @@ hand with the changelog section written for it.
 What the workflow does, in order:
 
 1. `npm run check` — the whole gate, on the commit about to be released.
-2. Releases the version `package.json` already declares if it carries no tag.
-   This is the bootstrap path, and it is how `v0.1.1` was published.
-3. Refuses the push when `lib/` changed without a real `## Unreleased` entry. A
-   release every push still has to leave something for the next section to say.
-4. Bumps the patch, moves the `## Unreleased` body under `## <version> — <date>`,
-   updates `dsh.plugin.json` and the Codex server identity, commits as
-   `chore(release): <version>`, tags `v<version>`, and publishes the Release from
-   that changelog section.
+2. Classifies the push by asking the remote whether the version in
+   `package.json` already carries a tag. A checkout fetches no tags, so this
+   cannot be answered locally.
+3. If it does not: tags that version, releases it as it stands, and stops. This
+   is the bootstrap branch, and it is how a hand-prepared `0.1` or `1` becomes a
+   release instead of being bumped back down to a patch.
+4. If it does: skips a `chore(release):` commit, refuses a push that changed
+   `lib/` without a real `## Unreleased` entry, then bumps the patch, moves the
+   changelog section under `## <version> — <date>`, updates `dsh.plugin.json` and
+   the Codex server identity, commits as `chore(release): <version>`, tags, and
+   publishes the Release from that section.
 
 After a release `## Unreleased` is empty on purpose; add an entry as you work, or
-the next push fails. A release commit starts with `chore(release):` and is
-skipped, because it has nothing left to release.
+the next push is refused.
 
-Neither the workflow nor this policy has run on a real GitHub runner yet: its
-inline steps were exercised against copies of `CHANGELOG.md`, `dsh.plugin.json`
-and `codex/server.mjs`, and the YAML parses clean.
+The workflow has now run on a real GitHub runner: it published `v0.1.2`, and
+`v0.1.1` was published by hand at the commit that declared it, so the bootstrap
+branch itself has still not been exercised. Two defects were found by running it
+and are recorded in `CHANGELOG.md` under Unreleased: a checkout fetches no tags,
+so the classification has to ask the remote; and the branch that tags an
+untagged version must not also be the only branch a tagged version can take, or
+nothing would ever bump again.
 
 Contribution rules, house style and the non-negotiable constraints are in
 [`AGENTS.md`](./AGENTS.md). The measured host facts live in
