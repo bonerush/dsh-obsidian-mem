@@ -24,6 +24,7 @@ import {
 } from '../scripts/changelog-order.mjs'
 import { checkStagedSources } from '../scripts/check-staged.mjs'
 import { currentHooksPath, HOOKS_PATH, main as installHooks } from '../scripts/install-hooks.mjs'
+import { setTarball } from '../scripts/marketplace-entry.mjs'
 import { judge, main as verifyChangelog, unreleasedSection } from '../scripts/verify-changelog.mjs'
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -376,4 +377,58 @@ test('--cut is the release path, and it refuses an empty section', (t) => {
     2,
     'the refused cut wrote nothing',
   )
+})
+
+// ---------------------------------------------------------------------------
+// The marketplace entry
+// ---------------------------------------------------------------------------
+
+/** The entry shape the marketplace ships for this plugin, before `tarball:`. */
+const ENTRY = [
+  'url: https://github.com/bonerush/dsh-obsidian-mem',
+  'name: bonerush/dsh-obsidian-mem',
+  'category: memory',
+  'description:',
+  '  en: the plugin',
+  '  zh: 插件',
+  '',
+].join('\n')
+
+const ASSET =
+  'https://github.com/bonerush/dsh-obsidian-mem/releases/download/v0.1.5/dsh-obsidian-mem-0.1.5.tgz'
+
+test('setTarball appends the field without a blank line and is idempotent', () => {
+  const once = setTarball(ENTRY, ASSET)
+  assert.equal(once, ENTRY.replace(/\n+$/, '\n') + `tarball: ${ASSET}\n`)
+  assert.equal(setTarball(once, ASSET), once, 'a re-run writes the same bytes')
+  const moved = setTarball(once, ASSET.replaceAll('0.1.5', '0.1.6'))
+  assert.equal(
+    moved.split('\n').filter((line) => line.startsWith('tarball:')).length,
+    1,
+    'a version move replaces the line instead of adding a second one',
+  )
+  assert.match(moved, /tarball: .*v0\.1\.6\/dsh-obsidian-mem-0\.1\.6\.tgz\n$/)
+})
+
+test('setTarball refuses every shape the marketplace refuses, plus the rotting one', () => {
+  // The marketplace rejects a non-GitHub host, a non-https URL and anything that
+  // is not a .tgz. It *accepts* `latest/download/`, which is the trap: the field
+  // is read at request time but the filename literally, so a version in the asset
+  // name makes the link 404 on the next release. That one is refused here.
+  const refused = [
+    [
+      ASSET.replace('/releases/download/v0.1.5/', '/releases/latest/download/').replace(
+        '-0.1.5',
+        '',
+      ),
+      /latest\/download/,
+    ],
+    ['https://example.com/dsh-obsidian-mem-0.1.5.tgz', /refuses a tarball on example\.com/],
+    [ASSET.replace('https://', 'http://'), /https/],
+    [ASSET.replace('.tgz', '.zip'), /\.tgz/],
+  ]
+  for (const [url, pattern] of refused) {
+    assert.throws(() => setTarball(ENTRY, url), pattern, url)
+  }
+  assert.throws(() => setTarball('url: https://github.com/other/repo\n', ASSET), /does not name/)
 })

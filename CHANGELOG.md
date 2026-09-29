@@ -11,6 +11,22 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Added
+
+- **`scripts/marketplace-entry.mjs` moves the marketplace entry's `tarball:` to a
+  release.** The entry pins a tag, because `releases/latest/download/<file>`
+  resolves `latest` per request but reads the filename literally, so a version in
+  the asset name makes the link 404 on the next release — every release therefore
+  owes the curated list one line. It runs on whatever credentials the caller
+  already has (`GH_TOKEN`, or the token `gh auth token` reads from the local
+  keyring), so the local path stores no secret at all. It looks up the fork and
+  the PR before creating either, rewrites an existing PR on the same branch
+  instead of opening a second one, and validates the entry with the listed
+  repository's own `readEntries`/`validateEntries`/`tarballProblem` from a fresh
+  clone. `setTarball` is pure and carries the tests: a non-GitHub host, a
+  non-https URL, anything that is not a `.tgz`, and the `latest/download/` shape
+  the marketplace accepts but which cannot survive a release.
+
 ## 0.1.5 — 2026-09-29
 
 ### Added
