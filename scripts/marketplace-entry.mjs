@@ -479,6 +479,45 @@ export async function main(options = {}) {
   }
 }
 
+/**
+ * Answer whether the credentials can do this job, and write nothing.
+ *
+ * This exists because the alternative way to find out is to store a token as a
+ * secret and cut a release, which is a slow way to learn that a permission is
+ * missing. It runs the same preflight the release does: read the release asset,
+ * resolve the fork, and prove `contents: write` on it with the draft probe.
+ *
+ * @param {string} [version] - the version whose asset to look for.
+ * @returns {Promise<{ok: boolean, fork: string, asset: string}>} the verdict.
+ */
+async function checkToken(version) {
+  const repoRoot = process.cwd()
+  const resolved =
+    version ?? JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')).version
+  const marketplace = marketplaceToken()
+  // The local read falls back to the marketplace credential: a caller checking a
+  // token has no GITHUB_TOKEN, and this token can at least read this repository.
+  const local = tokenFrom(['GITHUB_TOKEN', 'GH_TOKEN']) ?? marketplace
+  const viewer = api('user', marketplace).login
+  const [, upstreamName] = UPSTREAM.split('/')
+  const fork = `${viewer}/${upstreamName}`
+  const parent = api(`repos/${UPSTREAM}`, marketplace)
+  if (parent.fork !== false && parent.fork !== undefined) {
+    throw new Error(`${UPSTREAM} is itself a fork; refusing to guess the upstream`)
+  }
+  api(`repos/${fork}`, marketplace)
+  const url = `https://github.com/bonerush/dsh-obsidian-mem/releases/download/v${resolved}/dsh-obsidian-mem-${resolved}.tgz`
+  const asset = await assetAnswers(url, local)
+  probeWrite(fork, marketplace)
+  return {
+    ok: true,
+    fork,
+    asset: asset.ok
+      ? `${url} answers (${asset.how})`
+      : `${url} answered ${asset.status} (via ${asset.how}) — release v${resolved} may not exist yet`,
+  }
+}
+
 const isEntry =
   process.argv[1] !== undefined && import.meta.url === new URL(`file://${process.argv[1]}`).href
 if (isEntry) {
@@ -488,13 +527,19 @@ if (isEntry) {
   const args = process.argv.slice(2)
   const dryRun = args.includes('--dry-run')
   const version = args.find((argument) => !argument.startsWith('-'))
-  main({ version, dryRun })
-    .then((result) => {
-      process.stdout.write(`marketplace-entry: ${result.action}\n`)
-      if (result.url !== null) process.stdout.write(`${result.url}\n`)
-    })
-    .catch((error) => {
-      process.stderr.write(`marketplace-entry: ${error.message}\n`)
-      process.exitCode = 1
-    })
+  const task = args.includes('--check-token')
+    ? checkToken(version).then((report) => {
+        process.stdout.write(`marketplace-entry: credentials can write ${report.fork}\n`)
+        process.stdout.write(`  asset: ${report.asset}\n`)
+        return null
+      })
+    : main({ version, dryRun }).then((result) => {
+        process.stdout.write(`marketplace-entry: ${result.action}\n`)
+        if (result.url !== null) process.stdout.write(`${result.url}\n`)
+        return null
+      })
+  task.catch((error) => {
+    process.stderr.write(`marketplace-entry: ${error.message}\n`)
+    process.exitCode = 1
+  })
 }
