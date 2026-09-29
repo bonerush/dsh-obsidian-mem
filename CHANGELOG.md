@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.1.8 — 2026-09-29
+
 ### Added
 
 - **The memory graph follows the agent's own file work now, not only `mem_read`.**
@@ -30,6 +32,7 @@ release artifact. The versioning policy is in the README, under Development.
   unparsable argument is simply not a cue. Pinned by tests for the pure mapping, the
   two new service cues, the widened `onAccess` seam, the hook forwarding and the
   cue kinds.
+
 ## 0.1.7 — 2026-09-29
 
   Watching that work on a live host caught one defect in it: the config keeps the
