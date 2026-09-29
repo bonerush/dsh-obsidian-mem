@@ -32,6 +32,17 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Fixed
 
+- **The release guard inlined the commit message into its shell script, so a
+  multi-line message broke bash.** The step compared
+  `"${{ github.event.head_commit.message }}"` against `chore(release):*`, which
+  splices arbitrary commit text into the script: the body's newlines split the
+  `[[ … ]]` test across lines and the run died with `conditional binary operator
+  expected`, and its backticks were executed as command substitution first. The
+  message now arrives through the environment (`COMMIT_MESSAGE`) and the script
+  quotes a variable, which is the only shape that treats a commit body as data.
+  Found by the failure itself: earlier commits had single-line subjects, so the
+  bug first appeared on the release that was adding this file's own feature.
+
 - **The harness peer range silently excluded a version this repository had
   measured.** node-semver only lets a prerelease satisfy a range when some
   comparator in the same set shares its exact `major.minor.patch` tuple *and*

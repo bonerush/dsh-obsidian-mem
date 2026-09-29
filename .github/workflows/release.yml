@@ -128,8 +128,15 @@ jobs:
       - name: Stop before a release commit re-releases itself
         id: guard
         if: steps.classify.outputs.resolved == 'false'
+        # The message reaches the script through the environment, never through
+        # `${{ }}` interpolation into the shell text. A commit body is arbitrary
+        # text: the first version inlined it, and a multi-line message containing
+        # backticks broke bash with "conditional binary operator expected" —
+        # a release that failed because of how its own commit message was quoted.
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          if [[ "${{ github.event.head_commit.message }}" == chore\(release\):* ]]; then
+          if [[ "$COMMIT_MESSAGE" == chore\(release\):* ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
