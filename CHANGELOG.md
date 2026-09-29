@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.1.4 — 2026-09-29
+
 ### Fixed
 
 - **A release section could be inserted above a newer one, and nothing checked
