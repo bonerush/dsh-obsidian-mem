@@ -32,6 +32,15 @@ release artifact. The versioning policy is in the README, under Development.
   cue kinds.
 ## 0.1.7 — 2026-09-29
 
+  Watching that work on a live host caught one defect in it: the config keeps the
+  vault root in its human `~/Documents/dsh-memory` form, and every other consumer
+  expands it through the home seam, but the cue mapper compared absolute note paths
+  against that literal `~` and matched nothing. The `mem_*` cues lit and host tool
+  calls stayed dark, which is exactly what a session's activity ring showed. The
+  root is expanded once at mount now, and an assembly-level test mounts the plugin,
+  emits a `tool/ptc-dispatch` read and posts to the real graph route — it fails on
+  the unexpanded root and passes on the expanded one.
+
 ### Fixed
 
 - **A title ending in `.md` no longer produces a file with two extensions.** A MOC

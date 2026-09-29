@@ -15,9 +15,12 @@
 import assert from 'node:assert/strict'
 import { Context } from '@deepseek-ai/cordis'
 import toolsPlugin from '@deepseek-ai/dsh-tools'
+import { randomUUID } from 'node:crypto'
+import { once } from 'node:events'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { createServer } from 'node:http'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -1295,6 +1298,80 @@ test('apply() wires the hooks without touching the vault, and the six tools stil
   assert.equal(
     readDiagnosticJournal({ dataRoot }).events.some((event) => event.event === 'brief'),
     true,
+  )
+})
+
+test('a host tool event reaches the graph ring through the real assembly', async (t) => {
+  const ctx = new Context()
+  ctx.provide('systemPrompt', { tools: () => () => {} })
+  const fork = ctx.plugin(toolsPlugin)
+  await fork
+  const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-touch-'))
+  const previousHome = process.env.DSH_HOME
+  process.env.DSH_HOME = root
+  t.after(async () => {
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+    await fork.dispose().catch(() => {})
+    await rm(root, { recursive: true, force: true, maxRetries: 4 })
+  })
+
+  // The regression this pins: the plugin's config keeps the vault root in its
+  // human form, and every other consumer expands it through the home seam. The
+  // cue path compared an absolute note path against a literal `~` and matched
+  // nothing — the graph worked for `mem_*` and stayed dark for host tools.
+  const slug = 'obsidian-mem-touch-' + randomUUID()
+  const session = { header: { id: 'session-touch', cwd: join(root, 'repo') } }
+  const routes = new Map()
+  ctx.provide('webServer', {
+    register: (route) => {
+      routes.set(route.path, route)
+      return () => routes.delete(route.path)
+    },
+  })
+  ctx.provide('sessions', { get: (id) => (id === session.header.id ? session : undefined) })
+  const dispose = apply(ctx, { enabled: true, vaultPath: '~/' + slug })
+  t.after(() => dispose())
+  // The route is registered through `ctx.inject`, which lands on a later tick.
+  for (let tick = 0; tick < 50 && !routes.has('/obsidian-mem/graph'); tick += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  assert.ok(routes.has('/obsidian-mem/graph'), 'the graph route is mounted')
+
+  const server = createServer((request, response) => {
+    const route = routes.get(request.url)
+    if (route) return route.handler(request, response)
+    response.writeHead(404)
+    response.end('missing route')
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  t.after(() => server.close())
+  const origin = 'http://127.0.0.1:' + server.address().port
+
+  const note = 'Projects/demo--1c392abb/Docs/Note.md'
+  // A nested host read, exactly as `tool/ptc-dispatch` delivers it: `arguments` is
+  // an object, and the file path is absolute.
+  ctx.emit('session/event', session, {
+    type: 'tool/ptc-dispatch',
+    data: { name: 'read', arguments: { file_path: join(homedir(), slug, note) }, isError: false },
+  })
+  // A call that names no vault note must not become a cue either.
+  ctx.emit('session/event', session, {
+    type: 'tool/ptc-dispatch',
+    data: { name: 'read', arguments: { file_path: join(root, 'elsewhere.md') }, isError: false },
+  })
+
+  const response = await fetch(origin + '/obsidian-mem/graph', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId: 'session-touch', action: 'activity', cursor: 0 }),
+  })
+  assert.equal(response.status, 200)
+  const payload = await response.json()
+  assert.deepEqual(
+    payload.value.events.map((event) => [event.kind, event.path]),
+    [['read', note]],
   )
 })
 
