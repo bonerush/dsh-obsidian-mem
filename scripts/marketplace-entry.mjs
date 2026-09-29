@@ -329,7 +329,13 @@ export async function main(options = {}) {
 const isEntry =
   process.argv[1] !== undefined && import.meta.url === new URL(`file://${process.argv[1]}`).href
 if (isEntry) {
-  main({ version: process.argv[2], dryRun: process.argv.includes('--dry-run') })
+  // The version is the first argument that is not a flag. Reading argv[2] made
+  // `--dry-run` a version number and asked GitHub for a release named `v--dry-run`
+  // — which, to its credit, answered 404.
+  const args = process.argv.slice(2)
+  const dryRun = args.includes('--dry-run')
+  const version = args.find((argument) => !argument.startsWith('-'))
+  main({ version, dryRun })
     .then((result) => {
       process.stdout.write(`marketplace-entry: ${result.action}\n`)
       if (result.url !== null) process.stdout.write(`${result.url}\n`)
