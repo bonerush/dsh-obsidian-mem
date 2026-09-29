@@ -13,6 +13,31 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Fixed
 
+- **A title ending in `.md` no longer produces a file with two extensions.** A MOC
+  entry is the note's path minus one `.md`, so a note whose *title* already ends in
+  `.md` used to land on disk as `X.md.md` while every link to it said `X.md` — a
+  file that does not exist, in a link nobody can open, with nothing in the plugin
+  able to repair it. `sanitizeStem` strips a trailing extension now (after
+  truncation, before the final trim, case-insensitively, so `.MD` behaves too).
+  Routing is pinned by a test that asserts the invariant instead of the string: a
+  MOC line's target plus `.md` is the path the note actually has. Measured in a
+  live vault before the fix: 6 notes across two projects and 7 MOC entries.
+
+- **A wikilink inside code is no longer read as a link.** The dead-link scan ran
+  its pattern over the whole body, so a note that *discusses* link syntax
+  (`- [[target|alias]]` in prose about MOCs), quotes a shell test
+  (`[[ "$x" == y ]]` in a workflow) or quotes the linter's own message was reported
+  as linking to something that does not exist — 5 of the 6 findings left in a live
+  vault were this, including one the linter wrote about itself. Fenced blocks (a
+  fence of three or more backticks or tildes, closed by the same character at least
+  as long, unclosed running to the end of the note) and code spans (a backtick run
+  closed by a run of the same length) are blanked before the scan. One limit is
+  deliberate and stated in the code: a span crossing a line break is not paired,
+  because pairing across lines would let one stray backtick hide every link after
+  it. The test drives a note carrying all four shapes — real links, a code span, a
+  double-backtick span around a single one, a fenced block and a shell `[[` test —
+  and reported 6 dead links before the fix, the 2 real ones after.
+
 - **A failed marketplace step now says what is still true.** When it failed on the
   read-only token, the run went red at the last step and read like the release
   itself had failed — while the tag and its asset were already published and only

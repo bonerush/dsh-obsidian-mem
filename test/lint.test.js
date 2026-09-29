@@ -315,6 +315,46 @@ test('a dead wikilink is reported and a resolvable one is not', async (t) => {
   await f.index.close()
 })
 
+test('a wikilink inside code is not a dead link', async (t) => {
+  const f = await fixture(t)
+  // A note that *discusses* link syntax, or quotes a workflow script, links to
+  // nothing there: Obsidian resolves no link inside a code span or a fenced block,
+  // so neither may the linter.
+  await writeNote(
+    f,
+    projectPath(f, 'Docs/讨论链接写法.md'),
+    pluginNote({
+      id: 'doc-66666666-6666-4666-8666-666666666666',
+      title: '讨论链接写法',
+      body: [
+        '正文里的 [[不存在的东西]] 才是死链。',
+        '',
+        '- 行内代码里的写法示例：`[[链接]]`，以及 ``包含反引号 ` 的 [[也不算]]``。',
+        '',
+        '```sh',
+        'if [[ "$message" == chore(release):* ]]; then',
+        '```',
+        '',
+        '~~~text',
+        '[[围栏里的目标]]',
+        '~~~',
+        '',
+        '未闭合的反引号 ` 不影响后面的 [[也不存在]]。',
+        '',
+      ].join('\n'),
+    }),
+  )
+
+  const report = await lintOf(f)
+  const dead = report.findings.filter((finding) => finding.kind === 'dead-wikilink')
+  assert.deepEqual(
+    dead.map((finding) => /\[\[(.*?)\]\]/.exec(finding.message)?.[1]),
+    ['不存在的东西', '也不存在'],
+    JSON.stringify(dead),
+  )
+  await f.index.close()
+})
+
 test('case-folded duplicate note names are reported, exact duplicates are not', async (t) => {
   const f = await fixture(t)
   // Two directories on purpose: a case-insensitive filesystem cannot hold both

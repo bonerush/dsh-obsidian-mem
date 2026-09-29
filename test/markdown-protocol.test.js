@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { routeNote, wikilinkLine } from '../lib/routing.js'
 import {
   assertOwnedFrontmatter,
   bootstrapVault,
@@ -136,6 +137,45 @@ test('safeBasename trims trailing spaces, trailing dots and repeated dots', () =
   assert.equal(safeBasename('a..b'), 'a.b')
   assert.equal(safeBasename('.gitignore'), 'gitignore')
   assert.equal(safeBasename('报告.'), '报告')
+})
+
+test('safeBasename strips a trailing .md, so a note never keeps two extensions', () => {
+  // A title ends up in a MOC entry as `- [[<path minus one .md>|<title>]]`. A title
+  // that already ends in `.md` therefore used to land on disk as `X.md.md` while the
+  // entry pointed at `X.md` — a file that does not exist, and a link nobody can open.
+  assert.equal(
+    safeBasename('索引 287 与磁盘 306 的差异来自 _meta 非笔记文件及 hub index.md'),
+    '索引 287 与磁盘 306 的差异来自 _meta 非笔记文件及 hub index',
+  )
+  assert.equal(
+    safeBasename('Claims need evidence; unverified work is tracked in CHANGELOG.md'),
+    'Claims need evidence; unverified work is tracked in CHANGELOG',
+  )
+  assert.equal(safeBasename('report.MD'), 'report')
+  assert.equal(safeBasename('notes .md'), 'notes')
+  // The leading-dot trim runs first, so a title of nothing but `.md` is left as `md`:
+  // the strip has nothing to remove and the name is not a hidden file either way.
+  assert.equal(safeBasename('.md'), 'md')
+})
+
+test('the MOC entry for a title ending in .md resolves to the file it names', () => {
+  const bound = {
+    kind: 'bound',
+    projectId: ID1,
+    slug: 'alpha',
+    displayName: 'Alpha',
+    relativeDir: PROJECT_DIR,
+  }
+  const title = '索引 287 与磁盘 306 的差异来自 _meta 非笔记文件及 hub index.md'
+  const path = routeNote(bound, 'gotcha', title, { today: '2026-01-01' })
+  assert.equal(
+    path,
+    `${PROJECT_DIR}/Pitfalls/索引 287 与磁盘 306 的差异来自 _meta 非笔记文件及 hub index.md`,
+  )
+  const line = wikilinkLine(path, title)
+  // Obsidian appends one `.md` to a target: target + '.md' has to be the real path.
+  const target = line.slice('- [['.length, line.indexOf('|'))
+  assert.equal(`${target}.md`, path)
 })
 
 test('safeBasename never returns a Windows device name', () => {
