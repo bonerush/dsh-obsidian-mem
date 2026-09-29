@@ -579,6 +579,47 @@ test('a called memory keeps its name on screen while the graph is zoomed out', (
   s.renderer.destroy()
 })
 
+test('every lit label keeps one size, whatever weighted the cue', () => {
+  // Two notes lit in the same second disagreeing in size is the defect: a read cue
+  // reaches full weight while a search hit keeps 0.6 of it, so scaling the label by
+  // that weight drew the searched note smaller than the read one — and moved the
+  // size under the reader while the cue faded in and out.
+  const s = surface()
+  const view = (active = []) => {
+    const model = s.model([s.node('one', 'Docs/one.md'), s.node('two', 'Docs/two.md')])
+    model.active = active
+    return model
+  }
+  s.renderer.update(view())
+  s.emit(['one', 'two'], [0, 0, 120, 0])
+  s.wheel(0)
+  for (let i = 0; i < 40; i += 1) s.step()
+  s.wheel(120)
+  s.wheel(120)
+  for (let i = 0; i < 90; i += 1) s.step()
+  const drawn = () =>
+    s.contexts[0].calls.filter((call) => call.name === 'drawImage' && call.args.length === 5)
+  const mark = drawn().length
+  const at = Date.now()
+  s.renderer.update(
+    view([
+      { path: 'Docs/one.md', at, cursor: 1, kind: 'read' },
+      { path: 'Docs/two.md', at, cursor: 2, kind: 'search' },
+    ]),
+  )
+  for (let i = 0; i < 5; i += 1) s.step()
+  const sizes = drawn()
+    .slice(mark)
+    .slice(-2)
+    .map((call) => call.args[3])
+  assert.equal(sizes.length, 2, 'both lit notes keep their name on screen while zoomed out')
+  assert.ok(
+    Math.abs(sizes[0] - sizes[1]) < 0.001,
+    'a search hit keeps the read cue weight for its colour and alpha, not for its glyph size',
+  )
+  s.renderer.destroy()
+})
+
 test('the title-size setting scales the label raster', () => {
   const s = surface()
   const model = s.model([s.node('one')])

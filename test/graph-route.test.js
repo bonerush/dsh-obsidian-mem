@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -50,6 +50,13 @@ test('every module imported by the renderer is served by the registered routes',
     )
   }
   await load(origin + '/obsidian-mem/graph-renderer.js')
+  // `lib/client.js` is delivered by the client-module system rather than this route,
+  // but it names the browser modules by URL: asking for one that has no route is a
+  // 404 in the middle of the panel, so every URL it names is loaded here too.
+  const client = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
+  for (const match of client.matchAll(/['"]\/obsidian-mem\/([\w.-]+\.js)['"]/gu)) {
+    await load(origin + '/obsidian-mem/' + match[1])
+  }
 })
 
 test('graph route serves only same-origin requests for a live session', async (t) => {

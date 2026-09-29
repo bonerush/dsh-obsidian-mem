@@ -199,12 +199,27 @@ host `edit`/`write`, wrote (a **write**, in the tag colour). Injecting a
 relevant-note map into a turn lights its notes too. A host call counts only when
 its arguments name one `.md` inside the vault — `bash` and `run_code` deliberately
 do not, because their arguments are command or program text. These cues
-are per session and kept in memory only; reloading the host clears them. The
-graph endpoint is read-only and accepts same-origin requests from the local DSH
-web UI. Without Better Sidebar, the six memory tools continue to work.
+are per session and kept in memory only; reloading the host clears them. A cue moves
+a label's colour and opacity but never its size: every lit label in a frame is drawn
+at one size, so two notes touched in the same second cannot disagree. The graph
+endpoint is read-only and accepts same-origin requests from the local DSH web UI.
+Without Better Sidebar, the six memory tools continue to work.
 
-The browser assets are re-read on every request, so a change under `lib/` reaches
-the page on reload instead of waiting for the host to restart.
+The controls themselves are remembered, unlike the cues: scope, filters, colour
+groups, display and forces are kept in this browser's `localStorage` under one key
+(`dsh-obsidian-mem:graph-settings`), so they survive a page reload and a host
+restart. They belong to the browser profile and the origin, which makes
+`127.0.0.1:3080` and `localhost:3080` two separate panels; nothing about them leaves
+the browser, and the endpoint above stays read-only. **恢复默认设置** writes the
+built-in values back over the stored record. A record another version wrote, or one
+edited by hand, is never trusted as it stands: every field is checked and falls back
+to its default, because a `NaN` force blanks the graph instead of merely looking
+wrong.
+
+The browser assets are re-read on every request, so a change under `lib/` reaches the
+page on reload instead of waiting for the host to restart. A **new** asset is the one
+exception: the route list is registered when the plugin mounts, so adding a file needs
+one remount before the browser can fetch it.
 
 The interface and force/rendering rules were adapted by inspecting the installed
 Obsidian graph source. Canvas drawing uses its node-size, label-fade and

@@ -11,6 +11,42 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Added
+
+- **The graph panel's controls outlive the page now.** They were plain component
+  state, and the sidebar is rebuilt from scratch on every load, so a reload — or a
+  host restart — put scope, filters, colour groups, display and forces back at their
+  built-in values. They are stored in this browser's `localStorage` under one
+  versioned key (`dsh-obsidian-mem:graph-settings`), read through a new browser
+  module served beside the renderer (`lib/graph-settings.js`) and written back only
+  after that read lands: the first render still holds the built-in defaults, and
+  saving those would erase the record. Storage is not trusted in either direction —
+  every field is validated and falls back field by field, a record from another
+  version is ignored rather than migrated, colour groups are bounded, and a storage
+  that refuses to be read or written (a private window, a full quota) leaves a graph
+  that works. The graph route stays read-only. The unit matrix covers the round trip,
+  the per-field fallback, the version fence, the group bounds and both storage
+  failures; `graph-route.test.js` now loads every module the client names by URL, so
+  a name with no route fails the suite instead of 404-ing inside the panel.
+- **A new asset needs one plugin remount, and the README now says so.** The route
+  list is captured when the plugin mounts, so `/obsidian-mem/graph-settings.js`
+  answered 404 on the live host while `graph-renderer.js` answered 200 from the same
+  process — measured, not assumed. A reload is enough for a change to an asset that
+  already has a route; a file that is new to the list needs the remount.
+
+### Fixed
+
+- **Two notes lit in the same second no longer disagree about the size of their
+  titles.** While the graph was zoomed out, a lit label was drawn at
+  `rootScale + (1 - rootScale) * weight`, so its size followed its own cue's weight:
+  a `mem_search` hit keeps 0.6 of a read, so it stayed visibly smaller than the
+  `mem_read` beside it, and the size moved under the reader as each cue faded in and
+  out. The pin is now the frame's largest cue weight, which draws every lit label at
+  one size at any instant while the fade stays in the alpha. The hovered label keeps
+  app.js's own `1 / scale` pin, and a single cue behaves exactly as it did — the
+  pre-existing release test still passes unchanged, and the new one fails on the old
+  formula and passes on this one.
+
 ## 0.1.8 — 2026-09-29
 
 ### Added

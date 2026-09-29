@@ -61,6 +61,9 @@ const LAYERS = {
   // The finite recall clock and Canvas cue painting are independent leaves;
   // keeping them below the renderer preserves its geometry and label budget.
   'graph-recall': 0,
+  // The panel's remembered controls: a pure browser-side leaf with no repository
+  // import at all, so it sits at the bottom with the other leaves.
+  'graph-settings': 0,
   'graph-renderer': 1,
   'graph-worker': 0,
   'graph-activity': 0,
@@ -149,7 +152,11 @@ const BUDGETS = {
   'lib/index-db.js': 2300,
   // The loader owns React controls; the renderer owns cached labels, culling
   // and frame scheduling. Neither the renderer nor Worker imports React.
-  'lib/client.js': 600,
+  // Raised from 600 when the panel's controls started outliving the page: the host
+  // rebuilds this tab on every load and the graph route is read-only, so the restore
+  // and its gated save live here. The record shape and its validation are the part
+  // that earned a module of its own (`lib/graph-settings.js`), not the wiring.
+  'lib/client.js': 650,
   'lib/graph-renderer.js': 700,
   // The eleven-slot table, its two CSS forms and the probe read, split out of the
   // renderer when the label-size work pushed that file past its budget.
@@ -160,6 +167,9 @@ const BUDGETS = {
   // TTL) instead of being dropped — without that last part a note the turn *creates*
   // is written and never lights up.
   'lib/graph-recall.js': 250,
+  // The graph panel's remembered controls: the record shape, the per-field fallback
+  // and the bounds that keep an edited `localStorage` entry from blanking the graph.
+  'lib/graph-settings.js': 200,
   // Upstream minified D3 plus the reviewed source in client/graph-worker.js.
   'lib/graph-worker.js': 150,
   'lib/graph-activity.js': 100,

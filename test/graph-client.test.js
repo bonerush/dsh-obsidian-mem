@@ -67,6 +67,21 @@ test('browser bundle registers one memory graph tab through Better Sidebar', asy
     'the display section exposes the title-size slider',
   )
   assert.ok(script.includes('label: 0.85'), 'the title-size default is 0.85')
+  // The panel's own controls have to outlive the page: the host builds this tab from
+  // scratch on every load and the route that feeds it is read-only, so the bundle
+  // restores through the settings module the route serves — and saves only after
+  // that read lands, because the first render still holds the built-in defaults and
+  // writing those would erase the record.
+  assert.ok(
+    script.includes("import('/obsidian-mem/graph-settings.js')"),
+    'the bundle loads the settings module beside it',
+  )
+  assert.ok(script.includes('createGraphSettingsStore({'), 'the panel binds one store')
+  assert.match(
+    script,
+    /if \(!restored\) return\s+store\.current\?\.write\(/u,
+    'the save is gated on the restore landing first',
+  )
   exports.apply(ctx)
   assert.equal(tab.id, 'obsidian-mem:graph')
   assert.equal(tab.single, true)
