@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.1.6 — 2026-09-29
+
 ### Added
 
 - **A release now points the marketplace entry at itself.** Both release branches
