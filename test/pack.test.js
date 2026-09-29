@@ -10,17 +10,30 @@
 // reason alone.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { Range, parse, satisfies } from 'semver'
 
 import { REQUIRED_ENTRIES, verifyTarballEntries } from '../scripts/verify-tarball.mjs'
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const VERIFIER = resolve(REPO_ROOT, 'scripts/verify-pack.mjs')
 const TARBALL_VERIFIER = resolve(REPO_ROOT, 'scripts/verify-tarball.mjs')
+
+/**
+ * The harness versions this plugin claims to have been verified against.
+ *
+ * Kept as a literal rather than read out of the README: the point of the check is
+ * that the declared peer range agrees with the claim, and parsing prose to prove
+ * a claim about prose would let both drift together.
+ */
+const MEASURED_HOST_VERSIONS = Object.freeze({
+  '@deepseek-ai/dsh-tools': ['0.1.5-rc.2', '0.1.7-rc.2', '0.2.0-rc.1'],
+  '@deepseek-ai/cordis': ['4.0.2', '4.0.4'],
+})
 
 /**
  * The six tool names the shipped surface registers, and the four names the façade
@@ -402,4 +415,38 @@ test('the archive this checkout really produces satisfies the contract', () => {
   assert.match(run.stdout, /verify-tarball: OK/)
   // The report has to stay informative without freezing a number.
   assert.match(run.stdout, /lib modules, every required asset present/)
+})
+
+test('the harness peer range opts each measured prerelease tuple in explicitly', () => {
+  // A prerelease version only satisfies a range when some comparator in the same
+  // set shares its exact major.minor.patch tuple AND carries a prerelease tag.
+  // That is node-semver's documented behavior, and it makes a range look wider
+  // than it is: `>=0.1.5-rc.1 <0.2.0-0` rejects `0.1.7-rc.2` because no
+  // comparator mentions the 0.1.7 tuple. This plugin shipped exactly that bug —
+  // `^0.1.5-rc.1 || ^0.2.0-rc.1` excluded `0.1.7-rc.2`, one of the two versions
+  // the README lists as measured. The assertion is "the refused version names a
+  // tuple the range never opts in", so it stays about the rule rather than about
+  // a range string nobody may ever change.
+  const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'))
+  for (const name of ['@deepseek-ai/dsh-tools', '@deepseek-ai/cordis']) {
+    const range = pkg.peerDependencies?.[name]
+    assert.equal(typeof range, 'string', `${name} is declared as a peer`)
+    const optedIn = new Set(
+      new Range(range).set
+        .flat()
+        .filter((comparator) => comparator.semver?.prerelease?.length)
+        .map(
+          (comparator) =>
+            `${comparator.semver.major}.${comparator.semver.minor}.${comparator.semver.patch}`,
+        ),
+    )
+    for (const version of MEASURED_HOST_VERSIONS[name]) {
+      const parsed = parse(version)
+      const tuple = `${parsed.major}.${parsed.minor}.${parsed.patch}`
+      assert.ok(
+        satisfies(version, range) || optedIn.has(tuple),
+        `${name} ${range} silently excludes ${version}: no comparator opts in the ${tuple} tuple`,
+      )
+    }
+  }
 })

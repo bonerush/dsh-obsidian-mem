@@ -697,6 +697,14 @@ Only the patch bump is automated: nothing infers "a notable feature" or
 "breaking" from a diff, so a minor or major release is `package.json` edited by
 hand with the changelog section written for it.
 
+Every Release also carries the packed plugin as `dsh-obsidian-mem-<version>.tgz`,
+so an install can skip the build-from-source path — which needs a `prepare`
+approval in pnpm's `allowBuilds` — and take the prebuilt archive instead. The
+marketplace entry for this plugin pins that asset by tag, because the
+`releases/latest/download/<file>` form resolves `latest` at request time while
+taking the filename literally, so a version in the asset name would rot the link
+on the next release.
+
 What the workflow does, in order:
 
 1. `npm run check` — the whole gate, on the commit about to be released.

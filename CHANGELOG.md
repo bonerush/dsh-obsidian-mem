@@ -11,6 +11,42 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Added
+
+- **Every Release now carries the packed plugin as a `.tgz` asset.** The
+  marketplace entry for this plugin can point a `tarball:` field at a pinned
+  asset URL, which the storefront prefers over the build-from-source command —
+  and unlike `github:bonerush/dsh-obsidian-mem`, it does not make a user approve
+  a `prepare` script through pnpm's `allowBuilds` before anything installs. Both
+  release branches pack with `npm pack --ignore-scripts` (the gate above has
+  already run `prepack`, and the default would run the whole suite twice) and
+  attach the archive: the bootstrap branch on `gh release create`, the bump
+  branch on `create` or `upload --clobber` when the Release already exists.
+
+  Verified by installing the packed archive into an isolated `DSH_HOME`:
+  `dsh plugin --profile web add ./dsh-obsidian-mem-0.1.4.tgz` resolved five
+  packages in 495 ms with no `allowBuilds` prompt, and the installed copy's
+  `dsh-obsidian-mem-diagnose` wrote a report whose `package-files` check passes.
+  `v0.1.4` carries the asset and the URL answers a ranged request with `206`,
+  which is what the marketplace's own tarball probe asks for.
+
+### Fixed
+
+- **The harness peer range silently excluded a version this repository had
+  measured.** node-semver only lets a prerelease satisfy a range when some
+  comparator in the same set shares its exact `major.minor.patch` tuple *and*
+  carries a prerelease tag, so `^0.1.5-rc.1 || ^0.2.0-rc.1` accepted
+  `0.1.5-rc.2` and `0.2.0-rc.1` but excluded `0.1.7-rc.2` — one of the two
+  versions the README lists as verified. Nothing failed loudly; a user on that
+  version would have met an `ERESOLVE` and worked around it by hand. The range is
+  now `^0.1.5-rc.1 || ^0.1.7-rc.1 || ^0.2.0-rc.1`, which opts in each measured
+  tuple. `test/pack.test.js` asserts the rule rather than the string: for each
+  measured version, it is satisfied or its tuple is one the range opts in, read
+  out of the parsed range. Red first — the new case failed with
+  `silently excludes 0.1.7-rc.2: no comparator opts in the 0.1.7 tuple`. It also
+  needs `semver` as an exactly-pinned devDependency; the runtime dependency
+  budget is unchanged at two.
+
 ## 0.1.4 — 2026-09-29
 
 ### Fixed

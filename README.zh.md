@@ -615,6 +615,12 @@ monorepo 发布、不随本插件发布，所以在这里那一条命令*就是*
 只有补丁号是自动的：没有任何东西能从 diff 里推断出「值得标注的功能」或「破坏性变更」，
 所以次版本号和主版本号是手工编辑 `package.json`，并为它写好 changelog 段落。
 
+每个 Release 还会带上打包好的 `dsh-obsidian-mem-<version>.tgz`，于是安装可以跳过源码
+构建那条路——那条路需要在 pnpm 的 `allowBuilds` 里批准 `prepare` 脚本——直接取预构建
+归档。本插件的商城条目按 tag 钉住这个资产：`releases/latest/download/<file>` 这种写法
+只在请求时解析 `latest`，文件名却是照字面取的，所以资产名里带版本号会在下一次发版时
+把这个链接变成死链。
+
 workflow 依次做这些事：
 
 1. `npm run check`——在即将发布的那个提交上跑完整闸门。

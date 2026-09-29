@@ -116,7 +116,12 @@ jobs:
             const end = rest.findIndex((line) => /^## /.test(line))
             fs.writeFileSync(file, (end === -1 ? rest : rest.slice(0, end)).join("\n").trim() + "\n")
           ' CHANGELOG.md "$version" > "$notes"
-          gh release create "$tag" --title "dsh-obsidian-mem ${tag}" --notes-file "$notes"
+          # The prebuilt archive rides the release, so a marketplace entry can
+          # point `tarball:` at a pinned asset URL instead of making every user
+          # build from source. `--ignore-scripts` because `npm run check` above
+          # already ran `prepack`; the default would run the whole suite twice.
+          npm pack --ignore-scripts --pack-destination .
+          gh release create "$tag" --title "dsh-obsidian-mem ${tag}" --notes-file "$notes" ./*.tgz
 
       # A release commit has nothing left to release, so it is the one push that
       # does not produce a version of its own.
@@ -191,5 +196,12 @@ jobs:
             const end = rest.findIndex((line) => /^## /.test(line))
             fs.writeFileSync(file, (end === -1 ? rest : rest.slice(0, end)).join("\n").trim() + "\n")
           ' CHANGELOG.md "$next" > "$notes"
-          gh release view "v${next}" > /dev/null 2>&1 || \
-            gh release create "v${next}" --title "dsh-obsidian-mem v${next}" --notes-file "$notes"
+          # Same prebuilt archive as the bootstrap branch. `npm pack` writes
+          # `dsh-obsidian-mem-<version>.tgz` into the checkout, not into the
+          # commit, so the release commit stays clean.
+          npm pack --ignore-scripts --pack-destination .
+          if gh release view "v${next}" > /dev/null 2>&1; then
+            gh release upload "v${next}" ./*.tgz --clobber
+          else
+            gh release create "v${next}" --title "dsh-obsidian-mem v${next}" --notes-file "$notes" ./*.tgz
+          fi
