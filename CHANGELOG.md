@@ -13,6 +13,16 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Fixed
 
+- **A failed marketplace step now says what is still true.** When it failed on the
+  read-only token, the run went red at the last step and read like the release
+  itself had failed — while the tag and its asset were already published and only
+  the marketplace entry was behind. Both branches now wrap the call and emit an
+  annotation naming that state and the fix. There is deliberately no
+  `continue-on-error` and no summary step: a step that swallowed its own failure
+  would leave the entry stale with nothing red to notice, which is the failure the
+  whole job exists to prevent. Simulated with the read-only token: the script's
+  own diagnosis, then the two annotations, then exit 1.
+
 - **The marketplace step now learns about a read-only token before it does any
   work, and says what to grant.** The first real release through it failed at the
   very end — clone, edit, validate with the list's own tooling, commit, then a 403

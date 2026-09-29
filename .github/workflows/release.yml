@@ -221,18 +221,34 @@ jobs:
       #
       # `GH_TOKEN` is this repository's own token for reading its releases, and
       # `MARKETPLACE_TOKEN` is the fine-grained one that may write the fork and
-      # open the pull request. When the secret is absent the script says so and
-      # this step fails — an unannounced stale entry is worse than a red run.
+      # open the pull request. When the secret is absent or cannot write, the
+      # step fails — an unannounced stale entry is worse than a red run — and the
+      # annotation says what is actually still true, because by this point the tag
+      # and its asset are published and only the entry is behind.
+      #
+      # There is deliberately no `continue-on-error` and no summary step: a step
+      # that swallowed its own failure would leave the entry stale with nothing
+      # red to notice, which is the failure this whole job exists to prevent.
       - name: Point the marketplace entry at the bootstrap release
         if: steps.classify.outputs.resolved == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MARKETPLACE_TOKEN: ${{ secrets.MARKETPLACE_TOKEN }}
-        run: node scripts/marketplace-entry.mjs
+        run: |
+          if ! node scripts/marketplace-entry.mjs; then
+            echo "::error::The release is published; only the marketplace entry is behind." >&2
+            echo "::error::Fix MARKETPLACE_TOKEN (it needs Contents: Read and write on the fork), then run 'node scripts/marketplace-entry.mjs --check-token' locally." >&2
+            exit 1
+          fi
 
       - name: Point the marketplace entry at the bumped release
         if: steps.guard.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MARKETPLACE_TOKEN: ${{ secrets.MARKETPLACE_TOKEN }}
-        run: node scripts/marketplace-entry.mjs "$(node -p 'require("./package.json").version')"
+        run: |
+          if ! node scripts/marketplace-entry.mjs "$(node -p 'require("./package.json").version')"; then
+            echo "::error::The release is published; only the marketplace entry is behind." >&2
+            echo "::error::Fix MARKETPLACE_TOKEN (it needs Contents: Read and write on the fork), then run 'node scripts/marketplace-entry.mjs --check-token' locally." >&2
+            exit 1
+          fi
