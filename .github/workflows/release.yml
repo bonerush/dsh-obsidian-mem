@@ -152,25 +152,14 @@ jobs:
           branch="$(git rev-parse --abbrev-ref HEAD)"
 
           # The version bump and the changelog move together: a tag is only
-          # allowed to name a version whose changelog section exists.
+          # allowed to name a version whose changelog section exists. The section
+          # is placed by version number rather than at the top — `v0.1.1` was
+          # tagged after `v0.1.2` had shipped, and inserting above it left the
+          # file reading 0.1.3, 0.1.1, 0.1.2 — so `scripts/changelog-order.mjs`
+          # owns both the cut and the ordering, and its own tests cover it.
           npm version patch --no-git-tag-version
           next="$(node -p 'require("./package.json").version')"
-          node -e '
-            const fs = require("node:fs")
-            const [file, version, date] = process.argv.slice(1)
-            const heading = "## Unreleased"
-            const text = fs.readFileSync(file, "utf8")
-            const lines = text.split("\n")
-            const start = lines.findIndex((line) => line.trim() === heading)
-            if (start === -1) throw new Error("CHANGELOG.md has no " + heading + " section")
-            const rest = lines.slice(start + 1)
-            const end = rest.findIndex((line) => /^## /.test(line))
-            const body = (end === -1 ? rest : rest.slice(0, end)).join("\n").trim()
-            if (body === "") throw new Error("the " + heading + " section is empty; nothing to release")
-            const tail = end === -1 ? [] : rest.slice(end)
-            const cut = [heading, "", "## " + version + " — " + date, "", body, "", ...tail]
-            fs.writeFileSync(file, [...lines.slice(0, start), ...cut].join("\n"))
-          ' CHANGELOG.md "$next" "$today"
+          node scripts/changelog-order.mjs --cut "$next" "$today"
           node -e '
             const fs = require("node:fs")
             const version = process.argv[1]

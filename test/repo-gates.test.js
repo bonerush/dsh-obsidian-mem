@@ -15,6 +15,13 @@ import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 
 import { resolveBase } from '../scripts/ci-base.mjs'
+import {
+  compareVersions,
+  cutRelease,
+  isDescending,
+  main as changelogOrderMain,
+  parseChangelog,
+} from '../scripts/changelog-order.mjs'
 import { checkStagedSources } from '../scripts/check-staged.mjs'
 import { currentHooksPath, HOOKS_PATH, main as installHooks } from '../scripts/install-hooks.mjs'
 import { judge, main as verifyChangelog, unreleasedSection } from '../scripts/verify-changelog.mjs'
@@ -263,4 +270,110 @@ test('ci-base refuses a base that equals HEAD', (t) => {
   const verdict = resolveBase({ DEFAULT_BRANCH: 'main' }, root)
   assert.equal(verdict.sha, null)
   assert.match(verdict.reason, /nothing to compare|no event base/)
+})
+
+// ---------------------------------------------------------------------------
+// Changelog section order
+// ---------------------------------------------------------------------------
+
+test('cutRelease places a release by version, not at the top', () => {
+  // The shape that produced the defect: 0.1.2 shipped, then 0.1.1 was tagged by
+  // hand, so the next release had to land between them rather than above both.
+  const text = [
+    '# Changelog',
+    '',
+    '## Unreleased',
+    '',
+    '### Fixed',
+    '',
+    '- something new',
+    '',
+    '## 0.1.3',
+    '',
+    '- three',
+    '',
+    '## 0.1.1',
+    '',
+    '- one',
+    '',
+    '## 0.1.0',
+    '',
+    '- zero',
+    '',
+  ].join('\n')
+  const cut = cutRelease(text, '0.1.2', '2026-09-29')
+  assert.deepEqual(
+    parseChangelog(cut).releases.map((release) => release.version),
+    ['0.1.3', '0.1.2', '0.1.1', '0.1.0'],
+    'a late release lands in numeric order',
+  )
+  assert.equal(isDescending(parseChangelog(cut).releases), true)
+  assert.equal(unreleasedSection(cut), null, 'the body moves out of Unreleased')
+  assert.match(cut, /## 0\.1\.2 — 2026-09-29\n\n### Fixed\n\n- something new/)
+})
+
+test('cutRelease refuses an empty Unreleased section and a duplicate version', () => {
+  const empty = '# Changelog\n\n## Unreleased\n\n## 0.1.0\n\n- zero\n'
+  assert.throws(() => cutRelease(empty, '0.1.1', '2026-09-29'), /is empty/)
+  const filled = '# Changelog\n\n## Unreleased\n\n- next\n\n## 0.1.0\n\n- zero\n'
+  assert.throws(() => cutRelease(filled, '0.1.0', '2026-09-29'), /already has a section/)
+  assert.throws(
+    () => cutRelease('# Changelog\n\n- no heading\n', '0.1.1', '2026-09-29'),
+    /no ## Unreleased/,
+  )
+})
+
+test('compareVersions sorts by number, so 0.1.10 is newer than 0.1.9', () => {
+  assert.ok(compareVersions('0.1.10', '0.1.9') > 0)
+  assert.ok(compareVersions('0.2.0', '0.1.99') > 0)
+  assert.equal(compareVersions('1.0.0', '1.0.0'), 0)
+})
+
+test('the ordering check fails on a disordered changelog and --fix repairs it', (t) => {
+  const { root, changelog } = fixture(t)
+  writeFileSync(
+    changelog,
+    '# Changelog\n\n## Unreleased\n\n- next\n\n## 0.1.1\n\n- one\n\n## 0.1.2\n\n- two\n',
+  )
+  assert.equal(changelogOrderMain([], root), 1, 'a disordered file is reported')
+  assert.equal(changelogOrderMain(['--fix'], root), 0, '--fix rewrites it and reports success')
+  assert.deepEqual(
+    parseChangelog(readFileSync(changelog, 'utf8')).releases.map((release) => release.version),
+    ['0.1.2', '0.1.1'],
+  )
+  assert.equal(changelogOrderMain([], root), 0, 'and the check passes afterwards')
+  assert.equal(changelogOrderMain(['--nope'], root), 2, 'an unknown argument is a usage error')
+})
+
+test('this repository keeps its own changelog newest-first', () => {
+  const text = readFileSync(join(REPO_ROOT, 'CHANGELOG.md'), 'utf8')
+  const parsed = parseChangelog(text)
+  assert.notEqual(parsed, null, 'CHANGELOG.md has an Unreleased section')
+  assert.deepEqual(
+    parsed.releases.map((release) => release.version),
+    [...parsed.releases.map((release) => release.version)].sort((a, b) => compareVersions(b, a)),
+  )
+})
+
+test('--cut is the release path, and it refuses an empty section', (t) => {
+  const { root, changelog } = fixture(t)
+  // The fixture's Unreleased section carries an entry, so this cut succeeds and
+  // moves it. The empty-body refusal is `cutRelease`'s own case, covered above
+  // against a body with nothing in it: one fixture cannot be both states.
+  assert.equal(changelogOrderMain(['--cut', '0.1.1', '2026-09-29'], root), 0)
+  const cut = readFileSync(changelog, 'utf8')
+  assert.match(cut, /## 0\.1\.1 — 2026-09-29\n\n### Added\n\n- the first thing/)
+  assert.equal(unreleasedSection(cut), null, 'the body moved under the new version')
+  assert.deepEqual(
+    parseChangelog(cut).releases.map((release) => release.version),
+    ['0.1.1', '0.1.0'],
+  )
+  // With nothing left to release, a second cut is refused rather than writing an
+  // empty section under a new number.
+  assert.equal(changelogOrderMain(['--cut', '0.1.2', '2026-09-29'], root), 1)
+  assert.equal(
+    parseChangelog(readFileSync(changelog, 'utf8')).releases.length,
+    2,
+    'the refused cut wrote nothing',
+  )
 })

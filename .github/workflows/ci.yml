@@ -45,3 +45,8 @@ jobs:
         run: echo "sha=$(node scripts/ci-base.mjs)" >> "$GITHUB_OUTPUT"
       - name: Unreleased gate
         run: node scripts/verify-changelog.mjs --base "${{ steps.base.outputs.sha }}"
+      # Named separately so a disordered file reports as itself rather than as part
+      # of the suite. The same check runs inside `test/repo-gates.test.js`; this
+      # step is the cheap, legible version of it.
+      - name: Changelog section order
+        run: node scripts/changelog-order.mjs
