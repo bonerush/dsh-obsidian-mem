@@ -11,40 +11,18 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
-## 0.1.2 — 2026-09-29
+### Fixed
 
-### Added
-
-- **A push into `main` is a release, and the version now moves with it.** This
-  repository publishes no npm package, so a release is a git tag plus a GitHub
-  Release, and `.github/workflows/release.yml` mints both. The policy is
-  documented under Development in the README: `0.0.1` per push, `0.1` for a
-  notable feature, `1` for a breaking change — so the patch bump is mechanical
-  and a major bump is a person editing `package.json` before the push.
-
-  The workflow releases the version already declared when it carries no tag (that
-  path produced the `v0.1.1` release), and otherwise verifies the tree with
-  `npm run check`, refuses the push when `lib/` changed without a real
-  `## Unreleased` entry, bumps the patch, moves the changelog section under the
-  new number, updates `dsh.plugin.json` and the Codex server identity, commits as
-  `chore(release): <version>`, tags, and publishes the Release from that
-  changelog section.
-
-  Two failure modes are designed out rather than discovered later: pushing with
-  the default credential helper attributes the commit to `github-actions[bot]`,
-  which suppresses `GITHUB_TOKEN` on the resulting push event, so the workflow
-  would see "no tag for this version" on every run and bump forever — the remote
-  URL carries the token instead; and a release commit has nothing left to
-  release, because it moves every entry out of `## Unreleased`, so its own push
-  is skipped after the bootstrap step that only tags.
-
-  Honest limits: the skip guard matches the commit subject `chore(release):*`, so
-  a person who writes exactly that subject for an unrelated commit would skip
-  their own release; and a human push into `main` now fails unless the changelog
-  entry lands with it. Neither has been exercised on a real GitHub runner yet —
-  the inline steps were run against copies of `CHANGELOG.md`, `dsh.plugin.json`
-  and `codex/server.mjs` for both the empty-section refusal and the successful
-  cut, and the YAML parses clean, but the workflow itself has not run.
+- **The first release out of the automated path skipped its own bootstrap.** The
+  workflow only tags a version that carries no tag, and that step was written as
+  the *else* of the guard that skips a release commit. On the very push that
+  added the workflow there was no tag yet, so the guard and the bootstrap were
+  mutually exclusive: `0.1.1` was declared and never tagged, and the push
+  released `0.1.2` instead. `v0.1.1` was then tagged at the commit whose
+  `package.json` says 0.1.1, so the number now names the content it always
+  described, and this file lists 0.1.1 above 0.1.2 because that is the order the
+  numbers run in. Both tags and both Releases exist; the bootstrap step itself
+  still has not run on a runner.
 
 ## 0.1.1 — 2026-09-29
 
@@ -1201,6 +1179,41 @@ what is still open.
   **Action for anyone who copied the design document's §12 block:** those fields
   now produce a loud error where they used to be a silent no-op. Remove them; the
   accepted field set is the README table.
+
+## 0.1.2 — 2026-09-29
+
+### Added
+
+- **A push into `main` is a release, and the version now moves with it.** This
+  repository publishes no npm package, so a release is a git tag plus a GitHub
+  Release, and `.github/workflows/release.yml` mints both. The policy is
+  documented under Development in the README: `0.0.1` per push, `0.1` for a
+  notable feature, `1` for a breaking change — so the patch bump is mechanical
+  and a major bump is a person editing `package.json` before the push.
+
+  The workflow releases the version already declared when it carries no tag (that
+  path produced the `v0.1.1` release), and otherwise verifies the tree with
+  `npm run check`, refuses the push when `lib/` changed without a real
+  `## Unreleased` entry, bumps the patch, moves the changelog section under the
+  new number, updates `dsh.plugin.json` and the Codex server identity, commits as
+  `chore(release): <version>`, tags, and publishes the Release from that
+  changelog section.
+
+  Two failure modes are designed out rather than discovered later: pushing with
+  the default credential helper attributes the commit to `github-actions[bot]`,
+  which suppresses `GITHUB_TOKEN` on the resulting push event, so the workflow
+  would see "no tag for this version" on every run and bump forever — the remote
+  URL carries the token instead; and a release commit has nothing left to
+  release, because it moves every entry out of `## Unreleased`, so its own push
+  is skipped after the bootstrap step that only tags.
+
+  Honest limits: the skip guard matches the commit subject `chore(release):*`, so
+  a person who writes exactly that subject for an unrelated commit would skip
+  their own release; and a human push into `main` now fails unless the changelog
+  entry lands with it. Neither has been exercised on a real GitHub runner yet —
+  the inline steps were run against copies of `CHANGELOG.md`, `dsh.plugin.json`
+  and `codex/server.mjs` for both the empty-section refusal and the successful
+  cut, and the YAML parses clean, but the workflow itself has not run.
 
 ## 0.1.0 — 2026-09-23
 
