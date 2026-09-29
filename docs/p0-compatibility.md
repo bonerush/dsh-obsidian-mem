@@ -507,3 +507,36 @@ node test/p0/run-v4-source-probe.mjs \
 上述检查证明版本准入、真实新 tools 运行时上的既有测试、原生插件激活和
 浏览器渲染。没有在 0.2 宿主上新跑模型回合，因此不把它写成首请求召回、
 多回合注入、自动摄取或提炼的新增活体证据。
+
+## 12. 图谱提示要用的工具事件实测（2026-09-29）
+
+动效原来只由两个生产者驱动：成功的 `mem_read` 与真正注入的相关笔记索引。
+一个整理了 587 条笔记的回合（24 次 `mem_write`、10 次 `mem_admin`、1 次
+`mem_search`，其余用宿主的 `read`/`grep`/`bash` 读 vault）因此整场没有一次
+提示——该会话的活动环形缓冲直到用户下一句话才出现第 1 个事件。要让图谱跟上
+真实工作，必须读宿主自己的工具事件，所以先把它们的形状量出来。
+
+来源：`$DSH_HOME/sessions/--…-dsh-obsidian-mem--/session-72933d86-…/session.v4.jsonl.zstd`
+（849 行，`zstd -dc` 后逐行 `json.loads`；只统计类型与字段名，未摘录正文）。
+
+| 事件类型 | 条数 | 字段 | `arguments` 类型 |
+| --- | ---: | --- | --- |
+| `tool/call` | 83 | `callId, turn, step, name, arguments` | **字符串**（JSON 文本） |
+| `tool/result` | 82 | `turn, step, message` | 无 name/arguments |
+| `tool/ptc-dispatch-start` | 202 | `rootCallId, parentCallId, subCallId, name, arguments` | **对象** |
+| `tool/ptc-dispatch` | 202 | 同上 + `content, isError` | **对象** |
+
+对设计有约束力的三点：
+
+1. 只有 `tool/call` 与 `tool/ptc-dispatch*` 带 `name`；`tool/result` 只有
+   `message`，因此「哪个工具跑了」只能从调用侧取。
+2. `arguments` 在两种事件里类型不同（字符串 vs 对象），解析必须同时接受并
+   容忍解析失败；名字不在白名单时要在解析之前就返回，否则 `run_code` 的程序
+   文本（同一会话里单条可达数 KB）会被无谓地 `JSON.parse`。
+3. `tool/ptc-dispatch` 是完成事件并带 `isError`，`-start` 与 `tool/call` 不是，
+   所以「失败的嵌套调用不算一次触碰」只能在 `tool/ptc-dispatch` 上判断。
+
+同一会话的回合 1（整理回合）工具构成，正是白名单要排除的东西：`run_code` 36、
+`bash` 25、`read` 22、`grep` 8、`edit` 5——读取 vault 的是 `read`/`grep`，
+而 `bash`/`run_code` 的参数是命令与程序文本，其中出现的 vault 路径并不代表
+打开过那篇笔记。

@@ -190,9 +190,15 @@ projects. Administrative notes remain excluded from memory retrieval; the graph
 exposes only their labels and relationships. **Existing files only** hides
 unresolved targets. Attachments are outside this Markdown view and remain disabled.
 
-When this DSH process successfully calls `mem_read`, or injects a relevant-note
-map into a turn, the matching node and adjacent links pulse briefly, and that
-node's file name stays on screen at any zoom so the cue names what was read. These cues
+When this DSH process does something to memory, the matching node and adjacent links
+pulse briefly and that node's file name stays on screen at any zoom, so the cue
+names what was touched: a successful `mem_read`, or a host `read`/`grep` that opens
+a note in the vault (a **read**, in the accent colour); the notes a `mem_search`
+returned (the same colour, lighter); and the notes a `mem_write`/`mem_log`, or a
+host `edit`/`write`, wrote (a **write**, in the tag colour). Injecting a
+relevant-note map into a turn lights its notes too. A host call counts only when
+its arguments name one `.md` inside the vault — `bash` and `run_code` deliberately
+do not, because their arguments are command or program text. These cues
 are per session and kept in memory only; reloading the host clears them. The
 graph endpoint is read-only and accepts same-origin requests from the local DSH
 web UI. Without Better Sidebar, the six memory tools continue to work.

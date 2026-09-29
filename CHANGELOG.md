@@ -11,6 +11,25 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Added
+
+- **The memory graph follows the agent's own file work now, not only `mem_read`.**
+  A turn that wrote 24 notes, ran 10 admin actions and read the vault through the
+  host's `read` tool lit nothing, because the activity feed had exactly two
+  producers: a successful `mem_read` and an injected recall map. It now also cues a
+  `mem_search`'s hits (the same accent at a lower weight — finding a note is weaker
+  evidence of use than opening it), a `mem_write`/`mem_log` (the tag colour, so
+  "this note changed" does not read as "this note was read"), and any host
+  `read`/`edit`/`write`/`grep` whose arguments name one `.md` inside the vault.
+  `bash`, `run_code` and `glob` are excluded deliberately: their arguments are
+  command text, program text or a search root, and that one turn mentioned vault
+  paths in 25 `bash` and 36 `run_code` calls without opening a note. The event
+  shapes are measured in `docs/p0-compatibility.md` §12 — `tool/call` carries
+  `arguments` as a JSON string and `tool/ptc-dispatch` as an object, and only the
+  latter reports `isError`, which is why a failed nested call is skipped and an
+  unparsable argument is simply not a cue. Pinned by tests for the pure mapping, the
+  two new service cues, the widened `onAccess` seam, the hook forwarding and the
+  cue kinds.
 ## 0.1.7 — 2026-09-29
 
 ### Fixed

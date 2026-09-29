@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import { openIndex } from '../lib/index-db.js'
-import { createGraphActivity } from '../lib/graph-activity.js'
+import { createGraphActivity, noteTouchFromToolCall } from '../lib/graph-activity.js'
+import { createGraphRecall } from '../lib/graph-recall.js'
 import { createMemoryServices } from '../lib/services.js'
+import { bootstrapVault } from '../lib/vault.js'
 import { validateConfig } from '../lib/config.js'
 
 const PROJECT = '1c392abb-7b08-42f7-871d-2a379caf9448'
@@ -264,18 +266,168 @@ test('a successful mem_read reports its note path to the graph activity seam', a
   const services = createMemoryServices({
     config: validateConfig({ vaultPath: vaultRoot }),
     dataRoot,
-    onAccess: (sessionId, path) => accessed.push({ sessionId, path }),
+    onAccess: (sessionId, paths, kind) => accessed.push({ sessionId, paths, kind }),
   })
   t.after(() => services.close())
   const path = `${dir}/Decisions/Design.md`
   await services.read({ path }, undefined, {
     agent: { session: { header: { id: 'session-one' } } },
   })
-  assert.deepEqual(accessed, [{ sessionId: 'session-one', path }])
+  assert.deepEqual(accessed, [{ sessionId: 'session-one', paths: [path], kind: 'read' }])
   await assert.rejects(() =>
     services.read({ path: 'missing.md' }, undefined, {
       agent: { session: { header: { id: 'session-one' } } },
     }),
   )
   assert.equal(accessed.length, 1)
+})
+
+test('a host tool call is a cue only when it names one note inside the vault', () => {
+  const vaultRoot = '/tmp/vault'
+  const note = `${vaultRoot}/Projects/demo--1c392abb/Docs/Note.md`
+  const relative = 'Projects/demo--1c392abb/Docs/Note.md'
+  // `tool/call` carries `arguments` as a JSON string; `tool/ptc-dispatch` as an object.
+  assert.deepEqual(noteTouchFromToolCall('read', JSON.stringify({ file_path: note }), vaultRoot), {
+    kind: 'read',
+    path: relative,
+  })
+  assert.deepEqual(noteTouchFromToolCall('edit', { file_path: note }, vaultRoot), {
+    kind: 'write',
+    path: relative,
+  })
+  assert.deepEqual(noteTouchFromToolCall('write', { file_path: note }, vaultRoot), {
+    kind: 'write',
+    path: relative,
+  })
+  assert.deepEqual(noteTouchFromToolCall('grep', { path: note }, vaultRoot), {
+    kind: 'read',
+    path: relative,
+  })
+  // A vault-relative path is accepted too: a nested call may pass what the tools take.
+  assert.deepEqual(noteTouchFromToolCall('read', { file_path: relative }, vaultRoot), {
+    kind: 'read',
+    path: relative,
+  })
+
+  // Everything else is deliberately not a cue: a search root, a program that merely
+  // mentions a path, a command string, another directory, a non-note, a broken payload.
+  assert.equal(
+    noteTouchFromToolCall('grep', { path: `${vaultRoot}/Projects/demo--1c392abb` }, vaultRoot),
+    null,
+  )
+  assert.equal(noteTouchFromToolCall('run_code', '{ code: "' + note + '" }', vaultRoot), null)
+  assert.equal(noteTouchFromToolCall('bash', { command: 'cat ' + note }, vaultRoot), null)
+  assert.equal(
+    noteTouchFromToolCall('glob', { path: vaultRoot, pattern: '**/*.md' }, vaultRoot),
+    null,
+  )
+  assert.equal(noteTouchFromToolCall('read', { file_path: '/etc/hosts' }, vaultRoot), null)
+  assert.equal(
+    noteTouchFromToolCall(
+      'read',
+      { file_path: `${vaultRoot}/Projects/demo--1c392abb/Docs/Note.txt` },
+      vaultRoot,
+    ),
+    null,
+  )
+  assert.equal(
+    noteTouchFromToolCall('read', { file_path: `${vaultRoot}/../outside.md` }, vaultRoot),
+    null,
+  )
+  assert.equal(noteTouchFromToolCall('read', 'not json', vaultRoot), null)
+  assert.equal(noteTouchFromToolCall('read', null, vaultRoot), null)
+})
+
+test('mem_search and mem_write report their paths to the same activity seam', async (t) => {
+  const { vaultRoot, dataRoot } = await fixture(t, 'scan')
+  const seen = []
+  const binding = {
+    kind: 'bound',
+    projectId: PROJECT,
+    slug: 'demo',
+    displayName: 'demo',
+    relativeDir: dir,
+    vaultRoot,
+  }
+  // A write needs the project's MOC to exist; the vault is bootstrapped here
+  // rather than in the shared fixture, because bootstrapping adds hub notes that
+  // the projection tests above count.
+  await bootstrapVault(binding, {
+    initGitOnCreate: false,
+    home: dirname(vaultRoot),
+    dataRoot,
+  })
+  const services = createMemoryServices({
+    config: validateConfig({ vaultPath: vaultRoot }),
+    dataRoot,
+    binding,
+    onAccess: (sessionId, paths, kind) => seen.push({ sessionId, paths, kind }),
+  })
+  t.after(() => services.close())
+  const exec = { agent: { session: { header: { id: 'session-one' } } } }
+
+  const hits = await services.search({ query: 'Names matter' }, undefined, exec)
+  assert.ok(hits.length > 0, 'the fixture has a note to find')
+  assert.equal(seen.at(-1).kind, 'search')
+  assert.deepEqual(
+    seen.at(-1).paths,
+    hits.map((hit) => hit.path),
+  )
+
+  const written = await services.write(
+    { type: 'doc', title: 'Cue probe', body: 'body' },
+    undefined,
+    exec,
+  )
+  assert.equal(seen.at(-1).kind, 'write')
+  assert.ok(seen.at(-1).paths.includes(written.path), JSON.stringify(seen.at(-1)))
+})
+
+test('a cue carries the kind it was recorded with, and a search is dimmer than a read', () => {
+  const recall = createGraphRecall()
+  const nodes = [
+    { id: 'a', path: 'A.md' },
+    { id: 'b', path: 'B.md' },
+  ]
+  const now = 1000
+  const wall = Date.now()
+  recall.update(
+    [
+      { cursor: 1, path: 'A.md', kind: 'read', at: wall },
+      { cursor: 2, path: 'B.md', kind: 'search', at: wall },
+    ],
+    nodes,
+    now,
+    wall,
+  )
+  // 200 ms in: past the fade-in so a weight exists, well before DURATION.
+  const frame = recall.frame(now + 200, new Map(), false)
+  assert.equal(frame.cues.get('a').kind, 'read')
+  assert.equal(frame.cues.get('b').kind, 'search')
+  assert.ok(frame.cues.get('b').weight < frame.cues.get('a').weight)
+})
+
+test('a cue for a note the projection has not caught up with plays when it appears', () => {
+  const recall = createGraphRecall()
+  const now = 1000
+  const wall = Date.now()
+  // A write names the note the instant it creates it, while the snapshot that
+  // carries the new node only arrives with the next poll. The client keeps
+  // re-sending the accumulated activity list, so the cue has to survive a node
+  // that is not there yet rather than being consumed and lost.
+  const event = { cursor: 7, path: 'New.md', kind: 'write', at: wall }
+  recall.update([event], [{ id: 'other', path: 'Other.md' }], now, wall)
+  assert.equal(recall.frame(now + 200, new Map(), false).cues.size, 0)
+  recall.update(
+    [event],
+    [
+      { id: 'other', path: 'Other.md' },
+      { id: 'new', path: 'New.md' },
+    ],
+    now + 15000,
+    wall + 15000,
+  )
+  const cue = recall.frame(now + 15200, new Map(), false).cues.get('new')
+  assert.equal(cue?.kind, 'write')
+  assert.ok(cue.weight > 0)
 })

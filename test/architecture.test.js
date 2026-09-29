@@ -154,7 +154,12 @@ const BUDGETS = {
   // The eleven-slot table, its two CSS forms and the probe read, split out of the
   // renderer when the label-size work pushed that file past its budget.
   'lib/graph-palette.js': 160,
-  'lib/graph-recall.js': 200,
+  // Raised from 200 when the cue kinds and the parked cues landed: a write takes
+  // the tag colour instead of the accent, a search hit keeps 60% of the weight, and
+  // a cue whose note the projection has not carried yet is parked (bounded, with a
+  // TTL) instead of being dropped — without that last part a note the turn *creates*
+  // is written and never lights up.
+  'lib/graph-recall.js': 250,
   // Upstream minified D3 plus the reviewed source in client/graph-worker.js.
   'lib/graph-worker.js': 150,
   'lib/graph-activity.js': 100,
@@ -195,7 +200,11 @@ const BUDGETS = {
   // a revived job runs now rather than at the next unrelated capture. The retry and
   // the wake-up it asks for are one decision, which is why they stay in one file
   // instead of the kick moving out to the assembly.
-  'lib/services.js': 1120,
+  // Raised from 1120 when the graph cues landed: every successful search and write
+  // now reports the paths it touched through the same `onAccess` seam the read path
+  // already used. The seam widening (`path` → `paths` + `kind`) and the one helper
+  // that turns a write receipt into cue paths are what the 30 lines buy.
+  'lib/services.js': 1150,
   'lib/transaction.js': 2200,
   'lib/vault.js': 1750,
 }

@@ -667,6 +667,33 @@ test('a delayed activity poll starts one sweep at receipt and lights only the no
   )
 })
 
+test('a write cue paints the note in the tag colour, not the read accent', (t) => {
+  const s = surface()
+  t.after(() => s.renderer.destroy())
+  t.mock.method(Date, 'now', () => s.now())
+  const model = s.model([s.node('written')])
+  s.renderer.update(model)
+  s.emit(['written'], [0, 0])
+  const calls = s.contexts[0].calls
+  calls.length = 0
+  // The feed carries the kind; the renderer is what has to make it visible.
+  model.active = [{ path: 'written.md', at: s.now(), cursor: 1, kind: 'write' }]
+  s.renderer.update(model)
+  s.advance(250)
+  const painted = calls
+    .filter((call) => call.name === 'fill' && call.alpha > 0.5)
+    .map((call) => call.fillStyle)
+  assert.ok(
+    painted.includes(LIGHT_SLOTS['color-fill-tag'].color),
+    'a write takes the tag colour: ' + JSON.stringify(painted),
+  )
+  assert.equal(
+    painted.includes(LIGHT_SLOTS['color-fill-highlight'].color),
+    false,
+    'a write is never painted as a read',
+  )
+})
+
 test('recall label opacity and pinned size release gently while ambient labels are hidden', (t) => {
   const s = surface()
   t.after(() => s.renderer.destroy())

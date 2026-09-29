@@ -194,6 +194,7 @@ function bed(t, options = {}) {
     buildBrief,
     ...(options.search === undefined ? {} : { search: options.search }),
     ...(options.onRecall === undefined ? {} : { onRecall: options.onRecall }),
+    ...(options.onToolCall === undefined ? {} : { onToolCall: options.onToolCall }),
     ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
     config,
     // An injected capture seam, so a case can pin down what the disposal flush
@@ -1208,6 +1209,35 @@ test('a real vault, brief and search hand the first turn the matched excerpt', a
   assert.equal(recalledPaths[0].sessionId, SESSION_ID)
   assert.equal(recalledPaths[0].paths.length, 1)
   assert.match(recalledPaths[0].paths[0], /FTS5 中文索引的分词口径/)
+})
+
+test('a host tool call is reported to the touch seam, and nothing else is', async (t) => {
+  const touches = []
+  const h = bed(t, {
+    onToolCall: (sessionId, name, args) => touches.push({ sessionId, name, args }),
+  })
+  const session = { header: { id: 'session-tool' } }
+  // The two shapes a tool call arrives in: `tool/call` passes `arguments` as a
+  // JSON string, `tool/ptc-dispatch` as an object (docs/p0-compatibility.md).
+  h.ctx.emit('session/event', session, {
+    type: 'tool/call',
+    data: { name: 'read', arguments: '{"file_path":"/vault/A.md"}' },
+  })
+  h.ctx.emit('session/event', session, {
+    type: 'tool/ptc-dispatch',
+    data: { name: 'edit', arguments: { file_path: '/vault/A.md' }, isError: false },
+  })
+  // A nested call that failed is not a touch; a session event that is not a tool
+  // call is not one either.
+  h.ctx.emit('session/event', session, {
+    type: 'tool/ptc-dispatch',
+    data: { name: 'edit', arguments: { file_path: '/vault/A.md' }, isError: true },
+  })
+  h.ctx.emit('session/event', session, { type: 'turn/start', data: { turn: 1 } })
+  assert.deepEqual(touches, [
+    { sessionId: 'session-tool', name: 'read', args: '{"file_path":"/vault/A.md"}' },
+    { sessionId: 'session-tool', name: 'edit', args: { file_path: '/vault/A.md' } },
+  ])
 })
 
 // ---------------------------------------------------------------------------
