@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.1.10 — 2026-09-29
+
 ### Changed
 
 - **`docs/`, `research/` and `AGENTS.md` are local files now.** The repository
