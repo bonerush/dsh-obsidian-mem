@@ -25,6 +25,8 @@ import { join } from 'node:path'
 const UPSTREAM = 'awesome-dsh-plugin/awesome-dsh-plugin'
 /** Where the catalog points for this plugin's source. */
 const PLUGIN_URL = 'https://github.com/bonerush/dsh-obsidian-mem'
+/** This plugin's entry file in the list, named `<owner>__<repo>.yml`. */
+const PLUGIN_ENTRY = 'bonerush__dsh-obsidian-mem'
 
 /**
  * Run a command and return stdout, naming the failure instead of swallowing it.
@@ -98,21 +100,54 @@ function api(path, auth, options = {}) {
  * marketplace's own tarball probe makes (404/410 means dead, anything else
  * non-success means "not checked").
  *
+ * Retried, because a network that drops one TLS handshake must not be reported
+ * as "the asset is not there" — the same distinction the marketplace draws
+ * between a dead link and an unlooked-at one. When Node's fetch cannot reach
+ * github.com at all, `gh api` answers instead: it is the same authenticated
+ * client this script already needs, and on at least one machine here it is the
+ * only channel that works.
+ *
  * @param {string} url - the asset URL.
- * @returns {Promise<{ok: boolean, status: number}>} the verdict.
+ * @param {string} auth - the token, for the fallback.
+ * @returns {Promise<{ok: boolean, status: number, how: string}>} the verdict.
  */
-async function assetAnswers(url) {
-  try {
-    const response = await fetch(url, {
-      headers: { range: 'bytes=0-0' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(30000),
-    })
-    if (response.body) await response.body.cancel().catch(() => {})
-    return { ok: response.ok || response.status === 206, status: response.status }
-  } catch (error) {
-    return { ok: false, status: 0, error: error.message }
+async function assetAnswers(url, auth) {
+  let last = { ok: false, status: 0, how: 'fetch' }
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: { range: 'bytes=0-0' },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(20000),
+      })
+      if (response.body) await response.body.cancel().catch(() => {})
+      if (response.ok || response.status === 206) {
+        return { ok: true, status: response.status, how: 'fetch' }
+      }
+      last = { ok: false, status: response.status, how: 'fetch' }
+      // A definitive 404/410 is the asset genuinely not being there; anything
+      // else non-success is "we did not get to look", so it keeps retrying.
+      if (response.status === 404 || response.status === 410) return last
+    } catch {
+      last = { ok: false, status: 0, how: 'fetch' }
+    }
+    if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 2000 * attempt))
   }
+  try {
+    const afterDownload = url.split('/download/')[1]
+    if (typeof afterDownload === 'string') {
+      const [tag] = afterDownload.split('/')
+      const release = api(`repos/bonerush/dsh-obsidian-mem/releases/tags/${tag}`, auth)
+      const name = decodeURIComponent(url.split('/').pop())
+      const asset = (release.assets ?? []).find((candidate) => candidate.name === name)
+      return asset === undefined
+        ? { ok: false, status: 404, how: 'gh' }
+        : { ok: true, status: 200, how: 'gh' }
+    }
+  } catch {
+    /* the fetch verdict stands */
+  }
+  return last
 }
 
 /**
@@ -171,17 +206,19 @@ export async function main(options = {}) {
   const asset = `dsh-obsidian-mem-${version}.tgz`
   const url = `https://github.com/bonerush/dsh-obsidian-mem/releases/download/${tag}/${asset}`
 
-  const verdict = await assetAnswers(url)
+  // The token comes first: the asset check falls back to `gh api` when Node's
+  // fetch cannot reach github.com, and that fallback needs it.
+  const auth = token()
+  const verdict = await assetAnswers(url, auth)
   if (!verdict.ok) {
     throw new Error(
-      `the asset is not there yet: ${url} answered ${verdict.status}. ` +
+      `the asset is not there yet: ${url} answered ${verdict.status} (via ${verdict.how}). ` +
         'Release first (the workflow attaches it), then run this.',
     )
   }
 
-  const auth = token()
   const viewer = api('user', auth).login
-  const [upstreamOwner, upstreamName] = UPSTREAM.split('/')
+  const [, upstreamName] = UPSTREAM.split('/')
   const parent = api(`repos/${UPSTREAM}`, auth)
   if (parent.fork !== false && parent.fork !== undefined) {
     throw new Error(`${UPSTREAM} is itself a fork; refusing to guess the upstream`)
@@ -195,7 +232,9 @@ export async function main(options = {}) {
   }
 
   const branch = `tarball-${tag}`
-  const entryPath = `data/plugins/${upstreamOwner.replace(/[^a-z0-9-]/gi, '')}__${upstreamName}.yml`
+  // The entry file is named for the *listed plugin's* owner and repository, not
+  // for the marketplace's: `data/plugins/<owner>__<repo>.yml`.
+  const entryPath = `data/plugins/${PLUGIN_ENTRY}.yml`
   const work = mkdtempSync(join(tmpdir(), 'marketplace-entry-'))
   try {
     // The token rides in the remote URL so no credential helper is consulted;
@@ -216,7 +255,13 @@ export async function main(options = {}) {
     writeFileSync(path, next)
 
     // Their own validators, so the PR is checked by the list's rules and not by
-    // this script's opinion of them.
+    // this script's opinion of them. `entries.mjs` imports `js-yaml`, which the
+    // shallow clone does not carry, so the one dependency is installed first —
+    // about two seconds, and it keeps the alternative (re-implementing the four
+    // rules here) from becoming a second, drifting copy of them.
+    run('npm', ['install', '--silent', '--no-audit', '--no-fund', '--no-save', 'js-yaml'], {
+      cwd: work,
+    })
     const problems = run(
       'node',
       [
@@ -230,7 +275,7 @@ export async function main(options = {}) {
           'if (bad) throw new Error(bad);' +
           'const problems = m.validateEntries(all);' +
           'if (problems.length) throw new Error(problems.slice(0, 3).join("; "));' +
-          'console.log("validateEntries: 0 problems")',
+          'console.log("readEntries + validateEntries + tarballProblem: 0 problems")',
       ],
       { cwd: work },
     ).trim()
