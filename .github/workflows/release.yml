@@ -212,3 +212,27 @@ jobs:
           else
             gh release create "v${next}" --title "dsh-obsidian-mem v${next}" --notes-file "$notes" ./*.tgz
           fi
+
+      # The listed entry pins `tarball:` at a tag, so every release owes the
+      # curated list one line. Both branches call it, because either can be the
+      # one that creates the release, and the version is named outright rather
+      # than re-derived: in the bump branch a re-derivation would look for a
+      # tag on a commit that is no longer HEAD.
+      #
+      # `GH_TOKEN` is this repository's own token for reading its releases, and
+      # `MARKETPLACE_TOKEN` is the fine-grained one that may write the fork and
+      # open the pull request. When the secret is absent the script says so and
+      # this step fails — an unannounced stale entry is worse than a red run.
+      - name: Point the marketplace entry at the bootstrap release
+        if: steps.classify.outputs.resolved == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MARKETPLACE_TOKEN: ${{ secrets.MARKETPLACE_TOKEN }}
+        run: node scripts/marketplace-entry.mjs
+
+      - name: Point the marketplace entry at the bumped release
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MARKETPLACE_TOKEN: ${{ secrets.MARKETPLACE_TOKEN }}
+        run: node scripts/marketplace-entry.mjs "$(node -p 'require("./package.json").version')"

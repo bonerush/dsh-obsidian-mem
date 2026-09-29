@@ -53,24 +53,71 @@ function run(command, args, options = {}) {
 }
 
 /**
- * The token to act with: the environment's, else the one `gh` already holds.
+ * The first non-empty token among the named environment variables, else the one
+ * `gh` already holds, else null.
  *
- * @returns {string} a token.
- * @throws {Error} when neither is available.
+ * @param {string[]} names - environment variables to try, in order.
+ * @returns {string|null} a token, or null.
  */
-function token() {
-  for (const name of ['GH_TOKEN', 'GITHUB_TOKEN']) {
-    if (typeof process.env[name] === 'string' && process.env[name].trim() !== '') {
-      return process.env[name].trim()
-    }
+function tokenFrom(names) {
+  for (const name of names) {
+    const value = process.env[name]
+    if (typeof value === 'string' && value.trim() !== '') return value.trim()
   }
   try {
     const stored = execFileSync('gh', ['auth', 'token'], { encoding: 'utf8' }).trim()
     if (stored !== '') return stored
   } catch {
-    /* fall through to the error below */
+    /* the caller decides whether the absence is fatal */
   }
-  throw new Error('no token: set GH_TOKEN, or run `gh auth login` once')
+  return null
+}
+
+/**
+ * The credential that may write to the fork and open a pull request upstream.
+ *
+ * `MARKETPLACE_TOKEN` first, because a workflow that hands this script `GH_TOKEN`
+ * is handing it the repository's own token — which cannot write to a repository
+ * this project does not own. A GitHub Actions run without the secret would
+ * otherwise fail later on `gh api user` with "Bad credentials", which names the
+ * symptom and not the missing configuration.
+ *
+ * @returns {string} a token.
+ * @throws {Error} when there is none, or when the only one is the wrong kind.
+ */
+function marketplaceToken() {
+  const declared = (process.env.MARKETPLACE_TOKEN ?? '').trim()
+  if (declared !== '') return declared
+  const local = (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? '').trim()
+  if (local !== '') {
+    throw new Error(
+      'MARKETPLACE_TOKEN is not set, and GITHUB_TOKEN cannot write to a fork this repository ' +
+        'does not own: add the fine-grained token as the MARKETPLACE_TOKEN secret',
+    )
+  }
+  const found = tokenFrom(['MARKETPLACE_TOKEN', 'GH_TOKEN'])
+  if (found === null) {
+    throw new Error(
+      'no token for the marketplace: set MARKETPLACE_TOKEN, or run `gh auth login` once',
+    )
+  }
+  return found
+}
+
+/**
+ * The credential for reading this project's own releases.
+ *
+ * In a workflow that means `GITHUB_TOKEN`; on a workstation it means whatever
+ * `gh` holds. Kept separate from {@link marketplaceToken} so a fine-grained token
+ * scoped to the listed repository does not have to be scoped to this one too.
+ *
+ * @returns {string} a token.
+ * @throws {Error} when there is none.
+ */
+function localToken() {
+  const found = tokenFrom(['GITHUB_TOKEN', 'GH_TOKEN'])
+  if (found === null) throw new Error('no token for this repository: set GITHUB_TOKEN')
+  return found
 }
 
 /**
@@ -206,10 +253,14 @@ export async function main(options = {}) {
   const asset = `dsh-obsidian-mem-${version}.tgz`
   const url = `https://github.com/bonerush/dsh-obsidian-mem/releases/download/${tag}/${asset}`
 
-  // The token comes first: the asset check falls back to `gh api` when Node's
-  // fetch cannot reach github.com, and that fallback needs it.
-  const auth = token()
-  const verdict = await assetAnswers(url, auth)
+  // Two credentials on purpose. The asset and identity checks read this
+  // repository; the fork, the branch and the pull request belong to a repository
+  // this project only has a fork of. A token scoped to the listed repository
+  // therefore does not have to be scoped to this one.
+  const local = localToken()
+  const marketplace = marketplaceToken()
+
+  const verdict = await assetAnswers(url, local)
   if (!verdict.ok) {
     throw new Error(
       `the asset is not there yet: ${url} answered ${verdict.status} (via ${verdict.how}). ` +
@@ -217,18 +268,18 @@ export async function main(options = {}) {
     )
   }
 
-  const viewer = api('user', auth).login
+  const viewer = api('user', marketplace).login
   const [, upstreamName] = UPSTREAM.split('/')
-  const parent = api(`repos/${UPSTREAM}`, auth)
+  const parent = api(`repos/${UPSTREAM}`, marketplace)
   if (parent.fork !== false && parent.fork !== undefined) {
     throw new Error(`${UPSTREAM} is itself a fork; refusing to guess the upstream`)
   }
 
   const fork = `${viewer}/${upstreamName}`
-  const existing = api(`repos/${fork}`, auth, { allow404: true })
+  const existing = api(`repos/${fork}`, marketplace, { allow404: true })
   if (existing === null) {
     process.stdout.write(`creating the fork ${fork}\n`)
-    api(`repos/${UPSTREAM}/forks`, auth, { method: 'POST' })
+    api(`repos/${UPSTREAM}/forks`, marketplace, { method: 'POST' })
   }
 
   const branch = `tarball-${tag}`
@@ -239,7 +290,7 @@ export async function main(options = {}) {
   try {
     // The token rides in the remote URL so no credential helper is consulted;
     // it is never printed.
-    const remote = `https://x-access-token:${auth}@github.com/${fork}.git`
+    const remote = `https://x-access-token:${marketplace}@github.com/${fork}.git`
     run('git', ['clone', '--quiet', '--depth', '1', '--branch', 'main', remote, work])
     run('git', ['-C', work, 'remote', 'add', 'upstream', `https://github.com/${UPSTREAM}.git`])
     run('git', ['-C', work, 'fetch', '--quiet', '--depth', '1', 'upstream', 'main'])
@@ -305,13 +356,13 @@ export async function main(options = {}) {
       `Checked with this repository's own tooling: ${problems}, and the URL answers a\n` +
       'ranged request with a success status, which is what `probe-tarballs.mjs` asks for.\n'
 
-    const open = api(`repos/${UPSTREAM}/pulls?head=${viewer}:${branch}&state=open`, auth, {
+    const open = api(`repos/${UPSTREAM}/pulls?head=${viewer}:${branch}&state=open`, marketplace, {
       allow404: true,
     })
     if (Array.isArray(open) && open.length > 0) {
       return { url: open[0].html_url, action: `updated ${branch}` }
     }
-    const pr = api(`repos/${UPSTREAM}/pulls`, auth, {
+    const pr = api(`repos/${UPSTREAM}/pulls`, marketplace, {
       method: 'POST',
       body: {
         title: `Point the tarball at ${tag}`,

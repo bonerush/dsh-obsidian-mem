@@ -13,6 +13,19 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Added
 
+- **A release now points the marketplace entry at itself.** Both release branches
+  call `scripts/marketplace-entry.mjs`, so the pull request that moves the
+  entry's `tarball:` to the new tag appears on its own after a release — the entry
+  pins a tag, so every release owes the curated list one line. The step needs a
+  `MARKETPLACE_TOKEN` secret: the fine-grained token that may write the fork and
+  open the pull request upstream, since this repository's own token cannot. The
+  script uses two credentials deliberately — `GITHUB_TOKEN` to read this
+  repository's releases and `MARKETPLACE_TOKEN` for everything on the listed
+  repository — so the fine-grained token does not have to be scoped here too.
+  When the secret is missing the step fails with a message naming the secret
+  rather than surfacing `gh api`'s "Bad credentials", which names the symptom
+  instead of the configuration.
+
 - **`scripts/marketplace-entry.mjs` moves the marketplace entry's `tarball:` to a
   release.** The entry pins a tag, because `releases/latest/download/<file>`
   resolves `latest` per request but reads the filename literally, so a version in

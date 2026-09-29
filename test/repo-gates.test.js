@@ -6,7 +6,7 @@
 // it at a fixture, never by running it here — and nothing touches a real vault or
 // the real `$DSH_HOME`.
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -431,4 +431,25 @@ test('setTarball refuses every shape the marketplace refuses, plus the rotting o
     assert.throws(() => setTarball(ENTRY, url), pattern, url)
   }
   assert.throws(() => setTarball('url: https://github.com/other/repo\n', ASSET), /does not name/)
+})
+
+test('the marketplace step names the secret it needs instead of leaking a 401', () => {
+  // In a workflow the step has GITHUB_TOKEN but not the fine-grained token, and
+  // the failure has to point at the missing configuration. Running the real
+  // script as a separate process is the only way to see that decision: this
+  // repository's own token is read from the environment, never from `gh`.
+  const run = spawnSync(process.execPath, [join(REPO_ROOT, 'scripts', 'marketplace-entry.mjs')], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GH_TOKEN: 'ghs_placeholder',
+      GITHUB_TOKEN: undefined,
+      MARKETPLACE_TOKEN: undefined,
+    },
+  })
+  assert.equal(run.status, 1, run.stdout + run.stderr)
+  assert.match(run.stderr, /MARKETPLACE_TOKEN is not set/)
+  assert.match(run.stderr, /fine-grained token/)
+  assert.doesNotMatch(run.stderr, /Bad credentials/)
 })
