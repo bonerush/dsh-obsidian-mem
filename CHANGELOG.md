@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.1.7 — 2026-09-29
+
 ### Fixed
 
 - **A title ending in `.md` no longer produces a file with two extensions.** A MOC
