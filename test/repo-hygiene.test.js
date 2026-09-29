@@ -12,7 +12,7 @@
 // `TS18026` (plus `TS1005`) rather than a harmless comment.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -22,7 +22,13 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const MARKER = '// @ts-check'
 /** The bilingual documentation pair; both sides carry equal authority. */
 const README_PAIR = ['README.md', 'README.zh.md']
-/** Documents whose `npm run` references have to be real scripts. */
+/**
+ * Documents whose `npm run` references have to be real scripts.
+ *
+ * `AGENTS.md` is a local maintenance document — the repository ignores it (see
+ * `/.gitignore`) — so a clone that has none is not a failure: the check runs over
+ * whichever of these documents this checkout actually carries.
+ */
 const DOCUMENTS = ['AGENTS.md', 'README.md', 'README.zh.md']
 /** Directories that participate in the type ratchet. */
 const SCANNED_DIRECTORIES = ['lib', 'scripts', 'codex']
@@ -100,6 +106,7 @@ test('every npm run command named in the documentation exists', () => {
   const scripts = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts
   const missing = []
   for (const document of DOCUMENTS) {
+    if (!existsSync(join(ROOT, document))) continue
     const text = readFileSync(join(ROOT, document), 'utf8')
     for (const match of text.matchAll(/npm run ([a-zA-Z0-9:_-]+)/g)) {
       if (scripts[match[1]] === undefined) missing.push(`${document} names npm run ${match[1]}`)

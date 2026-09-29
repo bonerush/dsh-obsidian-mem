@@ -11,6 +11,31 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Changed
+
+- **`docs/`, `research/` and `AGENTS.md` are local files now.** The repository
+  ignores them and they left the index, so the public tree is the plugin, its tests,
+  its gates and the two READMEs — not the maintainer's working material: the frozen
+  specs and plans, the measured-fact records, the investigation output and the agent
+  instructions. They stay on disk and in the history. A fresh clone has to keep
+  passing, so two consequences are handled in the same change:
+  `test/repo-hygiene.test.js` now checks the documents a checkout actually carries
+  instead of requiring `AGENTS.md`, and the README pair no longer links to either
+  path. The `docs/p0-compatibility.md` citations under `lib/` and `test/` still
+  name the measurements they were written from, but that file is beside the checkout
+  now rather than in it.
+- **A run whose release is already published no longer reports itself as failed.**
+  The marketplace step runs last, after the tag, the tarball and the GitHub Release
+  exist, and it exited 1 when `MARKETPLACE_TOKEN` could not write the fork — so the
+  notification for a *successful* release read "release: All jobs have failed". It
+  probes the credential first (`--check-token`) and downgrades a refusal to a
+  `::warning::` that names the permission to grant; nothing is swallowed, and the
+  stale entry stays visible in the annotations. Measured on 2026-09-29: the
+  marketplace PR pointed at v0.1.6 while v0.1.9 was published and tagged, and the
+  local `gh` credential wrote the fork without complaint
+  (`marketplace-entry: credentials can write bonerush/awesome-dsh-plugin`) — which is
+  what identified the Actions secret, not the account, as the broken link.
+
 ## 0.1.9 — 2026-09-29
 
 ### Added

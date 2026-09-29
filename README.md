@@ -528,8 +528,8 @@ no plugin can intercept a shell write.
 references, so the gap is *visible*. It reports and never moves, rewrites or
 adopts your files. Treat the report as a worklist, not as enforcement.
 
-`README.md`, `AGENTS.md`, licenses and build configuration belong in the
-repository and stay there; the vault holds the long-form documents people read.
+`README.md`, licenses and build configuration belong in the repository and stay
+there; the vault holds the long-form documents people read.
 
 ---
 
@@ -752,9 +752,12 @@ so the classification has to ask the remote; and the branch that tags an
 untagged version must not also be the only branch a tagged version can take, or
 nothing would ever bump again.
 
-Contribution rules, house style and the non-negotiable constraints are in
-[`AGENTS.md`](./AGENTS.md). The measured host facts live in
-[`docs/p0-compatibility.md`](./docs/p0-compatibility.md).
+Contribution rules, house style and the non-negotiable constraints live in the
+maintainer's `AGENTS.md`, and the measured host facts in
+`docs/p0-compatibility.md`. Both are kept beside the checkout rather than in it —
+this repository ignores them (see `.gitignore`, and `CHANGELOG.md` for why) — so the
+citations of them under `lib/` name local files, not repository ones. What ships,
+and what a reader needs before enabling writes, is this README and the changelog.
 
 ---
 

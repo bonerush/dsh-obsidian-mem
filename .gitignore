@@ -14,5 +14,15 @@ node_modules/
 codex/marketplace/plugins/dsh-obsidian-mem/.mcp.json
 codex/marketplace/plugins/dsh-obsidian-mem/hooks/hooks.json
 
+# 本机维护资料：给维护者与 agent 看的仓库文档、实测记录与调研产物。
+# 与 scratch/ 同理——留在磁盘供本地审计，但不进版本库：它们不随包发布，
+# 面向的是这台机器上的维护工作，而不是使用这份插件的人。理由记在 CHANGELOG。
+docs/
+research/
+AGENTS.md
+
+# 会话临时目录：DSH 在本仓库里创建（粘贴的附件与 tmp），永远不该提交。
+.dsh/
+
 # 系统噪声
 .DS_Store
