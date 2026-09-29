@@ -470,3 +470,40 @@ node test/p0/run-v4-source-probe.mjs \
 - 探针只读：不改 `~/.dsh` 的任何配置、不写 vault、不建 profile；`--session`/`--v3-root` 都是只读输入。
 - 输出不含 prompt、模型输出正文、笔记正文或凭据；`convertedKind` 只报生产者名字。
 - 用例 C 记录的会话是真实用户数据，正文未摘录，只统计 source 形状与条数。
+
+## 11. DSH 0.2.0-rc.1 升级兼容性实测（2026-09-29）
+
+- 环境：macOS arm64，Node `v25.9.0`，DSH 从 `0.1.7-rc.2` 更新到
+  `0.2.0-rc.1`。插件继续使用本地 checkout 的 `link:` 安装。
+- 问题：旧 `@deepseek-ai/dsh-tools: ^0.1.5-rc.1` peer 不含 0.2 系列。
+  宿主的 `evaluatePluginCompatibility(manifest, {}, '0.2.0-rc.1')`
+  返回该 peer 的不兼容结果；这会阻止插件行准入，不能靠修改 `engines`
+  或确认模块能 import 来解决。
+- 修改：peer 为 `^0.1.5-rc.1 || ^0.2.0-rc.1`；测试用的精确开发依赖
+  为 `@deepseek-ai/dsh-tools@0.2.0-rc.1`、`@deepseek-ai/cordis@4.0.4`。
+  Node 的已测最低版本保持 `>=22.22.2`。
+
+### 11.1 命令与结果
+
+| 检查 | 结果 |
+|---|---|
+| 修改前 manifest 的宿主兼容检查 | 0.2 被 tools peer 拒绝 |
+| 修改后 manifest 的同一检查 | 0.1.5-rc.2、0.1.7-rc.2、0.2.0-rc.1 均无不兼容 peer |
+| `npm run check` | 735 tests / 735 pass / 0 fail / 0 skipped；lint、format、types 均通过 |
+| 上述命令中的 `verify-pack` / `verify-tarball` | 通过；52 archive entries，42 lib modules |
+| `node codex/prepare.mjs --check` | 6 tools、skill、MCP 配置和两个 hooks 均通过 |
+| 新宿主原生 `pluginManager/listPlugins` | 隔离 profile 和实际 Web profile 的 `dsh-obsidian-mem` 均为 enabled / active |
+| 实际 Web 的认证请求及 `session/list` | HTTP 200；升级前后均为 391 个历史会话，重启前 running 为 0 |
+| 浏览器完整刷新 | 现有会话、工作区和记忆图谱正常渲染 |
+
+隔离检查使用 `mkdtemp` 创建的独立 `DSH_HOME`、工作目录和 vault，关闭
+`autoCapture` 并设置 `distill.dryRun: true`。复制 profile 后重新安装绝对
+`link:` 路径，避免原相对 symlink 因位置改变而失效；启动使用 `--no-open`。
+实际安装更新属于用户授权的运维操作；其根和 Web `cordis.patch.yml`
+更新前后 SHA-256 相同，原有本地提交和工作树改动被保留。
+
+### 11.2 证据边界
+
+上述检查证明版本准入、真实新 tools 运行时上的既有测试、原生插件激活和
+浏览器渲染。没有在 0.2 宿主上新跑模型回合，因此不把它写成首请求召回、
+多回合注入、自动摄取或提炼的新增活体证据。

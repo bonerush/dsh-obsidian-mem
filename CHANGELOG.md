@@ -13,6 +13,23 @@ is a repository, not a release.
 
 ### Changed
 
+- **DSH 0.2.0-rc.1 is admitted by the plugin's host peer range.** The
+  `@deepseek-ai/dsh-tools` peer now accepts `^0.1.5-rc.1 || ^0.2.0-rc.1`;
+  the exact development fixtures move to tools `0.2.0-rc.1` and Cordis
+  `4.0.4`. Before the change, the first-party compatibility checker rejected
+  this plugin on `0.2.0-rc.1` because of its tools peer. After the change it
+  accepts the measured `0.1.5-rc.2`, `0.1.7-rc.2` and `0.2.0-rc.1` lines.
+
+  Verification on 2026-09-29, Node v25.9.0: `npm run check` passed all
+  **735 tests**, lint, formatting, types, the pack verifier and the real archive
+  contract (52 entries, 42 lib modules). `node codex/prepare.mjs --check`
+  also passed. An isolated native Web host and the updated installed Web host
+  both report the memory plugin as `enabled: true`, `fiberPhase: active`;
+  the refreshed browser renders its memory graph. This update does not measure
+  a new model turn, recall delivery or automatic distillation on the 0.2 line.
+  The commands and evidence boundary are recorded in
+  `docs/p0-compatibility.md` section 11.
+
 - **Recall feedback now uses a finite focus cue.** A read note lights with a
   stationary soft halo, its incident edges sweep outward once, and its title
   releases opacity and pinned size over the final 600 ms of a 2.6-second cue.
