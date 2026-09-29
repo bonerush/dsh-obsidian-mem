@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.1.2 — 2026-09-29
+
 ### Added
 
 - **A push into `main` is a release, and the version now moves with it.** This
