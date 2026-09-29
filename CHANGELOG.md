@@ -4,12 +4,47 @@ All notable changes to this plugin are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The package is not published to a registry and carries no tag yet, so `0.1.0`
-below is the version recorded in `package.json` and `dsh.plugin.json` during
-development rather than a release artifact. The source is public on GitHub; that
-is a repository, not a release.
+The package is not published to a registry. A release here is a git tag plus a
+GitHub Release, so `0.1.0` below — dated 2026-09-23 — records the development
+baseline that was never tagged, and every version from `0.1.1` on is a tagged
+release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
+
+### Added
+
+- **A push into `main` is a release, and the version now moves with it.** This
+  repository publishes no npm package, so a release is a git tag plus a GitHub
+  Release, and `.github/workflows/release.yml` mints both. The policy is
+  documented under Development in the README: `0.0.1` per push, `0.1` for a
+  notable feature, `1` for a breaking change — so the patch bump is mechanical
+  and a major bump is a person editing `package.json` before the push.
+
+  The workflow releases the version already declared when it carries no tag (that
+  path produced the `v0.1.1` release), and otherwise verifies the tree with
+  `npm run check`, refuses the push when `lib/` changed without a real
+  `## Unreleased` entry, bumps the patch, moves the changelog section under the
+  new number, updates `dsh.plugin.json` and the Codex server identity, commits as
+  `chore(release): <version>`, tags, and publishes the Release from that
+  changelog section.
+
+  Two failure modes are designed out rather than discovered later: pushing with
+  the default credential helper attributes the commit to `github-actions[bot]`,
+  which suppresses `GITHUB_TOKEN` on the resulting push event, so the workflow
+  would see "no tag for this version" on every run and bump forever — the remote
+  URL carries the token instead; and a release commit has nothing left to
+  release, because it moves every entry out of `## Unreleased`, so its own push
+  is skipped after the bootstrap step that only tags.
+
+  Honest limits: the skip guard matches the commit subject `chore(release):*`, so
+  a person who writes exactly that subject for an unrelated commit would skip
+  their own release; and a human push into `main` now fails unless the changelog
+  entry lands with it. Neither has been exercised on a real GitHub runner yet —
+  the inline steps were run against copies of `CHANGELOG.md`, `dsh.plugin.json`
+  and `codex/server.mjs` for both the empty-section refusal and the successful
+  cut, and the YAML parses clean, but the workflow itself has not run.
+
+## 0.1.1 — 2026-09-29
 
 ### Changed
 

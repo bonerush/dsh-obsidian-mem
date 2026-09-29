@@ -682,6 +682,41 @@ before you commit. The first-party verifier for this convention
 (`verify-translation-pairing`) ships with the harness monorepo, not with this
 plugin, so here that one command *is* the check.
 
+### Releases
+
+This repository publishes no npm package. A release is a **git tag plus a GitHub
+Release**, and `.github/workflows/release.yml` creates both.
+
+| Bump | When | Who |
+|---|---|---|
+| `0.0.1` | every push into `main` | the workflow, mechanically |
+| `0.1` | a notable feature | a person, before the push |
+| `1` | a breaking change | a person, before the push |
+
+Only the patch bump is automated: nothing infers "a notable feature" or
+"breaking" from a diff, so a minor or major release is `package.json` edited by
+hand with the changelog section written for it.
+
+What the workflow does, in order:
+
+1. `npm run check` — the whole gate, on the commit about to be released.
+2. Releases the version `package.json` already declares if it carries no tag.
+   This is the bootstrap path, and it is how `v0.1.1` was published.
+3. Refuses the push when `lib/` changed without a real `## Unreleased` entry. A
+   release every push still has to leave something for the next section to say.
+4. Bumps the patch, moves the `## Unreleased` body under `## <version> — <date>`,
+   updates `dsh.plugin.json` and the Codex server identity, commits as
+   `chore(release): <version>`, tags `v<version>`, and publishes the Release from
+   that changelog section.
+
+After a release `## Unreleased` is empty on purpose; add an entry as you work, or
+the next push fails. A release commit starts with `chore(release):` and is
+skipped, because it has nothing left to release.
+
+Neither the workflow nor this policy has run on a real GitHub runner yet: its
+inline steps were exercised against copies of `CHANGELOG.md`, `dsh.plugin.json`
+and `codex/server.mjs`, and the YAML parses clean.
+
 Contribution rules, house style and the non-negotiable constraints are in
 [`AGENTS.md`](./AGENTS.md). The measured host facts live in
 [`docs/p0-compatibility.md`](./docs/p0-compatibility.md).

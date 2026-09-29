@@ -1,6 +1,6 @@
 {
   "id": "dsh-obsidian-mem",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "main": "lib/index.js",
   "description": "DeepSeek Harness host plugin that keeps project documents and long-term memory as plain Markdown in a dedicated Obsidian vault.",
   "engines": {

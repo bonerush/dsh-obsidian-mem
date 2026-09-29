@@ -601,6 +601,37 @@ npm pack --dry-run --ignore-scripts      # manifest only
 对一遍。这个约定的官方校验器（`verify-translation-pairing`）随 harness 的
 monorepo 发布、不随本插件发布，所以在这里那一条命令*就是*校验。
 
+### 发布
+
+本仓库不发布 npm 包。一次发布 = **一个 git tag 加一个 GitHub Release**，
+`.github/workflows/release.yml` 负责把两者都造出来。
+
+| 递增 | 时机 | 由谁 |
+|---|---|---|
+| `0.0.1` | 每次 push 进 `main` | workflow 自动 |
+| `0.1` | 一次值得标注的功能 | 人，在 push 之前 |
+| `1` | 破坏性变更 | 人，在 push 之前 |
+
+只有补丁号是自动的：没有任何东西能从 diff 里推断出「值得标注的功能」或「破坏性变更」，
+所以次版本号和主版本号是手工编辑 `package.json`，并为它写好 changelog 段落。
+
+workflow 依次做这些事：
+
+1. `npm run check`——在即将发布的那个提交上跑完整闸门。
+2. 若 `package.json` 当前声明的版本还没有 tag，就直接为它发布。这是引导路径，
+   `v0.1.1` 就是这么发出去的。
+3. 当 `lib/` 有改动、而 `## Unreleased` 里没有真实条目时**拒绝这次 push**：
+   「每次 push 都发一版」也必须给下一段留下可写的内容。
+4. 递增补丁号，把 `## Unreleased` 的内容移到 `## <version> — <date>` 下，同步
+   `dsh.plugin.json` 与 Codex server 的身份串，以 `chore(release): <version>` 提交，
+   打上 `v<version>` 标签，并用那段 changelog 发布 Release。
+
+发布之后 `## Unreleased` 是空的，这是有意的；随手把条目写上，否则下一次 push 会失败。
+发布提交以 `chore(release):` 开头，会被跳过——它已经没有可发布的内容了。
+
+这个 workflow 和这套策略都还没有在真实的 GitHub runner 上跑过：其中的内联脚本是在
+`CHANGELOG.md`、`dsh.plugin.json`、`codex/server.mjs` 的副本上验证的，YAML 也能正常解析。
+
 贡献规则、代码风格和不可谈判的约束在 [`AGENTS.md`](./AGENTS.md)。实测的宿主事实
 在 [`docs/p0-compatibility.md`](./docs/p0-compatibility.md)。
 
