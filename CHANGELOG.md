@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.1.9 — 2026-09-29
+
 ### Added
 
 - **The graph panel's controls outlive the page now.** They were plain component
