@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.1.5 — 2026-09-29
+
 ### Added
 
 - **Every Release now carries the packed plugin as a `.tgz` asset.** The
