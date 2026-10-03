@@ -44,6 +44,12 @@ const LAYERS = {
   // `debug.js` imports nothing from `lib/`, so it sits at the bottom with the
   // other leaves; everything that records through it points downward.
   debug: 0,
+  // The fixed curation `code` vocabulary, added by the Task 5 fix round 2 (R33). It
+  // imports nothing, which is what lets the four modules that raise these codes
+  // (L4–L6) and the codec that persists them (L1) point at one list instead of the
+  // codec holding a second copy. The alternative — the codec importing the emitters —
+  // is the upward edge this table exists to refuse.
+  'curation-codes': 0,
   'diagnostic-codec': 1,
   'diagnostic-journal': 2,
   // The standalone report probes the complete plugin through dynamic imports;
@@ -165,11 +171,18 @@ const BUDGETS = {
   // Raised from 200 by the Task 5 fix round (210 formatted lines measured; the
   // file's rule is measured plus 30 rounded to the next 50, so 250 is the rule's
   // number). What the 10 lines buy: the closed `code` vocabulary the curation call
-  // sites actually supply — the scanner's four truncation reasons, the eight state
-  // payloads whose read is refused, the view build's two judged refusals and the
-  // binding refusal — declared as one list so the rule "a code a call site emits is
-  // registered here" stays checkable in one place, which is the same argument the
-  // `review` comment at `OUTCOMES` above makes for outcomes.
+  // sites actually supply, declared as one list so the rule "a code a call site emits
+  // is registered here" stays checkable in one place, which is the same argument the
+  // `review` comment at `OUTCOMES` above makes for outcomes. The count that comment
+  // gave — "the scanner's four truncation reasons, the eight state payloads …" — was
+  // wrong in both halves, which is what round 2 exists to fix.
+  // The Task 5 fix round 2 (R33) moves that list to `lib/curation-codes.js` and
+  // *derives* it here, because the round-1 list was still incomplete: it held four of
+  // the scanner's five truncation reasons (`manifest-budget` was missing), and the
+  // cursor, state, changed-set, view and proposal families were absent, while the case
+  // that looped it looped a hand-written copy that could not fail. The measured 233
+  // lines are the derivation, the comments naming what stays dynamic
+  // (`view-unwritable:<code>`) and the round trip the new case drives.
   'lib/diagnostic-codec.js': 250,
   'lib/diagnostic-journal.js': 300,
   'lib/diagnostic-report.js': 350,
@@ -442,8 +455,10 @@ const BUDGETS = {
   // that keeps a throwing trigger from retracting a committed receipt. The
   // alternative — the assembly enqueueing for the write path itself — would put the
   // private curation state in two modules and the R14/binding guards in two places.
-  // Task 5's fix round raises it to 1600 (1575 formatted lines measured; measured
-  // plus 30 rounds up to 1600 on the rule above). What the 31 lines buy: gating the
+  // Task 5's fix round raises it to 1600 (1575 formatted lines measured; the rule
+  // above would round 1575 + 30 = 1605 up to 1650, so 1600 is deliberately inside the
+  // rule and the next raise has to argue with this line rather than inherit the
+  // rounding). What the 31 lines buy: gating the
   // acknowledgement on `buildCurationView` returning `written` rather than on the
   // attempt — a `fallback` build writes nothing, so acknowledging off it would drop
   // the batch from the durable queue and from the view at once, which is the plan's

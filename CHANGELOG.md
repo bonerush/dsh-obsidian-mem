@@ -437,17 +437,21 @@ release artifact. The versioning policy is in the README, under Development.
   `failed`, which the per-finding refusal and Task 6's trigger catches emit. Two
   cases loop the whole outcome set and the whole code set through encode/decode, and
   the fallback case feeds the event a real pass recorded through the codec — both fail
-  on the pre-fix codec (`file-budget is not coarsened`; `actual: 'other'`). Also
+  on the pre-fix codec (`file-budget is not coarsened`; `actual: 'other'`). That list
+  was still incomplete and this entry's "the four-name list" framing was wrong;
+  **see the round-2 entry below, which enumerates the families it missed and replaces
+  the loop that could not fail.** Also
   corrected here: the Task 5 entry above stated the scanner writes a coverage cursor
   from a changed-path pass (it is guarded by `if (fullPass && …)`, and `fullPass` is
   `requested.length === 0`), said a per-finding refusal is "reported with code
   `failed`" (`failed` is the outcome; the code is the error's own), and claimed the
   disk vocabulary was in sync while `failed` and every code were absent from it. And
-  `view-unwritable:<code>` was found to be unreachable rather than merely untested: a
-  raw `fs` failure at the view path is not wrapped as a `CurationStateError`, so
-  `fs.rename`'s `EISDIR` escapes `buildCurationView` as a throw (probed with a
-  directory standing in for the view file) — the comment in `lib/services.js` records
-  that, and this entry does not claim a fallback it cannot reach.
+  the `view-unwritable:<code>` fallback was reported as unreachable: the probe behind
+  that was a raw `fs` failure at the view path, which is not wrapped as a
+  `CurationStateError`, so `fs.rename`'s `EISDIR` escapes `buildCurationView` as a
+  throw (probed with a directory standing in for the view file). That is one route,
+  not the whole family — see the round-2 entry, which records the reachable route the
+  review measured and the residual this entry wrongly closed.
   Measured: `npm test` **859 tests / 858 pass / 1 skipped / 0 fail** (the same tree
   with this round's edits stashed measured 857 / 856 / 1 / 0, so this round adds two
   cases); the covering command
@@ -455,11 +459,64 @@ release artifact. The versioning policy is in the README, under Development.
   reports **95 tests / 95 pass / 0 fail / 0 skipped**, and Task 6's adapters
   (`test/hooks.test.js`, `test/auto-capture.test.js`, `test/codex-hooks.test.js`) are
   green in the same run at 203 / 203.
-  Budgets: `lib/services.js` 1550 → 1600 (1575 formatted lines measured; on the
-  file's own measured-plus-30 rounding rule), `lib/diagnostic-codec.js` 200 → 250 (210
-  measured, same rule) and `lib/tool-schema.js` 950 → 1000 (948 measured, the same
-  rule the sibling service entry uses), each with its argument beside it in
+  Budgets: `lib/services.js` 1550 → 1600 (1575 formatted lines measured; the file's
+  own rule would round 1575 + 30 = 1605 up to 1650, so 1600 is deliberately inside the
+  rule rather than its number, which the entry beside it in `test/architecture.test.js`
+  now says — as first written it claimed measured-plus-30 rounded to 1600, which is
+  false arithmetic), `lib/diagnostic-codec.js` 200 → 250 (210 measured, same rule) and
+  `lib/tool-schema.js` 950 → 1000 (948 measured, the same rule the sibling service
+  entry uses), each with its argument beside it in
   `test/architecture.test.js`.
+
+- **Every fixed curation code is registered, and nothing claims the vocabulary is
+  complete** (Task 5 review round 2, R33). The round above registered 15 codes and
+  three places called that list the vocabulary; the reviewer measured it incomplete
+  four ways. `lib/curation-codes.js` is new: a leaf module (L0, it imports nothing)
+  holding the four families that can reach a `curation` event's `code` — the scanner's
+  five `truncatedReason` values (`file-budget`, `time-budget`, **`manifest-budget`,
+  which the round above omitted**, `manifest-changed`, `records-missing`), the private
+  state store's sixteen (`state-unreadable`, `state-not-a-file`, `state-corrupt`,
+  `state-oversize`, `cursor-invalid`/`-version`/`-project`, `record-invalid`/`-version`/
+  `-mismatch`, `changed-invalid`/`-version`/`-project`, `view-invalid`/`-version`/
+  `-project`), the proposal store's thirteen `proposal-*` codes plus the four state
+  refusals its record reader repeats, and the view builder's five fixed fallback
+  reasons. `lib/diagnostic-codec.js` derives `CODES` from that module, which is why it
+  is a leaf: the codec is L1 and the four emitters are L4–L6, so having the codec import
+  the emitters is the upward edge `test/architecture.test.js` refuses, and a second copy
+  in the codec is the drift this removes. The test
+  `test/diagnostic-codec.test.js`'s "every code a curation emitter can produce survives
+  the round trip" now **derives** its loop from those families and parses the four
+  emitters with the TypeScript AST, requiring each module's thrown/returned codes to
+  equal the list declared for it — the case it replaces looped a hand-written copy of
+  `CODES` and could not fail for an unregistered code, the self-fulfilling-name defect
+  the first review named. It also pins the derived union, so adding a code to an emitter
+  without registering it fails. Two things this does **not** claim: `view-unwritable:
+  <code>` appends a raw filesystem error's code and is a dynamic family no list can
+  enumerate, so it is coarsened to `other` on purpose (the comment in
+  `lib/diagnostic-codec.js` and the `CURATION_VIEW_CODES` comment say so), and
+  `view-unwritable` itself **is** reachable — the review measured a legal ≤2000-entry
+  document inside the margin gap between the builder's pretty-printed size check and the
+  store's bound, so the round above's "unreachable rather than merely untested" was an
+  over-claim about one probe (a directory standing in for the view file, `EISDIR`). The
+  underlying defect — the raw filesystem failure escaping `buildCurationView` as a throw
+  — remains a recorded final-fix-wave item and is not fixed here. Also corrected: the
+  budget entry and the round above said "1575 measured; measured plus 30 rounds up to
+  1600", which is arithmetic that does not hold (1575 + 30 = 1605, whose rule number is
+  1650); both now use the "deliberately inside the rule" wording of the sibling entries,
+  and 1600 is stricter than the rule so no debt is hidden.
+  Measured: `npm test` **864 tests / 863 pass / 1 skipped / 0 fail** — the same totals
+  as `95d08eb`, because this round replaces a case rather than adding one; the covering
+  command
+  `node --test test/diagnostic-codec.test.js test/tools.test.js test/debug.test.js test/architecture.test.js`
+  reports **60 tests / 60 pass / 0 fail / 0 skipped**. `lib/diagnostic-codec.js` is
+  **233** formatted lines against its 250 budget, `lib/curation-codes.js` is under the
+  600-line default and the layer table gains one leaf (`curation-codes: 0`) with its
+  reason beside it. Falsification: removing `manifest-budget` from
+  `lib/curation-codes.js` fails the round-trip case with
+  `lib/curation-scan.js names codes lib/curation-codes.js does not declare, or the
+  reverse`; adding `view-budget` to both the declared list and an emitter's `reason`
+  fails the same case at the pin of the derived union. Both mutations were reverted and
+  never committed.
 
 - **The parked-candidate signal is no longer thrown away, and the retry barrier is
   pinned** (Task 3 review round). `review` was missing from the diagnostic codec's

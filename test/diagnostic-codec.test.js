@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
+import ts from 'typescript'
 
+import {
+  CURATION_PROPOSAL_CODES,
+  CURATION_STATE_CODES,
+  CURATION_TRUNCATION_REASONS,
+  CURATION_VIEW_CODES,
+} from '../lib/curation-codes.js'
 import {
   createAliases,
   decodeDiagnosticConfig,
@@ -10,6 +18,145 @@ import {
 } from '../lib/diagnostic-codec.js'
 
 const at = '2026-09-27T00:00:00.000Z'
+
+/**
+ * Every curation module that names a fixed code, how it carries it, and the list in
+ * `lib/curation-codes.js` that has to agree with it.
+ *
+ * `error` means the module passes the code to a `CurationStateError`/`CurationError`;
+ * `reason` means it stores it under `reason` or `truncatedReason` — the two properties
+ * `lib/services.js` and the codec turn into a pass's one `code`. A lifecycle `reason`
+ * such as a proposal's own note is prose, not a code, which is why the property scan is
+ * scoped to these two modules rather than every module that has one.
+ */
+const CURATION_CODE_SOURCES = [
+  ['error', 'lib/curation-state.js', CURATION_STATE_CODES],
+  ['error', 'lib/curation-proposals.js', CURATION_PROPOSAL_CODES],
+  ['reason', 'lib/curation-view.js', CURATION_VIEW_CODES],
+  ['reason', 'lib/curation-scan.js', CURATION_TRUNCATION_REASONS],
+]
+
+/** The constructor names whose first string argument is a persisted code. */
+const CODE_ERRORS = new Set(['CurationError', 'CurationStateError'])
+
+/** The properties whose value `lib/services.js` persists as a pass's code. */
+const CODE_PROPERTIES = new Set(['reason', 'truncatedReason'])
+
+/**
+ * The code a literal or template carries: the whole string, or the static head of a
+ * template whose tail is dynamic (`view-unwritable:${error.code}` names the registered
+ * prefix `view-unwritable` and a suffix no list can enumerate).
+ *
+ * @param {object} node - a TypeScript AST node.
+ * @returns {string|null} the code, or `null` when the node is neither form.
+ */
+function codeOfLiteral(node) {
+  if (node === undefined) return null
+  if (ts.isStringLiteral(node)) return node.text
+  // Only the `name:<dynamic>` form is a prefixed code (`view-unwritable:${error.code}`).
+  // A template in some other shape (`record-${code}`) is a finding message, not a code.
+  if (ts.isTemplateExpression(node) && node.head.text.endsWith(':')) {
+    return node.head.text.slice(0, -1)
+  }
+  return null
+}
+
+/**
+ * The codes every branch of one expression can carry: a literal, both arms of the
+ * ternary that picks one, or a named local the caller resolves instead.
+ *
+ * @param {object} node - the expression.
+ * @param {Map<string, object[]>} locals - every initializer seen for a variable name.
+ * @returns {string[]} the codes.
+ */
+function codesOfExpression(node, locals) {
+  if (node === undefined) return []
+  if (ts.isConditionalExpression(node)) {
+    return [
+      ...codesOfExpression(node.whenTrue, locals),
+      ...codesOfExpression(node.whenFalse, locals),
+    ]
+  }
+  if (ts.isIdentifier(node)) {
+    return (locals.get(node.text) ?? []).flatMap((value) => codesOfExpression(value, locals))
+  }
+  const code = codeOfLiteral(node)
+  return code === null ? [] : [code]
+}
+
+/**
+ * The fixed codes one module's source really names.
+ *
+ * @param {'error'|'reason'} kind - how the module carries its code.
+ * @param {string} relative - the module, repo-relative.
+ * @returns {Set<string>} the codes found.
+ */
+function codesInSource(kind, relative) {
+  const source = readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8')
+  const file = ts.createSourceFile(relative, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
+  const locals = new Map()
+  const found = new Set()
+  // Two passes, because the property that carries a truncation reason reads a local
+  // whose value is chosen between branches (`truncatedReason: … : truncated`) and that
+  // local is assigned from several string literals earlier in the same function.
+  const collect = (node) => {
+    const add = (name, value) => {
+      const seen = locals.get(name) ?? []
+      seen.push(value)
+      locals.set(name, seen)
+    }
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      add(node.name.text, node.initializer)
+    }
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      add(node.left.getText(), node.right)
+    }
+    ts.forEachChild(node, collect)
+  }
+  collect(file)
+  const walk = (node) => {
+    if (
+      kind === 'error' &&
+      ts.isNewExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      CODE_ERRORS.has(node.expression.text)
+    ) {
+      const code = codeOfLiteral(node.arguments?.[0])
+      if (code !== null) found.add(code)
+    }
+    if (
+      kind === 'reason' &&
+      ts.isPropertyAssignment(node) &&
+      ts.isIdentifier(node.name) &&
+      CODE_PROPERTIES.has(node.name.text)
+    ) {
+      for (const code of codesOfExpression(node.initializer, locals)) found.add(code)
+    }
+    ts.forEachChild(node, walk)
+  }
+  walk(file)
+  return found
+}
+
+/**
+ * Every fixed code a curation call site can supply, derived from the emitters.
+ *
+ * @returns {Set<string>} the union of the families, each checked against its own module.
+ */
+function emittedCurationCodes() {
+  const found = new Set()
+  for (const [kind, relative, declared] of CURATION_CODE_SOURCES) {
+    const actual = codesInSource(kind, relative)
+    assert.ok(actual.size > 0, `${relative} names no code, so this check would be vacuous`)
+    assert.deepEqual(
+      [...actual].sort(),
+      [...declared].sort(),
+      `${relative} names codes lib/curation-codes.js does not declare, or the reverse`,
+    )
+    for (const code of actual) found.add(code)
+  }
+  return found
+}
 
 test('the disk format removes content and aliases identifiers consistently', () => {
   const aliases = createAliases()
@@ -101,33 +248,61 @@ test('every curation outcome the bounded action emits survives the round trip', 
   assert.equal(decodeDiagnosticEvent(unknown).outcome, 'other')
 })
 
-test('every code a curation call site supplies survives the round trip', () => {
+test('every code a curation emitter can produce survives the round trip', () => {
   // The other half of the same trap. A `curation` event carries one code, and that
   // code is the only durable record of *why* the call wrote nothing: the scanner's
-  // truncation reason, the private-state read that failed, or the view build's own
-  // refusal. None of them were in `CODES`, so all of them were persisted as `other`.
+  // truncation reason, the private-state read that failed, the view build's own
+  // refusal, or the proposal store's. The loop derives its codes from the emitters'
+  // declared families, so it cannot pass while an emitter names a code `CODES` lacks —
+  // the first version of this case looped a hand-written copy of the list and could
+  // not fail for the one thing it was named after.
   const aliases = createAliases()
-  const codes = [
-    // The scanner's four truncation reasons.
-    'file-budget',
-    'time-budget',
-    'manifest-changed',
-    'records-missing',
-    // The state payloads whose read or write was refused.
-    'state-not-a-file',
-    'state-corrupt',
-    'state-oversize',
-    'cursor-invalid',
-    'record-invalid',
-    'changed-invalid',
-    'view-invalid',
-    'view-oversize',
-    // The view build's two judged refusals, and the binding refusal a caller's
-    // resolution can throw at the service seam.
-    'entry-unusable',
-    'backfill-incomplete',
-    'not-bound',
-  ]
+  const codes = [...emittedCurationCodes()].sort()
+  assert.deepEqual(
+    codes,
+    [
+      'backfill-incomplete',
+      'changed-invalid',
+      'changed-project',
+      'changed-version',
+      'cursor-invalid',
+      'cursor-project',
+      'cursor-version',
+      'entry-unusable',
+      'file-budget',
+      'manifest-budget',
+      'manifest-changed',
+      'proposal-conflict',
+      'proposal-invalid',
+      'proposal-kind',
+      'proposal-kind-operation',
+      'proposal-mismatch',
+      'proposal-missing',
+      'proposal-operation',
+      'proposal-oversize',
+      'proposal-source-missing',
+      'proposal-source-unreadable',
+      'proposal-source-unsafe',
+      'proposal-state',
+      'proposal-version',
+      'record-invalid',
+      'record-mismatch',
+      'record-version',
+      'records-missing',
+      'source-changed',
+      'state-corrupt',
+      'state-not-a-file',
+      'state-oversize',
+      'state-unreadable',
+      'time-budget',
+      'view-invalid',
+      'view-oversize',
+      'view-project',
+      'view-unwritable',
+      'view-version',
+    ],
+    'the emitter vocabulary is fixed: a new code lands here and in lib/curation-codes.js',
+  )
   for (const code of codes) {
     const encoded = encodeDiagnosticEvent(
       { seq: 1, at, event: 'curation', outcome: 'scanned', code },
@@ -136,8 +311,11 @@ test('every code a curation call site supplies survives the round trip', () => {
     assert.equal(encoded.code, code, `${code} is not coarsened`)
     assert.equal(decodeDiagnosticEvent(encoded).code, code, `${code} decodes back`)
   }
+  // The control: a token the codec does not know is still coarsened, so the loop above
+  // is testing registration rather than a codec that echoes anything. The dynamic half
+  // of `view-unwritable:<code>` is the one curation value that has to be coarsened.
   const unknown = encodeDiagnosticEvent(
-    { seq: 1, at, event: 'curation', outcome: 'scanned', code: 'invented' },
+    { seq: 1, at, event: 'curation', outcome: 'scanned', code: 'view-unwritable:ENOSPC' },
     createAliases(),
   )
   assert.equal(unknown.code, 'other')
