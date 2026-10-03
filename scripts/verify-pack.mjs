@@ -73,6 +73,7 @@ const FORBIDDEN_NAMES = [
 const REQUIRED_ASSETS = [
   ['lib/index.js', 'the plugin entry point'],
   ['lib/diagnose-cli.js', 'the standalone diagnostic command'],
+  ['lib/curation-cli.js', 'the interactive review command that approves one proposal'],
   ['lib/client.js', 'the optional Better Sidebar browser entry'],
   ['lib/graph-renderer.js', 'the cached graph labels and viewport renderer'],
   ['lib/graph-palette.js', 'the graph theme color slots'],
@@ -258,6 +259,13 @@ export function verifyPack(root) {
   }
   if (pkg.bin?.['dsh-obsidian-mem-diagnose'] !== './lib/diagnose-cli.js') {
     problems.push('package.json bin.dsh-obsidian-mem-diagnose must target ./lib/diagnose-cli.js')
+  }
+  // The review command is the only route by which a parked curation proposal
+  // becomes a vault change, so a package that dropped it would ship a plugin whose
+  // review queue could never be decided. It is named here, beside the other bin,
+  // because a `bin` entry is the one asset nothing else in the tarball implies.
+  if (pkg.bin?.['dsh-obsidian-mem-review'] !== './lib/curation-cli.js') {
+    problems.push('package.json bin.dsh-obsidian-mem-review must target ./lib/curation-cli.js')
   }
 
   const floor = pkg.engines?.node

@@ -1561,3 +1561,115 @@ test('no temporary file survives a refused transaction', async (t) => {
     [],
   )
 })
+
+// ---------------------------------------------------------------------------
+// Curation Task 7: the caller's evidence preconditions
+// ---------------------------------------------------------------------------
+
+test('expectedSourceHashes re-verifies the planned evidence before the first write', async (t) => {
+  // The shape the reviewed-apply path needs: the transaction is planned from a read
+  // of `STATUS_NOTE`, and this request says which bytes that read saw. The engine
+  // re-reads under its own vault lock, so an edit that lands between the plan and
+  // the write refuses the whole transaction instead of publishing around it.
+  const { vault, dataRoot, bindingA } = await fixture(t)
+  const receipt = await runTransaction(
+    bindingA,
+    request(newTransactionId(), {
+      expectedSourceHashes: [{ path: STATUS_NOTE, hash: sha256(STATUS_BEFORE) }],
+    }),
+    { dataRoot },
+  )
+  assert.equal(receipt.result.status, 'applied')
+  assert.equal(await readFile(at(vault, STATUS_NOTE), 'utf8'), STATUS_AFTER)
+})
+
+test('a source whose bytes moved refuses the transaction and writes nothing', async (t) => {
+  const { vault, dataRoot, bindingA } = await fixture(t)
+  const edited = `${STATUS_BEFORE}尾注\n`
+  await writeFile(at(vault, STATUS_NOTE), edited)
+
+  await assert.rejects(
+    runTransaction(
+      bindingA,
+      request(newTransactionId(), {
+        expectedSourceHashes: [{ path: STATUS_NOTE, hash: sha256(STATUS_BEFORE) }],
+      }),
+      { dataRoot },
+    ),
+    { code: 'source-changed' },
+  )
+
+  assert.equal(await readFile(at(vault, STATUS_NOTE), 'utf8'), edited, 'the newer revision stands')
+  assert.equal(await readFile(at(vault, MOC), 'utf8'), MOC_BEFORE, 'the MOC never moved')
+  assert.equal(await exists(at(vault, NEW_NOTE)), false, 'the create never published')
+})
+
+test('a missing source is refused as changed rather than read as empty', async (t) => {
+  const { dataRoot, bindingA } = await fixture(t)
+  await assert.rejects(
+    runTransaction(
+      bindingA,
+      request(newTransactionId(), {
+        expectedSourceHashes: [{ path: `${PROJECT_A}/Decisions/不存在.md`, hash: 'a'.repeat(64) }],
+      }),
+      { dataRoot },
+    ),
+    { code: 'source-changed' },
+  )
+})
+
+test('the precondition is checked under the lock, from the bytes the engine reads itself', async (t) => {
+  // The seam proves *where* the check happens: `io.readFile` is the engine's own
+  // target read, so a stub that answers the wrong bytes for the source makes the
+  // verification fail even though the file on disk is untouched. A check made
+  // outside the transaction (from a caller's own read) would not consult this seam
+  // at all and would publish the write.
+  const { vault, dataRoot, bindingA } = await fixture(t)
+  const io = {
+    readFile: (path, ...rest) =>
+      String(path).endsWith('ADR-0-旧决策.md')
+        ? Promise.resolve(Buffer.from('别的字节\n'))
+        : readFile(path, ...rest),
+  }
+  await assert.rejects(
+    runTransaction(
+      bindingA,
+      request(newTransactionId(), {
+        expectedSourceHashes: [{ path: STATUS_NOTE, hash: sha256(STATUS_BEFORE) }],
+      }),
+      { dataRoot, io },
+    ),
+    { code: 'source-changed' },
+  )
+  assert.equal(await readFile(at(vault, STATUS_NOTE), 'utf8'), STATUS_BEFORE)
+  assert.equal(await readFile(at(vault, NEW_NOTE)).catch(() => null), null)
+})
+
+test('an unusable expectedSourceHashes entry is a request error, not a vault read', async (t) => {
+  const { vault, dataRoot, bindingA } = await fixture(t)
+  for (const value of [
+    'not-an-array',
+    [{}],
+    [{ path: STATUS_NOTE }],
+    [{ path: STATUS_NOTE, hash: 'short' }],
+    [
+      { path: STATUS_NOTE, hash: sha256(STATUS_BEFORE) },
+      { path: STATUS_NOTE, hash: sha256(STATUS_BEFORE) },
+    ],
+  ]) {
+    await assert.rejects(
+      runTransaction(bindingA, request(newTransactionId(), { expectedSourceHashes: value }), {
+        dataRoot,
+      }),
+      { code: 'invalid-request' },
+      `expected ${JSON.stringify(value)} to be refused`,
+    )
+  }
+  assert.equal(await readFile(at(vault, STATUS_NOTE), 'utf8'), STATUS_BEFORE)
+})
+
+test('an absent expectedSourceHashes is the empty list, so every existing caller is unchanged', async (t) => {
+  const { dataRoot, bindingA } = await fixture(t)
+  const receipt = await runTransaction(bindingA, request(newTransactionId()), { dataRoot })
+  assert.equal(receipt.result.status, 'applied')
+})

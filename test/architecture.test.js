@@ -128,8 +128,23 @@ const LAYERS = {
   // highest layer strictly under capture, and `memory` (L5) is therefore a lateral
   // neighbour it may not import — which is exactly why the `propose` seam exists.
   'curation-proposals': 5,
+  // The executor half of the same queue (Task 7): it reads the stored record, the
+  // vault jail, the memory layer's ownership proof and the transaction engine, and
+  // it must therefore sit *above* all of them — L6 is the first layer that is
+  // strictly above `memory` (L5), which is also what lets a review be driven from
+  // the command line without either of them importing the other. Its three L6
+  // neighbours (`capture`, `hot`, `curation-scan`) are unrelated to it: no edge
+  // exists in either direction, which is what the layer rule actually requires.
+  'curation-review': 6,
   lint: 5,
   'curation-scan': 6,
+  // The interactive review command (Task 7). It sits at the same layer as the
+  // façade because it is an entry point above the whole library, and it imports
+  // `curation-review` (L6) and `curation-proposals` (L5) rather than re-deriving
+  // either. It is deliberately *not* below `tools`: nothing in the tool surface may
+  // reach an approval, and an edge from `tools` to this module is the edge that
+  // would create one.
+  'curation-cli': 9,
   memory: 5,
   capture: 6,
   hot: 6,
@@ -308,7 +323,13 @@ const BUDGETS = {
   // sentence stating when a truncated-universe link finding comes back, and the
   // matching prose in `lib/note-health.js`, and the raise has to be argued for by
   // what the lines buy.
-  'lib/curation-scan.js': 1257,
+  // Lowered to 1247 by Task 5 fix round 3, which deleted the 13-line
+  // `CURATION_TRUNCATION_REASONS` copy this file carried: nothing imported it (the
+  // codec derives the vocabulary from `lib/curation-codes.js`, which is the single
+  // source) and its comment claimed a derivation that did not exist. 1247 is the
+  // measured 1244 plus 3, so the deletion is spent as budget instead of slack and the
+  // file is tighter than every round before it.
+  'lib/curation-scan.js': 1247,
   // The Task 3 module, on the same measured-plus-30 rule (1113 formatted lines,
   // 1115 with the two-line comment that makes the listing order intentional).
   // What the size buys: two proposal kinds with different operations, four
@@ -318,6 +339,17 @@ const BUDGETS = {
   // that has to replay rather than duplicate. Splitting the store from the recorder
   // would put one identity derivation in two files.
   'lib/curation-proposals.js': 1150,
+  // The Task 7 executor, on the same measured-plus-30-rounded-to-50 rule (608
+  // formatted lines measured). What the lines buy: the operation ledger that refuses
+  // anything but `create-separate` and `supersede`, the explicit request-field list
+  // that keeps a candidate's `id` out of the write (R6), the pre-transaction source
+  // verification that names `source-changed` / `source-unsafe` / `human-owned`
+  // instead of one generic refusal, the review claim that arbitrates two concurrent
+  // reviewers, and the renderer a reviewer reads before typing a confirmation.
+  'lib/curation-review.js': 650,
+  // The interactive command is mostly argument handling and the refusal text a
+  // person reads; 223 lines is the measured size and 250 is the rule's number.
+  'lib/curation-cli.js': 250,
   // Raised from 950 for the configurable item-count ceiling. The prompt must name
   // the ceiling the validator enforces (`too-many-items` refused a whole batch of
   // 21 against 16 because it did not), and a ceiling that comes from config cannot
@@ -386,7 +418,16 @@ const BUDGETS = {
   // lookup that produce its two inputs. The raise also covers the `propose` seam on
   // `normalizeDeps` and the two JSDoc blocks that record why the failure is closed
   // rather than falling through to a supersede.
-  'lib/memory.js': 1500,
+  // Raised from 1500 by Task 7 (1573 formatted lines measured; measured-plus-30
+  // rounds up to 1650, which is this number). What the 73 lines buy: the reviewed
+  // apply's evidence preconditions (`expectedSourceHashes`) carried through
+  // `normalizeDeps` and `buildCreatePlan` into the transaction request, the engine
+  // seams (`recover`/`failAfter`/`notifyIndex`/`lockTimeoutMs`/`pollMs`/`io`) the
+  // one composing caller needs to drive a crash, an index failure and a lock
+  // timeout, the `transactionOptions` helper that keeps every existing caller's
+  // options unchanged, and the explicit recovery that makes the exclusive-create
+  // path idempotent after a crash between its publish and its receipt store.
+  'lib/memory.js': 1650,
   'lib/naming.js': 250,
   'lib/paths.js': 300,
   'lib/pending.js': 1150,
@@ -455,10 +496,12 @@ const BUDGETS = {
   // that keeps a throwing trigger from retracting a committed receipt. The
   // alternative — the assembly enqueueing for the write path itself — would put the
   // private curation state in two modules and the R14/binding guards in two places.
-  // Task 5's fix round raises it to 1600 (1575 formatted lines measured; the rule
-  // above would round 1575 + 30 = 1605 up to 1650, so 1600 is deliberately inside the
+  // Task 5's fix round raises it to 1600 (1578 formatted lines measured — the 1575 this
+  // sentence first gave was a stale measurement of an earlier revision, and round 3's
+  // comment correction makes the file 1582 today, still under this number). The rule
+  // above would round 1578 + 30 = 1608 up to 1650, so 1600 is deliberately inside the
   // rule and the next raise has to argue with this line rather than inherit the
-  // rounding). What the 31 lines buy: gating the
+  // rounding. What the 31 lines buy: gating the
   // acknowledgement on `buildCurationView` returning `written` rather than on the
   // attempt — a `fallback` build writes nothing, so acknowledging off it would drop
   // the batch from the durable queue and from the view at once, which is the plan's
@@ -467,7 +510,14 @@ const BUDGETS = {
   // cannot reach, and the comments that withdraw the two claims the review found
   // false (the scanner's cursor, and the code precedence).
   'lib/services.js': 1600,
-  'lib/transaction.js': 2200,
+  // Raised from 2200 by Task 7 (2229 formatted lines measured; measured-plus-30
+  // rounds up to 2300, which is this number — the entry above the old one had no
+  // note of its own, so this number states the rule it follows). What the 29 lines
+  // buy: the `expectedSourceHashes` request field, its envelope validation, and
+  // `assertExpectedSourceHashes` — the check that re-reads a reviewed apply's
+  // evidence from inside the vault lock this transaction already holds, so an edit
+  // landing between a plan and its write is refused instead of overwritten.
+  'lib/transaction.js': 2300,
   'lib/vault.js': 1750,
 }
 

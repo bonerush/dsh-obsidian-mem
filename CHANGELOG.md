@@ -13,6 +13,61 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Added
 
+- **One parked curation proposal can now be reviewed and applied, through the same
+  transaction engine every other write uses** (Task 7). `lib/curation-review.js` is the
+  executor the Task 3 review found missing: nothing in the tree applied a parked
+  `supersede`, and re-applying one through `applyCandidate` would have classified it as
+  risky a second time and parked it again. `reviewCurationProposal({dataRoot,
+  proposalId, decision, binding, now})` reads the record, refuses anything that is not a
+  pending `create-separate` or `supersede` with a named code (`review-only`,
+  `operation-not-executable`, `proposal-not-current`, `proposal-missing`), verifies every
+  source through the vault jail and the memory layer's ownership proof, applies exactly
+  the approved operation, and only then marks the proposal `applied`. `decision:
+  'reject'` marks it `rejected` and changes no source byte. **A stale proposal never
+  auto-rebases:** the record's own `sources` travel into the transaction request as
+  `expectedSourceHashes`, which `lib/transaction.js` re-reads and re-hashes *inside the
+  vault lock it already holds* — no second, reentrant lock is taken anywhere — so an
+  edit that lands between the scan and the approval refuses with `source-changed` and
+  leaves the record `pending` for another review. The write request is built from an
+  explicit field list and goes through `createMemoryWithId`, so a candidate that carries
+  an `id` cannot turn an approved create into an update (R6); that path is the R6 guard
+  made structural, because it never reads `id` at all. Two reviewers of one proposal are
+  arbitrated by a per-proposal claim file beside the record: one applies, the other is
+  refused, and the shared idempotency key would in any case have replayed the winner's
+  transaction rather than minting a second note. A crash between the publish and the
+  receipt store is replayed by `recover` (the explicit half of
+  `mem_admin(action='jobs')`), which rolls the committed manifest forward before the
+  identity check so the retry returns the receipt the first attempt published instead of
+  refusing with `id-taken`.
+  - `lib/curation-cli.js` — the `dsh-obsidian-mem-review` command, the **only** approval
+    route. It requires an absolute `--vault`, resolves the project from the working
+    directory in `show` mode, prints the proposed operation, its sources and their
+    scanned hashes, and accepts exactly `apply <id>` or `reject <id>` — byte-for-byte,
+    one proposal per run, no `--all` and no default answer. Both stdin and stdout must be
+    terminals (`interactive-tty-required`); a piped answer exits non-zero, so an agent
+    that can spawn a process still cannot approve anything. **No model-callable approval
+    exists:** `mem_admin(action='curation')` still takes `operation` alone, and a case
+    asserts the compiled action enum and every `mem_admin` parameter name carry no
+    `apply`/`approve`/`reject`/`review`.
+  - `package.json` declares the second `bin`, and `scripts/verify-pack.mjs` now requires
+    `lib/curation-cli.js` to exist **and** the bin entry to target it: a `bin` entry is
+    the one asset no other pack check would miss, because `lib` is a directory entry.
+    `test/pack.test.js` covers the missing file, the dropped bin entry and a bin target
+    that escapes the package root.
+  - **Untested, stated as such:** the TTY-driving cases need `expect(1)`, the pty utility
+    this repository uses instead of `script(1)` (the BSD implementation refuses a child a
+    terminal when its own stdin is a socket). The cases are run and asserted here, and
+    they report a skip rather than a pass on a machine without it — the exit-code half of
+    that lane is therefore verified on this machine and not on a CI image that lacks it.
+    Live host delivery of the command is unverified: no case runs it from a real
+    interactive shell, only from a pseudo-terminal the test creates.
+  Measured: `npm test` **895 tests / 893 pass / 1 skipped / 0 fail** (the baseline
+  before this task measured 864 / 863 / 1 / 0 on this worktree); `npm run pack:check`
+  passes and the archive lists `lib/curation-cli.js`. Budgets raised with the argument
+  beside each one in `test/architecture.test.js`: `lib/memory.js` 1500 → 1650, and
+  `lib/transaction.js` 2200 → 2300. Two modules registered: `curation-review` (L6) and
+  `curation-cli` (L9), no existing layer renumbered.
+
 - **A bounded curation scan and the note-health rules the linter now shares**
   (work in progress; nothing user-visible changes yet — no config field, no new
   tool, no automatic pass). `lib/curation-scan.js` inspects one bound project
@@ -459,8 +514,9 @@ release artifact. The versioning policy is in the README, under Development.
   reports **95 tests / 95 pass / 0 fail / 0 skipped**, and Task 6's adapters
   (`test/hooks.test.js`, `test/auto-capture.test.js`, `test/codex-hooks.test.js`) are
   green in the same run at 203 / 203.
-  Budgets: `lib/services.js` 1550 → 1600 (1575 formatted lines measured; the file's
-  own rule would round 1575 + 30 = 1605 up to 1650, so 1600 is deliberately inside the
+  Budgets: `lib/services.js` 1550 → 1600 (1578 formatted lines measured — the 1575 this
+  sentence first gave was a stale measurement, corrected in fix round 3; the file's
+  own rule would round 1578 + 30 = 1608 up to 1650, so 1600 is deliberately inside the
   rule rather than its number, which the entry beside it in `test/architecture.test.js`
   now says — as first written it claimed measured-plus-30 rounded to 1600, which is
   false arithmetic), `lib/diagnostic-codec.js` 200 → 250 (210 measured, same rule) and
@@ -495,8 +551,11 @@ release artifact. The versioning policy is in the README, under Development.
   enumerate, so it is coarsened to `other` on purpose (the comment in
   `lib/diagnostic-codec.js` and the `CURATION_VIEW_CODES` comment say so), and
   `view-unwritable` itself **is** reachable — the review measured a legal ≤2000-entry
-  document inside the margin gap between the builder's pretty-printed size check and the
-  store's bound, so the round above's "unreachable rather than merely untested" was an
+  document inside the margin between the builder's **compact** serialisation check
+  (`MAX_VIEW_DOCUMENT_BYTES`, 768 KiB, `lib/curation-view.js`, measured on
+  `JSON.stringify(document)`) and the store's **pretty-printed** bound (`MAX_VIEW_BYTES`,
+  1 MiB, `lib/curation-state.js`, measured on `JSON.stringify(value, null, 2)`), so the
+  round above's "unreachable rather than merely untested" was an
   over-claim about one probe (a directory standing in for the view file, `EISDIR`). The
   underlying defect — the raw filesystem failure escaping `buildCurationView` as a throw
   — remains a recorded final-fix-wave item and is not fixed here. Also corrected: the

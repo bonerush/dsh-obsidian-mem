@@ -29,7 +29,8 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "dsh-obsidian-mem-diagnose": "./lib/diagnose-cli.js"
+    "dsh-obsidian-mem-diagnose": "./lib/diagnose-cli.js",
+    "dsh-obsidian-mem-review": "./lib/curation-cli.js"
   },
   "license": "MIT",
   "engines": {

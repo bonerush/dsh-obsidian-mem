@@ -96,7 +96,10 @@ function baseManifest() {
     name: 'dsh-obsidian-mem',
     version: '0.1.0',
     main: 'lib/index.js',
-    bin: { 'dsh-obsidian-mem-diagnose': './lib/diagnose-cli.js' },
+    bin: {
+      'dsh-obsidian-mem-diagnose': './lib/diagnose-cli.js',
+      'dsh-obsidian-mem-review': './lib/curation-cli.js',
+    },
     engines: { node: '>=22.22.2' },
     files: [
       'lib',
@@ -137,6 +140,7 @@ function verify(t, options = {}) {
   const assets = {
     'lib/index.js': "export const name = 'obsidian-mem'\n",
     'lib/diagnose-cli.js': "#!/usr/bin/env node\nprocess.stdout.write('diagnose fixture')\n",
+    'lib/curation-cli.js': "#!/usr/bin/env node\nprocess.stdout.write('review fixture')\n",
     'lib/client.js': '// browser fixture\n',
     'lib/graph-renderer.js': '// worker fixture\n',
     'lib/graph-palette.js': '// graph palette fixture\n',
@@ -201,6 +205,27 @@ test('the diagnostic command must be present at the declared bin target', (t) =>
 
   const pkg = baseManifest()
   pkg.bin['dsh-obsidian-mem-diagnose'] = '../outside.js'
+  const escaping = verify(t, { pkg })
+  assert.notEqual(escaping.status, 0)
+  assert.match(escaping.stdout + escaping.stderr, /bin/)
+})
+
+test('the review command must be present at the declared bin target', (t) => {
+  // The tarball's only approval route. A `bin` entry is the one asset no other
+  // check would miss: `lib` is a directory entry, so a module inside it packs
+  // whether or not the command that runs it is declared.
+  const missing = verify(t, { omit: ['lib/curation-cli.js'] })
+  assert.notEqual(missing.status, 0)
+  assert.match(missing.stdout + missing.stderr, /lib\/curation-cli\.js/)
+
+  const dropped = baseManifest()
+  delete dropped.bin['dsh-obsidian-mem-review']
+  const undeclared = verify(t, { pkg: dropped })
+  assert.notEqual(undeclared.status, 0)
+  assert.match(undeclared.stdout + undeclared.stderr, /dsh-obsidian-mem-review/)
+
+  const pkg = baseManifest()
+  pkg.bin['dsh-obsidian-mem-review'] = '../outside.js'
   const escaping = verify(t, { pkg })
   assert.notEqual(escaping.status, 0)
   assert.match(escaping.stdout + escaping.stderr, /bin/)

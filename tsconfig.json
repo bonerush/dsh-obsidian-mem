@@ -11,6 +11,7 @@
     "skipLibCheck": true
   },
   "files": [
+    "lib/curation-cli.js",
     "lib/curation-proposals.js",
     "lib/git.js",
     "lib/index.js",
