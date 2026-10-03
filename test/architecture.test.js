@@ -98,6 +98,14 @@ const LAYERS = {
   // applies the linter's fixed exclusions and reuses its note-health helpers, so
   // it has to sit above `lint` — that edge is what fixes L6 rather than L5.
   'curation-state': 4,
+  // The durable proposal store: the review queue a risky candidate is parked in.
+  // It reads the private curation state and the vault jail and writes nothing but
+  // private JSON, which is the position `curation-state` holds — but it also has to
+  // sit *below* `capture` (L6), because the queue worker is the layer that may
+  // compose the store with `applyCandidate`. That edge is what fixes L5: L5 is the
+  // highest layer strictly under capture, and `memory` (L5) is therefore a lateral
+  // neighbour it may not import — which is exactly why the `propose` seam exists.
+  'curation-proposals': 5,
   lint: 5,
   'curation-scan': 6,
   memory: 5,
@@ -142,7 +150,14 @@ const BUDGETS = {
   // decision points are what is being recorded, and they are in this file. The
   // size rule is registered rather than waived, which is the whole point of it:
   // the next raise has to argue with this line.
-  'lib/capture.js': 2050,
+  // Raised from 2050 by Task 3 (2086 measured). The proposal seam belongs here and
+  // nowhere else: this is the only layer that may compose the store with
+  // `applyCandidate`, and the alternative — having `memory.js` reach sideways for
+  // it — is the lateral edge the layer rule above exists to refuse. What the lines
+  // buy: the seam itself, the review outcome's diagnostic, the `proposalId` the
+  // receipt carries, and the one branch that skips the index refresh for an item
+  // that wrote nothing.
+  'lib/capture.js': 2100,
   'lib/config.js': 300,
   // The curation plan's three Task 2 modules, on the same rule as every other
   // entry (measured plus 30, rounded up). What the size buys: the scanner carries
@@ -161,6 +176,15 @@ const BUDGETS = {
   // fields plus a two-step recovery — instead of throwing the whole pass on one
   // note's frontmatter. The alternative was to leave that throw in place.
   'lib/curation-scan.js': 1050,
+  // The Task 3 module, on the same measured-plus-30 rule (1113 formatted lines,
+  // 1115 with the two-line comment that makes the listing order intentional).
+  // What the size buys: two proposal kinds with different operations, four
+  // review-only finding kinds, an identity derivation and a content hash that have
+  // to disagree in exactly the right places, an exclusive-create publication that
+  // survives two processes racing one identity, and the scan→proposal recording
+  // that has to replay rather than duplicate. Splitting the store from the recorder
+  // would put one identity derivation in two files.
+  'lib/curation-proposals.js': 1150,
   // Raised from 950 for the configurable item-count ceiling. The prompt must name
   // the ceiling the validator enforces (`too-many-items` refused a whole batch of
   // 21 against 16 because it did not), and a ceiling that comes from config cannot
@@ -207,7 +231,13 @@ const BUDGETS = {
   // this small assembly step belongs here, after the disabled early return.
   'lib/index.js': 200,
   'lib/lint.js': 1450,
-  'lib/memory.js': 1400,
+  // Raised from 1400 by Task 3 (1476 measured). The gate itself is deliberately
+  // here rather than in a helper module: the decision is "is this candidate risky",
+  // and it is only answerable beside the ownership pre-check and the duplicate
+  // lookup that produce its two inputs. The raise also covers the `propose` seam on
+  // `normalizeDeps` and the two JSDoc blocks that record why the failure is closed
+  // rather than falling through to a supersede.
+  'lib/memory.js': 1500,
   'lib/naming.js': 250,
   'lib/paths.js': 300,
   'lib/pending.js': 1150,

@@ -43,6 +43,7 @@ import {
   retryJob,
 } from '../lib/capture.js'
 import { createDiagnostics } from '../lib/debug.js'
+import { listCurationProposals, readCurationProposal } from '../lib/curation-proposals.js'
 import { openIndex } from '../lib/index-db.js'
 import { registerHooks } from '../lib/hooks.js'
 import { applyCandidate, createMemoryWithId } from '../lib/memory.js'
@@ -508,11 +509,14 @@ test('a validated job applies through createMemoryWithId: one note, one MOC line
   assert.equal(receipts[0].items[0].path, notes[0].path)
 })
 
-test('a candidate duplicating an existing note is skipped, and the job still completes', async (t) => {
-  // The end-to-end shape of the duplicate rule: a real job through the real
-  // apply path, with a real index behind the lookup. Measured on this
-  // repository's own vault, 42 same-type pairs are near duplicates and this is
-  // the path that produced them.
+test('a candidate duplicating an existing note is parked for review instead of skipped', async (t) => {
+  // Rewritten by Task 3. This is the end-to-end shape of the duplicate rule: a
+  // real job through the real apply path, with a real index behind the lookup.
+  // Measured on this repository's own vault, 42 same-type pairs are near
+  // duplicates — and the old outcome was that the second fact vanished as
+  // `skipped` with only a diagnostic recording it. The candidate is now parked
+  // whole, the job still completes, and the item is marked applied *because the
+  // proposal is durable*, which is what keeps a retry from writing it twice.
   const f = await fixture(t)
   const seeded = await seedDecision(f, { title: '调度器后端选型' })
   const index = await openIndex({
@@ -534,9 +538,41 @@ test('a candidate duplicating an existing note is skipped, and the job still com
   const notes = await memoryNotes(f)
   assert.equal(notes.length, 1, 'the duplicate was not written a second time')
   assert.equal(notes[0].note.data.id, seeded.id)
+
   const [receipt] = await readReceipts(f)
   assert.equal(receipt.result, 'applied')
-  assert.equal(receipt.items[0].id, seeded.id)
+  assert.equal(receipt.items[0].id, null, 'a parked candidate wrote no note')
+  assert.equal(receipt.items[0].path, null)
+  assert.match(receipt.items[0].proposalId, /^[0-9a-f]{64}$/u)
+  const parked = await readCurationProposal({
+    dataRoot: f.dataRoot,
+    projectId: f.binding.projectId,
+    proposalId: receipt.items[0].proposalId,
+  })
+  assert.equal(parked.kind, 'near-duplicate')
+  assert.equal(parked.state, 'pending')
+  assert.equal(parked.operation.kind, 'create-separate')
+  assert.equal(parked.operation.item.idempotencyKey, job.output.items[0].idempotencyKey)
+
+  // A second pass over the same job is a receipt replay, not a second proposal:
+  // the job is gone, and the queue holds exactly one entry for the one item.
+  const listed = await listCurationProposals({
+    dataRoot: f.dataRoot,
+    projectId: f.binding.projectId,
+    state: 'pending',
+  })
+  assert.equal(listed.total, 1)
+
+  // The parked candidate is still executable by the *review* path: approving it
+  // writes exactly the note the automatic path refused to write.
+  const approved = await applyCandidate(
+    f.binding,
+    { sessionId: SESSION_ID },
+    parked.operation.item,
+    { dataRoot: f.dataRoot, home: f.home },
+  )
+  assert.equal(approved.id, parked.operation.item.preassignedId)
+  assert.equal((await memoryNotes(f)).length, 2)
 })
 
 test('an empty result writes a no-memory receipt and touches nothing', async (t) => {
@@ -1038,7 +1074,14 @@ test('a fault injected before the index update leaves the note committed', async
 // Supersede: evidence, ownership and the old file's hash
 // ---------------------------------------------------------------------------
 
-test('a supersede whose old file changed mid-apply is not overwritten', async (t) => {
+test('a supersede whose old file changed mid-apply parks the candidate, never the new revision', async (t) => {
+  // Rewritten by Task 3. The old case exercised the hash race through the inbox
+  // fallback: the engine saw `hash-mismatch` and wrote the candidate into
+  // `Inbox/`. Now the candidate never reaches a transaction at all — it is parked
+  // for review — so the race is exercised as "the proposal's evidence is the
+  // revision that is actually on disk", which is what makes the later approval's
+  // hash recheck meaningful. The coverage is kept: the human edit survives and is
+  // never relinked, and no second decision note is written.
   const f = await fixture(t)
   const old = await seedDecision(f)
   const before = await readFile(at(f.vault, old.path))
@@ -1064,20 +1107,29 @@ test('a supersede whose old file changed mid-apply is not overwritten', async (t
     /superseded_by: dec-/,
     'the old note was not relinked',
   )
-
-  const receipt = (await readReceipts(f)).at(-1)
-  assert.equal(receipt.items[0].superseded, false)
-  assert.equal(receipt.items[0].conflicts[0].reason, 'hash-mismatch')
-  assert.equal(receipt.items[0].inbox, true)
-
-  const parked = await inboxCandidates(f)
-  assert.equal(parked.length, 1, 'the candidate is parked in the inbox instead of overwriting')
-  assert.equal(parked[0].note.data.type, 'decision')
   assert.deepEqual(
     (await readdir(at(f.vault, DECISIONS))).filter((name) => name.startsWith('ADR-')),
     ['ADR-1-旧结论.md'],
-    'a parked candidate takes no ADR number',
+    'the parked candidate took no ADR number',
   )
+  assert.deepEqual(await inboxCandidates(f), [], 'nothing was written anywhere')
+
+  const receipt = (await readReceipts(f)).at(-1)
+  assert.equal(receipt.items[0].superseded, false)
+  assert.deepEqual(receipt.items[0].conflicts, [])
+  assert.equal(receipt.items[0].inbox, false)
+  assert.equal(receipt.items[0].id, null)
+
+  // The evidence names the bytes the human left behind, not the hash the pre-check
+  // read before the edit: an approval re-verifies these, so a stale hash here would
+  // make every later approval refuse a target that never moved again.
+  const parked = await readCurationProposal({
+    dataRoot: f.dataRoot,
+    projectId: f.binding.projectId,
+    proposalId: receipt.items[0].proposalId,
+  })
+  assert.deepEqual(parked.sources, [{ id: old.id, path: old.path, hash: sha256(after) }])
+  assert.equal(parked.operation.supersedesId, old.id)
 })
 
 test('a supersede target that no longer exists parks the candidate in the inbox', async (t) => {
@@ -1105,25 +1157,52 @@ test('a human-owned supersede target is never rewritten', async (t) => {
   assert.equal(receipt.items[0].conflicts[0].reason, 'human-owned')
 })
 
-test('a legitimate supersede relinks the old note and never overwrites its body', async (t) => {
+test('a legitimate supersede is parked for review and the old note stays active', async (t) => {
+  // Rewritten by Task 3. The old case proved that a model-supplied `supersedesId`
+  // rewrote the old note's status automatically. A model's judgment that a
+  // conclusion changed is exactly the semantic decision the design reserves for a
+  // human: the candidate is now parked whole, the predecessor is left `active`,
+  // and the **receipt** carries the proposal so the job's own record names it.
+  // The coverage that mattered is kept — a supersede candidate never overwrites
+  // the old body — and strengthened, because not even its status moves.
   const f = await fixture(t)
   const old = await seedDecision(f)
   const oldBytes = await readFile(at(f.vault, old.path))
-  await writeJobAtomic(
-    f.queueRoot,
-    validatedJob([itemFixture({ title: '新结论', supersedesId: old.id })]),
-  )
+  const job = validatedJob([itemFixture({ title: '新结论', supersedesId: old.id })])
+  await writeJobAtomic(f.queueRoot, job)
 
   await processQueue(queueOptions(f))
   const receipt = (await readReceipts(f)).at(-1)
-  assert.equal(receipt.items[0].superseded, true)
+  assert.equal(receipt.result, 'applied')
+  assert.equal(receipt.items[0].superseded, false, 'no supersede was applied')
+  assert.equal(receipt.items[0].id, null)
+  assert.equal(receipt.items[0].path, null)
   assert.deepEqual(receipt.items[0].conflicts, [])
+  assert.match(receipt.items[0].proposalId, /^[0-9a-f]{64}$/u)
 
-  const relinked = await readFile(at(f.vault, old.path), 'utf8')
-  const originalBody = parseNote(oldBytes).body
-  assert.match(relinked, /status: "?superseded"?/)
-  assert.ok(relinked.includes(originalBody.trim()), 'the old evidence is preserved')
-  assert.equal((await memoryNotes(f)).length, 2)
+  const after = await readFile(at(f.vault, old.path))
+  assert.equal(Buffer.compare(after, oldBytes), 0, 'the old note is byte-identical')
+  // The seeded decision is `status: accepted`, which is what `seedDecision` writes;
+  // the point is that it is still whatever it was, not `superseded`.
+  assert.equal(parseNote(after).data.status, 'accepted', 'the predecessor was not relinked')
+  assert.equal((await memoryNotes(f)).length, 1, 'the replacement was not written')
+
+  // The parked proposal is the complete candidate: it names the predecessor and
+  // carries the exact item an approval would apply.
+  const parked = await readCurationProposal({
+    dataRoot: f.dataRoot,
+    projectId: f.binding.projectId,
+    proposalId: receipt.items[0].proposalId,
+  })
+  assert.equal(parked.kind, 'supersede')
+  assert.equal(parked.operation.kind, 'supersede')
+  assert.equal(parked.operation.supersedesId, old.id)
+  assert.equal(parked.operation.item.title, '新结论')
+  assert.deepEqual(parked.sources, [{ id: old.id, path: old.path, hash: sha256(after) }])
+  assert.equal(
+    (await listCurationProposals({ dataRoot: f.dataRoot, projectId: f.binding.projectId })).total,
+    1,
+  )
 })
 
 // ---------------------------------------------------------------------------

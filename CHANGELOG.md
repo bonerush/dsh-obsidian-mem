@@ -26,8 +26,45 @@ release artifact. The versioning policy is in the README, under Development.
   `lib/lint.js` now applies those instead of keeping its own copies, so a scan and
   a lint cannot disagree about one note. `lib/index-db.js` keeps exporting
   `SUPERSEDED_STATUSES` as an alias of the shared history list.
-  Measured: `npm test` 788 tests / 787 pass / 1 skipped / 0 fail, and a test
+  **Continuing into Task 3:** `lib/curation-proposals.js` is the durable review
+  queue for the candidates the plugin may not apply on its own — the supersede a
+  distillation proposed, and the restatement a title lookup called a duplicate —
+  stored one JSON document per proposal under `<dataRoot>/curation/proposals/` with
+  the same `0700`/`0600`, atomic and size-bounded rules as the cursor, and with an
+  identity derived from the project, the item (or the scan finding) and the source
+  hashes, so replaying a candidate returns the same record instead of growing the
+  queue. An identity that already exists with different content is refused with
+  `proposal-conflict` rather than overwritten; two processes racing one identity
+  have one winner (an exclusive create) and the loser re-reads it instead of
+  clobbering it; and a state transition is the only thing there that takes the vault
+  lock. A `near-duplicate`, `expired-review`, `dead-wikilink` or
+  `missing-provenance` finding recorded from a scan carries **no** operation: it is
+  a record to read, and a plan on such a kind is refused. In the apply path,
+  `applyCandidate` classifies a risky item — a `supersedesId` that survived the
+  ownership pre-check, or a twin from the duplicate lookup — *before* it creates
+  anything: it parks the candidate whole through the new `propose` seam and returns
+  `{review: true, proposalId, skipped: false}` with nothing written to the vault,
+  and a `review` item is recorded in `appliedItems` and in the receipt **without** an
+  index refresh, because no note exists for an index to look at. With no `propose`
+  seam the call throws `propose-unavailable` and writes nothing: falling through to
+  the old automatic supersede, or to the old silent `skipped`, would lose a
+  validated candidate. Three files carry it:
+  - `lib/curation-proposals.js` — the two executable kinds and the four review-only
+    ones, `snapshotProposalSources` reading each source's exact bytes through the
+    vault jail, and `recordCurationFindings` turning a scan's judgment-dependent
+    findings into stable proposals. A finding edited between passes retires the
+    record built from bytes that no longer exist and records the current one, and no
+    source note is ever changed.
+  - `lib/memory.js` — the `propose` seam on `normalizeDeps` (it can no longer import
+    the store: both sit at L5 and that lateral edge is refused) plus the fail-closed
+    gate above.
+  - `lib/capture.js` (L6) — the real seam, which snapshots the evidence and calls
+    `saveCurationProposal`. This is the only layer that may compose the two.
+  Measured: `npm test` 804 tests / 803 pass / 1 skipped / 0 fail, and a test
   asserts every source-note hash is unchanged before and after every kind of pass.
+  Untested: no scan currently emits a *suspected contradiction* finding, so the
+  review-only path is exercised for the four kinds the scanner does produce and a
+  contradiction would be recorded by the same code path without a case of its own.
   A pass that hits either bound reports `complete: false` even when the backfill
   behind it is finished, every note-supplied string an entry carries is bounded,
   and a record the private store refuses degrades that one note to `unexamined`

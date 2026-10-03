@@ -19,6 +19,11 @@ import { test } from 'node:test'
 
 import { HOT_ARCHIVE_RATIO, HOT_CAPACITY_CHARS, updateHot } from '../lib/hot.js'
 import {
+  readCurationProposal,
+  saveCurationProposal,
+  snapshotProposalSources,
+} from '../lib/curation-proposals.js'
+import {
   appendLog,
   applyCandidate,
   createMemoryWithId,
@@ -1002,7 +1007,14 @@ function splitGenerated(text) {
 // A distilled candidate that duplicates a note already in the vault
 // ---------------------------------------------------------------------------
 
-test('a candidate whose title twins an existing note is skipped, never written twice', async (t) => {
+test('a candidate whose title twins an existing note is parked for review, never dropped', async (t) => {
+  // Rewritten by Task 3. The old outcome was `skipped: true` with the twin's id on
+  // the "receipt" — a model-written restatement of an existing fact disappeared
+  // and nothing but a diagnostic recorded it. A title overlap is evidence for a
+  // *candidate*, never authority to discard one, so the candidate is now parked
+  // whole in the review queue and the vault is not touched at all: the coverage
+  // this case always had (the second note is not written) is kept, and what
+  // replaced the silent skip is a durable record a human can act on.
   const env = await fixture(t)
   const seeded = await writeMemory(
     env.binding,
@@ -1017,23 +1029,49 @@ test('a candidate whose title twins an existing note is skipped, never written t
     title: '召回额度按简报剩余计费，首轮必然饿死',
     score: 0.8,
   }
-  const result = await applyCandidate(
-    env.binding,
-    { sessionId: 'sess-1' },
-    { type: 'gotcha', title: '提示召回按简报剩余额度计费，首轮必然饿死', body: '同一件事。\n' },
-    { ...env.deps, findDuplicate: async () => twin },
-  )
-  assert.equal(result.skipped, true)
-  assert.equal(result.id, seeded.id, 'the receipt names the note that already covers the fact')
-  assert.equal(result.path, seeded.path)
+  const item = {
+    type: 'gotcha',
+    title: '提示召回按简报剩余额度计费，首轮必然饿死',
+    body: '同一件事。\n',
+    preassignedId: `got-${randomUUID()}`,
+    idempotencyKey: 'twin:1',
+  }
+  const result = await applyCandidate(env.binding, { sessionId: 'sess-1' }, item, {
+    ...env.deps,
+    findDuplicate: async () => twin,
+    propose: async (binding, details) =>
+      saveCurationProposal({
+        dataRoot: env.dataRoot,
+        now: NOW,
+        ...details,
+        sources: await snapshotProposalSources(binding, details.risky),
+      }),
+  })
+  assert.equal(result.review, true)
+  assert.equal(result.skipped, false)
+  assert.equal(result.id, null)
+  assert.equal(result.path, null)
+  assert.match(result.proposalId, /^[0-9a-f]{64}$/u)
+
   assert.deepEqual(
     await listMarkdown(at(env.vault, `${PROJECT}/Pitfalls`)),
     before,
-    'no second note was written',
+    'the candidate was parked, not written',
   )
+  const proposal = await readCurationProposal({
+    dataRoot: env.dataRoot,
+    projectId: env.binding.projectId,
+    proposalId: result.proposalId,
+  })
+  assert.equal(proposal.kind, 'near-duplicate')
+  assert.equal(proposal.state, 'pending')
+  assert.deepEqual(proposal.operation, { kind: 'create-separate', item })
+  assert.deepEqual(proposal.sources, [
+    { id: seeded.id, path: seeded.path, hash: sha256(await readFile(at(env.vault, seeded.path))) },
+  ])
 
-  // The control: without the lookup the very same route does write, which is what
-  // makes the assertion above about the twin rather than about the fixture.
+  // The control: the same route still writes an ordinary new note — the twin path
+  // is what parks a candidate, not the lookup seam being present at all.
   const control = await applyCandidate(
     env.binding,
     { sessionId: 'sess-1' },
@@ -1044,8 +1082,48 @@ test('a candidate whose title twins an existing note is skipped, never written t
       preassignedId: `got-${randomUUID()}`,
       idempotencyKey: 'control:1',
     },
-    env.deps,
+    { ...env.deps, findDuplicate: async () => null },
   )
   assert.notEqual(control.skipped, true)
+  assert.notEqual(control.review, true)
   assert.equal((await listMarkdown(at(env.vault, `${PROJECT}/Pitfalls`))).length, before.length + 1)
+})
+
+test('a risky item with no propose seam throws and writes nothing', async (t) => {
+  // The fail-closed half of the gate: without somewhere durable to park a risky
+  // candidate, neither the old automatic supersede nor a silent `skipped` may
+  // happen. The throw is what leaves the job retryable — a job that completed on a
+  // lost candidate is the defect this refusal exists to prevent.
+  const env = await fixture(t)
+  const seeded = await writeMemory(
+    env.binding,
+    { type: 'decision', title: '旧结论', body: '旧的正文。\n', status: 'accepted' },
+    env.deps,
+  )
+  const before = await read(env.vault, seeded.path)
+  const item = {
+    type: 'decision',
+    title: '新结论',
+    body: '新的正文。\n',
+    preassignedId: `dec-${randomUUID()}`,
+    idempotencyKey: 'risky:1',
+    supersedesId: seeded.id,
+  }
+  await assert.rejects(
+    () => applyCandidate(env.binding, { sessionId: 'sess-1' }, item, env.deps),
+    failsWith('propose-unavailable'),
+  )
+  assert.equal(await read(env.vault, seeded.path), before, 'the old note is byte-identical')
+
+  // The same refusal for the twin path, and the twin is not written either.
+  const decisionsBefore = await listMarkdown(at(env.vault, `${PROJECT}/Decisions`))
+  await assert.rejects(
+    () =>
+      applyCandidate(env.binding, { sessionId: 'sess-1' }, item, {
+        ...env.deps,
+        findDuplicate: async () => ({ id: seeded.id, path: seeded.path, score: 0.9 }),
+      }),
+    failsWith('propose-unavailable'),
+  )
+  assert.deepEqual(await listMarkdown(at(env.vault, `${PROJECT}/Decisions`)), decisionsBefore)
 })
