@@ -16,6 +16,11 @@ import { fileURLToPath } from 'node:url'
 
 import { hooksConfig } from '../codex/prepare.mjs'
 import {
+  curationCursorPath,
+  readCurationCursor,
+  readCurationViewJson,
+} from '../lib/curation-state.js'
+import {
   CONTINUE,
   INJECT_SOURCES,
   briefFor,
@@ -98,6 +103,23 @@ function parsed(text) {
   } catch {
     return null
   }
+}
+
+/**
+ * The one project id the private curation state names, read off the hint the MCP
+ * write leaves behind.
+ *
+ * The changed-path set's file name is the only document in this throwaway world
+ * that spells the whole UUID out; a receipt carries a transaction id instead.
+ *
+ * @param {string} dataRoot - the throwaway plugin data root.
+ * @returns {string} the project id.
+ */
+function hintedProjectId(dataRoot) {
+  const dir = join(dataRoot, 'curation', 'changed')
+  const names = readdirSync(dir)
+  assert.equal(names.length, 1, `expected one hint, saw ${JSON.stringify(names)}`)
+  return names[0].replace(/\.json$/u, '')
 }
 
 /** Bind one repository by writing a note into it, the way the MCP side does. */
@@ -425,6 +447,15 @@ test('a bound start injects the real brief and the due pass never reaches stdout
   // so the pass's own answer cannot be mistaken for the hook document.
   const space = world()
   const receipt = await bind(space)
+  const dataRoot = join(space.dsh, 'data', 'obsidian-mem')
+  const projectId = hintedProjectId(dataRoot)
+  // The MCP write leaves the durable hint and nothing else: it has no worker to
+  // wake, so any cursor or view below can only be the hook's own pass.
+  assert.equal(
+    existsSync(curationCursorPath(dataRoot, projectId)),
+    false,
+    'an MCP-only write runs no pass',
+  )
   const run = hook(
     { HOME: space.home, DSH_HOME: space.dsh, OBSIDIAN_MEM_VAULT: space.vault },
     JSON.stringify(payload(space.repo)),
@@ -434,6 +465,18 @@ test('a bound start injects the real brief and the due pass never reaches stdout
   assert.equal(run.answer.hookSpecificOutput.hookEventName, 'SessionStart')
   // The real hook wrote the real brief for the note `bind` committed.
   assert.match(run.answer.hookSpecificOutput.additionalContext, /钩子注入的决定/u)
+  // And the real handle ran the due pass, not just the stub below: the pass leaves
+  // a marker and a committed view for the note the write queued, which is state no
+  // other caller in this world can produce.
+  const cursor = await readCurationCursor(dataRoot, projectId)
+  assert.notEqual(cursor, null, 'the hook process ran the automatic pass')
+  const view = await readCurationViewJson(dataRoot, projectId)
+  assert.equal(view.complete, true)
+  assert.equal(
+    view.entries.some((entry) => entry.path === receipt.path),
+    true,
+    'the due pass inspected the note the MCP write committed',
+  )
 
   const handle = curationHandle({ text: '# obsidian-mem:brief\n\n- 钩子注入的决定\n' })
   const lines = []

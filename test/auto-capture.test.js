@@ -2358,10 +2358,15 @@ test('a committed write queues its note once and a parked candidate queues nothi
   )
 })
 
-test('two kicks while one curation pass is running start exactly one more', async (t) => {
-  // The single-flight guard. The pass promises are awaited directly (`pass()` is
-  // the worker's own handle on the pass a `kick` starts), so the window in which
-  // the second kick lands is the gate's, not a scheduler's.
+test('two passes asked for in one tick start exactly one', async (t) => {
+  // The worker's own single-flight gate, and only that: `pass()` records the
+  // in-flight promise before its first `await`, so a second request in the same
+  // tick cannot start a second pass. The proof is the answer, not a clock — a
+  // request answered by the running pass resolves to *that* pass's summary (the one
+  // job applied), where a second pass would resolve to a fresh summary of an empty
+  // queue. The callback is deliberately not awaited by the pass, so it cannot be
+  // what keeps the first pass in flight; nothing here races `completeJob`'s fs
+  // latency.
   const f = await fixture(t)
   await writeJobAtomic(f.queueRoot, validatedJob([itemFixture()]))
   const worker = createQueueWorker(
@@ -2370,31 +2375,18 @@ test('two kicks while one curation pass is running start exactly one more', asyn
   t.after(() => worker.stop())
 
   const calls = []
-  let release = () => {}
-  let gate = new Promise((resolve) => {
-    release = resolve
-  })
-  // `async`, because the worker awaits what this returns: that await is what keeps
-  // the pass in flight while the second kick arrives.
-  worker.setOnCurationCompleted(async (binding, paths) => {
-    calls.push(paths.slice())
-    await gate
-  })
+  worker.setOnCurationCompleted((binding, paths) => calls.push(paths.slice()))
 
   const first = worker.pass()
-  assert.equal(await waitUntil(() => calls.length === 1), true, 'the write reached the callback')
-  const dropped = worker.pass()
-  assert.equal(worker.isRunning(), true, 'the first pass is still the one running')
-  release()
-  await first
-  await dropped
-  assert.equal(calls.length, 1, 'a request during an in-flight pass is not a second pass')
+  const second = worker.pass()
+  assert.equal(worker.isRunning(), true, 'the first pass is the one running')
+  const [started, answered] = await Promise.all([first, second])
+  assert.equal(answered, started, 'a request during an in-flight pass is answered with that pass')
+  assert.equal(started.completed, 1, 'the one job was applied once')
+  assert.equal(calls.length, 1, 'and the callback ran once')
 
-  // Dropped for good, not deferred: with work waiting and nothing running, the
-  // next kick is a fresh pass.
-  gate = new Promise((resolve) => {
-    release = resolve
-  })
+  // Answered, not queued: with work waiting and nothing running, the next request
+  // is a fresh pass.
   await writeJobAtomic(
     f.queueRoot,
     validatedJob([itemFixture({ title: '第二次写入' })], {
@@ -2406,9 +2398,80 @@ test('two kicks while one curation pass is running start exactly one more', asyn
   )
   const third = worker.pass()
   assert.equal(await waitUntil(() => calls.length === 2), true, 'an idle worker runs the next pass')
-  release()
-  await third
+  const next = await third
+  assert.equal(next.completed, 1, 'the second pass is a pass of its own')
   assert.equal(calls.length, 2)
+})
+
+test('a curation callback that throws cannot fail a job whose vault work is done', async (t) => {
+  // The callback is advisory, so the receipt is the job's outcome and the callback's
+  // failure may only be a diagnostic. The counterfactual is why this case exists:
+  // the bare call let a synchronous throw reach the pass's catch, and `failJob`
+  // consumes an attempt — at `maxAttempts` (here 1, to make it terminal in one pass)
+  // the job would be marked `failed` for good with its note already on disk and no
+  // receipt to say so.
+  const f = await fixture(t)
+  const diagnostics = createDiagnostics()
+  const boom = new Error('the trigger threw')
+  boom.code = 'trigger-threw'
+  await writeJobAtomic(f.queueRoot, validatedJob([itemFixture()]))
+  const summary = await processQueue({
+    ...queueOptions(f, {
+      config: baseConfig({ autoCurate: true, distill: { maxRetries: 1 } }),
+      diagnostics,
+    }),
+    onCurationCompleted: () => {
+      throw boom
+    },
+  })
+
+  assert.equal(summary.completed, 1)
+  const note = (await memoryNotes(f))[0]
+  const receipt = (await readReceipts(f)).at(-1)
+  assert.equal(receipt.result, 'applied', 'a done job gets its receipt')
+  assert.equal(receipt.items[0].path, note.path)
+  assert.equal(await jobOnDisk(f), null, 'a completed job is deleted, not retried')
+  const events = eventsOf(diagnostics, 'curation')
+  assert.equal(events.length, 1, 'the callback failure is recorded once')
+  assert.equal(events[0].outcome, 'failed')
+  assert.equal(events[0].code, 'trigger-threw')
+  assert.equal(JSON.stringify(events).includes(note.path), false, 'content-free')
+})
+
+test('a curation callback that rejects is observed and never reaches the job', async (t) => {
+  // The same class as the throw above, with one extra hazard: the pass never awaits
+  // the callback, so before this wrapper nothing in the process held its rejection —
+  // it surfaced as an unhandled rejection instead of one diagnostic.
+  const f = await fixture(t)
+  const unhandled = []
+  const onUnhandled = (reason) => unhandled.push(reason)
+  process.on('unhandledRejection', onUnhandled)
+  t.after(() => process.removeListener('unhandledRejection', onUnhandled))
+  const diagnostics = createDiagnostics()
+  await writeJobAtomic(f.queueRoot, validatedJob([itemFixture()]))
+  const summary = await processQueue({
+    ...queueOptions(f, {
+      config: baseConfig({ autoCurate: true, distill: { maxRetries: 1 } }),
+      diagnostics,
+    }),
+    onCurationCompleted: async () => {
+      const error = new Error('the trigger rejected')
+      error.code = 'trigger-rejected'
+      throw error
+    },
+  })
+  // One macrotask turn is all a rejection needs to be reported as unhandled.
+  await sleep(20)
+
+  assert.equal(summary.completed, 1)
+  assert.deepEqual(unhandled, [], 'the rejection was observed, not left to the process')
+  const receipt = (await readReceipts(f)).at(-1)
+  assert.equal(receipt.result, 'applied')
+  assert.equal(await jobOnDisk(f), null)
+  const events = eventsOf(diagnostics, 'curation')
+  assert.equal(events.length, 1)
+  assert.equal(events[0].outcome, 'failed')
+  assert.equal(events[0].code, 'trigger-rejected')
 })
 
 test('a stopped worker starts no curation pass for a later kick', async (t) => {

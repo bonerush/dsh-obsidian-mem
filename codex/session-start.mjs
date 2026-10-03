@@ -33,6 +33,7 @@
 // may cost the user a session: every path writes one schema-valid object and exits
 // 0. Reasons go to stderr, where they cannot be mistaken for protocol, and only
 // when something actually went wrong or `OBSIDIAN_MEM_HOOK_DEBUG=1` asks for them.
+import { DEFAULT_MAX_MS, DEFAULT_MAX_NOTES } from '../lib/curation-scan.js'
 import { openMemory } from './server.mjs'
 
 /** The `source` values that open a conversation with no project context in it. */
@@ -101,10 +102,11 @@ export function decide(payload) {
  * Task 6's automatic pass runs *after* the brief is built and before the hook
  * answers, because a session start is the only turn boundary this adapter owns:
  * MCP gives tools, not boundaries, so there is nowhere else to put it. It is
- * bounded to a quarter of a second because it is on the session's critical path,
- * and it may neither change the brief nor fail the hook — a scan that throws is
- * one diagnostic and nothing more. `onCurated` exists so a test can hold the pass
- * open and count the calls; production passes nothing.
+ * bounded by `lib/curation-scan.js`'s shared defaults — a 500 ms deadline and 256
+ * notes, which is what keeps a session start from waiting on a large vault — and it
+ * may neither change the brief nor fail the hook: a scan that throws is one
+ * diagnostic and nothing more. `onCurated` exists so a test can hold the pass open
+ * and count the calls; production passes nothing.
  *
  * @param {string} cwd - the session's working directory, from the hook payload.
  * @param {Function} open - {@link openMemory}; injected so a test can count opens.
@@ -117,13 +119,19 @@ export async function briefFor(cwd, open, onCurated) {
     const brief = await memory.services.brief({})
     if (brief === null || typeof brief !== 'object') return null
     if (brief.status === 'unbound') return null
-    if (memory.config?.autoCurate === true) {
-      onCurated?.(cwd)
+    if (memory.config?.autoCurate !== false) {
       try {
+        onCurated?.(cwd)
         // The shared pass, so the binding rules and the R14 cloud-managed refusal
-        // are decided in one place. 256 notes and 500 ms are this adapter's own
-        // bound: the DSH worker runs in the background and can afford more.
-        await memory.services.curateCurrentProject({ dueOnly: true, maxNotes: 256, maxMs: 500 })
+        // are decided in one place. `lib/curation-scan.js`'s own defaults — 256
+        // notes and a 500 ms deadline — are named here rather than left implicit,
+        // because this adapter holds a session start open while it runs; the DSH
+        // paths pass no bounds at all, so they get these exact two values.
+        await memory.services.curateCurrentProject({
+          dueOnly: true,
+          maxNotes: DEFAULT_MAX_NOTES,
+          maxMs: DEFAULT_MAX_MS,
+        })
       } catch (error) {
         // Content-free, and never rethrown. A hook that exited non-zero or
         // answered nothing would cost the user a session to report a housekeeping

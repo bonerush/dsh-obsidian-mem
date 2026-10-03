@@ -26,7 +26,13 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { buildBrief } from '../lib/brief.js'
-import { curationRecordDir, curationViewPath, readChangedSources } from '../lib/curation-state.js'
+import {
+  curationRecordDir,
+  curationViewPath,
+  readChangedSources,
+  readCurationCursor,
+  writeCurationCursor,
+} from '../lib/curation-state.js'
 import { createDiagnostics } from '../lib/debug.js'
 import { readDiagnosticJournal } from '../lib/diagnostic-journal.js'
 import { updateHot } from '../lib/hot.js'
@@ -43,6 +49,7 @@ import {
 import { createMemoryServices, registerTools } from '../lib/tools.js'
 import { validateConfig } from '../lib/config.js'
 import { writeMemory } from '../lib/memory.js'
+import { withVaultLock } from '../lib/transaction.js'
 import { bootstrapVault } from '../lib/vault.js'
 
 /** Fixed, valid UUIDv4 identity (version nibble `4`, variant nibble `8`). */
@@ -1465,6 +1472,37 @@ async function curationBed(options = {}) {
       assert.equal(result.isError, false, result.error?.message ?? JSON.stringify(result))
       return result.value
     },
+    /** One `mem_log` through the registered tool surface. */
+    log: async (args) => {
+      const result = await ctx.tools.execute({
+        callId: `call-${randomUUID()}`,
+        name: 'mem_log',
+        arguments: args,
+        signal: new AbortController().signal,
+        agent: { session: { header: { id: SESSION_ID, cwd } } },
+      })
+      assert.equal(result.isError, false, result.error?.message ?? JSON.stringify(result))
+      return result.value
+    },
+    /**
+     * One pre-step through the real waterfall, the way a turn reaches the hooks.
+     *
+     * `messages` is empty on purpose: this case is about the once-per-session
+     * activity seam, not about prompt recall, so the step has nothing to retrieve
+     * for.
+     *
+     * @param {string} sessionId - the session the step belongs to.
+     * @returns {Promise<object>} the decision the host would enter with.
+     */
+    preStep: (sessionId) => {
+      const agent = { session: { header: { id: sessionId, cwd } } }
+      ctx.emit('agent/session-start', { agent, source: 'startup' })
+      return ctx.waterfall(
+        'agent/pre-step',
+        { agent, messages: [], turn: 1, step: 1, signal: new AbortController().signal },
+        async () => ({ kind: 'enter', messages: [] }),
+      )
+    },
     /** One `mem_admin` through the registered tool surface. */
     admin: async (args) => {
       const result = await ctx.tools.execute({
@@ -1551,6 +1589,56 @@ async function scanRecords(dataRoot, projectId) {
   }
 }
 
+/** Every `curation` event the assembly's own ring holds, oldest first. */
+async function curationEvents(bed) {
+  const snapshot = await bed.admin({ action: 'diagnostics' })
+  return snapshot.result.events.filter((event) => event.event === 'curation')
+}
+
+/** Wait until at least `count` curation events exist, then return all of them. */
+async function untilCurationEvents(bed, count) {
+  await until(async () => (await curationEvents(bed)).length >= count)
+  return curationEvents(bed)
+}
+
+/**
+ * The number of curation events once they stop arriving.
+ *
+ * A fixed pause would be a guess about how long a pass takes; this asks the only
+ * question the assertion needs — has the ring stopped moving? — so a second pass
+ * that is still running cannot be mistaken for one that never started.
+ *
+ * @param {object} bed - the assembly harness.
+ * @param {{settleMs?: number}} [options] - how long the count must hold still.
+ * @returns {Promise<number>} the settled count.
+ */
+async function settledCurationEvents(bed, { settleMs = 150 } = {}) {
+  let last = -1
+  let stableSince = Date.now()
+  const deadline = Date.now() + 8000
+  for (;;) {
+    const count = (await curationEvents(bed)).length
+    if (count !== last) {
+      last = count
+      stableSince = Date.now()
+    } else if (Date.now() - stableSince >= settleMs) {
+      return count
+    }
+    if (Date.now() > deadline) assert.fail('the curation ring never settled')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+/** Move one project's 24-hour due marker into the past, exactly as time would. */
+async function staleCursor(dataRoot, projectId) {
+  const cursor = await readCurationCursor(dataRoot, projectId)
+  assert.notEqual(cursor, null, 'a completed pass has to have written the marker')
+  await writeCurationCursor(dataRoot, projectId, {
+    ...cursor,
+    scannedAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+  })
+}
+
 test('a committed mem_write queues one durable hint and one pass services it', async (t) => {
   const bed = await curationBed()
   t.after(() => bed.close())
@@ -1616,4 +1704,148 @@ test('autoCurate:false stops the automatic pass and runs nothing else', async (t
   const scanned = await off.admin({ action: 'curation', operation: 'scan' })
   assert.equal(scanned.result.status, 'scanned')
   assert.equal(scanned.result.examined >= 1, true, 'the explicit scan is unaffected')
+})
+
+test('autoCurate:false leaves the session-activity half unarmed too', async (t) => {
+  // The second automatic trigger, driven through the same seam a turn uses. The
+  // switch removes the caller rather than reaching the pass and declining it, so
+  // there is no `skipped` record to find either.
+  const off = await curationBed({ config: { autoCurate: false } })
+  t.after(() => off.close())
+  const written = await off.write({
+    type: 'decision',
+    title: '活动半也关掉',
+    body: '结论：autoCurate:false 同时关掉提交后与到期两个自动触发。',
+  })
+  await off.preStep('session-off')
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  assert.deepEqual(await curationEvents(off), [], 'an activity check asks for no pass')
+  const names = await readdir(join(off.dataRoot, 'curation')).catch(() => [])
+  assert.deepEqual(names, [], `curation state must stay empty, saw ${names.join(',')}`)
+  assert.match(written.path, /Decisions\//u)
+})
+
+test('session activity runs the due pass once, and the marker suppresses the next', async (t) => {
+  // The brief's clause the controller ruled on (R31): a note that entered the vault
+  // without `mem_write` is inspected by the 24-hour check on DSH session activity.
+  // Until this case there was no DSH path that consulted the marker at all, and no
+  // case that drove the `skipped` outcome.
+  const bed = await curationBed()
+  t.after(() => bed.close())
+  const written = await bed.write({
+    type: 'decision',
+    title: '到期检查覆盖写路径之外',
+    body: '结论：DSH 会话活动按 24 小时标记检查整个项目。',
+  })
+  const projectId = await changedSetProjectId(bed.dataRoot)
+  assert.notEqual(projectId, null)
+  const binding = bindingFor(bed, projectId, written.path)
+  // The write asked for its own pass. This case is about the activity seam, so wait
+  // for that pass to land — a committed view and a drained queue — before counting:
+  // a request made during an in-flight pass is the guard's business, not the
+  // marker's.
+  const view = await untilJson(curationViewPath(bed.dataRoot, projectId))
+  await until(
+    async () => (await readChangedSources({ binding, dataRoot: bed.dataRoot })).length === 0,
+  )
+  assert.equal(view.complete, true)
+  // The view and a drained queue both hold *before* the pass records its decision,
+  // so the count to compare against is the one that has stopped moving.
+  const baseline = await settledCurationEvents(bed)
+
+  // 1. A fresh marker with nothing queued: the request reaches the pass and the pass
+  //    declines, recording `skipped` — the due check itself, not a quiet no-op.
+  await bed.preStep('session-due-fresh')
+  const declined = await untilCurationEvents(bed, baseline + 1)
+  assert.equal(declined.length, baseline + 1, 'one session asks at most once')
+  assert.equal(declined.at(-1).outcome, 'skipped')
+  assert.equal(declined.at(-1).hits, 0, 'a declined pass examines nothing')
+
+  // 2. A note that entered the vault outside `mem_write`: `mem_log`'s day log. Nothing
+  //    queued a hint for it, so the stale marker is the only thing that can make the
+  //    next request scan — which is the clause above, driven end to end.
+  const logged = await bed.log({
+    text: '结论：日志条目不经过 mem_write，因此只有到期标记能覆盖它。',
+  })
+  // A transaction receipt names what it published in `paths`; the day note is one.
+  const loggedPath = Array.isArray(logged.paths) ? logged.paths[0] : null
+  assert.equal(
+    typeof loggedPath,
+    'string',
+    `the log receipt carries its path: ${JSON.stringify(logged)}`,
+  )
+  assert.match(loggedPath, /\/Daily\/\d{4}-\d{2}-\d{2}\.md$/u)
+  const dayLog = (await readdir(join(bed.vault, binding.relativeDir, 'Daily'))).map(
+    (name) => `${binding.relativeDir}/Daily/${name}`,
+  )
+  assert.equal(dayLog.includes(loggedPath), true, `the day log is ${JSON.stringify(dayLog)}`)
+  await staleCursor(bed.dataRoot, projectId)
+  await bed.preStep('session-due-stale')
+  const scanned = await untilCurationEvents(bed, baseline + 2)
+  const pass = scanned.at(-1)
+  assert.equal(pass.outcome, 'scanned', 'the stale marker is what made it due')
+  assert.equal(pass.hits >= 2, true, `the pass inspected the day log too, hits=${pass.hits}`)
+  const nextView = await untilJson(curationViewPath(bed.dataRoot, projectId))
+  assert.equal(
+    nextView.entries.some((entry) => entry.path === loggedPath),
+    true,
+    'the note written outside `mem_write` is in the committed view',
+  )
+
+  // 3. The pass wrote a fresh marker, so the next session's request declines again.
+  await bed.preStep('session-due-fresh-again')
+  const suppressed = await untilCurationEvents(bed, baseline + 3)
+  assert.equal(suppressed.at(-1).outcome, 'skipped', 'the 24-hour marker suppresses a second run')
+  assert.equal(suppressed.at(-1).hits, 0)
+  assert.equal(
+    await settledCurationEvents(bed),
+    baseline + 3,
+    'and no fourth decision followed the suppressed one',
+  )
+})
+
+test('two automatic triggers for one project run exactly one pass', async (t) => {
+  // The per-project guard in `lib/index.js`. The two requests are two sessions'
+  // activity checks: each fires once, and the second arrives while the first pass is
+  // provably in flight because the test holds the whole-vault lock the pass needs to
+  // write its cursor. The ring then answers the only question that distinguishes
+  // "dropped" from "queued": one pass or two.
+  const bed = await curationBed()
+  t.after(() => bed.close())
+  const written = await bed.write({
+    type: 'decision',
+    title: '单飞守卫',
+    body: '结论：同一项目同时只跑一个自动清理通过。',
+  })
+  const projectId = await changedSetProjectId(bed.dataRoot)
+  assert.notEqual(projectId, null)
+  const binding = bindingFor(bed, projectId, written.path)
+  await untilJson(curationViewPath(bed.dataRoot, projectId))
+  await until(
+    async () => (await readChangedSources({ binding, dataRoot: bed.dataRoot })).length === 0,
+  )
+  const baseline = await settledCurationEvents(bed)
+  // A stale marker with an empty queue makes each request a full pass, which is the
+  // traversal that has to take the vault lock — so while this test holds it, no pass
+  // can finish, and the second request cannot arrive after the first one has.
+  await staleCursor(bed.dataRoot, projectId)
+
+  await withVaultLock(
+    binding,
+    async () => {
+      await bed.preStep('session-guard-1')
+      await bed.preStep('session-guard-2')
+      assert.equal(
+        (await curationEvents(bed)).length,
+        baseline,
+        'a pass that needs the vault lock cannot have finished inside it',
+      )
+    },
+    { dataRoot: bed.dataRoot, home: homedir() },
+  )
+
+  const settled = await settledCurationEvents(bed)
+  assert.equal(settled, baseline + 1, 'two triggers for one project are one pass')
+  const [pass] = (await curationEvents(bed)).slice(baseline)
+  assert.equal(pass.outcome, 'scanned')
 })

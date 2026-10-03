@@ -359,6 +359,61 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Fixed
 
+- **An automatic curation trigger can no longer fail a committed job, and DSH session
+  activity now consults the 24-hour marker** (Task 6 review round). `lib/capture.js`
+  called `onCurationCompleted` bare, after the job's transactions were durable and
+  before its receipt: a synchronous throw reached the pass's catch and became a
+  `failJob` attempt, which at `maxAttempts` marked a fully applied job `failed` for good
+  with its note on disk and no receipt, and a rejected promise was never observed, so it
+  surfaced as an unhandled rejection. Probed by reverting the wrapper: the pass summary
+  came back `failed: 1` with `reason: trigger-threw`, the job on disk was
+  `state: 'failed'` with `appliedItems` already naming the written path, and the receipt
+  list was empty. The call is now wrapped — a throw and a rejection each become one
+  content-free `curation` diagnostic, nothing is awaited, and the receipt is written
+  either way — and two cases drive both outcomes at the real seam, failing without the
+  wrapper.
+  `lib/hooks.js` gains the DSH half of the brief's "a due check on DSH session
+  activity", which no DSH path implemented: a new `planCurationDue` asks the
+  once-per-session activity seam (the one the weekly `lintHint` already uses) for one
+  bounded pass with `dueOnly: true`, through a new `onCurationDue` seam. The request is
+  handed to its owner rather than awaited, so nothing about a turn waits for it; a
+  missing seam, an unbound repository, a throwing owner and an owner that answers with
+  a rejected promise all leave the turn as it was. `lib/index.js` arms it only while
+  `autoCurate !== false`, drops it once the fiber's disposer has run, and gives both
+  automatic triggers the one per-project in-flight guard. That closes the coverage
+  Task 5 deferred: a case drives a fresh marker to `skipped`, a stale marker plus a
+  `mem_log` day log — a note that entered the vault outside `mem_write` — to `scanned`
+  with the day log in the committed view, and the fresh marker the pass wrote back to
+  `skipped` again.
+  Also in this round: the worker's "two kicks" case claimed a callback `await` kept the
+  pass in flight (it is never awaited) and raced `completeJob`'s fs latency — it now
+  proves the answer is the running pass's own summary, and a new case drives two
+  automatic triggers for one project while the test holds the vault lock the pass needs
+  to write its cursor, failing when the guard line is deleted (3 events instead of 2);
+  `codex/session-start.mjs`'s comments no longer call the pass "a quarter of a second"
+  or the 256-note/500-ms bounds "this adapter's own" — they are `lib/curation-scan.js`'s
+  shared defaults, which the DSH paths get by passing nothing — and the bounds are now
+  those imported constants; `onCurated` moved inside the `try` that protects the pass;
+  all four automatic gates read `autoCurate !== false` while the result's `autoEnabled`
+  still reports `=== true`, with the reason beside it; the codec comment now names
+  `skipped`'s one producer (a `dueOnly` request whose marker was fresh and whose queue
+  was empty) and `lib/debug.js`'s category note no longer says the config switch
+  produces a record — with the switch off no caller reaches the pass at all, which the
+  new case's empty ring asserts; and the real-child Codex case
+  now asserts the pass really ran — a cursor and a committed view for the queued note
+  under the throwaway `DSH_HOME`, which an MCP-only write cannot produce.
+  Measured: `npm test` **864 tests / 863 pass / 1 skipped / 0 fail** (`cbbfc8e` measured
+  859 / 858 / 1 / 0, so this round adds five cases); the covering command
+  `node --test test/auto-capture.test.js test/hooks.test.js test/codex-hooks.test.js test/tools.test.js test/architecture.test.js`
+  reports **153 tests / 153 pass / 0 fail / 0 skipped**.
+  Budgets: `lib/capture.js` 2160 → 2200 (2194 measured), `lib/hooks.js` 1150 → 1250
+  (1208 measured, the measured-plus-30 rule) and `lib/index.js` 200 → 250 (221
+  measured), each with its argument beside it in `test/architecture.test.js`; no layer
+  number moved. Untested, unchanged from Task 6: live host delivery — no case runs a
+  real DSH session or a trusted `codex exec` — and the Codex 500-ms deadline and
+  256-note bound are still asserted as the values the adapter passes, not as a measured
+  wall-clock stop.
+
 - **A curation pass no longer acknowledges hints whose view did not commit, and the
   category's vocabulary is registered** (Task 5 review round). `lib/services.js`
   discarded `buildCurationView`'s result and acknowledged the queued paths off

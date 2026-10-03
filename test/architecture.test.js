@@ -215,7 +215,16 @@ const BUDGETS = {
   // alternative was for the assembly to infer "did this job write" from the receipt,
   // which is exactly the guess R5 forbids: a parked candidate's receipt has no path.
   // The raise stays inside the measured-plus-30 rule rather than following it.
-  'lib/capture.js': 2160,
+  // Raised again from 2160 by the Task 6 fix round (2194 formatted lines measured;
+  // measured-plus-30 would round to 2250, so this stays inside the rule as the
+  // previous raise did). What the 34 lines buy: the wrapper that makes the advisory
+  // curation callback unable to fail, delay or go unobserved for a job whose vault
+  // writes are already durable — a synchronous throw used to reach this pass's catch
+  // and become a `failJob` attempt, which at `maxAttempts` marked a fully applied job
+  // `failed` with no receipt, and a rejected promise used to be an unhandled
+  // rejection. The alternative, letting the callback's owner be the only guard, is
+  // what the review found: the seam has no owner when the wiring omits one.
+  'lib/capture.js': 2200,
   'lib/config.js': 300,
   // The curation plan's three Task 2 modules, on the same rule as every other
   // entry (measured plus 30, rounded up). What the size buys: the scanner carries
@@ -309,7 +318,16 @@ const BUDGETS = {
   // state machine. The retrieval policy lives in prompt-recall.js; these lines
   // are the host decision assembly and its shared budget, not a second policy.
   // One post-commit recall cue is deliberately adjacent to the commit point.
-  'lib/hooks.js': 1150,
+  // Raised from 1150 by the Task 6 fix round (1208 formatted lines measured;
+  // measured-plus-30 rounds up to 1250, which is this number). What the 58 lines buy:
+  // the once-per-session due request (`planCurationDue`) at the same activity seam as
+  // the weekly hint — the DSH half of the brief's "a due check on DSH session
+  // activity", which no DSH path implemented before this round — plus the
+  // `onCurationDue` seam, its state flag and the comments that say why the request is
+  // handed to its owner instead of awaited. The alternative was a lifetime hook in
+  // `lib/index.js` polling for activity, which would be a timer this plugin
+  // deliberately does not have.
+  'lib/hooks.js': 1250,
   'lib/hot.js': 600,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
@@ -340,7 +358,14 @@ const BUDGETS = {
   'lib/graph-route.js': 200,
   // Both enabled entry points construct the private journal beside their ring;
   // this small assembly step belongs here, after the disabled early return.
-  'lib/index.js': 200,
+  // Raised from 200 by the Task 6 fix round (221 formatted lines measured;
+  // measured-plus-30 rounds up to 300, so 250 is deliberately inside the rule and the
+  // next raise has to argue with this line). What the 21 lines buy: the second
+  // automatic trigger — the due callback `lib/hooks.js` fires once per session — the
+  // `disposed` flag that stops a pass from being scheduled after the fiber unloads,
+  // and the one comment that records why the two automatic gates read
+  // `autoCurate !== false` while the result reports `=== true`.
+  'lib/index.js': 250,
   'lib/lint.js': 1450,
   // Raised from 1400 by Task 3 (1499 measured). The gate itself is deliberately
   // here rather than in a helper module: the decision is "is this candidate risky",
