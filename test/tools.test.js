@@ -24,7 +24,8 @@
 // a checkout whose `node_modules` was rebuilt without it cannot run this file,
 // exactly as a DSH process without the package could not register the tools.
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, existsSync, rmSync } from 'node:fs'
+import { readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -33,8 +34,15 @@ import { Context } from '@deepseek-ai/cordis'
 import toolsPlugin, { defineTool } from '@deepseek-ai/dsh-tools'
 
 import { validateConfig } from '../lib/config.js'
+import {
+  ackChangedSources,
+  enqueueChangedSource,
+  readChangedSources,
+} from '../lib/curation-state.js'
 import { createDiagnostics } from '../lib/debug.js'
 import { createMemoryServices, TOOL_NAMES, TOOL_PARAMETERS, registerTools } from '../lib/tools.js'
+import { resolveBinding } from '../lib/vault.js'
+import { makeCurationWorld } from './curation-world.js'
 
 /** The six names, sorted for set comparison. */
 const SIX = Object.freeze([
@@ -89,7 +97,25 @@ const SAMPLE_NOTE = Object.freeze({
 })
 
 /** The `mem_admin` values every action returns now that all six are real. */
-const adminResult = (action) => {
+const adminResult = (action, args = {}) => {
+  if (action === 'curation') {
+    return {
+      action,
+      result: {
+        status: args.operation === 'scan' ? 'scanned' : 'listed',
+        operation: args.operation ?? 'status',
+        projectId: '1c392abb-7b08-42f7-871d-2a379caf9448',
+        complete: false,
+        cursor: null,
+        scannedAt: null,
+        examined: 0,
+        counts: { entries: 0, exactGroups: 0, findings: 0, unexamined: 0 },
+        proposals: { total: 0, pending: 0, truncated: false, unreadable: 0 },
+        truncated: null,
+        autoEnabled: true,
+      },
+    }
+  }
   if (action === 'lint') {
     return {
       action,
@@ -161,7 +187,7 @@ function stubServices(overrides = {}) {
     write: () => ({ id: SAMPLE_ID, path: SAMPLE_PATH, receipt: sampleReceipt('write') }),
     log: () => sampleReceipt('log'),
     brief: () => ({ status: 'unbound', message: 'this working directory is not a bound project' }),
-    admin: (args) => adminResult(args.action),
+    admin: (args) => adminResult(args.action, args),
   }
   const services = { calls }
   for (const key of Object.keys(defaults)) {
@@ -196,6 +222,73 @@ function call(ctx, name, args, extra = {}) {
     signal: extra.signal ?? new AbortController().signal,
     ...('agent' in extra ? { agent: extra.agent } : {}),
   })
+}
+
+/** A throwaway world with one bound project and private curation state. */
+async function curationServices(t, { config = {}, notes = 1, bind = true } = {}) {
+  const world = await makeCurationWorld(t, { config })
+  const diagnostics = createDiagnostics({})
+  const services = createMemoryServices({
+    config: world.config,
+    dataRoot: world.dataRoot,
+    cwd: world.repo,
+    home: world.home,
+    diagnostics,
+  })
+  t.after(() => services.close())
+  // The first write is what binds the repository and bootstraps the vault, exactly
+  // as a real session's first `mem_write` does. `bind: false` is the pointerless
+  // world a session that has only ever read sees.
+  const written = []
+  for (let index = 0; bind && index < notes; index += 1) {
+    written.push(
+      await services.write({
+        type: 'convention',
+        title: `记忆条 ${index + 1}`,
+        body: `第 ${index + 1} 条约定的正文。`,
+      }),
+    )
+  }
+  const binding = await resolveBinding({
+    cwd: world.repo,
+    vaultRoot: world.config.vaultPath,
+    mode: 'show',
+    home: world.home,
+  })
+  // Private curation state only: the index the first write built lives under
+  // `index/`, and the journal under `diagnostics/`.
+  const countPrivateFiles = async () => {
+    const found = []
+    const walk = async (directory) => {
+      let entries
+      try {
+        entries = await readdir(directory, { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const entry of entries) {
+        if (entry.isDirectory()) await walk(join(directory, entry.name))
+        else found.push(join(directory, entry.name))
+      }
+    }
+    await walk(join(world.dataRoot, 'curation'))
+    return found.length
+  }
+  return {
+    ...world,
+    services,
+    diagnostics,
+    binding,
+    written,
+    countPrivateFiles,
+    readEnqueued: () => readChangedSources({ binding, dataRoot: world.dataRoot }),
+    enqueue: (path) => {
+      const target = path ?? written[0]?.path
+      if (target === undefined) throw new Error('this world has no written note to enqueue')
+      return enqueueChangedSource({ binding, dataRoot: world.dataRoot, path: target })
+    },
+    ack: (paths) => ackChangedSources({ binding, dataRoot: world.dataRoot, paths }),
+  }
 }
 
 /** Every object node reachable through `properties`, `items` and `oneOf`. */
@@ -328,7 +421,14 @@ test('the documented enums and defaults are exactly spec §9', async (t) => {
     // The one action that reads no vault and needs no binding, so it still answers
     // when every other action refuses.
     'diagnostics',
+    // Task 5's bounded administration: `status` reads private state without
+    // scanning and `scan` runs one bounded pass. There is deliberately no
+    // `apply`, `approve` or `reject` value here — approval is a TTY-only command
+    // (Task 7), never a model-callable action.
+    'curation',
   ])
+  assert.deepEqual(params('mem_admin').operation.enum, ['status', 'scan'])
+  assert.equal(params('mem_admin').operation.default, 'status')
   assert.deepEqual(params('mem_admin').mode.enum, ['show', 'local', 'fork', 'retain'])
   assert.equal(params('mem_admin').mode.default, 'show')
   assert.equal(params('mem_admin').rebuild.default, false)
@@ -338,6 +438,7 @@ test('the documented enums and defaults are exactly spec §9', async (t) => {
     'action',
     'jobId',
     'mode',
+    'operation',
     'path',
     'prune',
     'rebuild',
@@ -349,6 +450,21 @@ test('the documented enums and defaults are exactly spec §9', async (t) => {
   assert.deepEqual(Object.keys(params('mem_brief')), [])
 })
 
+test('mem_admin exposes no approval operation, in the DSL or in the compiled schema', async (t) => {
+  const ctx = await toolbed(t)
+  registerTools(ctx, stubServices())
+  const compiled = ctx.tools.get('mem_admin').parameters.properties.action.enum
+  const operation = ctx.tools.get('mem_admin').parameters.properties.operation.enum
+  for (const name of ['apply', 'approve', 'reject', 'accept']) {
+    assert.equal(TOOL_PARAMETERS.mem_admin.action.enum.includes(name), false)
+    assert.equal(compiled.includes(name), false)
+    assert.equal(operation.includes(name), false)
+  }
+  // The closed pair is the whole set: a widened `operation` would be a widened
+  // contract, so the equality is asserted rather than the absence of four names.
+  assert.deepEqual(operation, ['status', 'scan'])
+})
+
 test('mem_admin branches its result with a per-action const instead of an unconstrained object', async (t) => {
   const ctx = await toolbed(t)
   registerTools(ctx, stubServices())
@@ -357,6 +473,7 @@ test('mem_admin branches its result with a per-action const instead of an uncons
   const actions = schema.oneOf.map((arm) => arm.properties.action.const)
   assert.deepEqual(actions.slice().sort(), [
     'bind',
+    'curation',
     'diagnostics',
     'index',
     'jobs',
@@ -496,7 +613,7 @@ test('mem_admin defaults mode to show, retry to false and report to false', asyn
               resolution: { kind: 'unbound', reason: 'no-pointer' },
             },
           }
-        : adminResult(args.action),
+        : adminResult(args.action, args),
   })
   registerTools(ctx, services)
 
@@ -643,4 +760,238 @@ test('mem_admin(action="diagnostics") answers through the real seam without a va
   const refused = await call(ctx, 'mem_admin', { action: 'diagnostics', path: 'x.md' })
   assert.equal(refused.isError, true)
   assert.match(refused.error.message, /does not accept/)
+})
+
+// ---------------------------------------------------------------------------
+// Task 5: the bounded curation action, through the real service layer
+// ---------------------------------------------------------------------------
+
+test('curation status and scan answer their own bounded shape, and only their own parameters', async (t) => {
+  const { services, diagnostics } = await curationServices(t)
+  const ctx = await toolbed(t)
+  registerTools(ctx, services)
+
+  for (const [operation, status] of [
+    ['status', 'listed'],
+    ['scan', 'scanned'],
+  ]) {
+    const result = await call(ctx, 'mem_admin', { action: 'curation', operation })
+    assert.equal(result.isError, false, result.error?.message)
+    assert.equal(result.value.action, 'curation')
+    assert.deepEqual(Object.keys(result.value.result).sort(), [
+      'autoEnabled',
+      'complete',
+      'counts',
+      'cursor',
+      'examined',
+      'operation',
+      'projectId',
+      'proposals',
+      'scannedAt',
+      'status',
+      'truncated',
+    ])
+    assert.equal(result.value.result.operation, operation)
+    assert.equal(result.value.result.status, status)
+    assert.equal(result.value.result.autoEnabled, true)
+    assert.equal(Number.isSafeInteger(result.value.result.examined), true)
+    // The projection is bounded: counts are integers and the listing names its own
+    // truncation rather than returning an unbounded queue.
+    for (const count of Object.values(result.value.result.counts)) {
+      assert.equal(Number.isSafeInteger(count), true)
+    }
+    assert.deepEqual(result.value.result.proposals.unreadable, [])
+  }
+
+  // The scan ran through this service set and recorded its own decision.
+  const curated = diagnostics
+    .snapshot()
+    .events.filter((event) => event.event === 'curation')
+    .map((event) => event.outcome)
+  assert.ok(curated.includes('scanned'), `no scanned decision: ${JSON.stringify(curated)}`)
+  assert.ok(curated.includes('listed'), `no listed decision: ${JSON.stringify(curated)}`)
+
+  // `operation` is curation's own parameter; no other action accepts it, and
+  // curation accepts nothing else. Omitting it is the read-only answer, never a
+  // scan the caller did not ask for.
+  const defaulted = await call(ctx, 'mem_admin', { action: 'curation' })
+  assert.equal(defaulted.isError, false, defaulted.error?.message)
+  assert.equal(defaulted.value.result.operation, 'status')
+  assert.equal(defaulted.value.result.status, 'listed')
+  for (const args of [
+    { action: 'curation', jobId: 'job-1' },
+    { action: 'curation', report: true },
+    { action: 'projects', operation: 'scan' },
+  ]) {
+    const refused = await call(ctx, 'mem_admin', args)
+    assert.equal(refused.isError, true, `${JSON.stringify(args)} must be refused`)
+    assert.match(refused.error.message, /does not accept/)
+  }
+  const outOfEnum = await call(ctx, 'mem_admin', { action: 'curation', operation: 'apply' })
+  assert.equal(outOfEnum.isError, true)
+  assert.match(outOfEnum.error.message, /operation/)
+})
+
+test('status reads private state without scanning, and scan examines the notes', async (t) => {
+  const { services, repo, readEnqueued, countPrivateFiles } = await curationServices(t)
+  const ctx = await toolbed(t)
+  registerTools(ctx, services)
+  const agent = { session: { header: { id: 'sess-curation', cwd: repo } } }
+
+  // A fresh project: no cursor, no view. `status` must answer that and leave
+  // private state exactly as it found it — the read-only half of the contract.
+  const before = await countPrivateFiles()
+  const fresh = await call(ctx, 'mem_admin', { action: 'curation', operation: 'status' }, { agent })
+  assert.equal(fresh.isError, false, fresh.error?.message)
+  assert.equal(fresh.value.result.status, 'listed')
+  assert.equal(fresh.value.result.complete, false)
+  assert.equal(fresh.value.result.cursor, null)
+  assert.equal(fresh.value.result.scannedAt, null)
+  assert.equal(fresh.value.result.examined, 0)
+  assert.equal(fresh.value.result.counts.entries, 0)
+  assert.equal(await countPrivateFiles(), before, 'status must write no private state')
+
+  // `scan` inspects the project's notes and leaves a cursor behind — the bounded
+  // backfill the automatic pass (Task 6) resumes from.
+  const scanned = await call(ctx, 'mem_admin', { action: 'curation', operation: 'scan' }, { agent })
+  assert.equal(scanned.isError, false, scanned.error?.message)
+  assert.equal(scanned.value.result.status, 'scanned')
+  assert.equal(scanned.value.result.complete, true)
+  // The bootstrap skeleton is real vault content, so the pass covers every note of
+  // the bound project, not just the one this fixture wrote.
+  assert.ok(scanned.value.result.examined >= 1)
+  assert.ok(scanned.value.result.examined <= 256)
+  assert.equal(typeof scanned.value.result.cursor, 'string')
+  assert.match(scanned.value.result.scannedAt, /^\d{4}-\d{2}-\d{2}T/)
+  assert.ok(scanned.value.result.counts.entries >= 1)
+  assert.equal((await countPrivateFiles()) > before, true, 'the pass must leave a cursor')
+
+  // Nothing asked for an inspection and nothing is waiting for one: this fixture
+  // never enqueued a hint, so the durable queue is empty after a whole-project pass.
+  assert.deepEqual(await readEnqueued(), [])
+
+  // The status that follows reports the state the scan left, without scanning.
+  const listed = await call(
+    ctx,
+    'mem_admin',
+    { action: 'curation', operation: 'status' },
+    { agent },
+  )
+  assert.equal(listed.isError, false, listed.error?.message)
+  assert.equal(listed.value.result.scannedAt, scanned.value.result.scannedAt)
+  assert.equal(listed.value.result.examined, 0)
+  assert.equal(listed.value.result.counts.entries, scanned.value.result.counts.entries)
+})
+
+test('only the paths one pass inspected are acknowledged, and only over a complete view', async (t) => {
+  const { services, repo, written, enqueue, readEnqueued } = await curationServices(t, { notes: 3 })
+  const ctx = await toolbed(t)
+  registerTools(ctx, services)
+  const agent = { session: { header: { id: 'sess-bounded', cwd: repo } } }
+
+  // A complete view first, so the service has something a changed-path pass may
+  // merge into. Until it exists, the same call walks the project instead — which
+  // is the branch the second case below pins.
+  const initial = await call(ctx, 'mem_admin', { action: 'curation', operation: 'scan' }, { agent })
+  assert.equal(initial.isError, false, initial.error?.message)
+  assert.equal(initial.value.result.complete, true)
+
+  // Three hints, one inspected: only the path this pass read is durable enough to
+  // drop, and the view entry it wrote is what makes that durable.
+  const first = await enqueue(written[0].path)
+  const second = await enqueue(written[1].path)
+  const third = await enqueue(written[2].path)
+  const queued = await readEnqueued()
+  assert.equal(queued.length, 3, JSON.stringify(queued))
+  const one = await services.curateCurrentProject({
+    force: true,
+    changedPaths: [first.path],
+    maxNotes: 1,
+  })
+  assert.equal(one.status, 'scanned')
+  assert.equal(one.examined, 1)
+  // The two it never read, in the store's own order (it holds paths as they were
+  // first enqueued, and the fixture wrote them in this order).
+  assert.deepEqual(await readEnqueued(), [second.path, third.path])
+
+  // A pass cut short still only acknowledges what it inspected: the note bound is
+  // what makes the remaining hints wait, not any doubt about the ones it read.
+  const bounded = await services.curateCurrentProject({ force: true, maxNotes: 1 })
+  assert.equal(bounded.truncated, 'file-budget')
+  assert.equal(bounded.examined, 1)
+  assert.equal((await readEnqueued()).length, 1)
+
+  // The traversal over a manifest nothing has moved since covers it and certifies.
+  const covered = await call(ctx, 'mem_admin', { action: 'curation', operation: 'scan' }, { agent })
+  assert.equal(covered.isError, false, covered.error?.message)
+  assert.equal(covered.value.result.complete, true)
+  assert.deepEqual(await readEnqueued(), [])
+
+  const listed = await call(
+    ctx,
+    'mem_admin',
+    { action: 'curation', operation: 'status' },
+    { agent },
+  )
+  assert.equal(listed.isError, false, listed.error?.message)
+  assert.equal(listed.value.result.complete, true)
+})
+
+test('a pass cut short by the note bound reports that reason and certifies nothing', async (t) => {
+  // Its own world on purpose: a project that has already been walked has nothing
+  // of its own left to do, so the same call there would be repairing earlier
+  // batches instead of inspecting its first note, and the bound would prove
+  // something else than the one under test.
+  const { services } = await curationServices(t, { notes: 3 })
+  const bounded = await services.curateCurrentProject({ force: true, maxNotes: 1 })
+  assert.equal(bounded.status, 'scanned')
+  assert.equal(bounded.complete, false)
+  assert.equal(bounded.truncated, 'file-budget')
+  assert.equal(bounded.examined, 1)
+  // The cursor moved, so the next pass resumes instead of starting over — the
+  // bound is a resumption point, not a lost pass.
+  assert.equal(typeof bounded.cursor, 'string')
+  assert.equal(bounded.scannedAt !== null, true)
+
+  const finished = await services.curateCurrentProject({ force: true, maxNotes: 256 })
+  assert.equal(finished.complete, true)
+  assert.equal(finished.examined > bounded.examined, true)
+
+  // The other bound is the wall clock, and it is reported by its own name: zero
+  // milliseconds means this pass may not start a file operation at all, so it
+  // inspects nothing and says which bound stopped it.
+  const deadline = await services.curateCurrentProject({ force: true, maxMs: 0 })
+  assert.equal(deadline.status, 'scanned')
+  assert.equal(deadline.truncated, 'time-budget')
+  assert.equal(deadline.examined, 0)
+  assert.equal(deadline.complete, false)
+})
+
+test('curateCurrentProject answers "unbound" instead of scanning or binding', async (t) => {
+  const { services, repo, config, home } = await curationServices(t, { bind: false })
+  // A pointerless repository, which is what a session in a project nobody has
+  // written to yet looks like. The read-only resolution must report that instead
+  // of running a pass over whatever project the process happens to sit in.
+  assert.equal(await services.curateCurrentProject({}), 'unbound')
+  // Neither is a pointer minted as a side effect: the identity of a repository is
+  // the user's explicit action, never something a curation pass creates.
+  assert.equal(existsSync(join(repo, '.obsidian-mem')), false)
+  // A pointerless repository refuses an explicit curation call too, and refuses it
+  // without minting the identity: `mem_admin(action="curation")` resolves a project
+  // the read-only way, so a scan is not a bind in disguise.
+  await assert.rejects(
+    () => services.admin({ action: 'curation', operation: 'scan' }),
+    (error) => {
+      assert.equal(error.code, 'not-bound')
+      return true
+    },
+  )
+  assert.equal(existsSync(join(repo, '.obsidian-mem')), false)
+  const still = await resolveBinding({
+    cwd: repo,
+    vaultRoot: config.vaultPath,
+    mode: 'show',
+    home,
+  })
+  assert.equal(still.kind, 'unbound')
 })

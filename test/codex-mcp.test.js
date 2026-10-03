@@ -143,6 +143,32 @@ test("the MCP surface is the plugin's six tools, with schemas derived from TOOL_
   }
 })
 
+test('the two hosts expose the same six tools and the same curation schema', () => {
+  // Codex is the second entry point into `lib/`, so a surface change has to land on
+  // both sides or on neither. The names come from `TOOL_NAMES` and the enums are
+  // generated from `TOOL_PARAMETERS`, which is why this can compare them at all.
+  const byName = new Map(listTools().map((tool) => [tool.name, tool.inputSchema]))
+  assert.deepEqual(
+    [...byName.keys()],
+    ['mem_search', 'mem_read', 'mem_write', 'mem_log', 'mem_brief', 'mem_admin'],
+  )
+  const admin = byName.get('mem_admin')
+  assert.equal(admin.required.includes('action'), true)
+  assert.deepEqual(admin.properties.action.enum, TOOL_PARAMETERS.mem_admin.action.enum)
+  assert.equal(admin.properties.action.enum.includes('curation'), true)
+  // No approval route on either host's schema.
+  for (const name of ['apply', 'approve', 'reject']) {
+    assert.equal(admin.properties.action.enum.includes(name), false)
+  }
+  // `operation` is curation's own closed pair, in the same declaration order DSH's
+  // compiled schema uses.
+  assert.deepEqual(admin.properties.operation.enum, ['status', 'scan'])
+  assert.equal(admin.properties.operation.default, 'status')
+  // The description has to name what the model can ask for, or the action is
+  // unreachable in practice however valid its schema is.
+  assert.match(listTools().find((tool) => tool.name === 'mem_admin').description, /curation/)
+})
+
 test('jsonSchemaFor mirrors the author-facing DSL', () => {
   const schema = jsonSchemaFor({
     text: { type: 'string', required: true, description: 'one line' },

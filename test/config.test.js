@@ -26,6 +26,10 @@ const DEFAULTS = {
   hotCapacityChars: 9000,
   hotArchiveRatio: 0.67,
   autoCapture: true,
+  // Task 5's default switch: automatic curation passes are on unless the operator
+  // turns them off, and `false` disables only the automatic ones — the explicit
+  // `mem_admin(action="curation", operation="scan")` stays available.
+  autoCurate: true,
   captureIdleMs: 90000,
   distill: {
     provider: '',
@@ -199,6 +203,19 @@ test('ignoreGlobs defaults to empty and only appends exclusions', () => {
   const globs = ['**/.trash/**', 'Archive/**']
   assert.deepStrictEqual(validateConfig({ ignoreGlobs: globs }).ignoreGlobs, globs)
   assertRejected(/ignoreGlobs/, { ignoreGlobs: ['ok', 7] })
+})
+
+test('autoCurate is the default switch Task 6 reads, and only a boolean is accepted', () => {
+  // The plan's global constraint in one place: `true` by default, `false` turns
+  // automatic passes off without removing the explicit scan, and a value that is
+  // neither is a config error rather than a truthy guess.
+  assert.equal(validateConfig({}).autoCurate, true)
+  assert.equal(validateConfig({ autoCurate: false }).autoCurate, false)
+  assert.equal(validateConfig({ autoCurate: true }).autoCurate, true)
+  // Idempotent on the host's own pre-validated object, like every other field.
+  assert.equal(validateConfig(validateConfig({ autoCurate: false })).autoCurate, false)
+  assertRejected(/autoCurate/, { autoCurate: 'off' })
+  assertRejected(/autoCurate/, { autoCurate: 0 })
 })
 
 test('an unknown top-level key is refused instead of silently defaulting', () => {

@@ -357,7 +357,14 @@ const BUDGETS = {
   // to 2,050 with a note saying the raise was temporary; the façade is 22 lines,
   // so the number that replaces it is 100 rather than another raise.
   'lib/tools.js': 100,
-  'lib/tool-schema.js': 900,
+  // Raised from 900 by Task 5 (948 formatted lines measured). What the 48 lines
+  // buy: the `curation` result arm (the bounded status/scan shape a caller reads),
+  // the `operation` parameter with its `status`/`scan` enum and its description, the
+  // new action in `mem_admin`'s enum, and `forwardAdminArguments` applying that
+  // parameter's documented default. The alternative — a second schema module for
+  // one action — would put the action list in two files, which is the drift the
+  // diagnostics enum comment above already records once.
+  'lib/tool-schema.js': 950,
   'lib/tool-registry.js': 250,
   // Raised from 1100 when the explicit-retry wake-up landed here: `kickQueueWorker`
   // is threaded through the option record and the one action that owns retrying, so
@@ -368,7 +375,21 @@ const BUDGETS = {
   // now reports the paths it touched through the same `onAccess` seam the read path
   // already used. The seam widening (`path` → `paths` + `kind`) and the one helper
   // that turns a write receipt into cue paths are what the 30 lines buy.
-  'lib/services.js': 1150,
+  // Raised from 1150 by Task 5 (1477 formatted lines measured). The curation
+  // orchestration belongs here rather than in a module of its own: it is the layer
+  // that already owns the read-only project resolution and the R14 cloud-managed
+  // refusal, and `curateCurrentProject` exists precisely so the Codex adapter calls
+  // one shared method instead of reimplementing those guards. What the 327 lines
+  // buy: `curateForBinding` (the view-then-queue traversal choice, the 24-hour due
+  // marker, the acknowledgement that follows the view write and covers only the
+  // paths a pass inspected), the scan→proposal call into `recordCurationFindings`,
+  // the closed and bounded response projection shared by `status` and `scan`, the
+  // proposal listing, and the `curation` diagnostics that record an outcome and
+  // counts without a path or a note. Splitting the policy out would put one
+  // decision in two files. The measured-plus-30 rule would round to 1550; 1500 is
+  // deliberately inside it, so — as with `brief.js` and `curation-view.js` — the
+  // next raise has to argue with this line rather than inherit the rounding.
+  'lib/services.js': 1500,
   'lib/transaction.js': 2200,
   'lib/vault.js': 1750,
 }

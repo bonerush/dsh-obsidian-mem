@@ -76,6 +76,24 @@ test('every distill outcome a call site emits survives the round trip', () => {
   assert.equal(decodeDiagnosticEvent(unknown).outcome, 'other')
 })
 
+test('every curation outcome the bounded action emits survives the round trip', () => {
+  // Task 5's one new diagnostic category, and the same trap `review` fell into:
+  // `mem_admin(action="curation")` emits its own outcome, the ring carries it fine,
+  // and only the *disk* format can silently rewrite it to `other`.
+  const aliases = createAliases()
+  for (const outcome of ['listed', 'scanned', 'skipped']) {
+    const encoded = encodeDiagnosticEvent({ seq: 1, at, event: 'curation', outcome }, aliases)
+    assert.equal(encoded.outcome, outcome, `${outcome} is not coarsened`)
+    assert.equal(decodeDiagnosticEvent(encoded).outcome, outcome, `${outcome} decodes back`)
+  }
+  const unknown = encodeDiagnosticEvent(
+    { seq: 1, at, event: 'curation', outcome: 'invented' },
+    createAliases(),
+  )
+  assert.equal(unknown.outcome, 'other')
+  assert.equal(decodeDiagnosticEvent(unknown).outcome, 'other')
+})
+
 test('unknown outcomes are coarsened and unsupported events are rejected', () => {
   const aliases = createAliases()
   assert.equal(encodeDiagnosticEvent({ seq: 1, at, event: 'unknown' }, aliases), null)

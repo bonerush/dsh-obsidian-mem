@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 
+import { curationCursorPath } from '../lib/curation-state.js'
 import {
   DIAGNOSTIC_FIELDS,
   EVENT_NAMES,
@@ -16,6 +17,7 @@ import {
   recordDiagnostic,
 } from '../lib/debug.js'
 import { ADMIN_OUTPUT } from '../lib/tool-schema.js'
+import { makeCurationWorld } from './curation-world.js'
 
 /** The diagnostics arm of \`mem_admin\`'s output schema, reached the way a caller does. */
 const DIAGNOSTICS_ARM = ADMIN_OUTPUT.oneOf.find(
@@ -264,6 +266,69 @@ test('recordDiagnostic absorbs a broken diagnostics object', () => {
       'bind',
       {},
     ),
+  )
+})
+
+/** The `curation` arm of `mem_admin`'s output schema. */
+const CURATION_ARM = ADMIN_OUTPUT.oneOf.find((arm) => arm.properties.action.const === 'curation')
+
+test("the curation category's outcomes and the schema's closed enums agree", () => {
+  // Same rule as the `recall` case above, applied to Task 5's category: the ring
+  // accepts three outcomes and the disk codec persists exactly those, so both
+  // closed lists are asserted rather than the absence of a fourth name.
+  assert.ok(EVENT_NAMES.includes('curation'))
+  assert.deepEqual(CURATION_ARM.properties.result.properties.operation.enum, ['status', 'scan'])
+  const emitted = ['listed', 'scanned', 'skipped']
+  const diagnostics = createDiagnostics({})
+  for (const [index, outcome] of emitted.entries()) {
+    diagnostics.event('curation', { outcome, hits: index, ms: index })
+  }
+  const events = diagnostics.snapshot().events
+  assert.deepEqual(
+    events.map((event) => event.outcome),
+    emitted,
+  )
+  // The schema's shape is the bound: five integer counts and a duration, no text.
+  assert.deepEqual(
+    Object.keys(CURATION_ARM.properties.result.properties.counts.properties).sort(),
+    ['entries', 'exactGroups', 'findings', 'unexamined'],
+  )
+})
+
+test('a curated note body and path stay out of the diagnostics the tool returns', async (t) => {
+  const sentinelBody = `SENTINEL-CURATION-BODY-${randomUUID()}`
+  const sentinelTitle = `SENTINEL-CURATION-TITLE-${randomUUID()}`
+  const world = await makeCurationWorld(t)
+  const written = await world.services.write({
+    type: 'convention',
+    title: sentinelTitle,
+    body: `${sentinelBody} 的正文。`,
+  })
+  // Real curation work through the shipped service, with a real sentinel in the
+  // vault the pass reads.
+  const curated = await world.services.admin({ action: 'curation', operation: 'scan' })
+  assert.equal(curated.result.status, 'scanned')
+  assert.ok(curated.result.examined >= 1)
+  assert.equal(curated.result.counts.entries >= 1, true)
+
+  const diagnostics = await world.services.admin({ action: 'diagnostics' })
+  const serialised = JSON.stringify(diagnostics)
+  for (const sentinel of [sentinelBody, sentinelTitle]) {
+    assert.equal(serialised.includes(sentinel), false, `${sentinel} reached the ring`)
+  }
+  // Neither the vault-relative note the pass read nor the private cursor it wrote
+  // may appear: the ring carries outcomes and counts, never a path. The cursor path
+  // is derived here the way the state module derives it, so the assertion covers
+  // the write side of the pass rather than the note it read.
+  assert.equal(serialised.includes(written.path), false)
+  assert.equal(
+    serialised.includes(curationCursorPath(world.dataRoot, curated.result.projectId)),
+    false,
+  )
+  assert.equal(
+    diagnostics.result.events.some((event) => event.event === 'curation'),
+    true,
+    'the pass must record that it ran',
   )
 })
 

@@ -227,6 +227,66 @@ release artifact. The versioning policy is in the README, under Development.
   1 MiB bound over the same document *is* covered; and a view is never read across
   two processes in one test.
 
+- **Bounded curation administration, and the switch that will drive it** (Task 5).
+  `mem_admin` gains one action, `curation`, whose `operation` is exactly
+  `status` or `scan` — there is deliberately no `apply`, `approve` or `reject`
+  value, in the DSL, in the compiled schema or in the router, because approval is
+  the TTY-only command Task 7 adds and never a model-callable action. `lib/config.js`
+  gains `autoCurate: z.boolean().default(true)`; `false` disables automatic passes
+  only, and the explicit `scan` stays available. Both host descriptions name the new
+  action, and `test/tools.test.js` and `test/codex-mcp.test.js` assert the two hosts
+  expose the same six tools and the same closed `operation` pair.
+  `lib/services.js` gains the internal `curateForBinding(binding, options)` and
+  `curateCurrentProject(options)` seams, and the action is a thin projection of the
+  same result they return: `{status, operation, projectId, complete, cursor,
+  scannedAt, examined, counts, proposals, truncated, autoEnabled}`. `status` reads
+  the private cursor, the committed view and the bounded proposal listing and scans
+  nothing; `scan` runs one bounded pass. Both resolve the project through the
+  existing read-only `resolveProject` path, so neither mints a `.obsidian-mem`
+  pointer — a case asserts the pointer is still absent after both, and that a
+  pointerless repository gets `not-bound` (the tool) and `'unbound'` (the adapter
+  seam) rather than a pass over whatever project the process sits in.
+  The pass order is the contract, and each half is asserted rather than asserted
+  about: the durable changed-path queue is read first and chooses the traversal;
+  `dueOnly` skips a pass when a complete scan is younger than 24 hours (the marker
+  is the cursor's `scannedAt`, and a queued hint bypasses it because it is
+  information the marker was never asked about); the view is written **before** the
+  hints are acknowledged, so a crash between the two leaves them queued for replay;
+  and the acknowledgement drops only the queued paths the pass actually inspected,
+  sorted and cut at 512, so a pass cut short by either bound leaves the rest queued.
+  One thing the tests forced into the open and this entry records as a measured
+  coupling: the scanner writes a coverage cursor from a changed-path pass too, so a
+  rule of "acknowledge only a `complete` pass" would replay hints forever and never
+  resume the interrupted backfill. When no complete view exists yet, `curateForBinding`
+  therefore runs a **full** pass even with hints queued (they are in its manifest, so
+  they are inspected), and a changed-path merge is only used over a complete view.
+  Wiring R28: the same call now invokes `recordCurationFindings`, which Task 3 built
+  and left uncalled — a judgment-dependent scan finding becomes a stable, review-only
+  proposal. Each finding is recorded on its own, so an unreadable source refuses that
+  one finding (reported as a `curation` diagnostic with code `failed`) instead of
+  failing a pass whose view has already been written.
+  Diagnostics: one new `curation` category, in sync across `EVENT_NAMES`, the
+  `mem_admin` output schema's enum and the disk codec's `OUTCOMES`
+  (`listed` / `scanned` / `skipped`), carrying an outcome, a project id, a
+  truncation code, an examined count and a duration. A case drives a real pass over
+  a note whose body and title carry random sentinels and requires neither the text,
+  the vault-relative note path, nor the private cursor path to appear in
+  `mem_admin(action="diagnostics")`.
+  Measured: `npm test` **846 tests / 845 pass / 1 skipped / 0 fail** (`c02bda1`
+  measured 835 tests / 834 pass / 1 skipped / 0 fail on the same checkout, so this
+  task adds eleven cases and no failure).
+  Budgets: `lib/services.js` 1150 → 1500 and `lib/tool-schema.js` 900 → 950, both
+  with the argument for the lines beside them in `test/architecture.test.js`;
+  `lib/diagnostic-codec.js` stays at 200 (199 measured) and `lib/config.js`,
+  `lib/debug.js` and `lib/tool-registry.js` stay inside their existing ones.
+  Untested: no automatic trigger calls `curateForBinding` yet (Task 6 is that step),
+  so `dueOnly`'s 24-hour branch is covered only through the seam's own call — the
+  `skipped` outcome is pinned by the diagnostic vocabulary but no case drives a
+  due-marker skip; the `scan` action's behaviour when the vault's root is
+  cloud-managed is the existing R14 refusal reached through `requireProject`, not a
+  case added here; and the proposal listing is exercised empty, so a populated
+  queue's counts are exercised by the proposal module's own tests rather than here.
+
 ### Fixed
 
 - **The parked-candidate signal is no longer thrown away, and the retry barrier is

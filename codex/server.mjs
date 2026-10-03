@@ -59,7 +59,7 @@ const DESCRIPTION = Object.freeze({
   mem_brief:
     'The recall brief for the project bound to the current working directory: binding, hot memory, conventions and recent decisions. Call this once when you start work in a repository.',
   mem_admin:
-    "Vault maintenance: lint, index status/rebuild, bind (show/local/fork/retain), the project list, promote a note into Methods/, the pending job queue, and diagnostics (a bounded, content-free ring of this process's decisions; it empties on restart).",
+    'Vault maintenance: lint, index status/rebuild, bind (show/local/fork/retain), the project list, promote a note into Methods/, the pending job queue, curation (operation "status" reads the private cursor and review queue, "scan" runs one bounded pass), and diagnostics (a bounded, content-free ring of this process\'s decisions; it empties on restart).',
 })
 
 /**
