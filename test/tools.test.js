@@ -995,3 +995,41 @@ test('curateCurrentProject answers "unbound" instead of scanning or binding', as
   })
   assert.equal(still.kind, 'unbound')
 })
+
+test('a hint callback that throws never retracts a committed write', async (t) => {
+  // The write path's failure contract. `onCurationHint` is the seam that starts a
+  // pass, and it runs *after* the transaction — so the vault byte, the receipt and
+  // the durable hint are all already in place when it can fail. The failure the
+  // receipt must survive is the callback's, and `applyOutcome` hangs the equivalent
+  // promise off itself rather than awaiting it; here the callback is synchronous and
+  // throwing, which is the harsher of the two.
+  const world = await makeCurationWorld(t)
+  const services = createMemoryServices({
+    config: world.config,
+    dataRoot: world.dataRoot,
+    cwd: world.repo,
+    home: world.home,
+    onCurationHint: () => {
+      throw new Error('the trigger is broken')
+    },
+  })
+  t.after(() => services.close())
+
+  const written = await services.write({
+    type: 'convention',
+    title: '钩子坏了也要留下字据',
+    body: '结论：回执与提示先落盘，触发器的失败不能撤销回执。',
+  })
+  assert.match(written.path, /^Projects\//u)
+  assert.equal(typeof written.receipt.txId, 'string')
+  // The hint is durable, which is what makes the failed trigger a missing
+  // optimisation rather than a lost change: the next due pass services it.
+  const binding = await resolveBinding({
+    cwd: world.repo,
+    vaultRoot: world.config.vaultPath,
+    mode: 'show',
+    home: world.home,
+  })
+  assert.deepEqual(await readChangedSources({ binding, dataRoot: world.dataRoot }), [written.path])
+  assert.equal(existsSync(join(world.vault, ...written.path.split('/'))), true)
+})

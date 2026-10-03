@@ -148,7 +148,10 @@ function handNote({ id, type = 'doc', title, extra = [], body = '正文。\n' })
 
 /** A world with `count` plain notes written through the service layer. */
 async function worldWithNotes(t, count) {
-  const world = await makeCurationWorld(t)
+  // `autoCurate: false` because Task 6 made a committed `services.write` queue its
+  // note: these cases set up their own changed-path state by hand, and a hint the
+  // fixture left behind per note would be read as part of what they assert.
+  const world = await makeCurationWorld(t, { config: { autoCurate: false } })
   const written = []
   for (let index = 0; index < count; index += 1) {
     written.push(

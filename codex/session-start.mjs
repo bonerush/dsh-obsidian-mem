@@ -98,16 +98,42 @@ export function decide(payload) {
  * and the second is the rule that an empty brief must never be injected as if the
  * project had no memory.
  *
+ * Task 6's automatic pass runs *after* the brief is built and before the hook
+ * answers, because a session start is the only turn boundary this adapter owns:
+ * MCP gives tools, not boundaries, so there is nowhere else to put it. It is
+ * bounded to a quarter of a second because it is on the session's critical path,
+ * and it may neither change the brief nor fail the hook — a scan that throws is
+ * one diagnostic and nothing more. `onCurated` exists so a test can hold the pass
+ * open and count the calls; production passes nothing.
+ *
  * @param {string} cwd - the session's working directory, from the hook payload.
  * @param {Function} open - {@link openMemory}; injected so a test can count opens.
+ * @param {Function} [onCurated] - called once per pass that was actually started.
  * @returns {Promise<string|null>} the brief text, or `null` for "inject nothing".
  */
-export async function briefFor(cwd, open) {
+export async function briefFor(cwd, open, onCurated) {
   const memory = open({ cwd })
   try {
     const brief = await memory.services.brief({})
     if (brief === null || typeof brief !== 'object') return null
     if (brief.status === 'unbound') return null
+    if (memory.config?.autoCurate === true) {
+      onCurated?.(cwd)
+      try {
+        // The shared pass, so the binding rules and the R14 cloud-managed refusal
+        // are decided in one place. 256 notes and 500 ms are this adapter's own
+        // bound: the DSH worker runs in the background and can afford more.
+        await memory.services.curateCurrentProject({ dueOnly: true, maxNotes: 256, maxMs: 500 })
+      } catch (error) {
+        // Content-free, and never rethrown. A hook that exited non-zero or
+        // answered nothing would cost the user a session to report a housekeeping
+        // failure.
+        memory.diagnostics?.event?.('curation', {
+          outcome: 'failed',
+          code: typeof error?.code === 'string' ? error.code : undefined,
+        })
+      }
+    }
     const text = typeof brief.text === 'string' ? brief.text.trim() : ''
     return text === '' ? null : text
   } finally {

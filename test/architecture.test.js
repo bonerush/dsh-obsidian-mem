@@ -199,7 +199,15 @@ const BUDGETS = {
   // buy: the seam itself, the review outcome's diagnostic, the `proposalId` the
   // receipt carries, and the one branch that skips the index refresh for an item
   // that wrote nothing.
-  'lib/capture.js': 2100,
+  // Raised from 2100 by Task 6 (2157 formatted lines measured; measured-plus-30
+  // would round to 2200). What the 56 lines buy: the `onCurationCompleted` seam on
+  // `processQueue` and its context field, the collected committed-path list, the
+  // durable hint enqueue and the advisory call after it, and the worker's
+  // `setOnCurationCompleted` plus the re-read of the callback on every pass. The
+  // alternative was for the assembly to infer "did this job write" from the receipt,
+  // which is exactly the guess R5 forbids: a parked candidate's receipt has no path.
+  // The raise stays inside the measured-plus-30 rule rather than following it.
+  'lib/capture.js': 2160,
   'lib/config.js': 300,
   // The curation plan's three Task 2 modules, on the same rule as every other
   // entry (measured plus 30, rounded up). What the size buys: the scanner carries
@@ -386,10 +394,16 @@ const BUDGETS = {
   // the closed and bounded response projection shared by `status` and `scan`, the
   // proposal listing, and the `curation` diagnostics that record an outcome and
   // counts without a path or a note. Splitting the policy out would put one
-  // decision in two files. The measured-plus-30 rule would round to 1550; 1500 is
+  // decision in two files. The measured-plus-30 rule would round to 1550; 1500 was
   // deliberately inside it, so — as with `brief.js` and `curation-view.js` — the
   // next raise has to argue with this line rather than inherit the rounding.
-  'lib/services.js': 1500,
+  // Task 6 argues for it: 1544 formatted lines. What the 44 lines buy: the
+  // `queueCurationHint` helper for the tool write path, the `onCurationHint` seam it
+  // calls once the hint is durable, the `autoCurate` guard around both and the catch
+  // that keeps a throwing trigger from retracting a committed receipt. The
+  // alternative — the assembly enqueueing for the write path itself — would put the
+  // private curation state in two modules and the R14/binding guards in two places.
+  'lib/services.js': 1550,
   'lib/transaction.js': 2200,
   'lib/vault.js': 1750,
 }

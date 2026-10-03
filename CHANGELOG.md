@@ -287,6 +287,66 @@ release artifact. The versioning policy is in the README, under Development.
   case added here; and the proposal listing is exercised empty, so a populated
   queue's counts are exercised by the proposal module's own tests rather than here.
 
+- **Both adapters run the incremental curation pass themselves** (Task 6). Nothing
+  new is user-visible: the six tools are unchanged, no config key is added, and
+  `autoCurate: false` still disables automatic passes only — the explicit
+  `mem_admin(action="curation", operation="scan")` keeps working, which a case now
+  drives on the same project after the switch has suppressed every automatic one.
+  **The DSH side** gains one seam and two triggers. A committed vault write queues
+  its note in the durable changed-path set: `lib/services.js`'s `write` (the
+  `mem_write` tool, and Codex's MCP `mem_write`) does it through a new shared
+  `queueCurationHint`, and the queue worker's apply path does it for each item that
+  really committed a transaction — a **parked** candidate contributes no path,
+  because the note it describes does not exist and a hint for it would send the
+  next pass to inspect nothing (R5). The hint is written outside the vault
+  transaction (the enqueue takes the same vault lock and it is not reentrant) and
+  its failure is a content-free `curation` diagnostic rather than an error: the
+  receipt is already durable, so the worst case is that the note waits for the next
+  due full scan. After the hint is on disk, a new `onCurationHint` seam asks this
+  host for a pass, and `lib/index.js` runs `curateForBinding` with a per-project
+  in-flight set: a second request while one pass is running is dropped rather than
+  queued, the call is never awaited, and its refusal is recorded as an outcome and
+  a code — never a path — so a curation failure cannot fail a completed user turn.
+  A worker teardown starts no new pass: `stop()` makes both `kick()` and an
+  explicit `pass()` answer with nothing.
+  **The Codex side** runs its due pass inside `SessionStart`, after the brief is
+  built and before the hook answers, with the 256-note limit and the 500-ms
+  deadline, reading the 24-hour marker from private state through the shared
+  `curateCurrentProject` (so the binding rules and the R14 cloud-managed refusal
+  stay in one place). Its failure changes neither the injected brief nor the exit
+  code — a case makes the scan throw and requires the same one valid JSON line on
+  stdout — and an MCP-only install claims no pass at all, because the pass lives in
+  the hook: `resume`, `compact`, an unbound directory and an untrusted hook all
+  leave the counterfactual data root uncreated.
+  Measured: `npm test` **857 tests / 856 pass / 1 skipped / 0 fail** (`a1a4417`
+  measured 846 / 845 / 1 / 0 on the same checkout with this task's test edits
+  stashed, so this task adds eleven cases and no failure).
+  Also measured: `test/codex-hooks.test.js` and `test/hooks.test.js` drive the
+  signal in-process through the injected `open` seam where the assertion is about
+  the decision, and as real hook processes where it is about stdout and the file
+  system.
+  Fixed in passing: `failed` was missing from the disk codec's `curation` outcome
+  set, so the per-finding refusal `lib/services.js` has emitted since Task 5 was
+  persisted as `other` — the same trap `review` fell into. `lib/diagnostic-codec.js`
+  lists it now and the round-trip case loops it.
+  Budgets: `lib/capture.js` 2100 → 2160 (2157 formatted lines measured) and
+  `lib/services.js` 1500 → 1550 (1544 measured), each with its argument beside it in
+  `test/architecture.test.js`; `lib/index.js` (199 measured), `lib/hooks.js`,
+  `lib/diagnostic-codec.js` (200 measured) and `codex/session-start.mjs` stay inside
+  their existing ones.
+  Untested: **live host delivery is unverified.** No case here runs a real DSH
+  session against a real vault and observes the pass happen, and none runs
+  `codex exec` with the hook trusted — the two adapters are driven at their seams
+  (the registered tools through a real `Context`, the hook through `runHook` and
+  as a child process), which is what the suite can do without a host. Three
+  narrower gaps: the *ordering* of the DSH pass against a turn's own tail is
+  asserted only as "the callback is advisory and nothing waits on it", since the
+  receipt path is synchronous and the pass is not; the Codex 500-ms deadline is
+  asserted as the value the adapter passes, not as a measured wall-clock stop, and
+  the same for the 256-note bound; and no case exercises two hosts curating the
+  same project at the same moment, which is the cross-process vault lock rather
+  than this task's single-flight set.
+
 ### Fixed
 
 - **The parked-candidate signal is no longer thrown away, and the retry barrier is

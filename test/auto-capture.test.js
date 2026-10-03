@@ -46,6 +46,7 @@ import {
 import { createDiagnostics } from '../lib/debug.js'
 import { openDiagnosticJournal, readDiagnosticJournal } from '../lib/diagnostic-journal.js'
 import { listCurationProposals, readCurationProposal } from '../lib/curation-proposals.js'
+import { readChangedSources } from '../lib/curation-state.js'
 import { openIndex } from '../lib/index-db.js'
 import { registerHooks } from '../lib/hooks.js'
 import { applyCandidate, createMemoryWithId } from '../lib/memory.js'
@@ -1669,6 +1670,16 @@ async function waitFor(read, done, { timeoutMs = 5000, stepMs = 25 } = {}) {
   return value
 }
 
+/** Poll a predicate until it answers true, or return false at the deadline. */
+async function waitUntil(predicate, { timeoutMs = 5000, stepMs = 5 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (await predicate()) return true
+    if (Date.now() > deadline) return false
+    await sleep(stepMs)
+  }
+}
+
 test('without a binding seam the worker resolves the project from the vault registry', async (t) => {
   const f = await fixture(t)
   const otherProject = '7f3b19c2-4d05-4a1e-9c77-000000000002'
@@ -2268,4 +2279,155 @@ test('a parked candidate persists the review outcome the codec must keep', async
     eventsOf(diagnostics, 'index').map((event) => event.outcome),
     ['none'],
   )
+})
+
+// ---------------------------------------------------------------------------
+// The automatic curation trigger (curation Task 6)
+// ---------------------------------------------------------------------------
+
+test('a committed write queues its note once and a parked candidate queues nothing', async (t) => {
+  // R5's boundary. A parked candidate writes no vault byte, so a trigger that
+  // queued a path for it would ask the next pass to inspect a note that does not
+  // exist. Both jobs below go through the shipped apply path; only the first one
+  // commits a transaction.
+  const f = await fixture(t)
+  const applied = []
+  const callback = (binding, paths) => applied.push({ projectId: binding.projectId, paths })
+  const seamWith = (extra = {}) => ({
+    ...queueOptions(f, { config: baseConfig({ autoCurate: true }), ...extra }),
+    onCurationCompleted: callback,
+  })
+
+  await writeJobAtomic(f.queueRoot, validatedJob([itemFixture()]))
+  const summary = await processQueue(seamWith())
+  assert.equal(summary.completed, 1)
+
+  const note = (await memoryNotes(f))[0]
+  assert.equal(applied.length, 1, 'one completed job asks for exactly one pass')
+  assert.equal(applied[0].projectId, f.binding.projectId)
+  assert.deepEqual(applied[0].paths, [note.path])
+  // Durable, not merely reported: the hint the next process reads comes off disk.
+  assert.deepEqual(await readChangedSources({ binding: f.binding, dataRoot: f.dataRoot }), [
+    note.path,
+  ])
+
+  // The parked case. A title twin is what makes a candidate risky, and the seam
+  // parks it instead of writing. An index is required, exactly as the duplicate
+  // case above requires one: without it the lookup answers `null` and the
+  // candidate is not risky at all.
+  const seeded = await seedDecision(f, { title: '自动清理触发边界' })
+  const index = await openIndex({
+    vaultRoot: f.vault,
+    dataRoot: f.dataRoot,
+    backend: 'sqlite',
+    projectId: f.binding.projectId,
+    home: f.home,
+  })
+  t.after(() => index.close().catch(() => {}))
+  await index.waitReady(undefined, 10_000)
+  applied.length = 0
+  await writeJobAtomic(
+    f.queueRoot,
+    validatedJob([itemFixture({ title: '自动清理触发边界（重写）' })], {
+      jobId: 'job-cccccccccccccccccccccccccccccccc',
+      toSeq: 9,
+      createdAt: '2026-09-23T00:00:01.000Z',
+      updatedAt: '2026-09-23T00:00:01.000Z',
+    }),
+  )
+  const second = await processQueue(seamWith({ index: async () => index }))
+  assert.equal(second.completed, 1, 'the parked candidate leaves a completed job')
+  const parkedReceipt = (await readReceipts(f)).at(-1)
+  assert.equal(parkedReceipt.result, 'applied')
+  assert.equal(parkedReceipt.items[0].path, null, 'the candidate wrote no note')
+  assert.equal(typeof parkedReceipt.items[0].proposalId, 'string')
+  assert.equal(
+    (await memoryNotes(f)).some((note) => note.note.data.id === seeded.id),
+    true,
+    'the seeded note is still the only one with that identity',
+  )
+  assert.deepEqual(
+    applied,
+    [],
+    'a non-write must not enqueue a path for a note that does not exist',
+  )
+  assert.deepEqual(
+    await readChangedSources({ binding: f.binding, dataRoot: f.dataRoot }),
+    [note.path],
+    'the committed note stays queued and the parked one is absent',
+  )
+})
+
+test('two kicks while one curation pass is running start exactly one more', async (t) => {
+  // The single-flight guard. The pass promises are awaited directly (`pass()` is
+  // the worker's own handle on the pass a `kick` starts), so the window in which
+  // the second kick lands is the gate's, not a scheduler's.
+  const f = await fixture(t)
+  await writeJobAtomic(f.queueRoot, validatedJob([itemFixture()]))
+  const worker = createQueueWorker(
+    queueOptions(f, { config: baseConfig({ autoCurate: true }), debounceMs: 0 }),
+  )
+  t.after(() => worker.stop())
+
+  const calls = []
+  let release = () => {}
+  let gate = new Promise((resolve) => {
+    release = resolve
+  })
+  // `async`, because the worker awaits what this returns: that await is what keeps
+  // the pass in flight while the second kick arrives.
+  worker.setOnCurationCompleted(async (binding, paths) => {
+    calls.push(paths.slice())
+    await gate
+  })
+
+  const first = worker.pass()
+  assert.equal(await waitUntil(() => calls.length === 1), true, 'the write reached the callback')
+  const dropped = worker.pass()
+  assert.equal(worker.isRunning(), true, 'the first pass is still the one running')
+  release()
+  await first
+  await dropped
+  assert.equal(calls.length, 1, 'a request during an in-flight pass is not a second pass')
+
+  // Dropped for good, not deferred: with work waiting and nothing running, the
+  // next kick is a fresh pass.
+  gate = new Promise((resolve) => {
+    release = resolve
+  })
+  await writeJobAtomic(
+    f.queueRoot,
+    validatedJob([itemFixture({ title: '第二次写入' })], {
+      jobId: 'job-dddddddddddddddddddddddddddddddd',
+      toSeq: 11,
+      createdAt: '2026-09-23T00:00:02.000Z',
+      updatedAt: '2026-09-23T00:00:02.000Z',
+    }),
+  )
+  const third = worker.pass()
+  assert.equal(await waitUntil(() => calls.length === 2), true, 'an idle worker runs the next pass')
+  release()
+  await third
+  assert.equal(calls.length, 2)
+})
+
+test('a stopped worker starts no curation pass for a later kick', async (t) => {
+  const f = await fixture(t)
+  await writeJobAtomic(f.queueRoot, validatedJob([itemFixture()]))
+  const worker = createQueueWorker(
+    queueOptions(f, { config: baseConfig({ autoCurate: true }), debounceMs: 0 }),
+  )
+  const calls = []
+  worker.setOnCurationCompleted((binding, paths) => calls.push(paths.slice()))
+
+  await worker.pass()
+  assert.equal(calls.length, 1, 'an active worker does run a pass')
+  worker.stop()
+  worker.kick()
+  await sleep(50)
+  assert.equal(calls.length, 1, 'a teardown stops new work instead of scheduling one more pass')
+  // `stop()` is also what makes an explicit pass a no-op, which is the same
+  // decision seen from the other side: the worker cannot start one.
+  const after = await worker.pass()
+  assert.equal(after, null, 'a stopped worker answers a pass with nothing at all')
 })

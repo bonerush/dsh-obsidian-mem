@@ -15,7 +15,14 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { hooksConfig } from '../codex/prepare.mjs'
-import { CONTINUE, INJECT_SOURCES, decide, hookOutput } from '../codex/session-start.mjs'
+import {
+  CONTINUE,
+  INJECT_SOURCES,
+  briefFor,
+  decide,
+  hookOutput,
+  runHook,
+} from '../codex/session-start.mjs'
 import { openMemory } from '../codex/server.mjs'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -307,4 +314,162 @@ test('the plugin ships its hook at the path Codex discovers, and not in the mani
     assert.match(hooksConfig().hooks.SessionStart[0].hooks[0].command, /session-start\.mjs$/)
   }
   assert.deepEqual(readdirSync(join(PLUGIN, 'skills')), ['obsidian-mem'])
+})
+
+// ---------------------------------------------------------------------------
+// The automatic curation trigger (curation Task 6)
+// ---------------------------------------------------------------------------
+
+/**
+ * One `openMemory`-shaped handle whose services are the test's own, with a spy
+ * on the one call the due pass is allowed to make.
+ *
+ * The shape is what `briefFor` reads (`services.brief`, `services.close`,
+ * `config.autoCurate`), so the trigger's decision is exercised without a vault:
+ * the bound and the configuration switch are exactly the two inputs that are not
+ * about the brief, and the process-level controls below cover the vault.
+ *
+ * @param {object} [input] - overrides: `text`, `status`, `autoCurate`, `fail`.
+ * @returns {object} the handle plus `calls` and `closed`.
+ */
+function curationHandle({
+  text = '# obsidian-mem:brief\n\n- 一条记忆\n',
+  status = 'ok',
+  autoCurate = true,
+  fail = false,
+} = {}) {
+  const calls = []
+  const state = { closed: 0 }
+  return {
+    calls,
+    state,
+    config: { autoCurate },
+    diagnostics: { event: () => {} },
+    services: {
+      brief: async () => ({ status, text }),
+      curateCurrentProject: async (options) => {
+        calls.push(options)
+        if (fail) {
+          const error = new Error('the cursor could not be read')
+          error.code = 'curation-state'
+          throw error
+        }
+        return { status: 'scanned', projectId: '1c392abb-7b08-42f7-871d-2a379caf9448' }
+      },
+      close: async () => {
+        state.closed += 1
+      },
+    },
+  }
+}
+
+test('a bound SessionStart runs one due pass with the bounded limits and one JSON line', async () => {
+  const lines = []
+  const err = []
+  const handle = curationHandle()
+  const out = { write: (line) => lines.push(line) }
+  const result = await runHook(JSON.stringify(payload('/work/demo')), {
+    open: () => handle,
+    out,
+    err: { write: (line) => err.push(line) },
+  })
+
+  // The hook document Codex validates, and the one wire line it arrives on: a
+  // `console.log` anywhere below this would be read as a second answer.
+  assert.equal(result.hookSpecificOutput.hookEventName, 'SessionStart')
+  assert.match(result.hookSpecificOutput.additionalContext, /obsidian-mem:brief/u)
+  assert.equal(lines.length, 1)
+  assert.deepEqual(JSON.parse(lines[0]), result)
+  assert.equal(handle.calls.length, 1, 'one due pass and no more')
+  assert.deepEqual(handle.calls[0], { dueOnly: true, maxNotes: 256, maxMs: 500 })
+  // The brief is built first, so the pass can never be what the injected text
+  // waits for.
+  assert.equal(handle.state.closed, 1)
+  assert.deepEqual(err, [])
+})
+
+test('a scan that throws changes neither the injected brief nor the exit code', async () => {
+  const lines = []
+  const handle = curationHandle({ fail: true })
+  const result = await runHook(JSON.stringify(payload('/work/demo')), {
+    open: () => handle,
+    out: { write: (line) => lines.push(line) },
+    err: { write: () => {} },
+  })
+
+  assert.equal(result.hookSpecificOutput.hookEventName, 'SessionStart')
+  assert.match(result.hookSpecificOutput.additionalContext, /obsidian-mem:brief/)
+  assert.equal(lines.length, 1, 'a failed pass still emits exactly one line')
+  assert.deepEqual(JSON.parse(lines[0]), result)
+  assert.equal(handle.calls.length, 1)
+  assert.equal(handle.state.closed, 1, 'the hook releases what it opened even on the failure path')
+})
+
+test('autoCurate:false and an unbound project both claim no automatic pass', async () => {
+  // `briefFor` is called directly here for the same reason the process-level
+  // controls exist: the switch has exactly one effect, and the stub makes it
+  // impossible for the assertion to pass because of an unrelated crash.
+  const off = curationHandle({ autoCurate: false })
+  const injected = await briefFor('/work/demo', () => off)
+  assert.match(injected, /obsidian-mem:brief/u)
+  assert.deepEqual(off.calls, [], 'autoCurate:false disables the automatic pass and nothing else')
+
+  const unbound = curationHandle({ status: 'unbound', text: '' })
+  assert.equal(await briefFor('/work/demo', () => unbound), null)
+  assert.deepEqual(unbound.calls, [], 'an unbound directory must not start a pass')
+})
+
+test('a bound start injects the real brief and the due pass never reaches stdout', async () => {
+  // The process-level half of the contract: whatever the pass answers, the wire
+  // carries the brief and nothing else. The counting stub stands in for the seam
+  // so the pass's own answer cannot be mistaken for the hook document.
+  const space = world()
+  const receipt = await bind(space)
+  const run = hook(
+    { HOME: space.home, DSH_HOME: space.dsh, OBSIDIAN_MEM_VAULT: space.vault },
+    JSON.stringify(payload(space.repo)),
+  )
+  assert.equal(run.status, 0)
+  assert.equal(run.lines.length, 1)
+  assert.equal(run.answer.hookSpecificOutput.hookEventName, 'SessionStart')
+  // The real hook wrote the real brief for the note `bind` committed.
+  assert.match(run.answer.hookSpecificOutput.additionalContext, /钩子注入的决定/u)
+
+  const handle = curationHandle({ text: '# obsidian-mem:brief\n\n- 钩子注入的决定\n' })
+  const lines = []
+  const stubbed = await runHook(JSON.stringify(payload(space.repo)), {
+    open: () => handle,
+    out: { write: (line) => lines.push(line) },
+    err: { write: () => {} },
+  })
+  assert.equal(stubbed.hookSpecificOutput.hookEventName, 'SessionStart')
+  assert.equal(lines.length, 1)
+  assert.deepEqual(handle.calls, [{ dueOnly: true, maxNotes: 256, maxMs: 500 }])
+  assert.match(receipt.path, /Decisions\//u)
+})
+
+test('a source that injects nothing opens no vault and claims no pass', async () => {
+  // `resume` and `compact` continue a conversation that already carries the
+  // earlier injection, so the hook returns before `openMemory` is reached: the
+  // counterfactual root is never created, which is what "opens no data root"
+  // means when there is a bound repository it *would* have opened.
+  const space = world()
+  await bind(space)
+  {
+    const env = { HOME: space.home, DSH_HOME: space.dsh, OBSIDIAN_MEM_VAULT: space.vault }
+    for (const source of ['resume', 'compact']) {
+      const root = join(space.home, `skipped-${source}`)
+      const run = hook({ ...env, DSH_HOME: root }, JSON.stringify(payload(space.repo, { source })))
+      assert.equal(run.status, 0)
+      assert.deepEqual(run.answer, { ...CONTINUE })
+      assert.equal(run.lines.length, 1)
+      assert.equal(existsSync(root), false, `${source} must not open a data root`)
+    }
+    // An unbound directory is answered by the same one-line document.
+    const other = join(space.home, 'not-a-project')
+    mkdirSync(other, { recursive: true })
+    const unbound = hook(env, JSON.stringify(payload(other)))
+    assert.deepEqual(unbound.answer, { ...CONTINUE })
+    assert.equal(unbound.lines.length, 1)
+  }
 })

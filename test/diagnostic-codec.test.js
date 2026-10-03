@@ -81,7 +81,9 @@ test('every curation outcome the bounded action emits survives the round trip', 
   // `mem_admin(action="curation")` emits its own outcome, the ring carries it fine,
   // and only the *disk* format can silently rewrite it to `other`.
   const aliases = createAliases()
-  for (const outcome of ['listed', 'scanned', 'skipped']) {
+  // `failed` was emitted by `curateForBinding` from Task 5 on but was never listed,
+  // so every per-finding refusal was persisted as `other`.
+  for (const outcome of ['listed', 'scanned', 'skipped', 'failed']) {
     const encoded = encodeDiagnosticEvent({ seq: 1, at, event: 'curation', outcome }, aliases)
     assert.equal(encoded.outcome, outcome, `${outcome} is not coarsened`)
     assert.equal(decodeDiagnosticEvent(encoded).outcome, outcome, `${outcome} decodes back`)

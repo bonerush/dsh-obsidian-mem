@@ -15,16 +15,18 @@
 import assert from 'node:assert/strict'
 import { Context } from '@deepseek-ai/cordis'
 import toolsPlugin from '@deepseek-ai/dsh-tools'
+import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { buildBrief } from '../lib/brief.js'
+import { curationRecordDir, curationViewPath, readChangedSources } from '../lib/curation-state.js'
 import { createDiagnostics } from '../lib/debug.js'
 import { readDiagnosticJournal } from '../lib/diagnostic-journal.js'
 import { updateHot } from '../lib/hot.js'
@@ -1386,4 +1388,232 @@ test('disabled apply creates no support journal', async (t) => {
   })
   assert.equal(apply({}, { enabled: false }), undefined)
   assert.equal(existsSync(join(root, 'data', 'obsidian-mem', 'diagnostics')), false)
+})
+
+// ---------------------------------------------------------------------------
+// The automatic curation trigger through the real assembly (curation Task 6)
+// ---------------------------------------------------------------------------
+
+/** A Git environment free of the machine's own configuration. */
+function gitEnv() {
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE'])
+    delete env[key]
+  return env
+}
+
+/**
+ * The real assembly over a throwaway repository, vault and data root.
+ *
+ * `DSH_HOME` is redirected before `apply` because `resolveDataRoot()` — the one
+ * call site — derives every private path the trigger reads and writes: the
+ * changed-path queue, the cursor and the view all live under it.
+ *
+ * @param {object} [options] - config overrides for the plugin row.
+ * @returns {{root: string, cwd: string, vault: string, dataRoot: string, stop: Function, write: Function}} the harness.
+ */
+async function curationBed(options = {}) {
+  const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t6-curation-'))
+  const cwd = join(root, 'repo')
+  const vault = join(root, 'vault')
+  await mkdir(cwd, { recursive: true })
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd, env: gitEnv() })
+  const ctx = new Context()
+  ctx.provide('systemPrompt', { tools: () => () => {} })
+  const fork = ctx.plugin(toolsPlugin)
+  await fork
+  // A durable distillation job must never be the reason a curation pass is or is
+  // not run, so the model answers with text the validated barrier refuses.
+  const answer = 'not the JSON the validated barrier requires'
+  ctx.provide('llm', {
+    stream: () =>
+      (async function* () {
+        yield { type: 'text-delta', index: 0, text: answer }
+        yield { type: 'block-end', index: 0, block: { type: 'text', text: answer } }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      })(),
+  })
+  const previousHome = process.env.DSH_HOME
+  process.env.DSH_HOME = root
+  const stop = apply(ctx, {
+    ...(options.config ?? {}),
+    enabled: true,
+    vaultPath: vault,
+    distill: { maxRetries: 1 },
+  })
+  return {
+    root,
+    cwd,
+    vault,
+    dataRoot: join(root, 'data', 'obsidian-mem'),
+    stop,
+    /**
+     * One `mem_write` through the registered tool surface, the way a session
+     * makes it. The throw, if any, is the caller's: a harness that cannot write
+     * would otherwise silently assert nothing.
+     */
+    write: async (args) => {
+      const result = await ctx.tools.execute({
+        callId: `call-${randomUUID()}`,
+        name: 'mem_write',
+        arguments: args,
+        signal: new AbortController().signal,
+        agent: { session: { header: { id: SESSION_ID, cwd } } },
+      })
+      // Unwrapped here rather than at every call site: a harness that cannot write
+      // would otherwise assert nothing while looking green.
+      assert.equal(result.isError, false, result.error?.message ?? JSON.stringify(result))
+      return result.value
+    },
+    /** One `mem_admin` through the registered tool surface. */
+    admin: async (args) => {
+      const result = await ctx.tools.execute({
+        callId: `call-${randomUUID()}`,
+        name: 'mem_admin',
+        arguments: args,
+        signal: new AbortController().signal,
+        agent: { session: { header: { id: SESSION_ID, cwd } } },
+      })
+      assert.equal(result.isError, false, result.error?.message ?? JSON.stringify(result))
+      return result.value
+    },
+    close: async () => {
+      stop()
+      if (previousHome === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = previousHome
+      await fork.dispose().catch(() => {})
+      await rm(root, { recursive: true, force: true, maxRetries: 4 })
+    },
+  }
+}
+
+/** The project id of the one changed-path set under a data root, or `null`. */
+async function changedSetProjectId(dataRoot) {
+  try {
+    const names = await readdir(join(dataRoot, 'curation', 'changed'))
+    return names.length === 1 ? names[0].replace(/\.json$/u, '') : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The binding shape the curation readers need, for one project.
+ *
+ * The directory is read off the written path and the project id out of the
+ * private state, because neither document carries both: a write receipt carries a
+ * transaction id, and the changed-path set carries only the project.
+ */
+function bindingFor(bed, projectId, writtenPath) {
+  const match = /^(Projects\/[^/]+--[0-9a-f]{8})\//u.exec(writtenPath)
+  assert.notEqual(match, null, `unexpected note path: ${writtenPath}`)
+  return {
+    kind: 'bound',
+    projectId,
+    slug: 'repo',
+    displayName: 'repo',
+    schema: 1,
+    vaultRoot: bed.vault,
+    repoRoot: bed.cwd,
+    relativeDir: match[1],
+  }
+}
+
+/** Poll for a JSON document to appear, then parse it. */
+async function untilJson(path, { timeoutMs = 8000 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    try {
+      return JSON.parse(await readFile(path, 'utf8'))
+    } catch {
+      if (Date.now() > deadline) assert.fail(`no JSON document appeared at ${path}`)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+  }
+}
+
+/** Poll a predicate until it answers true, or fail the test at the deadline. */
+async function until(predicate, { timeoutMs = 8000, stepMs = 10 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (await predicate()) return true
+    if (Date.now() > deadline) assert.fail('the automatic curation trigger never answered')
+    await new Promise((resolve) => setTimeout(resolve, stepMs))
+  }
+}
+
+/** How many per-path scan records the private state holds for one project. */
+async function scanRecords(dataRoot, projectId) {
+  try {
+    return (await readdir(curationRecordDir(dataRoot, projectId))).length
+  } catch {
+    return 0
+  }
+}
+
+test('a committed mem_write queues one durable hint and one pass services it', async (t) => {
+  const bed = await curationBed()
+  t.after(() => bed.close())
+  const written = await bed.write({
+    type: 'decision',
+    title: '用自动清理替代手动扫描',
+    body: '结论：写入提交后把路径排入待检队列，由下一次到期检查消费。',
+  })
+  assert.match(written.path, /^Projects\/repo--[0-9a-f]{8}\/Decisions\//u)
+  // The private state names the identity the plugin minted, which is the one
+  // document that spells a project's id out — a write receipt carries a
+  // transaction id instead.
+  const projectId = await changedSetProjectId(bed.dataRoot)
+  assert.notEqual(projectId, null, 'the committed write left a durable hint')
+  const binding = bindingFor(bed, projectId, written.path)
+
+  // The view is the pass's output, so its content is what proves the pass reached
+  // this note rather than merely being asked to.
+  const view = await untilJson(curationViewPath(bed.dataRoot, projectId))
+  assert.equal(view.complete, true)
+  assert.equal(
+    view.entries.some((entry) => entry.path === written.path),
+    true,
+    'the pass inspected the note the write committed',
+  )
+  // Acknowledged, because the pass inspected it. That write follows the view's, so
+  // the state to wait for is the empty set rather than the view alone.
+  await until(
+    async () => (await readChangedSources({ binding, dataRoot: bed.dataRoot })).length === 0,
+  )
+  assert.deepEqual(
+    await readChangedSources({ binding, dataRoot: bed.dataRoot }),
+    [],
+    'the hint was consumed by the pass that serviced it',
+  )
+  // One committed write is one hint: the scanner writes one record per note it
+  // examines, and the bootstrap skeleton is what the other records are.
+  const records = await scanRecords(bed.dataRoot, projectId)
+  assert.equal(records, view.entries.length, 'every entry the view carries has a record')
+})
+
+test('autoCurate:false stops the automatic pass and runs nothing else', async (t) => {
+  // A bound project, so the pass this switch suppresses is a real one: against an
+  // unbound directory every configuration looks identical.
+  const off = await curationBed({ config: { autoCurate: false } })
+  t.after(() => off.close())
+  const written = await off.write({
+    type: 'decision',
+    title: '关掉自动清理',
+    body: '结论：autoCurate:false 只停止自动通过，显式扫描不受影响。',
+  })
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  // No hint, no cursor and no view: the switch stopped the automatic half, and the
+  // note it declined to curate is still on disk.
+  const names = await readdir(join(off.dataRoot, 'curation')).catch(() => [])
+  assert.deepEqual(names, [], `curation state must stay empty, saw ${names.join(',')}`)
+  const binding = bindingFor(off, '00000000-0000-4000-8000-000000000000', written.path)
+  assert.deepEqual(await readChangedSources({ binding, dataRoot: off.dataRoot }), [])
+  assert.match(written.path, /Decisions\//u)
+
+  // The switch disables automatic passes and nothing else: an explicit scan still
+  // runs, over the same project, and answers with what it examined.
+  const scanned = await off.admin({ action: 'curation', operation: 'scan' })
+  assert.equal(scanned.result.status, 'scanned')
+  assert.equal(scanned.result.examined >= 1, true, 'the explicit scan is unaffected')
 })
