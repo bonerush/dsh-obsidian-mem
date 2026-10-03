@@ -24,7 +24,7 @@
 // a checkout whose `node_modules` was rebuilt without it cannot run this file,
 // exactly as a DSH process without the package could not register the tools.
 import assert from 'node:assert/strict'
-import { mkdtempSync, existsSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -40,6 +40,11 @@ import {
   readChangedSources,
 } from '../lib/curation-state.js'
 import { createDiagnostics } from '../lib/debug.js'
+import {
+  createAliases,
+  decodeDiagnosticEvent,
+  encodeDiagnosticEvent,
+} from '../lib/diagnostic-codec.js'
 import { createMemoryServices, TOOL_NAMES, TOOL_PARAMETERS, registerTools } from '../lib/tools.js'
 import { resolveBinding } from '../lib/vault.js'
 import { makeCurationWorld } from './curation-world.js'
@@ -110,7 +115,7 @@ const adminResult = (action, args = {}) => {
         scannedAt: null,
         examined: 0,
         counts: { entries: 0, exactGroups: 0, findings: 0, unexamined: 0 },
-        proposals: { total: 0, pending: 0, truncated: false, unreadable: 0 },
+        proposals: { total: 0, pending: 0, truncated: false, unreadable: [] },
         truncated: null,
         autoEnabled: true,
       },
@@ -1032,4 +1037,70 @@ test('a hint callback that throws never retracts a committed write', async (t) =
   })
   assert.deepEqual(await readChangedSources({ binding, dataRoot: world.dataRoot }), [written.path])
   assert.equal(existsSync(join(world.vault, ...written.path.split('/'))), true)
+})
+
+test('a pass whose view build fell back acknowledges nothing', async (t) => {
+  // The ordering guarantee the plan states: a hint may be dropped only once the
+  // view it was built from is durable. Every non-`written` build *returns without
+  // writing*, so gating the acknowledgement on the attempt rather than on the
+  // result would drop the batch from the durable queue while the stored view never
+  // learned about it — lost from both, which is the one outcome the plan's order
+  // exists to prevent.
+  //
+  // The build is injected, because the service's own inputs cannot reach this
+  // combination: `curateForBinding` only hands `buildCurationView` changed paths
+  // when the stored view is already complete, and a complete view plus a complete
+  // batch is exactly the case that writes. The injected verdict is the one the real
+  // build returns for an oversize or unusable document; what is under test is what
+  // the caller does with it. The injection runs *after* the real scan, so the pass
+  // really inspected the queued path.
+  const { services, diagnostics, repo, binding, written, enqueue, readEnqueued } =
+    await curationServices(t, { notes: 1 })
+  const ctx = await toolbed(t)
+  registerTools(ctx, services)
+  const agent = { session: { header: { id: 'sess-fallback', cwd: repo } } }
+
+  const initial = await call(ctx, 'mem_admin', { action: 'curation', operation: 'scan' }, { agent })
+  assert.equal(initial.isError, false, initial.error?.message)
+  assert.equal(initial.value.result.complete, true)
+  const queued = await enqueue(written[0].path)
+  assert.deepEqual(await readEnqueued(), [queued.path])
+
+  let built = null
+  const fellBack = await services.curateForBinding(binding, {
+    force: true,
+    changedPaths: [queued.path],
+    buildView: async (input) => {
+      built = input
+      return { status: 'fallback', reason: 'view-oversize' }
+    },
+  })
+  // The real scan ran and really inspected the queued path, so only the build's
+  // verdict is under test.
+  assert.equal(built.scan.examined, 1)
+  assert.equal(built.scan.examinedPaths.includes(queued.path), true)
+  assert.equal(fellBack.status, 'scanned')
+  assert.equal(fellBack.examined, 1)
+  // The fallback reason is reported as this call's one code, so `scanned` does not
+  // read as "published"; `truncated` stays null because the scan was not cut short.
+  assert.equal(fellBack.truncated, null)
+  const decision = diagnostics
+    .snapshot()
+    .events.filter((event) => event.event === 'curation')
+    .at(-1)
+  assert.equal(decision.outcome, 'scanned')
+  assert.equal(decision.code, 'view-oversize')
+  // The reason is only durable if the disk vocabulary knows it: feed the very event
+  // this pass recorded through the codec, so a code a call site starts emitting
+  // cannot be silently persisted as `other` (the trap `review` fell into).
+  const persisted = encodeDiagnosticEvent(decision, createAliases())
+  assert.equal(persisted.code, 'view-oversize')
+  assert.equal(decodeDiagnosticEvent(persisted).code, 'view-oversize')
+  // The hint survives, because nothing durable carries what the view would have.
+  assert.deepEqual(await readEnqueued(), [queued.path])
+
+  // And through the tool's own projection of the same private state.
+  const throughTool = await call(ctx, 'mem_admin', { action: 'curation', operation: 'status' })
+  assert.equal(throughTool.isError, false, throughTool.error?.message)
+  assert.deepEqual(await readEnqueued(), [queued.path])
 })

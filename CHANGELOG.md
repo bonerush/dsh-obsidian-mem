@@ -254,24 +254,34 @@ release artifact. The versioning policy is in the README, under Development.
   hints are acknowledged, so a crash between the two leaves them queued for replay;
   and the acknowledgement drops only the queued paths the pass actually inspected,
   sorted and cut at 512, so a pass cut short by either bound leaves the rest queued.
-  One thing the tests forced into the open and this entry records as a measured
-  coupling: the scanner writes a coverage cursor from a changed-path pass too, so a
-  rule of "acknowledge only a `complete` pass" would replay hints forever and never
-  resume the interrupted backfill. When no complete view exists yet, `curateForBinding`
-  therefore runs a **full** pass even with hints queued (they are in its manifest, so
-  they are inspected), and a changed-path merge is only used over a complete view.
+  One thing the tests forced into the open: a changed-path pass can never satisfy
+  `complete`, so a rule of "acknowledge only a `complete` pass" would replay hints
+  forever and never resume the interrupted backfill. When no complete view exists yet,
+  `curateForBinding` therefore runs a **full** pass even with hints queued (they are in
+  its manifest, so they are inspected), and a changed-path merge is only used over a
+  complete view. (An earlier revision of this entry attributed that to the scanner
+  writing a coverage cursor from a changed-path pass. It does not: the write is guarded
+  by `if (fullPass && …)` with `fullPass = requested.length === 0`, so a changed-path
+  pass writes no cursor, and `nextAfter` falls back to `lastInspected` unless the pass
+  covered its scope, so a `file-budget` pass records its resumption point rather than
+  the last manifest path. The workaround is still needed, for the reason stated here.)
   Wiring R28: the same call now invokes `recordCurationFindings`, which Task 3 built
   and left uncalled — a judgment-dependent scan finding becomes a stable, review-only
   proposal. Each finding is recorded on its own, so an unreadable source refuses that
-  one finding (reported as a `curation` diagnostic with code `failed`) instead of
-  failing a pass whose view has already been written.
+  one finding instead of failing a pass whose view is already written; the refusal is
+  reported as a `curation` diagnostic whose outcome is `failed` and whose code is the
+  error's own code, absent when the error carries none.
   Diagnostics: one new `curation` category, in sync across `EVENT_NAMES`, the
-  `mem_admin` output schema's enum and the disk codec's `OUTCOMES`
-  (`listed` / `scanned` / `skipped`), carrying an outcome, a project id, a
-  truncation code, an examined count and a duration. A case drives a real pass over
-  a note whose body and title carry random sentinels and requires neither the text,
-  the vault-relative note path, nor the private cursor path to appear in
-  `mem_admin(action="diagnostics")`.
+  `mem_admin` output schema's enum and the disk codec's `OUTCOMES` — `listed` /
+  `scanned` / `skipped` / `failed` — carrying an outcome, a project id, one code, an
+  examined count and a duration. The code is the scanner's truncation reason
+  (`file-budget`, `time-budget`, `manifest-changed`, `records-missing`), the state
+  problem the call worked around (the `CurationStateError` payloads) or a view build's
+  refusal (`entry-unusable`, `view-oversize`, `backfill-incomplete`), and every one of
+  them is registered in the codec's `CODES` so none is persisted as `other`. A case
+  drives a real pass over a note whose body and title carry random sentinels and
+  requires neither the text, the vault-relative note path, nor the private cursor path
+  to appear in `mem_admin(action="diagnostics")`.
   Measured: `npm test` **846 tests / 845 pass / 1 skipped / 0 fail** (`c02bda1`
   measured 835 tests / 834 pass / 1 skipped / 0 fail on the same checkout, so this
   task adds eleven cases and no failure).
@@ -348,6 +358,53 @@ release artifact. The versioning policy is in the README, under Development.
   than this task's single-flight set.
 
 ### Fixed
+
+- **A curation pass no longer acknowledges hints whose view did not commit, and the
+  category's vocabulary is registered** (Task 5 review round). `lib/services.js`
+  discarded `buildCurationView`'s result and acknowledged the queued paths off
+  `scan.examinedPaths`, but that call returns `{status:'fallback'}` **without writing**
+  for `backfill-incomplete`, `entry-unusable` and `view-oversize`: the batch was then
+  dropped from the durable queue while the stored view never learned about it — the one
+  outcome the plan's write-then-acknowledge order exists to prevent. The
+  acknowledgement is now gated on `status === 'written'`, a fallback is reported as the
+  pass's one code, and the phrase "the scan's records and the view are both durable"
+  (false in exactly that case) is gone. A case injects a `fallback` verdict through a
+  new test-only `buildView` seam, after the real scan has examined the queued path,
+  and requires the hint to survive; it fails on the pre-fix branch with the queue
+  emptied. The same round registered what the category persists:
+  `lib/diagnostic-codec.js`'s `CODES` gains the scanner's four truncation reasons
+  (`file-budget`, `time-budget`, `manifest-changed`, `records-missing`), the state
+  payloads whose read is refused (`state-not-a-file`, `state-corrupt`,
+  `state-oversize`, `cursor-invalid`, `record-invalid`, `changed-invalid`,
+  `view-invalid`, `view-oversize`) and the view build's refused values
+  (`entry-unusable`, `backfill-incomplete`), so a call that reports why it wrote
+  nothing is no longer persisted as `other`; the `curation` outcome set keeps
+  `failed`, which the per-finding refusal and Task 6's trigger catches emit. Two
+  cases loop the whole outcome set and the whole code set through encode/decode, and
+  the fallback case feeds the event a real pass recorded through the codec — both fail
+  on the pre-fix codec (`file-budget is not coarsened`; `actual: 'other'`). Also
+  corrected here: the Task 5 entry above stated the scanner writes a coverage cursor
+  from a changed-path pass (it is guarded by `if (fullPass && …)`, and `fullPass` is
+  `requested.length === 0`), said a per-finding refusal is "reported with code
+  `failed`" (`failed` is the outcome; the code is the error's own), and claimed the
+  disk vocabulary was in sync while `failed` and every code were absent from it. And
+  `view-unwritable:<code>` was found to be unreachable rather than merely untested: a
+  raw `fs` failure at the view path is not wrapped as a `CurationStateError`, so
+  `fs.rename`'s `EISDIR` escapes `buildCurationView` as a throw (probed with a
+  directory standing in for the view file) — the comment in `lib/services.js` records
+  that, and this entry does not claim a fallback it cannot reach.
+  Measured: `npm test` **859 tests / 858 pass / 1 skipped / 0 fail** (the same tree
+  with this round's edits stashed measured 857 / 856 / 1 / 0, so this round adds two
+  cases); the covering command
+  `node --test test/tools.test.js test/debug.test.js test/diagnostic-codec.test.js test/config.test.js test/codex-mcp.test.js`
+  reports **95 tests / 95 pass / 0 fail / 0 skipped**, and Task 6's adapters
+  (`test/hooks.test.js`, `test/auto-capture.test.js`, `test/codex-hooks.test.js`) are
+  green in the same run at 203 / 203.
+  Budgets: `lib/services.js` 1550 → 1600 (1575 formatted lines measured; on the
+  file's own measured-plus-30 rounding rule), `lib/diagnostic-codec.js` 200 → 250 (210
+  measured, same rule) and `lib/tool-schema.js` 950 → 1000 (948 measured, the same
+  rule the sibling service entry uses), each with its argument beside it in
+  `test/architecture.test.js`.
 
 - **The parked-candidate signal is no longer thrown away, and the retry barrier is
   pinned** (Task 3 review round). `review` was missing from the diagnostic codec's

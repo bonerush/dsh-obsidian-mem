@@ -162,7 +162,15 @@ const BUDGETS = {
   // The optional support sink adds one failure-isolated observer to the existing
   // ring. It stays here so every call site still passes only one diagnostics seam.
   'lib/debug.js': 250,
-  'lib/diagnostic-codec.js': 200,
+  // Raised from 200 by the Task 5 fix round (210 formatted lines measured; the
+  // file's rule is measured plus 30 rounded to the next 50, so 250 is the rule's
+  // number). What the 10 lines buy: the closed `code` vocabulary the curation call
+  // sites actually supply — the scanner's four truncation reasons, the eight state
+  // payloads whose read is refused, the view build's two judged refusals and the
+  // binding refusal — declared as one list so the rule "a code a call site emits is
+  // registered here" stays checkable in one place, which is the same argument the
+  // `review` comment at `OUTCOMES` above makes for outcomes.
+  'lib/diagnostic-codec.js': 250,
   'lib/diagnostic-journal.js': 300,
   'lib/diagnostic-report.js': 350,
   'lib/diagnose-cli.js': 100,
@@ -372,7 +380,13 @@ const BUDGETS = {
   // parameter's documented default. The alternative — a second schema module for
   // one action — would put the action list in two files, which is the drift the
   // diagnostics enum comment above already records once.
-  'lib/tool-schema.js': 950,
+  // Raised to 1000 by the Task 5 fix round on the file's own measured-plus-30 rule:
+  // 948 measured plus 30 is 978, which rounds up to 1000 — the rule's number, as the
+  // sibling `lib/services.js` entry spells out its own. 950 was inside that rule
+  // without saying which number it was inside, which is the debt this line removes;
+  // the fix round added no line to this file, so the raise is bookkeeping rather than
+  // new space.
+  'lib/tool-schema.js': 1000,
   'lib/tool-registry.js': 250,
   // Raised from 1100 when the explicit-retry wake-up landed here: `kickQueueWorker`
   // is threaded through the option record and the one action that owns retrying, so
@@ -403,7 +417,16 @@ const BUDGETS = {
   // that keeps a throwing trigger from retracting a committed receipt. The
   // alternative — the assembly enqueueing for the write path itself — would put the
   // private curation state in two modules and the R14/binding guards in two places.
-  'lib/services.js': 1550,
+  // Task 5's fix round raises it to 1600 (1575 formatted lines measured; measured
+  // plus 30 rounds up to 1600 on the rule above). What the 31 lines buy: gating the
+  // acknowledgement on `buildCurationView` returning `written` rather than on the
+  // attempt — a `fallback` build writes nothing, so acknowledging off it would drop
+  // the batch from the durable queue and from the view at once, which is the plan's
+  // ordering guarantee made real — plus the reported fallback reason, the two-line
+  // `buildView` seam that lets a case drive a fallback the service's own inputs
+  // cannot reach, and the comments that withdraw the two claims the review found
+  // false (the scanner's cursor, and the code precedence).
+  'lib/services.js': 1600,
   'lib/transaction.js': 2200,
   'lib/vault.js': 1750,
 }

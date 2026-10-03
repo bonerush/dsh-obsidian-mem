@@ -274,11 +274,12 @@ const CURATION_ARM = ADMIN_OUTPUT.oneOf.find((arm) => arm.properties.action.cons
 
 test("the curation category's outcomes and the schema's closed enums agree", () => {
   // Same rule as the `recall` case above, applied to Task 5's category: the ring
-  // accepts three outcomes and the disk codec persists exactly those, so both
-  // closed lists are asserted rather than the absence of a fourth name.
+  // accepts the outcomes the call sites emit and the disk codec persists exactly
+  // those, so both closed lists are asserted rather than the absence of a fifth
+  // name. `failed` is the per-finding refusal and Task 6's trigger catches.
   assert.ok(EVENT_NAMES.includes('curation'))
   assert.deepEqual(CURATION_ARM.properties.result.properties.operation.enum, ['status', 'scan'])
-  const emitted = ['listed', 'scanned', 'skipped']
+  const emitted = ['listed', 'scanned', 'skipped', 'failed']
   const diagnostics = createDiagnostics({})
   for (const [index, outcome] of emitted.entries()) {
     diagnostics.event('curation', { outcome, hits: index, ms: index })
