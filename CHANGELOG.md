@@ -32,23 +32,28 @@ release artifact. The versioning policy is in the README, under Development.
   explicit field list and goes through `createMemoryWithId`, so a candidate that carries
   an `id` cannot turn an approved create into an update (R6); that path is the R6 guard
   made structural, because it never reads `id` at all. Two reviewers of one proposal are
-  arbitrated by a per-proposal claim file beside the record: one applies, the other is
+  arbitrated by a per-proposal claim file beside the record: one decides, the other is
   refused, and the shared idempotency key would in any case have replayed the winner's
-  transaction rather than minting a second note. A crash between the publish and the
-  receipt store is replayed by `recover` (the explicit half of
+  transaction rather than minting a second note. The claim is taken before **either**
+  decision, so a rejection cannot mark `rejected` a proposal an apply is publishing, and
+  the same claim is the one that makes a stale claim's reclaim exclusive (the obsolete
+  claim is renamed out of the way before the exclusive create). A crash between the
+  publish and the receipt store is replayed by `recover` (the explicit half of
   `mem_admin(action='jobs')`), which rolls the committed manifest forward before the
   identity check so the retry returns the receipt the first attempt published instead of
-  refusing with `id-taken`.
+  refusing with `id-taken`; the CLI passes it, so the human route can replay that window.
   - `lib/curation-cli.js` — the `dsh-obsidian-mem-review` command, the **only** approval
     route. It requires an absolute `--vault`, resolves the project from the working
     directory in `show` mode, prints the proposed operation, its sources and their
     scanned hashes, and accepts exactly `apply <id>` or `reject <id>` — byte-for-byte,
     one proposal per run, no `--all` and no default answer. Both stdin and stdout must be
-    terminals (`interactive-tty-required`); a piped answer exits non-zero, so an agent
-    that can spawn a process still cannot approve anything. **No model-callable approval
-    exists:** `mem_admin(action='curation')` still takes `operation` alone, and a case
-    asserts the compiled action enum and every `mem_admin` parameter name carry no
-    `apply`/`approve`/`reject`/`review`.
+    terminals (`interactive-tty-required`), so a piped answer exits non-zero. That is not
+    a proof a person is present: a process able to allocate a pty can drive this prompt,
+    and a case does exactly that — the defence is the exact-typed confirmation plus the
+    read-only binding and the proposal-state checks behind it, not the terminal.
+    **No model-callable approval exists:** `mem_admin(action='curation')` still takes
+    `operation` alone, and a case asserts the compiled action enum and every `mem_admin`
+    parameter name carry no `apply`/`approve`/`reject`/`review`.
   - `package.json` declares the second `bin`, and `scripts/verify-pack.mjs` now requires
     `lib/curation-cli.js` to exist **and** the bin entry to target it: a `bin` entry is
     the one asset no other pack check would miss, because `lib` is a directory entry.
@@ -61,12 +66,23 @@ release artifact. The versioning policy is in the README, under Development.
     that lane is therefore verified on this machine and not on a CI image that lacks it.
     Live host delivery of the command is unverified: no case runs it from a real
     interactive shell, only from a pseudo-terminal the test creates.
-  Measured: `npm test` **895 tests / 893 pass / 1 skipped / 0 fail** (the baseline
-  before this task measured 864 / 863 / 1 / 0 on this worktree); `npm run pack:check`
-  passes and the archive lists `lib/curation-cli.js`. Budgets raised with the argument
-  beside each one in `test/architecture.test.js`: `lib/memory.js` 1500 → 1650, and
-  `lib/transaction.js` 2200 → 2300. Two modules registered: `curation-review` (L6) and
-  `curation-cli` (L9), no existing layer renumbered.
+  Measured (fix round 1): `npm test` **908 tests / 907 pass / 1 skipped / 0 fail**; the
+  same tree's covering files
+  (`test/curation-review.test.js`, `test/curation-cli.test.js`, `test/curation-tty.test.js`,
+  `test/transaction.test.js`, `test/memory.test.js`, `test/architecture.test.js`) measure
+  **117 tests / 117 pass / 0 skipped / 0 fail** under a throwaway `DSH_HOME`. The `1
+  skipped` is the suite's own pre-existing skip, not this lane: `expect(1)` is installed
+  here, so every TTY case ran and passed. `npm run pack:check` passes and the archive
+  lists `lib/curation-cli.js`. Budgets raised with the argument beside each one in
+  `test/architecture.test.js`: `lib/memory.js` 1500 → 1650, and `lib/transaction.js`
+  2200 → 2300; `lib/curation-review.js` stays inside its 650-line budget. Two modules
+  registered: `curation-review` (L6) and `curation-cli` (L9), no existing layer
+  renumbered.
+  - **An earlier entry here recorded `895 tests / 893 pass / 1 skipped / 0 fail` for this
+    work, which does not add up and disagrees with the report's `901 / 900 / 1 / 0`.**
+    Both were measured on revisions that no longer exist (later commits added the
+    curation-scan and trigger cases); the number above is the one this round measured, and
+    the report now carries it too.
 
 - **A bounded curation scan and the note-health rules the linter now shares**
   (work in progress; nothing user-visible changes yet — no config field, no new

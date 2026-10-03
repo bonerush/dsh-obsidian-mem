@@ -10,8 +10,7 @@
 // `test/curation-tty.test.js`, behind a real pseudo-terminal.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdir } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { test } from 'node:test'
 
 import { ADMIN_ACTION_PARAMETERS, TOOL_PARAMETERS } from '../lib/tool-schema.js'
@@ -54,7 +53,6 @@ test('an absolute --vault path is required before anything is read', async (t) =
 
 test('a missing --vault or a bad id is a usage error, before any store read', async (t) => {
   const made = await makeCurationWorld(t)
-  await mkdir(join(made.root, 'unused'), { recursive: true })
   const noVault = run(made, [])
   assert.notEqual(noVault.status, 0)
   assert.match(noVault.stderr, /--vault/u)

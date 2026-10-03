@@ -53,6 +53,7 @@ import {
   runTransaction,
   TransactionError,
 } from '../lib/vault.js'
+import { normalizeDeps } from '../lib/memory.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -1672,4 +1673,36 @@ test('an absent expectedSourceHashes is the empty list, so every existing caller
   const { dataRoot, bindingA } = await fixture(t)
   const receipt = await runTransaction(bindingA, request(newTransactionId()), { dataRoot })
   assert.equal(receipt.result.status, 'applied')
+})
+
+test('the memory layer validates the evidence entries and the recovery flag it consumes itself', async (t) => {
+  // Task 7's review composes a reviewed apply through `createMemoryWithId`, which
+  // hands `expectedSourceHashes` to the engine and consumes `recover` itself (it
+  // calls `recoverTransactions`). An entry the engine would answer `invalid-request`
+  // for, and a truthy-but-not-boolean `recover` the engine never sees, are both
+  // programming errors here rather than review outcomes — so they are refused where
+  // they are read, not three layers down.
+  const { dataRoot } = await fixture(t)
+  for (const value of [
+    'not-an-array',
+    [{}],
+    [{ path: STATUS_NOTE }],
+    [{ path: STATUS_NOTE, hash: 'short' }],
+    [{ path: '   ', hash: sha256('x') }],
+  ]) {
+    assert.throws(
+      () => normalizeDeps({ dataRoot, expectedSourceHashes: value }),
+      RangeError,
+      `expected ${JSON.stringify(value)} to be refused`,
+    )
+  }
+  assert.throws(() => normalizeDeps({ dataRoot, recover: 'yes' }), RangeError)
+  // The seam is unchanged for everything a caller legitimately passes.
+  const options = normalizeDeps({
+    dataRoot,
+    recover: true,
+    expectedSourceHashes: [{ path: STATUS_NOTE, hash: sha256(STATUS_BEFORE) }],
+  })
+  assert.equal(options.recover, true)
+  assert.equal(options.expectedSourceHashes.length, 1)
 })

@@ -24,9 +24,11 @@
 // real home, vault or `$DSH_HOME`.
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { readFile, readdir, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import ts from 'typescript'
 
 import {
   CURATION_REVIEW_CODES,
@@ -43,6 +45,11 @@ import { makeCurationWorld } from './curation-world.js'
 const NOW = new Date('2026-10-03T04:00:00Z')
 /** The other project these cases must never see. */
 const OTHER_PROJECT = '6a1f0b52-0000-4000-8000-000000000001'
+/**
+ * The translation tables in `lib/curation-review.js` whose *values* are the answer
+ * vocabulary: a key is an engine code, a value is what this module reports for it.
+ */
+const TABLE_NAMES = new Set(['STORE_CODES', 'TRANSACTION_CODES', 'MEMORY_CODES'])
 
 /** The sha256 of a byte sequence. */
 function sha256(value) {
@@ -587,8 +594,9 @@ test('a deletion operation has no generic apply, and the executor refuses it by 
   )
   assert.deepEqual(await vaultBytes(made), before)
 
-  // A review-only kind reaches the same refusal even if a record names it: the
-  // operation, not the kind, is what decides.
+  // No operation at all is a different answer: there is no plan here to refuse by
+  // name, so the exported executor says the operation itself is unusable rather than
+  // claiming it recognised a kind it never saw.
   await assert.rejects(
     () =>
       applyReviewedMemory(
@@ -597,10 +605,11 @@ test('a deletion operation has no generic apply, and the executor refuses it by 
         { dataRoot: made.dataRoot, home: made.home, now: NOW },
       ),
     (error) => {
-      assert.equal(error.code, 'operation-not-executable', error.message)
+      assert.equal(error.code, 'operation-invalid', error.message)
       return true
     },
   )
+  assert.deepEqual(await vaultBytes(made), before)
 })
 
 test('a rejection marks the proposal rejected and changes no source byte', async (t) => {
@@ -670,6 +679,91 @@ test('two concurrent reviewers of one proposal: one applies, one is refused', as
   )
   assert.deepEqual(notes.length, 1, `one note for one approved candidate, saw ${notes.join(', ')}`)
 })
+
+/**
+ * A one-shot gate on the reviewed evidence read.
+ *
+ * The engine reads each `expectedSourceHashes` path inside the transaction, through
+ * `io.readFile`, so a promise that resolves on that read is a seam *after* the review
+ * took its claim and *before* it publishes. `release` lets the apply finish.
+ *
+ * @param {string} relative - the vault-relative source the apply will re-read.
+ * @returns {{reached: Promise<void>, io: object, release: () => void}} the gate.
+ */ function evidenceGate(relative) {
+  const name = relative.split('/').at(-1)
+  let arrived = null
+  const reached = new Promise((resolve) => {
+    arrived = resolve
+  })
+  let release = null
+  const held = new Promise((resolve) => {
+    release = resolve
+  })
+  let fired = false
+  return {
+    reached,
+    release,
+    io: {
+      readFile: async (absolute, ...rest) => {
+        if (!fired && String(absolute).endsWith(name)) {
+          fired = true
+          arrived()
+          await held
+        }
+        return readFile(absolute, ...rest)
+      },
+    },
+  }
+}
+
+test(
+  'a rejection cannot take a proposal an apply is publishing',
+  { timeout: 30_000 },
+  async (t) => {
+    // The interleaving Important 5 names: the apply has taken the claim and is between
+    // its publish and its mark when a rejection arrives. Before this round the reject
+    // branch ran before any claim, so it read the record `pending`, marked it
+    // `rejected`, and the apply then refused *after* the note was on disk — a published
+    // note behind a rejected record, and an undeclared `proposal-state` answer.
+    const made = await world(t)
+    const { proposal } = await parkCreateSeparate(made)
+    const gate = evidenceGate(made.seed.path)
+    const applying = reviewCurationProposal({
+      dataRoot: made.dataRoot,
+      proposalId: proposal.proposalId,
+      decision: 'apply',
+      binding: made.binding,
+      now: NOW,
+      io: gate.io,
+    })
+    await gate.reached
+    // The claim is held while the apply is inside its transaction, so the reject is
+    // refused before it can move the record.
+    const rejected = await reviewCurationProposal({
+      dataRoot: made.dataRoot,
+      proposalId: proposal.proposalId,
+      decision: 'reject',
+      binding: made.binding,
+      now: NOW,
+    })
+    assert.equal(rejected.status, 'refused', JSON.stringify(rejected))
+    assert.equal(rejected.code, 'proposal-not-current')
+    gate.release()
+    const applied = await applying
+    assert.equal(applied.status, 'applied', JSON.stringify(applied))
+
+    const record = await readCurationProposal({
+      dataRoot: made.dataRoot,
+      projectId: made.binding.projectId,
+      proposalId: proposal.proposalId,
+    })
+    assert.equal(record.state, 'applied', 'no rejection landed behind the apply')
+    const notes = (await listMarkdown(at(made, `${made.binding.relativeDir}/Pitfalls`))).filter(
+      (name) => name !== 'index.md',
+    )
+    assert.equal(notes.length, 1, 'exactly one note, and the record that decided it')
+  },
+)
 
 test('a held vault lock refuses the review with the engine’s lock code', async (t) => {
   const made = await world(t)
@@ -741,7 +835,11 @@ test('a committed apply whose index notification fails still records the applied
   assert.equal(written.frontmatter.id, proposal.operation.item.preassignedId)
 })
 
-test('a crash before the index notification replays the same transaction on retry', async (t) => {
+test('a crash before the receipt is stored is replayed only by asking for recovery', async (t) => {
+  // `failAfter: 'receipt'` interrupts *after* the manifest was written `committed`
+  // and after the vault holds the new note, but *before* the receipt store learns the
+  // idempotency key — the window `recover` exists for. `index-notify` (the earlier
+  // value here) fires after both, so nothing about that case needed recovery at all.
   const made = await world(t)
   const { proposal } = await parkCreateSeparate(made)
   const attempt = (extra) =>
@@ -751,26 +849,27 @@ test('a crash before the index notification replays the same transaction on retr
       decision: 'apply',
       binding: made.binding,
       now: NOW,
-      // `recover` is the explicit half of `mem_admin(action='jobs')`'s repair: a
-      // crash is replayed by asking for it, never by a normal review quietly
-      // rolling a committed transaction forward.
-      recover: true,
       ...extra,
     })
 
   await assert.rejects(
-    () => attempt({ failAfter: 'index-notify' }),
+    () => attempt({ failAfter: 'receipt' }),
     (error) => {
-      // The engine's simulated crash, raised at the named step rather than caught and
-      // converted: a review must not report a status for an interruption.
       assert.equal(error.code, 'injected-failure', error.message)
-      assert.equal(error.when, 'index-notify')
+      assert.equal(error.when, 'receipt')
       return true
     },
   )
-  // The record is not applied and no note was published: the crash happened before
-  // the manifest could be completed, and the next review replays the same
-  // idempotency key rather than minting a second note.
+  // The crash landed after the publish, so the note is already in the vault and the
+  // record is still undecided — this is the window `recover` exists for.
+  const afterCrash = (await listMarkdown(at(made, `${made.binding.relativeDir}/Pitfalls`))).filter(
+    (name) => name !== 'index.md',
+  )
+  assert.deepEqual(
+    afterCrash.length,
+    1,
+    `the crash published the note, saw ${afterCrash.join(', ')}`,
+  )
   assert.equal(
     (
       await readCurationProposal({
@@ -780,14 +879,32 @@ test('a crash before the index notification replays the same transaction on retr
       })
     ).state,
     'pending',
+    'the crash left the record undecided',
   )
 
-  const retry = await attempt({})
+  // A retry that does not ask for recovery cannot proceed, and it never will on its
+  // own: the committed manifest still owes a receipt, so the retry is refused rather
+  // than allowed to publish a second note. Two attempts, because "it refuses once"
+  // would also be true of a transient failure.
+  for (const round of ['first', 'second']) {
+    const blocked = await attempt({})
+    assert.equal(blocked.status, 'refused', `${round} retry: ${JSON.stringify(blocked)}`)
+    assert.equal(blocked.code, 'proposal-not-current')
+  }
+
+  // The one retry that asks for recovery rolls the committed manifest forward and
+  // replays the write, so the published note is the note that stands.
+  const retry = await attempt({ recover: true })
   assert.equal(retry.status, 'applied', JSON.stringify(retry))
   const notes = (await listMarkdown(at(made, `${made.binding.relativeDir}/Pitfalls`))).filter(
     (name) => name !== 'index.md',
   )
-  assert.equal(notes.length, 1, `one note after a crash and a replay, saw ${notes.join(', ')}`)
+  assert.deepEqual(notes.length, 1, `one note after a crash and a replay, saw ${notes.join(', ')}`)
+  assert.deepEqual(
+    notes,
+    afterCrash,
+    'recovery reused the published note instead of minting another',
+  )
   const afterRetry = await vaultBytes(made)
 
   const replay = await attempt({})
@@ -795,7 +912,6 @@ test('a crash before the index notification replays the same transaction on retr
   assert.equal(replay.code, 'proposal-not-current')
   assert.deepEqual(await vaultBytes(made), afterRetry, 'a refused replay writes no byte')
 })
-
 // ---------------------------------------------------------------------------
 // The declared code vocabulary
 // ---------------------------------------------------------------------------
@@ -985,9 +1101,150 @@ test('every refusal code this module answers with is declared in one list', asyn
     ),
   )
 
+  // `operation-invalid` also travels through a review: a record whose operation is not
+  // an object at all reaches `applyReviewedMemory`, whose own request check names it —
+  // the path the exported executor exists for.
+  const malformed = await parkCreateSeparate(made)
+  const malformedPath = join(
+    made.dataRoot,
+    'curation',
+    'proposals',
+    made.binding.projectId,
+    `${malformed.proposal.proposalId}.json`,
+  )
+  const malformedRecord = JSON.parse(await readFile(malformedPath, 'utf8'))
+  malformedRecord.operation = { kind: 'create-separate', item: null }
+  await writeFile(malformedPath, `${JSON.stringify(malformedRecord, null, 2)}\n`)
+  refused(
+    await reviewCurationProposal({
+      dataRoot: made.dataRoot,
+      proposalId: malformed.proposal.proposalId,
+      decision: 'apply',
+      binding: made.binding,
+      now: NOW,
+    }),
+  )
+
+  // The store's own refused transition (`proposal-state`) is answered as
+  // `proposal-not-current`: a rejection arriving while an apply holds the claim is
+  // refused by the claim, which is the same fact about the same record.
+  const gated = await parkCreateSeparate(made)
+  const gate = evidenceGate(made.seed.path)
+  const applying = reviewCurationProposal({
+    dataRoot: made.dataRoot,
+    proposalId: gated.proposal.proposalId,
+    decision: 'apply',
+    binding: made.binding,
+    now: NOW,
+    io: gate.io,
+  })
+  await gate.reached
+  refused(
+    await reviewCurationProposal({
+      dataRoot: made.dataRoot,
+      proposalId: gated.proposal.proposalId,
+      decision: 'reject',
+      binding: made.binding,
+      now: NOW,
+    }),
+  )
+  gate.release()
+  assert.equal((await applying).status, 'applied')
+
   assert.deepEqual(
     [...observed].sort(),
     [...CURATION_REVIEW_CODES].sort(),
     'every declared code is answered by a case, and every answered code is declared',
+  )
+})
+
+test('the review vocabulary and the module’s own emitters are the same set', () => {
+  // The behavioural case above can only observe the codes its own drivers produce, so
+  // on its own it cannot fail for a code the module answers and this file never
+  // drives — the direction the finding named. This reads the module's source instead:
+  // every code it passes to its own error constructor is an answer it can give, and so
+  // is every value of the three translation tables `refusalCode` answers through. A
+  // refusal added to the module and not declared fails here, and a declared code the
+  // module cannot answer fails here too.
+  const source = readFileSync(new URL('../lib/curation-review.js', import.meta.url), 'utf8')
+
+  /**
+   * Every code one module source can answer with: the constructor's first string
+   * argument and every value of the named translation tables.
+   *
+   * @param {string} sourceText - the JavaScript.
+   * @returns {Set<string>} the answered codes.
+   */
+  const answeredCodes = (sourceText) => {
+    const file = ts.createSourceFile(
+      'scan.js',
+      sourceText,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.JS,
+    )
+    const found = new Set()
+    const walk = (node) => {
+      if (ts.isNewExpression(node) && node.expression.getText(file) === 'CurationReviewError') {
+        const code = node.arguments?.[0]
+        // The code is a quoted string (`'operation-invalid'`) or a substitution-free
+        // template; one with a `${}` in it is a message.
+        if (code !== undefined && ts.isStringLiteralLike(code)) found.add(code.text)
+      }
+      // A refusal the function returns rather than throws is a `code: '…'` entry.
+      if (
+        ts.isPropertyAssignment(node) &&
+        node.name.getText(file) === 'code' &&
+        ts.isStringLiteralLike(node.initializer)
+      ) {
+        found.add(node.initializer.text)
+      }
+      // The tables' *values* are the answers (their keys are the engine's own codes).
+      // They are declared as `Object.freeze({…})`, so the literal is reached through
+      // the call; a spread or shorthand entry is not an answer and is skipped.
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+        const initializer =
+          ts.isCallExpression(node.initializer) && node.initializer.arguments.length === 1
+            ? node.initializer.arguments[0]
+            : node.initializer
+        if (TABLE_NAMES.has(node.name.text) && ts.isObjectLiteralExpression(initializer)) {
+          for (const property of initializer.properties) {
+            // The keys are *not* answers: a table maps an engine code to the one this
+            // module reports for it, and only the reading side of that pair is a code
+            // `CURATION_REVIEW_CODES` may declare.
+            if (ts.isPropertyAssignment(property) && ts.isStringLiteral(property.initializer)) {
+              found.add(property.initializer.text)
+            }
+          }
+        }
+      }
+      ts.forEachChild(node, walk)
+    }
+    walk(file)
+    return found
+  }
+
+  const answers = answeredCodes(source)
+  assert.ok(answers.size > 0, 'the scan found no emitter, so this check would be vacuous')
+  // `proposal-state` is a table *key*: the store's own refusal is reported under this
+  // module's name for the same fact, so it is not part of the answer vocabulary and a
+  // position here would be a promise nothing answers.
+  assert.deepEqual(
+    [...answers].sort(),
+    [...CURATION_REVIEW_CODES].sort(),
+    'the codes lib/curation-review.js can answer with must be exactly the declared list',
+  )
+
+  // The control: the same scan reports an answer the list does not declare, so the
+  // case above is a check and not a restatement of the list.
+  // The control changes a table *value*, which is the half that is an answer: the
+  // replacement must be reported as an undeclared code.
+  const control = source.replace(`'human-owned': 'human-owned',`, `'human-owned': 'undeclared-x',`)
+  assert.notEqual(control, source, 'the control must actually change the source')
+  const controlAnswers = answeredCodes(control)
+  assert.deepEqual(
+    [...controlAnswers].filter((code) => !CURATION_REVIEW_CODES.includes(code)),
+    ['undeclared-x'],
+    'an answered-but-undeclared code must be reported',
   )
 })

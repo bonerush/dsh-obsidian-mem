@@ -13,7 +13,9 @@
 // never as a pass.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { readFile, readdir } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
@@ -35,17 +37,22 @@ function hasExpect() {
 }
 
 /**
- * One Tcl program that runs the command, waits for its prompt and types `typed`.
+ * The body of the Tcl program that types `typed` at the command and reports its exit.
  *
- * `eof` is reached when the child exits, which is how the exit status is captured
- * without a second spawn. `exit 0` on the eof branch is deliberate: expect treats
- * any other eof as a failure and writes a misleading message of its own.
+ * `typed` is spliced into one double-quoted Tcl string, so it is escaped for that
+ * quoting (`\`, `"`, `$`) and nothing else — a character it does not escape is a
+ * character Tcl would interpret rather than type.
+ *
+ * @param {string} typed - the exact bytes a user would type; the Tcl string it becomes.
+ * @returns {string} the Tcl program, without a shebang.
  */
-function expectProgram(typed, args) {
-  const argv = [process.execPath, CLI, ...args].join(' ')
+function expectProgram(typed) {
   return [
     'set timeout 30',
-    `spawn -noecho ${argv}`,
+    // `{*}$argv` expands the list `expect` itself was handed, so an argument holding
+    // a space (a vault path, for one) stays one argument. Splicing them into a command
+    // string would split it and silently run the command against the wrong path.
+    'spawn -noecho {*}$argv',
     'expect {',
     // The prompt line the command itself prints, and the signal that it is waiting
     // for input rather than still reading the vault.
@@ -80,20 +87,33 @@ function expectProgram(typed, args) {
 /**
  * Run the command inside a pty and type `typed` at it.
  *
+ * The pty comes from `expect` and the command's argv is handed to it as a list with
+ * `--`, so the command is spawned with the same argument boundaries the test wrote
+ * (`expect`'s own `--` ends its option parsing). The program itself travels in a
+ * scratch file rather than `-c`: a command string would have to be quoted again, and
+ * every quote added is a boundary that can be lost.
+ *
  * @param {object} made - the world.
  * @param {string[]} args - the command's argv (after the program name).
- * @param {string} typed - the exact bytes a user would type, newline included.
- * @returns {{status: number, output: string}} the run, or `null` when there is no pty.
+ * @param {string} typed - the exact bytes a user would type, without a newline.
+ * @returns {{status: number, output: string}|null} the run, or `null` when there is no pty.
  */
-function runOnTty(made, args, typed) {
+async function runOnTty(made, args, typed) {
   if (!hasExpect()) return null
-  const run = spawnSync(EXPECT, ['-c', expectProgram(typed, args)], {
-    cwd: made.repo,
-    encoding: 'utf8',
-    env: { ...process.env, DSH_HOME: made.dshHome },
-    timeout: 60_000,
-  })
-  return { status: run.status ?? -1, output: `${run.stdout ?? ''}${run.stderr ?? ''}` }
+  const scriptDirectory = await mkdtemp(join(tmpdir(), 'obsidian-tty-'))
+  const script = join(scriptDirectory, 'run.exp')
+  try {
+    await writeFile(script, expectProgram(typed), 'utf8')
+    const run = spawnSync(EXPECT, ['-f', script, '--', process.execPath, CLI, ...args], {
+      cwd: made.repo,
+      encoding: 'utf8',
+      env: { ...process.env, DSH_HOME: made.dshHome },
+      timeout: 60_000,
+    })
+    return { status: run.status ?? -1, output: `${run.stdout ?? ''}${run.stderr ?? ''}` }
+  } finally {
+    await rm(scriptDirectory, { recursive: true, force: true, maxRetries: 4 })
+  }
 }
 
 /** The binding the world's writes created. */
@@ -109,12 +129,12 @@ async function bindingOf(made) {
 }
 
 /** One world with one saved `create-separate` proposal about the seed note. */
-async function parked(t, { itemKey = 'cli:1', title = '命令行复核的候选' } = {}) {
-  const made = await makeCurationWorld(t)
+async function parked(t, { itemKey = 'cli:1', title = '命令行复核的候选', vaultName = null } = {}) {
+  const made = await makeCurationWorld(t, vaultName === null ? {} : { vaultPath: vaultName })
   const seed = await made.services.write({ type: 'doc', title: '起点', body: '起点正文。\n' })
   const binding = await bindingOf(made)
   const item = {
-    preassignedId: `got-${crypto.randomUUID()}`,
+    preassignedId: `got-${randomUUID()}`,
     idempotencyKey: itemKey,
     type: 'gotcha',
     title,
@@ -150,7 +170,7 @@ async function publishedNotes(made) {
 test('typing the exact confirmation applies the proposal', async (t) => {
   const made = await parked(t)
   const id = made.proposal.proposalId
-  const answer = runOnTty(made, ['--vault', made.vault, id], `apply ${id}`)
+  const answer = await runOnTty(made, ['--vault', made.vault, id], `apply ${id}`)
   if (answer === null) {
     t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
     return
@@ -176,11 +196,44 @@ test('typing the exact confirmation applies the proposal', async (t) => {
   assert.equal(record.state, 'applied')
 })
 
+test('a line ending delivered as CR LF is still the exact confirmation', async (t) => {
+  // `askLine` strips one trailing `\r`, because a pty in raw mode hands back the
+  // carriage return it read. The near-miss set below cannot cover that: this is the
+  // accepted direction, and without the strip the same bytes would be a mismatch.
+  const made = await parked(t)
+  const id = made.proposal.proposalId
+  const answer = await runOnTty(made, ['--vault', made.vault, id], `apply ${id}\r`)
+  if (answer === null) {
+    t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
+    return
+  }
+  assert.equal(answer.status, 0, answer.output)
+  assert.equal(
+    (await publishedNotes(made)).length,
+    1,
+    'the CR LF confirmation applied the proposal',
+  )
+})
+
+test('a vault path holding a space survives the pty lane', async (t) => {
+  // The command is spawned through `expect`, which is where a path with a space would
+  // be split into two arguments if the argv were spliced into a command string.
+  const made = await parked(t, { vaultName: 'vault with a space' })
+  const id = made.proposal.proposalId
+  const answer = await runOnTty(made, ['--vault', made.vault, id], `apply ${id}`)
+  if (answer === null) {
+    t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
+    return
+  }
+  assert.equal(answer.status, 0, answer.output)
+  assert.equal((await publishedNotes(made)).length, 1)
+})
+
 test('a near miss publishes nothing and exits non-zero', async (t) => {
   const made = await parked(t)
   const id = made.proposal.proposalId
   for (const typed of ['', `apply`, id, `apply ${id} `, `APPLY ${id}`, `apply ${id}x`]) {
-    const answer = runOnTty(made, ['--vault', made.vault, id], typed)
+    const answer = await runOnTty(made, ['--vault', made.vault, id], typed)
     if (answer === null) {
       t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
       return
@@ -206,7 +259,7 @@ test('typing the exact rejection marks the proposal rejected and changes no byte
   const id = made.proposal.proposalId
   const seedPath = join(made.vault, ...made.seed.path.split('/'))
   const before = await readFile(seedPath)
-  const answer = runOnTty(made, ['--vault', made.vault, id], `reject ${id}`)
+  const answer = await runOnTty(made, ['--vault', made.vault, id], `reject ${id}`)
   if (answer === null) {
     t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
     return
@@ -227,7 +280,7 @@ test('a wrong proposal id exits non-zero and writes nothing', async (t) => {
   const wrong = 'b'.repeat(64)
   const seedPath = join(made.vault, ...made.seed.path.split('/'))
   const before = await readFile(seedPath)
-  const answer = runOnTty(made, ['--vault', made.vault, wrong], `apply ${wrong}`)
+  const answer = await runOnTty(made, ['--vault', made.vault, wrong], `apply ${wrong}`)
   if (answer === null) {
     t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
     return
@@ -253,7 +306,7 @@ test('the command never approves a batch: one id, one proposal', async (t) => {
     operation: {
       kind: 'create-separate',
       item: {
-        preassignedId: `got-${crypto.randomUUID()}`,
+        preassignedId: `got-${randomUUID()}`,
         idempotencyKey: 'cli:2',
         type: 'gotcha',
         title: '第二个候选',
@@ -262,7 +315,7 @@ test('the command never approves a batch: one id, one proposal', async (t) => {
     },
   })
   const id = made.proposal.proposalId
-  const answer = runOnTty(made, ['--vault', made.vault, id], `apply ${id}`)
+  const answer = await runOnTty(made, ['--vault', made.vault, id], `apply ${id}`)
   if (answer === null) {
     t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
     return
@@ -280,7 +333,7 @@ test('the command never approves a batch: one id, one proposal', async (t) => {
 test('the review display names the source it will touch and carries no credentials', async (t) => {
   const made = await parked(t)
   const id = made.proposal.proposalId
-  const answer = runOnTty(made, ['--vault', made.vault, id], `reject ${id}`)
+  const answer = await runOnTty(made, ['--vault', made.vault, id], `reject ${id}`)
   if (answer === null) {
     t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
     return
