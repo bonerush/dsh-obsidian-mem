@@ -311,102 +311,126 @@ test('one pass classifies active, exact, near, expired, broken-link and unexamin
   assert.ok(activeEntry.description.length <= 200)
 })
 
-test('a link this project cannot decide is never reported dead, and an internal one is', async (t) => {
+test('the scan-vs-linter link matrix is exactly what the resolver comment states', async (t) => {
   const world = await makeCurationWorld(t)
   await world.services.write({ type: 'doc', title: '锚点', body: '正文。\n' })
   const binding = await bindingOf(world)
-  // A global method note and another project's note. Both live in the swept vault
-  // — the linter's `filePaths` — and neither is in the project tree or the vault
-  // root, which is the whole of the scan resolver's universe.
-  await writeRaw(world, 'Methods/某方法.md', '# 某方法\n\n正文。\n')
-  await writeRaw(
-    world,
-    'Projects/other--6a1f0b52/Docs/别家.md',
-    handNote({ id: 'doc-44444444-4444-4444-8444-444444444444', title: '别家' }),
-  )
-  // An attachment inside this project: in the vault, in the linter's universe, and
-  // not an indexable note, so the manifest cannot hold it — but the resolver's
-  // file set can, and must.
-  const attachment = `${binding.relativeDir}/Docs/图.png`
-  await writeRaw(world, attachment, 'not really a png\n')
-  // A `LICENSE` at the project root — extension-less, and *not* in the linking note's
-  // own directory — plus two vault-root files: a note and an extension-less file. The
-  // manifest (`.md` only) cannot hold the three extension-less ones, but the resolver's
-  // file set can, because the linter's own `filePaths` is every swept *file*:
-  // `[[Home]]` is a vault-root note and `[[Makefile]]` is a vault-root file, so the
-  // linter resolves both and a scan that called either dead would invent a finding.
-  await writeRaw(world, `${binding.relativeDir}/LICENSE`, 'MIT\n')
-  await writeRaw(world, 'Home.md', '---\ntitle: Home\n---\n首页。\n')
-  await writeRaw(world, 'Makefile', 'all:\n\techo hi\n')
-  const inside = `${binding.relativeDir}/Docs/并不存在`
-  // The `[[LICENSE]]` target is the one divergence this resolver has: there is no
-  // `LICENSE.md` anywhere and the only `LICENSE` is one directory *up* from the note,
-  // so the linter's candidates (`LICENSE`, `<noteDir>/LICENSE`, and each with `.md`)
-  // all miss it and it calls the link dead, while the scan's bare-basename rule
-  // resolves it. `[[Docs/LICENSE]]` is the same shape written partially qualified.
-  // That is the under-report the resolver comment names, and it is asserted as
-  // silence here and as a dead link in the lint report below.
+  const project = binding.relativeDir
+  for (const [path, text] of [
+    // Swept vault files the scan's universe does not hold: they are neither in the
+    // project tree nor a *file* entry of the vault root (the root's `Docs/` is a
+    // directory here, and the scan never descends the root).
+    ['Methods/某方法.md', '# 某方法\n\n正文。\n'],
+    [
+      'Projects/other--6a1f0b52/Docs/别家.md',
+      handNote({ id: 'doc-44444444-4444-4444-8444-444444444444', title: '别家' }),
+    ],
+    ['Docs/分享.md', '---\ntitle: 分享\n---\n正文。\n'],
+    ['Docs/zzz.txt', 'x\n'],
+    // Inside the project: an extension-less file beside the linking note and a
+    // non-Markdown attachment, both of which the scan's *file* set must hold.
+    [`${project}/Docs/LICENSE`, 'MIT\n'],
+    [`${project}/Docs/txt.txt`, 'x\n'],
+    [`${project}/Docs/图.png`, 'not really a png\n'],
+    // One directory up from the linking note, so a bare `[[LICENSE]]` is one the
+    // linter's directory-bound rule cannot reach.
+    [`${project}/LICENSE`, 'MIT\n'],
+    // The vault root: a note and an extension-less file the resolver must see.
+    ['Home.md', '---\ntitle: Home\n---\n首页。\n'],
+    ['Makefile', 'all:\n\techo hi\n'],
+  ]) {
+    await writeRaw(world, path, text)
+  }
+  const inside = `${project}/Docs/并不存在`
+  const targets = [
+    'Docs/nomatch',
+    'Methods/并不存在',
+    'Methods/某方法',
+    'Home',
+    'Makefile',
+    'LICENSE',
+    'Docs/txt.txt',
+    'Docs/LICENSE',
+    'other/LICENSE',
+    'Docs/分享',
+    'Docs/zzz.txt',
+    '并不存在',
+    `${project}/Docs/并不存在`,
+  ]
   const linker = await world.services.write({
     type: 'doc',
     title: '引用者',
-    body: `见 [[Home]]、[[Makefile]]、[[Docs/LICENSE]]、[[LICENSE]]、[[Methods/某方法]]、[[Projects/other--6a1f0b52/Docs/别家]]、[[Methods/并不存在]]、[[${attachment}]] 与 [[${inside}]]。\n`,
+    body: `${targets.map((target) => `[[${target}]]`).join('、')}。\n`,
   })
 
   const result = await scan(world, binding)
   assert.equal(result.complete, true)
-  // Only the target that names nothing anywhere is judged. The rest name paths or
-  // files the resolver either found or cannot decide, and "cannot see" must never
-  // arrive as "dead": a false dead-link claim about the user's vault is worse than a
-  // missing one, so the scan stays silent and the linter still reports on demand.
+  const lint = await lintVault({ binding, home: world.home, now: NOW })
+  const scanDead = new Set(
+    result.findings.filter((finding) => finding.kind === 'dead-wikilink').map((f) => f.target),
+  )
+  const lintDead = new Set(
+    lint.findings
+      .filter((finding) => finding.kind === 'dead-wikilink' && finding.path === linker.path)
+      .map((finding) => /\[\[([^\]]+)\]\]/u.exec(finding.message)[1]),
+  )
+
+  // The probe matrix, run against this fixture and asserted row by row: `DEAD` is
+  // a reported finding, `silent` is none. Five rows have the scan silent and the
+  // linter dead, and they are not one shape. `Docs/nomatch`, `Methods/并不存在`,
+  // `Docs/txt.txt`, `Docs/LICENSE` and `other/LICENSE` share the stated reason: a
+  // slash-bearing target that does not start with this project's directory is
+  // answered `true` before any name is looked at, so that silence needs no
+  // basename match anywhere — `Docs/nomatch` has none at all, while
+  // `Docs/LICENSE` and `other/LICENSE` have one. `Docs/分享` is the same rule on a
+  // target that exists (the linter resolves it through the root `Docs/`, the scan
+  // answers `true` without deciding), and `[[LICENSE]]` is the limit of the
+  // matrix: a bare name both sides resolve, the scan through its basename rule
+  // against the project-root `LICENSE` and the linter through the vault-root one.
+  // Every row is probed rather than described; a comment that went further than
+  // this matrix is the failure it exists to prevent.
+  const expected = [
+    ['Docs/nomatch', 'silent', 'DEAD'],
+    ['Methods/并不存在', 'silent', 'DEAD'],
+    ['Methods/某方法', 'silent', 'silent'],
+    ['Home', 'silent', 'silent'],
+    ['Makefile', 'silent', 'silent'],
+    ['LICENSE', 'silent', 'silent'],
+    ['Docs/txt.txt', 'silent', 'DEAD'],
+    ['Docs/LICENSE', 'silent', 'DEAD'],
+    ['other/LICENSE', 'silent', 'DEAD'],
+    ['Docs/分享', 'silent', 'silent'],
+    ['Docs/zzz.txt', 'silent', 'silent'],
+    ['并不存在', 'DEAD', 'DEAD'],
+    [`${project}/Docs/并不存在`, 'DEAD', 'DEAD'],
+  ]
+  assert.deepEqual(
+    targets.map((target) => [
+      target,
+      scanDead.has(target) ? 'DEAD' : 'silent',
+      lintDead.has(target) ? 'DEAD' : 'silent',
+    ]),
+    expected,
+  )
+  // The relation the comment claims holds over that matrix: for a target it can
+  // decide the scan is a subset of the linter, and a missing finding is the safe
+  // direction. A curation merge can miss a finding; it is never shown a link the
+  // linter called alive.
+  assert.deepEqual(
+    targets.filter((target) => scanDead.has(target) && !lintDead.has(target)),
+    [],
+  )
+  // The scan's whole dead-link output for this note: the bare name that exists
+  // nowhere and the project-prefixed path that exists nowhere. Those two are the
+  // only rows the matrix calls `DEAD`, so nothing above is a filter artefact.
   assert.deepEqual(
     result.findings
       .filter((finding) => finding.kind === 'dead-wikilink')
       .map((finding) => [finding.path, finding.target]),
-    [[linker.path, inside]],
-  )
-
-  // The linter's universe is also every file, so it resolves `[[Home]]`, `[[Makefile]]`
-  // and `[[Docs/LICENSE]]` about the same as the scan does. The one place it disagrees
-  // is the shape that makes the scan's findings a *subset*: a partially qualified (or
-  // bare) target whose basename matches a file that exists elsewhere than the exact
-  // path the linter tries. `[[LICENSE]]` and `[[Docs/LICENSE]]` are both that shape
-  // here — the only `LICENSE` is extension-less and one directory down — so the lint
-  // report calls them dead while the scan stays silent, and the scan never reports a
-  // target the linter did not. What has to be pinned is exactly that: the silence is
-  // the safe direction, and the target naming nothing at all is still reported.
-  const lint = await lintVault({ binding, home: world.home, now: NOW })
-  const reported = lint.findings
-    .filter((finding) => finding.kind === 'dead-wikilink' && finding.path === linker.path)
-    .map((finding) => finding.message)
-  const missing = reported.filter((message) => message.includes(inside))
-  assert.deepEqual(missing, [
-    `${linker.path} links to [[${inside}]], which does not exist in this vault`,
-  ])
-  // The two spellings of the partially qualified / bare target the scan stays silent
-  // about, each of them a link the linter really does report.
-  for (const target of ['[[LICENSE]]', '[[Docs/LICENSE]]']) {
-    assert.equal(
-      reported.some((message) => message.includes(target)),
-      true,
-      `the lint report should call ${target} dead, so the scan's silence is the named under-report`,
-    )
-    assert.equal(
-      result.findings.some(
-        (finding) => finding.kind === 'dead-wikilink' && `[[${finding.target}]]` === target,
-      ),
-      false,
-      `the scan should stay silent about ${target}, and the comment above must say so`,
-    )
-  }
-  // Every scan finding has to be a link the linter also called dead: the divergence
-  // is one-directional, so a curation merge can miss a finding but is never shown a
-  // link the linter resolved.
-  const scanTargets = result.findings
-    .filter((finding) => finding.kind === 'dead-wikilink')
-    .map((finding) => `[[${finding.target}]]`)
-  assert.deepEqual(
-    scanTargets.filter((target) => !reported.some((message) => message.includes(target))),
-    [],
+    [
+      [linker.path, '并不存在'],
+      [linker.path, inside],
+    ],
   )
 })
 
@@ -553,6 +577,8 @@ test('a truncated link universe makes the resolver silent rather than confident'
   // undecidable resolver — overwrite the finding this half asserts on.
   const whole = await scan(world, binding, { dataRoot: join(world.root, 'whole') })
   assert.equal(whole.examinedPaths.includes(linker.path), true)
+  assert.equal(whole.complete, true)
+  assert.equal(whole.manifest.count, (await manifestOf(world, binding)).length)
   assert.deepEqual(
     whole.findings
       .filter((finding) => finding.kind === 'dead-wikilink')
@@ -560,9 +586,14 @@ test('a truncated link universe makes the resolver silent rather than confident'
     [[linker.path, target]],
   )
 
-  // The same fixture under a bound this list cannot fill. `maxFiles` is the seam the
-  // module exposes for exactly this case; the assertion that matters is that the
-  // resolver stops answering, and that the pass says why.
+  // The same fixture under a bound the file list cannot fill. `maxFiles` is the seam
+  // the module exposes for exactly this case, and it is the bound the reviewer's
+  // probe used. What it must not do is shorten the *manifest*: `manifest.paths` is
+  // the notes this pass claims coverage of, and a walk that broke there would write
+  // the cursor over a short fingerprint and call it `complete` — notes nobody
+  // looked at, certified by a flag. So the assertions name every half of that: the
+  // same note count, the same `complete`, the resolver silent rather than certain,
+  // and a cursor that moved only because the coverage behind it really is whole.
   const bounded = await scan(world, binding, {
     maxFiles: 10,
     dataRoot: join(world.root, 'bounded'),
@@ -575,13 +606,58 @@ test('a truncated link universe makes the resolver silent rather than confident'
   assert.deepEqual(
     bounded.findings
       .filter((finding) => finding.kind === 'resolver-truncated')
-      .map((finding) => finding.severity),
-    ['warn'],
+      .map((finding) => [finding.severity, finding.message]),
+    [['warn', 'the link universe hit its 10-file bound, so no link was judged dead in this pass']],
   )
-  // The manifest is untouched by the link-universe bound: it is the same project,
-  // and `complete` is about covering it, not about how many names a link was checked
-  // against. The cursor still moves.
+  // The manifest is untouched by the link-universe bound, which is the whole of this
+  // fix: the same project, the same note count, the same coverage claim. The bound
+  // stops the file list alone, so the cursor is allowed to move — and the note count
+  // is asserted equal to the whole pass rather than merely non-zero, because that
+  // equality is the thing the old walk broke.
+  assert.equal(bounded.manifest.count, whole.manifest.count)
+  assert.equal(bounded.manifest.truncated, false)
+  assert.equal(bounded.complete, true)
   assert.equal(bounded.cursor === null, false)
+})
+
+test('the manifest budget is a coverage truncation the pass names and never hides', async (t) => {
+  const world = await makeCurationWorld(t)
+  await world.services.write({ type: 'doc', title: '锚点', body: '正文。\n' })
+  const binding = await bindingOf(world)
+  for (let index = 0; index < 4; index += 1) {
+    await world.services.write({ type: 'doc', title: `预算 ${index}`, body: `第 ${index} 条。\n` })
+  }
+  const whole = await scan(world, binding, { dataRoot: join(world.root, 'whole') })
+  assert.equal(whole.manifest.count, (await manifestOf(world, binding)).length)
+  assert.equal(whole.manifest.truncated, false)
+  assert.equal(whole.complete, true)
+
+  // `maxManifestFiles` is the seam for the manifest's own budget, and it is the
+  // only bound that truncates the walk. It was structurally unreachable before the
+  // file bound stopped breaking the whole walk, so this case is the one that keeps
+  // the branch from going dead again: a pass that cannot cover every note says
+  // `manifest-budget`, claims nothing complete, and leaves the cursor alone rather
+  // than writing one over the shorter manifest it is holding.
+  const bounded = await scan(world, binding, {
+    maxManifestFiles: 3,
+    dataRoot: join(world.root, 'bounded'),
+  })
+  assert.equal(bounded.manifest.count, 3)
+  assert.equal(bounded.manifest.truncated, true)
+  assert.equal(bounded.truncatedReason, 'manifest-budget')
+  assert.equal(bounded.complete, false)
+  assert.equal(bounded.cursor, null)
+  assert.deepEqual(
+    bounded.findings
+      .filter((finding) => finding.kind === 'manifest-truncated')
+      .map((finding) => [finding.severity, finding.message]),
+    [
+      [
+        'warn',
+        'the manifest walk stopped at its 3-path budget, so no coverage was claimed for this pass',
+      ],
+    ],
+  )
 })
 
 test('inspectCurationNote reports a dead link only when it is given a resolver', async (t) => {

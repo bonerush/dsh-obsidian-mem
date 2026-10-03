@@ -65,20 +65,29 @@ release artifact. The versioning policy is in the README, under Development.
   Untested: no scan currently emits a *suspected contradiction* finding, so the
   review-only path is exercised for the four kinds the scanner does produce and a
   contradiction would be recorded by the same code path without a case of its own.
-  A pass that hits either bound reports `complete: false` even when the backfill
-  behind it is finished, every note-supplied string an entry carries is bounded,
+  A pass that hits the note-count or wall-clock bound reports `complete: false` even
+  when the backfill behind it is finished, every note-supplied string an entry
+  carries is bounded,
   and a record the private store refuses degrades that one note to `unexamined`
   instead of failing the pass. The scan's link resolver is applied to a wider set
   than the notes it inspects: every file of the bound project's tree plus the vault
   root's entries, so a link to a vault-root note, a vault-root `Makefile` or an
   extension-less file beside the linking note is not called dead. The narrower set
   plus its bare-basename rule makes the scan's dead-link findings a **subset** of
-  the linter's — the scan never reports a link the linter resolved — and the one
-  shape it stays silent about is a **partially qualified target whose basename
-  matches a file anywhere in the project or the vault root** (`[[Docs/LICENSE]]`
-  with no `Docs/LICENSE` but a `LICENSE` elsewhere), because the scan additionally
-  accepts a bare basename; `lintVault`'s `filePaths` is every swept *file*, not a
-  `.md`-only note set, so the bare `[[LICENSE]]` spelling is the same shape.
+  the linter's — the scan never reports a link the linter resolved. The relation was
+  probed rather than assumed, and it is only this: **for a target the scan can
+  decide, its findings are a subset of the linter's; for a target it cannot decide —
+  any slash-bearing target that does not name a path under this project, and
+  everything when the enumeration failed or was truncated — the scan reports nothing
+  and the linter may still report it.** The probe found five rows where the scan is
+  silent and the linter reports a dead link: `[[Docs/nomatch]]` (nothing named
+  `nomatch` anywhere), `[[Methods/并不存在]]`, `[[Docs/txt.txt]]`, `[[Docs/LICENSE]]`
+  and `[[other/LICENSE]]`; the silence needs no basename match at all, because a
+  slash-bearing target outside the project prefix is answered `true` before any name
+  is looked at. `lintVault`'s `filePaths` is every swept *file* (not a `.md`-only
+  note set), so the linter's own answer for those targets is a real dead link and the
+  scan's silence is the safe direction. The covering test asserts the whole matrix,
+  scan against `lintVault`, row by row.
   A directory that either half of that universe cannot be enumerated in makes the
   resolver silent rather than guessing, and the pass now says so instead of
   certifying what it did not read: a `readdir` refused for anything but `ENOENT`
@@ -86,9 +95,19 @@ release artifact. The versioning policy is in the README, under Development.
   the cursor where it was, and the resolver's own file list carries a
   `MAX_RESOLVER_FILES` count bound whose truncation makes every target undecidable
   (a `resolver-truncated` finding names it) rather than checking links against half
-  a tree.
+  a tree. That file bound no longer stops the *note* walk: it used to break the whole
+  enumeration, which truncated `manifest.paths` too while `truncated` and `denied`
+  stayed false — `complete: true` and a cursor written over the short fingerprint,
+  notes nobody had read. The two lists now stop separately, the manifest stays whole,
+  and the bound is named in the finding with the value that actually applied.
+  The fourth Task 2 fix round also replaced the last over-narrow attribution in
+  `lib/note-health.js` — the comment that described the scan's silence as "both
+  differences under-report" without saying which targets — with the same literal
+  relation the resolver comment and the covering test now carry.
   Measured at the Task 2 fix round that landed this: `npm test` 810 tests / 809 pass
   / 1 skipped / 0 fail.
+  Measured again at the fourth fix round on `fix: keep curation coverage and link
+  claims exact`: `npm test` 811 tests / 810 pass / 1 skipped / 0 fail.
   Untested: the >50 000-note manifest bound, the >50 000-file resolver bound at its
   shipped value (the covering test lowers it through the `maxFiles` option) and the
   oversize branch of the record degradation (after the entry bound, a note whose

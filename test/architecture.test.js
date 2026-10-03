@@ -194,7 +194,17 @@ const BUDGETS = {
   // that bites turns the list into `null` rather than a short one a link could be
   // called dead against. The two comments that described the linter's `filePaths` as
   // `.md`-only were also replaced with the relation that actually holds.
-  'lib/curation-scan.js': 1217,
+  // Raised again to 1257 (1227 measured formatted at `fix: keep curation coverage
+  // and link claims exact`, same measured-plus-30 rule) in the fourth fix round, which closed
+  // the fail-open the previous round's file bound introduced: the bound broke the
+  // whole walk, so `manifest.paths` was truncated too while `truncated` and `denied`
+  // stayed false — `complete: true` and a cursor written over a short fingerprint.
+  // The two lists now stop separately, `maxManifestFiles` is a validated seam so the
+  // manifest budget the file bound had made unreachable stays exercised, and the
+  // truncation message names the bound that actually applied instead of the shipped
+  // constant. The rest of the lines are the resolver comment rewritten to the literal
+  // probe result, because three rounds of prose had each over-claimed.
+  'lib/curation-scan.js': 1257,
   // The Task 3 module, on the same measured-plus-30 rule (1113 formatted lines,
   // 1115 with the two-line comment that makes the listing order intentional).
   // What the size buys: two proposal kinds with different operations, four
