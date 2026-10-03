@@ -44,6 +44,7 @@ import {
   retryJob,
 } from '../lib/capture.js'
 import { createDiagnostics } from '../lib/debug.js'
+import { openDiagnosticJournal, readDiagnosticJournal } from '../lib/diagnostic-journal.js'
 import { listCurationProposals, readCurationProposal } from '../lib/curation-proposals.js'
 import { openIndex } from '../lib/index-db.js'
 import { registerHooks } from '../lib/hooks.js'
@@ -2223,27 +2224,45 @@ test('a proposal-write failure before markJob leaves the job validated and retry
 
 test('a parked candidate persists the review outcome the codec must keep', async (t) => {
   // The gate's whole signal is `outcome: 'review'`, and the disk format is a closed
-  // vocabulary that rewrites an unlisted token to `other`. This asserts the token
-  // through the REAL ring, so a codec that drops `review` fails here and not only
-  // in the codec's own unit test. `applied` follows it because `completeJob` records
-  // the job's own summary line: the item was parked and the turn still finished,
-  // which is the difference this signal exists to make visible.
+  // vocabulary that rewrites an unlisted token to `other`. The codec runs in the
+  // journal sink and nowhere else, so this case drives the REAL sink and reads the
+  // record back off disk. (Fix round 2 replaced the in-process-ring assertion that
+  // stood here: the ring carries `review` whatever the codec does, so it could not
+  // fail for the reason the case claims, and it passed under a codec without the
+  // token.) `applied` follows the parked item because `completeJob` records the
+  // job's own summary line: the item was parked and the turn still finished, which
+  // is the difference this signal exists to make visible.
   const f = await fixture(t)
   const seeded = await seedDecision(f)
-  const diagnostics = createDiagnostics()
+  const sink = openDiagnosticJournal({ dataRoot: f.dataRoot, config: baseConfig() })
+  const diagnostics = createDiagnostics({ sink })
   await writeJobAtomic(f.queueRoot, validatedJob([itemFixture({ supersedesId: seeded.id })]))
 
   const summary = await processQueue(queueOptions(f, { diagnostics }))
   assert.equal(summary.completed, 1)
 
   const distilled = eventsOf(diagnostics, 'distill')
-  assert.equal(distilled[0].outcome, 'review', 'the parked signal is not coarsened to `other`')
+  assert.equal(distilled[0].outcome, 'review', 'the parked signal is what the ring holds')
   assert.deepEqual(
     distilled.map((event) => event.outcome),
     ['review', 'applied'],
   )
   assert.equal(distilled[0].jobId, JOB_ID)
   assert.equal(distilled[0].projectId, PROJECT_ID)
+
+  // The same two decisions as they reached the disk: the sink encodes through the
+  // codec on the way, so a codec that drops `review` writes `other` here and fails.
+  // The identifiers arrive as per-run aliases, so the content-free projection the
+  // journal is allowed to keep is asserted with the outcome.
+  const persisted = readDiagnosticJournal({ dataRoot: f.dataRoot }).events.filter(
+    (event) => event.event === 'distill',
+  )
+  assert.deepEqual(
+    persisted.map((event) => event.outcome),
+    ['review', 'applied'],
+    'a persisted distill record must not be coarsened to `other`',
+  )
+  assert.match(persisted[0].job, /^j[1-9][0-9]*$/u)
   // The parked candidate wrote nothing, so no index refresh happened either.
   assert.deepEqual(
     eventsOf(diagnostics, 'index').map((event) => event.outcome),

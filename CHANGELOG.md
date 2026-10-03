@@ -105,18 +105,25 @@ release artifact. The versioning policy is in the README, under Development.
   no note was persisted as `other` — a green suite could not see it because the
   in-process ring carries the token fine and only the disk format coarsens it.
   `lib/diagnostic-codec.js` now lists it, a case loops the whole `distill`
-  vocabulary through encode/decode, and a second case reads the token off the real
-  ring after a parked pass. `parkRiskyCandidate` also accepted a seam that resolved
+  vocabulary through encode/decode, and a second case drives the real journal sink
+  and reads the token back off disk after a parked pass (this sentence said "the real
+  ring" until fix round 2: the ring holds the token whatever the codec does, so that
+  assertion could not fail for the reason the case claims). `parkRiskyCandidate` also
+  accepted a seam that resolved
   *something* without an identity: `proposalId: null` went into `appliedItems` and
   the receipt and the item was then `continue`d past, so the job completed with the
   candidate recorded as parked and no durable record of it anywhere. A `propose`
   seam that answers without a non-empty string identity is now refused with
   `propose-failed`, the same code a refusing seam raises, which keeps the job
   `validated` and retryable instead of completing it on a lost candidate.
-  Measured: `npm test` **809 tests / 808 pass / 1 skipped / 0 fail**; the
-  round-trip case fails on the pre-fix codec with `review is not coarsened`, and the
+  Measured: `npm test` **810 tests / 809 pass / 1 skipped / 0 fail** (the 809 round 1
+  measured predates Task 2's `06a6a43`, whose nineteenth
+  `test/curation-scan.test.js` case is the one added test); the
+  round-trip case fails on the pre-fix codec with `review is not coarsened`, the
   guard case fails with `Missing expected rejection: a seam answering undefined must
-  throw`. The brief's mandated retry-barrier case is now pinned by
+  throw`, and the persisted-record case fails on a codec without `review` because the
+  record read back off disk is `other`. The brief's mandated retry-barrier case is now
+  pinned by
   `test/auto-capture.test.js` (a throwing `propose` seam through the real
   `processQueue`: `state: 'validated'`, `attempts: 1`, `lastError.code` of
   `propose-failed`, `nextAttemptAt` in the future, no receipt, byte-identical
@@ -125,6 +132,19 @@ release artifact. The versioning policy is in the README, under Development.
   Untested: the guard is reached only through a caller-supplied seam, so the case
   drives a `writeMemory` wrapper with a throwing `propose` rather than a second
   production seam.
+
+- **Two `lib/memory.js` comments corrected, and one round-1 report claim withdrawn**
+  (Task 3 review round 2). The block above `createNote`'s request called the kept
+  `supersedes`/`expectedSupersedesHash` shape "the wire contract `updateNote` uses":
+  `updateNote` refuses `supersedes` outright and never reads that field, and the
+  consumer is `createNote`. The same JSDoc listed the live pre-check refusals as
+  `note-not-found`/`human-owned` while `ownership-unproven` lands there too, which is
+  also what a MOC container raises. Both comments now name the real consumer and the
+  complete live set. Nothing executable changed. The round-1 report claimed a
+  `test/auto-capture.test.js` comment ("the engine saw `hash-mismatch`") had been
+  corrected; that line is byte-identical between `3f9d429` and `18b15a3` and is
+  accurate history, so no change happened and none was needed — the claim is
+  withdrawn rather than the record rewritten.
 
 ## 0.1.10 — 2026-09-29
 
