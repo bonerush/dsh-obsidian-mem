@@ -20,7 +20,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -316,8 +316,8 @@ test('a link this project cannot decide is never reported dead, and an internal 
   await world.services.write({ type: 'doc', title: '锚点', body: '正文。\n' })
   const binding = await bindingOf(world)
   // A global method note and another project's note. Both live in the swept vault
-  // — the linter's `filePaths` — and neither is in this project's manifest, which
-  // is the whole of the scan resolver's universe.
+  // — the linter's `filePaths` — and neither is in the project tree or the vault
+  // root, which is the whole of the scan resolver's universe.
   await writeRaw(world, 'Methods/某方法.md', '# 某方法\n\n正文。\n')
   await writeRaw(
     world,
@@ -325,20 +325,28 @@ test('a link this project cannot decide is never reported dead, and an internal 
     handNote({ id: 'doc-44444444-4444-4444-8444-444444444444', title: '别家' }),
   )
   // An attachment inside this project: in the vault, in the linter's universe, and
-  // not an indexable note, so the manifest cannot hold it either.
+  // not an indexable note, so the manifest cannot hold it — but the resolver's
+  // file set can, and must.
   const attachment = `${binding.relativeDir}/Docs/图.png`
   await writeRaw(world, attachment, 'not really a png\n')
+  // An extension-less file beside the linking note, and two vault-root files — a
+  // note and an extension-less file. These are the three shapes the resolver's
+  // universe is wider than the manifest *for*: the linter resolves all three, so a
+  // scan that called any of them dead would invent a finding.
+  await writeRaw(world, `${binding.relativeDir}/Docs/LICENSE`, 'MIT\n')
+  await writeRaw(world, 'Home.md', '---\ntitle: Home\n---\n首页。\n')
+  await writeRaw(world, 'Makefile', 'all:\n\techo hi\n')
   const inside = `${binding.relativeDir}/Docs/并不存在`
   const linker = await world.services.write({
     type: 'doc',
     title: '引用者',
-    body: `见 [[Methods/某方法]]、[[Projects/other--6a1f0b52/Docs/别家]]、[[Methods/并不存在]]、[[${attachment}]] 与 [[${inside}]]。\n`,
+    body: `见 [[Home]]、[[Makefile]]、[[Docs/LICENSE]]、[[Methods/某方法]]、[[Projects/other--6a1f0b52/Docs/别家]]、[[Methods/并不存在]]、[[${attachment}]] 与 [[${inside}]]。\n`,
   })
 
   const result = await scan(world, binding)
   assert.equal(result.complete, true)
-  // Only the target inside this project that names a note is judged. The rest name
-  // paths or files the manifest cannot see, and "cannot see" must never arrive as
+  // Only the target that names nothing anywhere is judged. The rest name paths or
+  // files outside the resolver's universe, and "cannot see" must never arrive as
   // "dead": a false dead-link claim about the user's vault is worse than a missing
   // one, so the scan stays silent and the linter still reports on demand.
   assert.deepEqual(
@@ -348,23 +356,102 @@ test('a link this project cannot decide is never reported dead, and an internal 
     [[linker.path, inside]],
   )
 
-  // The linter's universe is the whole swept vault, so on the same note it still
-  // reports the two targets that really are missing — and resolves the method, the
-  // other project's note and the attachment. That is what makes the divergence
-  // one-directional: the scan reports a subset of the linter's dead links, never a
-  // link the linter would have resolved. (The lint report carries the target in
-  // its message.)
+  // The linter's universe is the whole swept vault, but the linter reads *notes*:
+  // it builds `filePaths` from the files it can hold a note for, so a non-`.md`
+  // file is not in it and the lint report also calls `[[Docs/LICENSE]]` dead. That
+  // one goes the other way — the scan sees a file the lint cannot — and the
+  // direction is the safe one: the scan is silent where the linter invents a
+  // finding, never the reverse. What has to be pinned here is that the target
+  // naming nothing at all is still reported, and that the scan never reports a
+  // target the linter resolved.
   const lint = await lintVault({ binding, home: world.home, now: NOW })
   const reported = lint.findings
     .filter((finding) => finding.kind === 'dead-wikilink' && finding.path === linker.path)
     .map((finding) => finding.message)
-    .sort()
+  const missing = reported.filter((message) => message.includes(inside))
+  assert.deepEqual(missing, [
+    `${linker.path} links to [[${inside}]], which does not exist in this vault`,
+  ])
+  // Every scan finding has to be a link the linter also called dead: the divergence
+  // is one-directional, so a curation merge can miss a finding but is never shown a
+  // link the linter resolved.
+  const scanTargets = result.findings
+    .filter((finding) => finding.kind === 'dead-wikilink')
+    .map((finding) => `[[${finding.target}]]`)
   assert.deepEqual(
-    reported,
-    [
-      `${linker.path} links to [[Methods/并不存在]], which does not exist in this vault`,
-      `${linker.path} links to [[${inside}]], which does not exist in this vault`,
-    ].sort(),
+    scanTargets.filter((target) => !reported.some((message) => message.includes(target))),
+    [],
+  )
+})
+
+test('a directory the resolver cannot enumerate makes it silent, never a false dead link', async (t) => {
+  const world = await makeCurationWorld(t)
+  const written = await world.services.write({ type: 'doc', title: '锚点', body: '正文。\n' })
+  const binding = await bindingOf(world)
+  // A directory beside the linking note that the enumerator cannot read. The
+  // manifest still holds the notes above it — it is the file list that comes back
+  // undecidable — so this is the case the resolver's `null` universe exists for.
+  const locked = join(world.vault, ...binding.relativeDir.split('/'), 'Docs', '锁定')
+  await mkdir(locked, { recursive: true })
+  await writeFile(join(locked, '隐藏.txt'), 'hidden\n', 'utf8')
+  // A target that names nothing anywhere: no bare name carries it and no
+  // directory-qualified candidate matches, so a resolver that believes it
+  // enumerated the tree reports it dead. That belief is the thing under test.
+  const target = `${binding.relativeDir}/Docs/并不存在`
+  const linker = await world.services.write({
+    type: 'doc',
+    title: '引用者',
+    body: `见 [[${target}]]。\n`,
+  })
+  // Each pass gets its own data root on purpose. A second pass over the same root
+  // would resume from the cursor and replay the linker's stored record instead of
+  // asking the resolver again — which would mask exactly the decision this test is
+  // about behind a cached finding.
+  const options = (name) => ({
+    dataRoot: join(world.root, name),
+    home: world.home,
+    now: NOW,
+  })
+
+  // Readable first, so the same fixture is proven to produce the finding when the
+  // enumeration can see the whole tree.
+  const readable = await scanCuration(binding, options('readable'))
+  assert.deepEqual(
+    readable.findings
+      .filter((finding) => finding.kind === 'dead-wikilink')
+      .map((finding) => [finding.path, finding.target]),
+    [[linker.path, target]],
+  )
+
+  await chmod(locked, 0o000)
+  t.after(() => chmod(locked, 0o700).catch(() => {}))
+  let result
+  try {
+    result = await scanCuration(binding, options('locked'))
+  } finally {
+    // Restored inside the test as well as in `t.after`, so a failure above cannot
+    // leave an unreadable directory for the temp-tree cleanup.
+    await chmod(locked, 0o700).catch(() => {})
+  }
+  // Nothing is judged dead: "I could not look" is never "it is not there". The pass
+  // still inspects the notes it can see, so the silence is the resolver's decision
+  // about a half-enumerated universe and not an empty pass.
+  assert.deepEqual(
+    result.findings.filter((finding) => finding.kind === 'dead-wikilink'),
+    [],
+  )
+  assert.equal(result.examinedPaths.includes(linker.path), true)
+  assert.equal(result.examinedPaths.includes(written.path), true)
+
+  // Enumeration restored, the finding comes back — which is what makes the silence
+  // above a decision about the failed enumeration rather than a resolver that
+  // never reports anything.
+  const restored = await scanCuration(binding, options('restored'))
+  assert.deepEqual(
+    restored.findings
+      .filter((finding) => finding.kind === 'dead-wikilink')
+      .map((finding) => [finding.path, finding.target]),
+    [[linker.path, target]],
   )
 })
 

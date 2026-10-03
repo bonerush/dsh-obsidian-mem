@@ -60,7 +60,7 @@ release artifact. The versioning policy is in the README, under Development.
     gate above.
   - `lib/capture.js` (L6) — the real seam, which snapshots the evidence and calls
     `saveCurationProposal`. This is the only layer that may compose the two.
-  Measured: `npm test` 804 tests / 803 pass / 1 skipped / 0 fail, and a test
+  Measured: `npm test` 805 tests / 804 pass / 1 skipped / 0 fail, and a test
   asserts every source-note hash is unchanged before and after every kind of pass.
   Untested: no scan currently emits a *suspected contradiction* finding, so the
   review-only path is exercised for the four kinds the scanner does produce and a
@@ -68,12 +68,20 @@ release artifact. The versioning policy is in the README, under Development.
   A pass that hits either bound reports `complete: false` even when the backfill
   behind it is finished, every note-supplied string an entry carries is bounded,
   and a record the private store refuses degrades that one note to `unexamined`
-  instead of failing the pass. The scan's link resolver differs from `lintVault`'s
-  only by under-reporting: a bare basename the linter's directory-bound rule
-  refuses resolves, while a directory-qualified target outside the scan's project
-  and a target naming a file that is not a Markdown note are not judged at all — so
-  a scan reports a subset of the linter's dead links, never one the linter resolved.
-  All of that is documented where the resolver is built.
+  instead of failing the pass. The scan's link resolver is applied to a wider set
+  than the notes it inspects: every file of the bound project's tree plus the vault
+  root's entries, so a link to a vault-root note, a vault-root `Makefile` or an
+  extension-less file beside the linking note is not called dead. One difference
+  survives, and only in the safe direction: a directory-qualified target inside a
+  vault directory that is neither the project nor the vault root (a method note,
+  another project) is not judged at all — so a scan reports a subset of the dead
+  links the same vault's lint reports, never one the linter resolved, and a
+  curation merge can miss a finding but is never shown a link the linter called
+  alive. The one case that goes the other way is named where the resolver is built:
+  `lintVault` reads notes, so it calls a link to an extension-less file that really
+  exists dead, while the scan enumerates the vault's files and stays silent.
+  A directory that either half of that universe cannot be enumerated in makes the
+  resolver silent rather than guessing.
   Untested: the >50 000-note manifest bound, and the oversize branch of the record
   degradation (after the entry bound, a note whose frontmatter can be parsed cannot
   reach the 64 KB record bound; the same recovery path is exercised by an

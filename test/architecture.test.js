@@ -167,15 +167,25 @@ const BUDGETS = {
   'lib/note-health.js': 300,
   'lib/curation-state.js': 800,
   // Raised from 900 in the Task 2 fix round, on the same measured-plus-30 rule
-  // (974 lines). The review found three honesty gaps, and each one is fixed where
-  // the fact is decided rather than in a caller: a resolver that declines to judge
-  // targets outside its own project, so "a scan reports a subset of the linter's
-  // dead links" is true as written; a `complete` that is false whenever either
-  // bound truncated the pass, so a merge cannot drop the paths it never inspected;
-  // and a record write that degrades one note to `unexamined` — bounded entry
-  // fields plus a two-step recovery — instead of throwing the whole pass on one
-  // note's frontmatter. The alternative was to leave that throw in place.
-  'lib/curation-scan.js': 1050,
+  // (987 lines at that commit; the 974 this comment first recorded was measured
+  // before the round's own last edit). The review found three honesty gaps, and
+  // each one is fixed where the fact is decided rather than in a caller: a resolver
+  // that declines to judge targets outside its own project, so "a scan reports a
+  // subset of the linter's dead links" is true as written; a `complete` that is
+  // false whenever either bound truncated the pass, so a merge cannot drop the
+  // paths it never inspected; and a record write that degrades one note to
+  // `unexamined` — bounded entry fields plus a two-step recovery — instead of
+  // throwing the whole pass on one note's frontmatter.
+  // Raised again to 1115 (1085 measured, same rule) in the second fix round, which
+  // closed the resolver's universe: it is now enumerated from the vault surface —
+  // the project's whole file tree plus one vault-root `readdir` — instead of the
+  // `.md` manifest, because the manifest cannot see a vault-root note or an
+  // extension-less file, and calling those links dead invented findings the linter
+  // never made. The lines buy that second enumeration and the `null` universe an
+  // enumeration failure returns, so the resolver reads it as undecidable rather
+  // than as an empty vault. The alternative was a resolver that reported files it
+  // never looked for.
+  'lib/curation-scan.js': 1115,
   // The Task 3 module, on the same measured-plus-30 rule (1113 formatted lines,
   // 1115 with the two-line comment that makes the listing order intentional).
   // What the size buys: two proposal kinds with different operations, four
