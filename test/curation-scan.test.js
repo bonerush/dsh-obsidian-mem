@@ -29,6 +29,7 @@ import {
   CURATION_FILE_MODE,
   MAX_CHANGED_PATHS,
   MAX_CURSOR_BYTES,
+  MAX_SCAN_RECORD_BYTES,
   SCAN_RECORD_SCHEMA,
   ackChangedSources,
   curationChangedPath,
@@ -39,9 +40,15 @@ import {
   readChangedSources,
   readCurationCursor,
 } from '../lib/curation-state.js'
-import { inspectCurationNote, scanCuration, MAX_NOTE_FINDINGS } from '../lib/curation-scan.js'
+import {
+  inspectCurationNote,
+  scanCuration,
+  MAX_ENTRY_TEXT_CHARS,
+  MAX_NOTE_FINDINGS,
+} from '../lib/curation-scan.js'
 import { MAX_NOTE_BYTES, isIndexableRelativePath } from '../lib/index-db.js'
 import { parseNote } from '../lib/frontmatter.js'
+import { lintVault } from '../lib/lint.js'
 import { writeMemory } from '../lib/memory.js'
 import { noteLinkFindings, noteReviewFinding } from '../lib/note-health.js'
 import { resolveBinding } from '../lib/vault.js'
@@ -304,6 +311,63 @@ test('one pass classifies active, exact, near, expired, broken-link and unexamin
   assert.ok(activeEntry.description.length <= 200)
 })
 
+test('a link this project cannot decide is never reported dead, and an internal one is', async (t) => {
+  const world = await makeCurationWorld(t)
+  await world.services.write({ type: 'doc', title: '锚点', body: '正文。\n' })
+  const binding = await bindingOf(world)
+  // A global method note and another project's note. Both live in the swept vault
+  // — the linter's `filePaths` — and neither is in this project's manifest, which
+  // is the whole of the scan resolver's universe.
+  await writeRaw(world, 'Methods/某方法.md', '# 某方法\n\n正文。\n')
+  await writeRaw(
+    world,
+    'Projects/other--6a1f0b52/Docs/别家.md',
+    handNote({ id: 'doc-44444444-4444-4444-8444-444444444444', title: '别家' }),
+  )
+  // An attachment inside this project: in the vault, in the linter's universe, and
+  // not an indexable note, so the manifest cannot hold it either.
+  const attachment = `${binding.relativeDir}/Docs/图.png`
+  await writeRaw(world, attachment, 'not really a png\n')
+  const inside = `${binding.relativeDir}/Docs/并不存在`
+  const linker = await world.services.write({
+    type: 'doc',
+    title: '引用者',
+    body: `见 [[Methods/某方法]]、[[Projects/other--6a1f0b52/Docs/别家]]、[[Methods/并不存在]]、[[${attachment}]] 与 [[${inside}]]。\n`,
+  })
+
+  const result = await scan(world, binding)
+  assert.equal(result.complete, true)
+  // Only the target inside this project that names a note is judged. The rest name
+  // paths or files the manifest cannot see, and "cannot see" must never arrive as
+  // "dead": a false dead-link claim about the user's vault is worse than a missing
+  // one, so the scan stays silent and the linter still reports on demand.
+  assert.deepEqual(
+    result.findings
+      .filter((finding) => finding.kind === 'dead-wikilink')
+      .map((finding) => [finding.path, finding.target]),
+    [[linker.path, inside]],
+  )
+
+  // The linter's universe is the whole swept vault, so on the same note it still
+  // reports the two targets that really are missing — and resolves the method, the
+  // other project's note and the attachment. That is what makes the divergence
+  // one-directional: the scan reports a subset of the linter's dead links, never a
+  // link the linter would have resolved. (The lint report carries the target in
+  // its message.)
+  const lint = await lintVault({ binding, home: world.home, now: NOW })
+  const reported = lint.findings
+    .filter((finding) => finding.kind === 'dead-wikilink' && finding.path === linker.path)
+    .map((finding) => finding.message)
+    .sort()
+  assert.deepEqual(
+    reported,
+    [
+      `${linker.path} links to [[Methods/并不存在]], which does not exist in this vault`,
+      `${linker.path} links to [[${inside}]], which does not exist in this vault`,
+    ].sort(),
+  )
+})
+
 test('inspectCurationNote reports a dead link only when it is given a resolver', async (t) => {
   const { world, binding, written } = await worldWithNotes(t, 1)
   const path = written[0].path
@@ -504,6 +568,52 @@ test('maxMs: 0 reports a time budget without reading a note', async (t) => {
   assert.equal(stepped.examined, 2)
 })
 
+test('a truncated pass is never complete, even when the backfill behind it is', async (t) => {
+  const { world, binding, written } = await worldWithNotes(t, 3)
+  const done = await scan(world, binding)
+  assert.equal(done.complete, true)
+
+  const [first, second] = [written[0].path, written[1].path].sort()
+  // The changed-path traversal runs out of note budget before the second path: the
+  // stored backfill is finished, but this pass covered half of what it was handed,
+  // and the path it never inspected is the one a merge on `complete` would drop.
+  const budgeted = await scan(world, binding, { changedPaths: [first, second], maxNotes: 1 })
+  assert.equal(budgeted.truncated, true)
+  assert.equal(budgeted.truncatedReason, 'file-budget')
+  assert.equal(budgeted.complete, false)
+  assert.equal(budgeted.examined, 1)
+  assert.deepEqual(
+    budgeted.entries.map((entry) => entry.path),
+    [first],
+  )
+
+  const timedOut = await scan(world, binding, { changedPaths: [first], maxMs: 0 })
+  assert.equal(timedOut.truncatedReason, 'time-budget')
+  assert.equal(timedOut.complete, false)
+  assert.equal(timedOut.examined, 0)
+
+  // Nothing about the backfill changed, so a changed-path pass that finished its
+  // own list still reports the project complete.
+  const again = await scan(world, binding, { changedPaths: [first] })
+  assert.equal(again.complete, true)
+})
+
+test('verifying the covered prefix obeys the deadline', async (t) => {
+  const { world, binding } = await worldWithNotes(t, 3)
+  const done = await scan(world, binding)
+  assert.equal(done.complete, true)
+  assert.ok(done.cursor.afterPath)
+
+  // Every path is already covered, so this pass has no note to inspect: the only
+  // work left is re-reading one record per manifest path to prove the coverage.
+  // With no time budget that read must not happen, and a pass that verified
+  // nothing may not certify anything.
+  const starved = await scan(world, binding, { maxMs: 0 })
+  assert.equal(starved.examined, 0)
+  assert.equal(starved.truncatedReason, 'time-budget')
+  assert.equal(starved.complete, false)
+})
+
 // ---------------------------------------------------------------------------
 // Path refusals
 // ---------------------------------------------------------------------------
@@ -624,6 +734,70 @@ test('a note with more findings than a record holds reports the count', async (t
   const reread = await scan(world, binding)
   assert.equal(reread.complete, true)
   assert.deepEqual(reread.examinedPaths, [])
+})
+
+test('a frontmatter string cannot fill a record past what the store accepts', async (t) => {
+  const { world, binding } = await worldWithNotes(t, 1)
+  const path = `${binding.relativeDir}/Docs/巨题.md`
+  const links = Array.from(
+    { length: 128 },
+    (unused, index) => `[[缺失-${String(index).padStart(4, '0')}${'x'.repeat(150)}]]`,
+  )
+  // Frontmatter has to close inside the parser's first 64 KB, so this is a title as
+  // long as a note can legally carry, beside enough findings to reach the finding
+  // cap: before the entry bound, the title alone pushed the record over the store's
+  // 64 KB and the pass threw instead of reporting the note.
+  await writeRaw(
+    world,
+    path,
+    handNote({
+      id: 'doc-99999999-9999-4999-8999-999999999999',
+      title: 'T'.repeat(60_000),
+      body: `${links.join(' ')}\n`,
+    }),
+  )
+
+  const result = await scan(world, binding)
+  assert.equal(result.complete, true)
+  const entry = result.entries.find((item) => item.path === path)
+  assert.ok(entry, JSON.stringify(result.counts))
+  assert.equal(entry.title.length, MAX_ENTRY_TEXT_CHARS)
+
+  // The bound is not cosmetic: the record the store accepted is inside the bound
+  // its own reader enforces, so the next pass reuses it instead of refusing it and
+  // inspecting the note again.
+  const recordFile = curationRecordPath(world.dataRoot, binding.projectId, path)
+  const size = (await stat(recordFile)).size
+  assert.ok(size <= MAX_SCAN_RECORD_BYTES, `the record is ${size} bytes`)
+  assert.equal(JSON.parse(await readFile(recordFile, 'utf8')).status, 'ok')
+  const reread = await scan(world, binding)
+  assert.deepEqual(reread.examinedPaths, [])
+})
+
+test('a record the store refuses becomes an unexamined note, never a thrown pass', async (t) => {
+  const { world, binding, written } = await worldWithNotes(t, 1)
+  const path = written[0].path
+  // A directory where the record file belongs: every rename into place fails, which
+  // is the code path an oversize record takes too. One note's record must not be
+  // able to fail the pass that reads it.
+  await mkdir(curationRecordPath(world.dataRoot, binding.projectId, path), { recursive: true })
+
+  const result = await scan(world, binding)
+  assert.equal(
+    result.entries.some((entry) => entry.path === path),
+    false,
+  )
+  const finding = result.findings.find((item) => item.kind === 'unexamined' && item.path === path)
+  assert.ok(finding, JSON.stringify(result.findings))
+  assert.match(finding.reason, /^record-/)
+  // The record never became durable, so the path is a coverage hole: this pass may
+  // not claim completion over an inspection nobody can read back.
+  assert.equal(result.complete, false)
+  assert.equal(result.truncatedReason, 'records-missing')
+  assert.equal(
+    result.findings.some((item) => item.kind === 'record-unreadable'),
+    true,
+  )
 })
 
 // ---------------------------------------------------------------------------

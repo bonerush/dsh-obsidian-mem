@@ -26,12 +26,21 @@ release artifact. The versioning policy is in the README, under Development.
   `lib/lint.js` now applies those instead of keeping its own copies, so a scan and
   a lint cannot disagree about one note. `lib/index-db.js` keeps exporting
   `SUPERSEDED_STATUSES` as an alias of the shared history list.
-  Measured: `npm test` 783 tests / 782 pass / 1 skipped / 0 fail, and a test
+  Measured: `npm test` 788 tests / 787 pass / 1 skipped / 0 fail, and a test
   asserts every source-note hash is unchanged before and after every kind of pass.
-  Untested: the >50 000-note manifest bound and the `records-missing` recovery
-  branch are implemented and unexercised. The scan's link resolver accepts a bare
-  basename that `lintVault` deliberately does not, so a scan reports a subset of
-  the linter's dead links; the divergence is documented where the resolver is built.
+  A pass that hits either bound reports `complete: false` even when the backfill
+  behind it is finished, every note-supplied string an entry carries is bounded,
+  and a record the private store refuses degrades that one note to `unexamined`
+  instead of failing the pass. The scan's link resolver differs from `lintVault`'s
+  only by under-reporting: a bare basename the linter's directory-bound rule
+  refuses resolves, while a directory-qualified target outside the scan's project
+  and a target naming a file that is not a Markdown note are not judged at all — so
+  a scan reports a subset of the linter's dead links, never one the linter resolved.
+  All of that is documented where the resolver is built.
+  Untested: the >50 000-note manifest bound, and the oversize branch of the record
+  degradation (after the entry bound, a note whose frontmatter can be parsed cannot
+  reach the 64 KB record bound; the same recovery path is exercised by an
+  unwritable record).
 
 ## 0.1.10 — 2026-09-29
 

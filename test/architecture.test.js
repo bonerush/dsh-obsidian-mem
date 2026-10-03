@@ -151,7 +151,16 @@ const BUDGETS = {
   // carries the linter's own wording so the two cannot drift.
   'lib/note-health.js': 300,
   'lib/curation-state.js': 800,
-  'lib/curation-scan.js': 900,
+  // Raised from 900 in the Task 2 fix round, on the same measured-plus-30 rule
+  // (974 lines). The review found three honesty gaps, and each one is fixed where
+  // the fact is decided rather than in a caller: a resolver that declines to judge
+  // targets outside its own project, so "a scan reports a subset of the linter's
+  // dead links" is true as written; a `complete` that is false whenever either
+  // bound truncated the pass, so a merge cannot drop the paths it never inspected;
+  // and a record write that degrades one note to `unexamined` — bounded entry
+  // fields plus a two-step recovery — instead of throwing the whole pass on one
+  // note's frontmatter. The alternative was to leave that throw in place.
+  'lib/curation-scan.js': 1050,
   // Raised from 950 for the configurable item-count ceiling. The prompt must name
   // the ceiling the validator enforces (`too-many-items` refused a whole batch of
   // 21 against 16 because it did not), and a ceiling that comes from config cannot
