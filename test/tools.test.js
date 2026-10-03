@@ -230,7 +230,10 @@ function call(ctx, name, args, extra = {}) {
 }
 
 /** A throwaway world with one bound project and private curation state. */
-async function curationServices(t, { config = {}, notes = 1, bind = true } = {}) {
+async function curationServices(
+  t,
+  { config = {}, notes = 1, bind = true, curationBounds = null } = {},
+) {
   const world = await makeCurationWorld(t, { config })
   const diagnostics = createDiagnostics({})
   const services = createMemoryServices({
@@ -239,6 +242,7 @@ async function curationServices(t, { config = {}, notes = 1, bind = true } = {})
     cwd: world.repo,
     home: world.home,
     diagnostics,
+    curationBounds,
   })
   t.after(() => services.close())
   // The first write is what binds the repository and bootstraps the vault, exactly
@@ -771,6 +775,14 @@ test('mem_admin(action="diagnostics") answers through the real seam without a va
 // Task 5: the bounded curation action, through the real service layer
 // ---------------------------------------------------------------------------
 
+/**
+ * The bounds the tool-path scan cases hand the factory (R40). That action takes no
+ * bound from the tool, so the wall clock decides a pass this small only when the
+ * machine is loaded; supplying the scan's own generous limits makes `complete` a
+ * claim about the fixture instead.
+ */
+const CURATION_TEST_BOUNDS = Object.freeze({ maxNotes: 256, maxMs: 60_000 })
+
 test('curation status and scan answer their own bounded shape, and only their own parameters', async (t) => {
   const { services, diagnostics } = await curationServices(t)
   const ctx = await toolbed(t)
@@ -837,8 +849,51 @@ test('curation status and scan answer their own bounded shape, and only their ow
   assert.match(outOfEnum.error.message, /operation/)
 })
 
+test('the scan action passes on the bound the factory supplied', async (t) => {
+  // R40: the tool-path coverage cases below supply `curationBounds` so their
+  // `complete` is a fixture claim. That is only true if this path really uses the
+  // bound, so zero milliseconds — a bound no wall clock can beat — must certify
+  // nothing through the tool itself. The world is its own because a truncated pass
+  // leaves the cursor and the queue in a state the cases above do not expect.
+  const { services, repo } = await curationServices(t, { curationBounds: { maxMs: 0 } })
+  const ctx = await toolbed(t)
+  registerTools(ctx, services)
+  const agent = { session: { header: { id: 'sess-env-bounds', cwd: repo } } }
+  const result = await call(ctx, 'mem_admin', { action: 'curation', operation: 'scan' }, { agent })
+  assert.equal(result.isError, false, result.error?.message)
+  assert.equal(result.value.result.status, 'scanned')
+  assert.equal(result.value.result.complete, false)
+  assert.equal(result.value.result.truncated, 'time-budget')
+  assert.equal(result.value.result.examined, 0)
+})
+
+test('an unusable curation bound is refused at the factory, never ignored', async (t) => {
+  // A typo'd bound that quietly fell back to the shipped limit would put the
+  // coverage cases back on the wall clock, which is the defect the seam removes.
+  const world = await makeCurationWorld(t)
+  const base = { config: world.config, dataRoot: world.dataRoot, cwd: world.repo, home: world.home }
+  for (const curationBounds of [
+    [],
+    { maxNotes: 0 },
+    { maxMs: -1 },
+    { maxNotes: 1.5 },
+    { limit: 500 },
+  ]) {
+    assert.throws(
+      () => createMemoryServices({ ...base, curationBounds }),
+      RangeError,
+      `${JSON.stringify(curationBounds)} must be refused`,
+    )
+  }
+  const accepted = createMemoryServices({ ...base, curationBounds: CURATION_TEST_BOUNDS })
+  t.after(() => accepted.close())
+  assert.equal(typeof accepted.admin, 'function')
+})
+
 test('status reads private state without scanning, and scan examines the notes', async (t) => {
-  const { services, repo, readEnqueued, countPrivateFiles } = await curationServices(t)
+  const { services, repo, readEnqueued, countPrivateFiles } = await curationServices(t, {
+    curationBounds: CURATION_TEST_BOUNDS,
+  })
   const ctx = await toolbed(t)
   registerTools(ctx, services)
   const agent = { session: { header: { id: 'sess-curation', cwd: repo } } }
@@ -889,7 +944,10 @@ test('status reads private state without scanning, and scan examines the notes',
 })
 
 test('only the paths one pass inspected are acknowledged, and only over a complete view', async (t) => {
-  const { services, repo, written, enqueue, readEnqueued } = await curationServices(t, { notes: 3 })
+  const { services, repo, written, enqueue, readEnqueued } = await curationServices(t, {
+    notes: 3,
+    curationBounds: CURATION_TEST_BOUNDS,
+  })
   const ctx = await toolbed(t)
   registerTools(ctx, services)
   const agent = { session: { header: { id: 'sess-bounded', cwd: repo } } }
@@ -1073,7 +1131,7 @@ test('a pass whose view build fell back acknowledges nothing', async (t) => {
   // the caller does with it. The injection runs *after* the real scan, so the pass
   // really inspected the queued path.
   const { services, diagnostics, repo, binding, written, enqueue, readEnqueued } =
-    await curationServices(t, { notes: 1 })
+    await curationServices(t, { notes: 1, curationBounds: CURATION_TEST_BOUNDS })
   const ctx = await toolbed(t)
   registerTools(ctx, services)
   const agent = { session: { header: { id: 'sess-fallback', cwd: repo } } }

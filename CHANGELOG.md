@@ -691,6 +691,20 @@ release artifact. The versioning policy is in the README, under Development.
   accurate history, so no change happened and none was needed — the claim is
   withdrawn rather than the record rewritten.
 
+- **The curation scan action takes an internal bound, so its coverage cases no longer
+  ride the wall clock** (Task 5, R40). `createMemoryServices` accepts an optional
+  `curationBounds` (`{maxNotes?, maxMs?}`, default `null`) which the admin `scan` action
+  threads into its one pass; `test/tools.test.js` supplies generous limits for the five
+  assertions that claim `complete`, and a case with a tiny bound shows the limit is live.
+  **Nothing user-visible changed:** the option is not a tool parameter, not in
+  `TOOL_PARAMETERS`, and not in the `mem_admin` description — the six tools' names,
+  descriptions and compiled input schemas are byte-identical to the pre-change output — and
+  no production caller passes it. It is recorded here because any change under `lib/` has
+  to move this section, and the one line of shipped code that exists for the tests should
+  be visible rather than smuggled in with them. Measured on this change: three
+  back-to-back `npm test` runs, identical totals **903 tests / 902 pass / 1 skipped / 0
+  fail**.
+
 ## 0.1.10 — 2026-09-29
 
 ### Changed
