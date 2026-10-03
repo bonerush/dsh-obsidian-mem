@@ -35,6 +35,7 @@ import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 
 import { compileIgnoreGlobs, validateConfig } from '../lib/config.js'
+import { parseNote } from '../lib/frontmatter.js'
 import { RECALL_SOURCE, registerHooks } from '../lib/hooks.js'
 import { openIndex } from '../lib/index-db.js'
 import {
@@ -46,6 +47,7 @@ import {
   weeklyLintHint,
 } from '../lib/lint.js'
 import { promoteNote, writeMemory } from '../lib/memory.js'
+import { createVaultLinkResolver, noteLinkFindings, noteReviewFinding } from '../lib/note-health.js'
 import { readPendingJobs, writeJobAtomic } from '../lib/pending.js'
 import { createMemoryServices } from '../lib/tools.js'
 import {
@@ -352,6 +354,62 @@ test('a wikilink inside code is not a dead link', async (t) => {
     ['不存在的东西', '也不存在'],
     JSON.stringify(dead),
   )
+  await f.index.close()
+})
+
+test('the shared note-health helpers reproduce the linter findings on one fixture', async (t) => {
+  // Curation (Task 2 of the curation plan) inspects one note at a time and must
+  // not maintain a second, quietly different opinion about review dates and dead
+  // links. The linter and the shared helpers are compared on the SAME fixture and
+  // the SAME vault file set: a note with an overdue review date, two targets that
+  // resolve to nothing, one that resolves, and one inside a code span.
+  const f = await fixture(t)
+  await writeNote(
+    f,
+    projectPath(f, 'Docs/目标.md'),
+    pluginNote({ id: 'doc-77777777-7777-4777-8777-777777777777', title: '目标' }),
+  )
+  const body = [
+    `见 [[${projectPath(f, 'Docs/目标')}|目标]] 与 [[不存在的东西]]。`,
+    '',
+    '还有 [[也不存在]]，以及 `[[代码里的目标]]`。',
+    '',
+  ].join('\n')
+  const linking = (
+    await writeMemory(
+      f.binding,
+      { type: 'doc', title: '引用者', body, review_after: '2000-01-01' },
+      { dataRoot: f.dataRoot, home: f.home },
+    )
+  ).path
+
+  const report = await lintOf(f)
+  const note = parseNote(await readFile(join(f.vault, ...linking.split('/'))))
+
+  const sharedReview = noteReviewFinding(note.data, report.today)
+  const lintReview = report.findings.find((finding) => finding.kind === 'expired-review')
+  assert.ok(sharedReview, JSON.stringify(report.findings))
+  assert.ok(lintReview, JSON.stringify(report.findings))
+  assert.equal(sharedReview.reviewAfter, '2000-01-01')
+  assert.match(lintReview.message, /2000-01-01/)
+
+  // The resolver is built from the fixture's own files, the way the linter builds
+  // its file set — not from the helper under test.
+  const files = new Set(
+    [...(await hashTree(f.vault)).keys()].filter(
+      (path) => !path.startsWith('.') && !path.includes('/.'),
+    ),
+  )
+  const sharedDead = noteLinkFindings(note.body, linking, createVaultLinkResolver(files)).map(
+    (finding) => finding.target,
+  )
+  const lintDead = report.findings
+    .filter((finding) => finding.kind === 'dead-wikilink')
+    .map((finding) => /\[\[(.*?)\]\]/.exec(finding.message)?.[1])
+  assert.deepEqual(lintDead, ['不存在的东西', '也不存在'])
+  assert.deepEqual(sharedDead, lintDead)
+  // Without a resolver the shared rule refuses to judge, so it reports nothing.
+  assert.deepEqual(noteLinkFindings(note.body, linking, null), [])
   await f.index.close()
 })
 

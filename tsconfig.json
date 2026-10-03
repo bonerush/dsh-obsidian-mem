@@ -14,6 +14,7 @@
     "lib/git.js",
     "lib/index.js",
     "lib/naming.js",
+    "lib/note-health.js",
     "lib/paths.js",
     "lib/pointer.js",
     "lib/prompt-recall.js",

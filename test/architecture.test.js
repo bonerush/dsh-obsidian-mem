@@ -74,6 +74,11 @@ const LAYERS = {
   naming: 0,
   paths: 0,
   pointer: 0,
+  // The note-level health rules — an overdue review date, a dead wikilink — that
+  // the linter and the curation scanner both apply. A leaf with no repository
+  // import at all, so both callers point down at it instead of each keeping a
+  // copy that could drift.
+  'note-health': 0,
   assets: 1,
   frontmatter: 1,
   git: 1,
@@ -87,7 +92,14 @@ const LAYERS = {
   'prompt-recall': 3,
   transaction: 3,
   vault: 4,
+  // The curation scanner's private state (cursor, per-path records, changed-path
+  // queue) imports the transaction engine's lock and the path jail and nothing
+  // above them, which is the same position `vault` holds. The scanner itself
+  // applies the linter's fixed exclusions and reuses its note-health helpers, so
+  // it has to sit above `lint` — that edge is what fixes L6 rather than L5.
+  'curation-state': 4,
   lint: 5,
+  'curation-scan': 6,
   memory: 5,
   capture: 6,
   hot: 6,
@@ -132,6 +144,14 @@ const BUDGETS = {
   // the next raise has to argue with this line.
   'lib/capture.js': 2050,
   'lib/config.js': 300,
+  // The curation plan's three Task 2 modules, on the same rule as every other
+  // entry (measured plus 30, rounded up). What the size buys: the scanner carries
+  // the coverage rules a bounded pass has to keep honest, the state module carries
+  // the permission, size and version checks for three documents, and note-health
+  // carries the linter's own wording so the two cannot drift.
+  'lib/note-health.js': 300,
+  'lib/curation-state.js': 800,
+  'lib/curation-scan.js': 900,
   // Raised from 950 for the configurable item-count ceiling. The prompt must name
   // the ceiling the validator enforces (`too-many-items` refused a whole batch of
   // 21 against 16 because it did not), and a ceiling that comes from config cannot

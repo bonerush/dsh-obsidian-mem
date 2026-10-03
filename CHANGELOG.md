@@ -11,6 +11,28 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Added
+
+- **A bounded curation scan and the note-health rules the linter now shares**
+  (work in progress; nothing user-visible changes yet — no config field, no new
+  tool, no automatic pass). `lib/curation-scan.js` inspects one bound project
+  under both a note-count and a wall-clock bound, resumes from a private cursor
+  instead of recounting earlier notes, restarts when the path manifest moves under
+  a running backfill, and reports a partial result as partial; it never writes a
+  byte inside a vault. `lib/curation-state.js` owns that cursor, one rebuildable
+  record per inspected path and the durable changed-path queue, all under
+  `<dataRoot>/curation/` with `0700`/`0600` permissions and atomic renames.
+  `lib/note-health.js` holds the overdue-review and dead-wikilink rules, and
+  `lib/lint.js` now applies those instead of keeping its own copies, so a scan and
+  a lint cannot disagree about one note. `lib/index-db.js` keeps exporting
+  `SUPERSEDED_STATUSES` as an alias of the shared history list.
+  Measured: `npm test` 783 tests / 782 pass / 1 skipped / 0 fail, and a test
+  asserts every source-note hash is unchanged before and after every kind of pass.
+  Untested: the >50 000-note manifest bound and the `records-missing` recovery
+  branch are implemented and unexercised. The scan's link resolver accepts a bare
+  basename that `lintVault` deliberately does not, so a scan reports a subset of
+  the linter's dead links; the divergence is documented where the resolver is built.
+
 ## 0.1.10 — 2026-09-29
 
 ### Changed
