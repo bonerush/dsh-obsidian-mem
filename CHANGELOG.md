@@ -115,6 +115,59 @@ release artifact. The versioning policy is in the README, under Development.
   path is exercised by an unwritable record). Known limitation: the wall-clock
   bound is now consulted after the manifest walk, so neither it nor `maxNotes`
   bounds the enumeration itself — pre-existing, and named rather than implied away.
+  **Continuing into Task 4:** `lib/curation-view.js` is the compact,
+  source-verified navigation view, and `mem_brief` now composes its
+  decisions/gotchas navigation from one when a complete view is stored under
+  `<dataRoot>/curation/view/<projectId>.json`. Each entry carries one bounded
+  description (120 code points, no leading block prefix, so a hostile note line can
+  never arrive as a heading), its vault path, its type, its status and the sha256 of
+  the bytes it was built from; an exact-match group is displayed once and names
+  **every** alternative path. Historical statuses are excluded at build time, as
+  current search already excludes them. A full pass replaces the view; a
+  changed-path pass merges into a view that is already complete and recomputes the
+  affected groups from the merge (it never replaces the view with the changed
+  subset), and refuses with `backfill-incomplete` when the stored view is not
+  complete. `readCurationView` answers `null` for a view that is absent, corrupt,
+  mis-versioned, over its bound or written for another project — a cache miss, never
+  a partial view — and `verifyCurationEntries` re-hashes **every** path of every
+  selected entry, including every member of a collapsed group, through the existing
+  vault jail; one changed member is `fallback`/`source-changed`, and a failed check
+  never yields a ready-but-empty view. `buildBrief` takes the view as an optional
+  input and, when verification fails or no view is given, runs exactly the source
+  extraction path it ran before: the budget, the whole-block truncation, `omitted`,
+  the hot priority and `indexState` are unchanged. The view can only replace the
+  decisions/gotchas list, and only when it provably carries every path that list
+  would have shown; the binding, the hot layer, the hub outline, the convention
+  index and the user's preferences are still derived from the source, and a path a
+  higher-priority section already names is not repeated under the view's heading.
+  `mem_search` and `mem_read` are untouched, so a view cannot narrow retrieval.
+  The brief verifies a bounded slice, not the whole view: the first entries in path
+  order that its own character budget could render (`budget / 64`, so ~93 at the
+  default), which means a 2000-entry view costs the hashes of the entries that could
+  actually appear rather than 2000 reads at session start. The cut is a real cost and
+  is named as one: on a view larger than one brief could carry, an entry in the tail
+  of the path order does not reach this navigation at all — it stays in the view for
+  the next budget and is still reachable through the hub, the convention index or
+  `mem_search`.
+  The view's file IO (path, version and project check, 1 MiB reader bound, `0700`/
+  `0600`, exclusive temporary file plus atomic rename) lives in
+  `lib/curation-state.js`; its content, merge and verification live in
+  `lib/curation-view.js`. Measured at the Task 4 commit, for the fixture the covering
+  test builds: the pre-view brief was **1125** code points and the same fixture with a
+  verified complete view is **1161**, both under the default 6000 budget with
+  `truncated: false` and `omitted: 0`. The view is *not* the smaller brief — it
+  carries every current entry with a bounded description rather than five titles, and
+  the claims it earns are that each path is source-verified before it is injected and
+  that a collapsed exact group names every copy.
+  Measured: `npm test` 832 tests / 831 pass / 1 skipped / 0 fail (the 811/810/1
+  before this task's two new test files and one new integration case).
+  Untested: no task yet *writes* a view from a service action (Task 5 does), so the
+  integration case builds one by calling `scanCuration` + `buildCurationView`
+  directly; the two *write-side* oversize fallbacks (`view-oversize`, and the
+  store's own `view-unwritable`) need a vault or a data root no fixture here builds,
+  so they are named as boundaries rather than shown working — the reader's own
+  1 MiB bound over the same document *is* covered; and a view is never read across
+  two processes in one test.
 
 ### Fixed
 

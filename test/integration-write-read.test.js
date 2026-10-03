@@ -32,6 +32,8 @@ import { Context } from '@deepseek-ai/cordis'
 import toolsPlugin from '@deepseek-ai/dsh-tools'
 
 import { validateConfig } from '../lib/config.js'
+import { scanCuration } from '../lib/curation-scan.js'
+import { buildCurationView, readCurationView } from '../lib/curation-view.js'
 import { apply } from '../lib/index.js'
 import { resolveDataRoot } from '../lib/paths.js'
 import { queueRootFor, readPendingJobs, writeJobAtomic } from '../lib/pending.js'
@@ -978,4 +980,72 @@ test('an explicit job retry wakes the host worker, so a revived job really runs'
   const { jobs } = await readPendingJobs(queueRoot)
   assert.equal(jobs[0].state, 'deferred')
   assert.equal(jobs[0].deferredReason, 'no-binding')
+})
+
+test('a stored view reaches the real brief through mem_brief, and a changed source falls back', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+
+  // Two exact duplicates, one distinct fact nothing has ever retrieved: the
+  // duplicate pair is the collapsed group and the third note rules out an
+  // implementation that evicts what retrieval has not touched.
+  const low = value(
+    await call(
+      ctx,
+      'mem_write',
+      { type: 'decision', title: '集成视图', body: '集成视图的第一条事实。' },
+      { cwd: f.repo },
+    ),
+    'first write',
+  )
+  const twin = value(
+    await call(
+      ctx,
+      'mem_write',
+      { type: 'decision', title: '集成视图', body: '集成视图的第一条事实。' },
+      { cwd: f.repo },
+    ),
+    'duplicate write',
+  )
+  assert.notEqual(low.path, twin.path)
+
+  // Build the view the way the curation action will (Task 5): scan the bound
+  // project, then store what the scan produced.
+  const scan = await scanCuration(f.binding, { dataRoot: f.dataRoot, home: f.home, maxNotes: 1000 })
+  assert.equal(scan.complete, true)
+  const built = await buildCurationView({
+    binding: f.binding,
+    dataRoot: f.dataRoot,
+    scan,
+  })
+  assert.equal(built.status, 'written')
+  const stored = await readCurationView({ dataRoot: f.dataRoot, projectId: f.binding.projectId })
+  assert.equal(stored.complete, true)
+
+  const brief = value(await call(ctx, 'mem_brief', {}, { cwd: f.repo }), 'mem_brief')
+  const viewLine = brief.text.split('\n').find((line) => line.includes(`\`${low.path}\``))
+  assert.ok(viewLine !== undefined, brief.text)
+  // The collapsed group is displayed once, and the alternative path is named.
+  assert.ok(viewLine.includes(twin.path), viewLine)
+  assert.equal(brief.text.split('\n').filter((line) => line.includes(`\`${low.path}\``)).length, 1)
+  assert.equal(brief.indexState.status, 'ready')
+  assert.ok(brief.charCount <= 6000)
+
+  // Retrieval is untouched: the view never narrows what the tools can reach.
+  const found = value(
+    await call(ctx, 'mem_search', { query: '集成视图' }, { cwd: f.repo }),
+    'search',
+  )
+  const paths = found.hits.map((hit) => hit.path)
+  assert.ok(paths.includes(low.path))
+  assert.ok(paths.includes(twin.path))
+
+  // Edit the alternative member; the next brief must take the source path and
+  // still surface the fact rather than repeating a stale view line.
+  const raw = await readFile(join(f.vault, ...twin.path.split('/')), 'utf8')
+  await writeFile(join(f.vault, ...twin.path.split('/')), `${raw}\n补充一行。\n`, 'utf8')
+  const fallen = value(await call(ctx, 'mem_brief', {}, { cwd: f.repo }), 'fallback brief')
+  assert.ok(fallen.text.includes(twin.path.replace(/\.md$/u, '')), fallen.text)
+  assert.equal(fallen.indexState.status, 'ready')
+  assert.ok(fallen.charCount <= 6000)
 })
