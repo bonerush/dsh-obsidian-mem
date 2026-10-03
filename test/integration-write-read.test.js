@@ -1010,8 +1010,15 @@ test('a stored view reaches the real brief through mem_brief, and a changed sour
   assert.notEqual(low.path, twin.path)
 
   // Build the view the way the curation action will (Task 5): scan the bound
-  // project, then store what the scan produced.
-  const scan = await scanCuration(f.binding, { dataRoot: f.dataRoot, home: f.home, maxNotes: 1000 })
+  // project, then store what the scan produced. The pass is asserted to be complete,
+  // so its deadline is set where a busy machine cannot reach it — the shipped 500 ms
+  // bound belongs to a hook pass, not to this coverage claim.
+  const scan = await scanCuration(f.binding, {
+    dataRoot: f.dataRoot,
+    home: f.home,
+    maxNotes: 1000,
+    maxMs: 60_000,
+  })
   assert.equal(scan.complete, true)
   const built = await buildCurationView({
     binding: f.binding,

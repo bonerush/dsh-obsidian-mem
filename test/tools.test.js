@@ -912,6 +912,10 @@ test('only the paths one pass inspected are acknowledged, and only over a comple
     force: true,
     changedPaths: [first.path],
     maxNotes: 1,
+    // This call is about the *note* bound, so the deadline is set beyond any loaded
+    // machine's reach: the shipped 500 ms made `examined` depend on how fast the box
+    // reached its first read.
+    maxMs: 60_000,
   })
   assert.equal(one.status, 'scanned')
   assert.equal(one.examined, 1)
@@ -921,7 +925,11 @@ test('only the paths one pass inspected are acknowledged, and only over a comple
 
   // A pass cut short still only acknowledges what it inspected: the note bound is
   // what makes the remaining hints wait, not any doubt about the ones it read.
-  const bounded = await services.curateCurrentProject({ force: true, maxNotes: 1 })
+  const bounded = await services.curateCurrentProject({
+    force: true,
+    maxNotes: 1,
+    maxMs: 60_000,
+  })
   assert.equal(bounded.truncated, 'file-budget')
   assert.equal(bounded.examined, 1)
   assert.equal((await readEnqueued()).length, 1)
@@ -948,7 +956,13 @@ test('a pass cut short by the note bound reports that reason and certifies nothi
   // batches instead of inspecting its first note, and the bound would prove
   // something else than the one under test.
   const { services } = await curationServices(t, { notes: 3 })
-  const bounded = await services.curateCurrentProject({ force: true, maxNotes: 1 })
+  // The note bound is what this case asserts, so the wall clock is not allowed to
+  // supply the truncation instead: 60 s is far beyond what a three-note pass costs.
+  const bounded = await services.curateCurrentProject({
+    force: true,
+    maxNotes: 1,
+    maxMs: 60_000,
+  })
   assert.equal(bounded.status, 'scanned')
   assert.equal(bounded.complete, false)
   assert.equal(bounded.truncated, 'file-budget')
@@ -958,7 +972,11 @@ test('a pass cut short by the note bound reports that reason and certifies nothi
   assert.equal(typeof bounded.cursor, 'string')
   assert.equal(bounded.scannedAt !== null, true)
 
-  const finished = await services.curateCurrentProject({ force: true, maxNotes: 256 })
+  const finished = await services.curateCurrentProject({
+    force: true,
+    maxNotes: 256,
+    maxMs: 60_000,
+  })
   assert.equal(finished.complete, true)
   assert.equal(finished.examined > bounded.examined, true)
 

@@ -120,9 +120,20 @@ function itemFixture(overrides = {}) {
   }
 }
 
-/** One complete scan of a world, with the clock and seams every case shares. */
+/**
+ * One complete scan of a world, with the clock and seams every case shares.
+ *
+ * `maxMs` is the seam, not a preference: the shipped 500 ms bound belongs to a hook
+ * pass, and every case here asserts what a *finished* pass found, so the deadline is
+ * set far beyond what one of these fixtures costs.
+ */
 function scan(made, binding) {
-  return scanCuration(binding, { dataRoot: made.dataRoot, home: made.home, now: NOW })
+  return scanCuration(binding, {
+    dataRoot: made.dataRoot,
+    home: made.home,
+    now: NOW,
+    maxMs: 60_000,
+  })
 }
 
 /** The source path list one finding names. */

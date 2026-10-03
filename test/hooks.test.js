@@ -1608,21 +1608,30 @@ async function untilCurationEvents(bed, count) {
  * question the assertion needs — has the ring stopped moving? — so a second pass
  * that is still running cannot be mistaken for one that never started.
  *
+ * Both halves of that question are needed. The window alone was satisfiable by two
+ * polls and a slow machine: one `diagnostics` call can take longer than `settleMs`
+ * under the suite's own load, so the second sighting of an unchanged count would
+ * return while the pass it was waiting for was still running. `stableObservations`
+ * is what makes "stopped moving" mean more than "asked twice".
+ *
  * @param {object} bed - the assembly harness.
- * @param {{settleMs?: number}} [options] - how long the count must hold still.
+ * @param {{settleMs?: number, stableObservations?: number}} [options] - how long the count must hold still, and over how many sightings of it.
  * @returns {Promise<number>} the settled count.
  */
-async function settledCurationEvents(bed, { settleMs = 150 } = {}) {
+async function settledCurationEvents(bed, { settleMs = 150, stableObservations = 3 } = {}) {
   let last = -1
+  let stable = 0
   let stableSince = Date.now()
   const deadline = Date.now() + 8000
   for (;;) {
     const count = (await curationEvents(bed)).length
     if (count !== last) {
       last = count
+      stable = 1
       stableSince = Date.now()
-    } else if (Date.now() - stableSince >= settleMs) {
-      return count
+    } else {
+      stable += 1
+      if (stable >= stableObservations && Date.now() - stableSince >= settleMs) return count
     }
     if (Date.now() > deadline) assert.fail('the curation ring never settled')
     await new Promise((resolve) => setTimeout(resolve, 10))
@@ -1807,9 +1816,10 @@ test('session activity runs the due pass once, and the marker suppresses the nex
 test('two automatic triggers for one project run exactly one pass', async (t) => {
   // The per-project guard in `lib/index.js`. The two requests are two sessions'
   // activity checks: each fires once, and the second arrives while the first pass is
-  // provably in flight because the test holds the whole-vault lock the pass needs to
-  // write its cursor. The ring then answers the only question that distinguishes
-  // "dropped" from "queued": one pass or two.
+  // in flight — the test holds the whole-vault lock that pass needs to write its
+  // cursor, and waits for the record that pass rewrites before asking for it, so the
+  // overlap is a fact about the pass's own durable state. The ring then answers the
+  // only question that distinguishes "dropped" from "queued": one pass or two.
   const bed = await curationBed()
   t.after(() => bed.close())
   const written = await bed.write({
@@ -1829,11 +1839,24 @@ test('two automatic triggers for one project run exactly one pass', async (t) =>
   // traversal that has to take the vault lock — so while this test holds it, no pass
   // can finish, and the second request cannot arrive after the first one has.
   await staleCursor(bed.dataRoot, projectId)
+  // The cursor still claims a path whose stored record is now gone, so the next full
+  // pass has to re-inspect that path — and a record write happens *before* the pass
+  // takes the vault lock for its cursor. The reappearing record is therefore a
+  // durable receipt that the first request's pass is running and cannot have
+  // finished, which is what makes the two requests an overlap by construction and not
+  // a hope about how the scheduler ordered two detached requests.
+  const recordDir = curationRecordDir(bed.dataRoot, projectId)
+  const stored = await readdir(recordDir)
+  assert.ok(stored.length > 0, 'a completed backfill has to have stored a record')
+  await rm(join(recordDir, stored[0]), { force: true })
 
   await withVaultLock(
     binding,
     async () => {
       await bed.preStep('session-guard-1')
+      await until(async () => (await scanRecords(bed.dataRoot, projectId)) === stored.length, {
+        timeoutMs: 20000,
+      })
       await bed.preStep('session-guard-2')
       assert.equal(
         (await curationEvents(bed)).length,
@@ -1844,6 +1867,11 @@ test('two automatic triggers for one project run exactly one pass', async (t) =>
     { dataRoot: bed.dataRoot, home: homedir() },
   )
 
+  // The pass the first request started cannot finish while the lock is held, so wait
+  // for its event before asking whether a second one follows: without this the
+  // shipped settle window was the whole decision, and a slow poll could satisfy it
+  // while that pass was still running.
+  await untilCurationEvents(bed, baseline + 1)
   const settled = await settledCurationEvents(bed)
   assert.equal(settled, baseline + 1, 'two triggers for one project are one pass')
   const [pass] = (await curationEvents(bed)).slice(baseline)

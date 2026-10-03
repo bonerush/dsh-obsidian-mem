@@ -115,12 +115,18 @@ async function briefWorld(t) {
   return { ...world, binding, low, twin, near, oldRule, newRule, hostile, neverUsed }
 }
 
-/** One complete scan, then the view the scanner's caller would store. */
+/**
+ * One complete scan, then the view the scanner's caller would store.
+ *
+ * "Complete" is the point, so the deadline is set where no loaded machine reaches it:
+ * the shipped 500 ms is a bound on a hook pass, and a case that asserts the view
+ * covers the project must not fail because the box was busy.
+ */
 async function storeView(world, options = {}) {
   const scan = await scanCuration(world.binding, {
     dataRoot: world.dataRoot,
     maxNotes: 1000,
-    maxMs: 5000,
+    maxMs: 60_000,
     home: world.home,
     now: NOW,
     ...options,

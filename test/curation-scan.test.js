@@ -57,6 +57,19 @@ import { listMarkdown, makeCurationWorld } from './curation-world.js'
 /** The clock every case injects, so `scannedAt` and the review date are fixed. */
 const NOW = new Date('2026-10-03T04:00:00Z')
 
+/**
+ * The deadline a pass that has to finish asks for.
+ *
+ * `scanCuration`'s shipped 500 ms is a bound on one hook pass, not a latency promise:
+ * a case that asserts coverage — `complete`, the manifest count, `truncatedReason:
+ * null` — under that bound is asserting how fast the machine is. The readable half of
+ * the enumeration case below reported `time-budget` and `complete: false` against its
+ * three-note fixture when that case ran alone on this machine at a load average of
+ * about six. Sixty seconds is far above what a pass over any of these fixtures costs,
+ * and a case that is *about* the deadline passes its own `maxMs` (or `clock`) instead.
+ */
+const NO_TRUNCATION_MS = 60_000
+
 /** The sha256 of a byte sequence. */
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
@@ -523,11 +536,14 @@ test('a directory the resolver cannot enumerate makes it silent, never a false d
   // Each pass gets its own data root on purpose. A second pass over the same root
   // would resume from the cursor and replay the linker's stored record instead of
   // asking the resolver again — which would mask exactly the decision this test is
-  // about behind a cached finding.
+  // about behind a cached finding. Each of the three passes below ends in a coverage
+  // claim (`complete`, `truncatedReason: null`), so the deadline cannot be the thing
+  // that decides them: they run under `NO_TRUNCATION_MS`.
   const options = (name) => ({
     dataRoot: join(world.root, name),
     home: world.home,
     now: NOW,
+    maxMs: NO_TRUNCATION_MS,
   })
 
   // Readable first, so the same fixture is proven to produce the finding when the

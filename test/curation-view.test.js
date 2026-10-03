@@ -67,12 +67,18 @@ async function bindingOf(world) {
   return binding
 }
 
-/** One complete scan of the world's project. */
+/**
+ * One complete scan of the world's project.
+ *
+ * `maxMs` keeps "complete" a claim about the fixture and never about the machine:
+ * the shipped 500 ms is a bound on a hook pass, and the cases here read what a
+ * finished pass found.
+ */
 async function scanOf(world, binding, options = {}) {
   return scanCuration(binding, {
     dataRoot: world.dataRoot,
     maxNotes: 1000,
-    maxMs: 5000,
+    maxMs: 60_000,
     home: world.home,
     now: NOW,
     ...options,
