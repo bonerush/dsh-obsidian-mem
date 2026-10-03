@@ -71,21 +71,31 @@ release artifact. The versioning policy is in the README, under Development.
   instead of failing the pass. The scan's link resolver is applied to a wider set
   than the notes it inspects: every file of the bound project's tree plus the vault
   root's entries, so a link to a vault-root note, a vault-root `Makefile` or an
-  extension-less file beside the linking note is not called dead. One difference
-  survives, and only in the safe direction: a directory-qualified target inside a
-  vault directory that is neither the project nor the vault root (a method note,
-  another project) is not judged at all — so a scan reports a subset of the dead
-  links the same vault's lint reports, never one the linter resolved, and a
-  curation merge can miss a finding but is never shown a link the linter called
-  alive. The one case that goes the other way is named where the resolver is built:
-  `lintVault` reads notes, so it calls a link to an extension-less file that really
-  exists dead, while the scan enumerates the vault's files and stays silent.
+  extension-less file beside the linking note is not called dead. The narrower set
+  plus its bare-basename rule makes the scan's dead-link findings a **subset** of
+  the linter's — the scan never reports a link the linter resolved — and the one
+  shape it stays silent about is a **partially qualified target whose basename
+  matches a file anywhere in the project or the vault root** (`[[Docs/LICENSE]]`
+  with no `Docs/LICENSE` but a `LICENSE` elsewhere), because the scan additionally
+  accepts a bare basename; `lintVault`'s `filePaths` is every swept *file*, not a
+  `.md`-only note set, so the bare `[[LICENSE]]` spelling is the same shape.
   A directory that either half of that universe cannot be enumerated in makes the
-  resolver silent rather than guessing.
-  Untested: the >50 000-note manifest bound, and the oversize branch of the record
-  degradation (after the entry bound, a note whose frontmatter can be parsed cannot
-  reach the 64 KB record bound; the same recovery path is exercised by an
-  unwritable record).
+  resolver silent rather than guessing, and the pass now says so instead of
+  certifying what it did not read: a `readdir` refused for anything but `ENOENT`
+  reports an `enumeration-failed` state finding, sets `complete: false` and leaves
+  the cursor where it was, and the resolver's own file list carries a
+  `MAX_RESOLVER_FILES` count bound whose truncation makes every target undecidable
+  (a `resolver-truncated` finding names it) rather than checking links against half
+  a tree.
+  Measured at the Task 2 fix round that landed this: `npm test` 810 tests / 809 pass
+  / 1 skipped / 0 fail.
+  Untested: the >50 000-note manifest bound, the >50 000-file resolver bound at its
+  shipped value (the covering test lowers it through the `maxFiles` option) and the
+  oversize branch of the record degradation (after the entry bound, a note whose
+  frontmatter can be parsed cannot reach the 64 KB record bound; the same recovery
+  path is exercised by an unwritable record). Known limitation: the wall-clock
+  bound is now consulted after the manifest walk, so neither it nor `maxNotes`
+  bounds the enumeration itself — pre-existing, and named rather than implied away.
 
 ### Fixed
 

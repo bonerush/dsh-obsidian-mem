@@ -185,7 +185,16 @@ const BUDGETS = {
   // enumeration failure returns, so the resolver reads it as undecidable rather
   // than as an empty vault. The alternative was a resolver that reported files it
   // never looked for.
-  'lib/curation-scan.js': 1115,
+  // Raised again to 1217 (1187 measured at `fix: stop curation enumeration from
+  // claiming unseen coverage`, same measured-plus-30 rule) in the third fix round,
+  // which made the enumeration's own failures visible: a directory the walk cannot
+  // read is now a state finding plus `complete: false` plus a cursor that stays put
+  // (before, the pass claimed `complete: true` over a manifest that was one subtree
+  // short), the resolver's file list got the count bound it never had, and a bound
+  // that bites turns the list into `null` rather than a short one a link could be
+  // called dead against. The two comments that described the linter's `filePaths` as
+  // `.md`-only were also replaced with the relation that actually holds.
+  'lib/curation-scan.js': 1217,
   // The Task 3 module, on the same measured-plus-30 rule (1113 formatted lines,
   // 1115 with the two-line comment that makes the listing order intentional).
   // What the size buys: two proposal kinds with different operations, four
