@@ -48,9 +48,8 @@ const LAYERS = {
   'diagnostic-journal': 2,
   // The standalone report probes the complete plugin through dynamic imports;
   // it sits above the host entry rather than becoming an import of that entry.
-  // It moved from L11 to L12 with Task 4, which raised `index` to L11.
-  'diagnostic-report': 12,
-  'diagnose-cli': 13,
+  'diagnostic-report': 11,
+  'diagnose-cli': 12,
   config: 0,
   // Browser-only code and the bounded activity/HTTP helpers do not import
   // another repository module; the host entry composes them at L10.
@@ -107,11 +106,13 @@ const LAYERS = {
   // re-applies the history and exact-group rules instead of importing the
   // scanner's, because it also groups a merge of a stored view and a changed-path
   // batch, which is data the scanner never saw. Importing even one constant from
-  // `curation-scan` would put this module at L7 and push `brief`, `hooks`,
-  // `services`, `tools` and `index` up with it — a five-file layer shift for a
-  // string bound. L5 instead means `brief` (L8) and `services` (L9) can import it
-  // downward, which is the only shape in which the brief can verify before it
-  // injects.
+  // `curation-scan` would put this module at L7, which is `brief`'s own layer: the
+  // edge would no longer point strictly down, so `brief` would have to rise to L8
+  // and `hooks`, `services`, `tools`, `index`, `diagnostic-report` and `diagnose-cli`
+  // with it — the seven raises an earlier revision of this table made and the review
+  // withdrew (R27) — all of that for a string bound. L5 is also what lets `brief`
+  // (L7) and `services` (L8) import this module downward, which is the only shape in
+  // which the brief can verify before it injects.
   'curation-view': 5,
   // The durable proposal store: the review queue a risky candidate is parked in.
   // It reads the private curation state and the vault jail and writes nothing but
@@ -126,33 +127,30 @@ const LAYERS = {
   memory: 5,
   capture: 6,
   hot: 6,
-  brief: 8,
-  // `hooks` imports `DEFAULT_BRIEF_BUDGET_CHARS` from `brief`, so it moves with it
-  // (L8 → L9); see the `services` entry below for the whole Task 4 shift.
-  hooks: 9,
+  brief: 7,
+  // `hooks` imports `DEFAULT_BRIEF_BUDGET_CHARS` from `brief` (L7), which puts it at
+  // L8; Task 4's view work left that layer where it was (R27).
+  hooks: 8,
   // The tool contract reads `DEFAULT_LIMIT` from `index-db` (L2) and nothing
   // else, which puts it at L3; the registrations import the contract and nothing
   // else, which puts them at L4. Both were inside `tools.js` before Task 11.
   'tool-schema': 3,
   'tool-registry': 4,
   // The service layer calls `buildBrief`, so it sits above `brief`; that single
-  // edge is what fixes its layer, and it is the reason the split is L8/L9/L10
+  // edge is what fixes its layer, and it is the reason the split is L7/L8/L9/L10
   // rather than three files at the old `tools` layer.
   //
-  // Task 4 raised `brief` from L7 to L8 and every module above it with it, because
-  // `brief` now imports `curation-view` (L5) to verify the entries it is about to
-  // inject — the plan puts that verification inside `buildBrief` rather than at the
-  // service seam, so the edge is the reviewed decision and the four raises are its
-  // consequence: `brief` L8, `hooks` and `services` L9, `tools` L10, `index` L11.
-  // The alternative was a second module holding the verification, which would have
-  // split one contract (a view entry and the hash that proves it) across two files
-  // to buy nothing.
-  services: 9,
+  // Task 4 put the view verification inside `buildBrief`, so this file imports
+  // `curation-view` (L5) too — an edge that points down from L8 and therefore needs
+  // no raise. An earlier revision raised `brief` (and this file with it) on the
+  // false premise that the import required one; the review withdrew those seven
+  // raises (R27) and this table is the reviewed numbers without them.
+  services: 8,
   // The façade: it imports its three parts and nothing else, so it has to be
   // above all of them. A module that re-exports is not a peer of what it
   // re-exports, which is exactly what the strict-downward rule encodes.
-  tools: 10,
-  index: 11,
+  tools: 9,
+  index: 10,
 }
 
 /**
@@ -170,7 +168,12 @@ const BUDGETS = {
   'lib/diagnose-cli.js': 100,
   'lib/assets.js': 600,
   // Raised from 1150 by Task 4 (1275 formatted lines measured at the Task 4 commit,
-  // same measured-plus-30 rule). What the 125 lines buy: the `view` section between the conventions and the recent list, the
+  // 1278 after the fix round's own edit, where the rendered-length selection replaced
+  // the `budget / 64` divisor). The rule elsewhere is measured plus 30 rounded up to
+  // the next 50, which for this file would be 1350: 1310 is deliberately inside that
+  // (measured plus 32), so the entry hides no debt behind the rounding. What the 128
+  // lines over the old 1150 buy: the `view` section between the conventions and the
+  // recent list, the
   // substitution rule that only replaces that list when the view provably carries
   // every path it would have shown, the cross-section path dedupe that keeps one
   // fact from arriving twice under two headings, the entry renderer that spells out
@@ -179,9 +182,9 @@ const BUDGETS = {
   // is emitted. The alternative — having `services` verify and hand `brief` a
   // pre-approved list — moves the decision the plan puts inside `buildBrief` out of
   // it, and would leave the one function that injects the text unable to say why it
-  // fell back. The extra 5 over the first measurement are the bound's own prose —
-  // the reason a cut entry is dropped *before* the budget, which the first draft of
-  // the comment claimed the budget would have covered, and which is not true.
+  // fell back. Five of the lines over the pre-comment measurement are the prose about
+  // why a cut entry is dropped *before* the budget — the first draft of the comment
+  // claimed the budget would have covered it, and that is not true.
   'lib/brief.js': 1310,
   // Raised from 1900 when the diagnostics call sites landed here. The alternative
   // was to move the emissions into a module of their own, which would have meant
@@ -213,8 +216,11 @@ const BUDGETS = {
   // concept. The lines are those two functions plus the module comment that says why
   // a damaged view is a cache miss where a damaged cursor is an error.
   'lib/curation-state.js': 950,
-  // The Task 4 module on the same measured-plus-30 rule (491 formatted lines, and
-  // the 30 covers the next comment this file will need). What the size buys: the
+  // The Task 4 module (491 formatted lines at the Task 4 commit, 534 after the fix
+  // round's comment corrections). Its measured-plus-30 rounded number would be 600;
+  // 550 is deliberately inside that (measured plus 16), so — as with `brief.js` —
+  // the next raise has to argue with this line rather than inherit the rounding.
+  // What the size buys: the
   // stored entry shape and its bounds, the exact-group rule re-applied over a merge
   // of two different sources, the merge itself, the all-members verification, and
   // the build's three cases — replace, merge, or refuse an incomplete backfill.

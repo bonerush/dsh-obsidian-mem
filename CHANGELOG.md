@@ -120,9 +120,19 @@ release artifact. The versioning policy is in the README, under Development.
   decisions/gotchas navigation from one when a complete view is stored under
   `<dataRoot>/curation/view/<projectId>.json`. Each entry carries one bounded
   description (120 code points, no leading block prefix, so a hostile note line can
-  never arrive as a heading), its vault path, its type, its status and the sha256 of
-  the bytes it was built from; an exact-match group is displayed once and names
-  **every** alternative path. Historical statuses are excluded at build time, as
+  never arrive as a heading), its vault path, its type, its status, the sha256 of
+  the bytes it was built from and the scanner's `exactKey`; an exact-match group is
+  displayed once and names
+  **every** alternative path, and it stays collapsed across a changed-path merge —
+  the stored entry keeps the identity key the scanner computed, and a merge has no
+  note body to re-derive it from, so without that field a merge would regroup every
+  stored entry by its own path and print each duplicate pair as two lines until the
+  next full pass. The document holds at most **2000** displayed entries
+  (`VIEW_ENTRY_LIMIT`), a bound applied to the grouped list so it can never split a
+  collapsed group or drop one of its alternative paths; a scan that examined more
+  current facts than that keeps the first entries in path order, which bounds the
+  projection and leaves the scan's own `complete` flag untouched. Historical
+  statuses are excluded at build time, as
   current search already excludes them. A full pass replaces the view; a
   changed-path pass merges into a view that is already complete and recomputes the
   affected groups from the merge (it never replaces the view with the changed
@@ -141,9 +151,14 @@ release artifact. The versioning policy is in the README, under Development.
   index and the user's preferences are still derived from the source, and a path a
   higher-priority section already names is not repeated under the view's heading.
   `mem_search` and `mem_read` are untouched, so a view cannot narrow retrieval.
-  The brief verifies a bounded slice, not the whole view: the first entries in path
-  order that its own character budget could render (`budget / 64`, so ~93 at the
-  default), which means a 2000-entry view costs the hashes of the entries that could
+  The brief verifies a bounded slice, not the whole view: the longest prefix of the
+  candidates whose own rendered lines — path, every alternative path and description —
+  fill its character budget, computed from those strings rather than from a divisor
+  over an assumed line length. The slice is exact in both directions: the renderer
+  emits a prefix of the same list, so nothing is injected unhashed, and one entry
+  past the slice would need more than the whole budget for the view section alone, so
+  no entry that could have been rendered is left unverified. A 2000-entry view costs
+  the hashes of the entries that could
   actually appear rather than 2000 reads at session start. The cut is a real cost and
   is named as one: on a view larger than one brief could carry, an entry in the tail
   of the path order does not reach this navigation at all — it stays in the view for
@@ -154,13 +169,22 @@ release artifact. The versioning policy is in the README, under Development.
   `lib/curation-state.js`; its content, merge and verification live in
   `lib/curation-view.js`. Measured at the Task 4 commit, for the fixture the covering
   test builds: the pre-view brief was **1125** code points and the same fixture with a
-  verified complete view is **1161**, both under the default 6000 budget with
+  verified complete view is **1185** (1161 at the Task 4 commit; the fix round put the
+  hostile note's `## …` line first in its body, which lengthens that one description
+  by 24), both under the default 6000 budget with
   `truncated: false` and `omitted: 0`. The view is *not* the smaller brief — it
   carries every current entry with a bounded description rather than five titles, and
   the claims it earns are that each path is source-verified before it is injected and
   that a collapsed exact group names every copy.
   Measured: `npm test` 832 tests / 831 pass / 1 skipped / 0 fail (the 811/810/1
   before this task's two new test files and one new integration case).
+  The Task 4 fix round on `fix: bound and merge the curation view honestly` enforced
+  the entry bound, stored the group key, reverted the seven layer raises the review
+  withdrew (R27: an edge needs only a strictly lower target, so `brief` at L7 may
+  import `curation-view` at L5) and replaced the line-length divisor with the
+  rendered-length slice above; it also corrected the `brief.js` budget comment that
+  claimed the rounding rule where the number is deliberately inside it.
+  Measured at that round: `npm test` 835 tests / 834 pass / 1 skipped / 0 fail.
   Untested: no task yet *writes* a view from a service action (Task 5 does), so the
   integration case builds one by calling `scanCuration` + `buildCurationView`
   directly; the two *write-side* oversize fallbacks (`view-oversize`, and the
