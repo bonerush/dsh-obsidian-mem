@@ -79,12 +79,26 @@ async function bindingOf(world) {
   return binding
 }
 
-/** One bounded pass with the world's seams, so no case has to repeat them. */
+/**
+ * One bounded pass with the world's seams, so no case has to repeat them.
+ *
+ * The wall-clock bound is a step counter, not `Date.now`: the pass consults it once
+ * per note and per batch, and the shipped 500-ms default turned every case that
+ * asserts coverage — `complete`, `truncatedReason === null` — into an assertion about
+ * machine load. Measured with the suite under eight concurrent fsync loaders (3.2x),
+ * four of those cases failed with `time-budget` against a fixture of a handful of
+ * notes. The two cases that are *about* the deadline keep it honest by passing their
+ * own clock (`maxMs: 0` still truncates before the first read, and the stepped
+ * 100-ms clock still reaches a 250-ms budget after two notes); a case that wants the
+ * real clock can pass one and override this default.
+ */
 function scan(world, binding, options = {}) {
+  let ticks = 0
   return scanCuration(binding, {
     dataRoot: world.dataRoot,
     home: world.home,
     now: NOW,
+    clock: () => (ticks += 1),
     ...options,
   })
 }

@@ -577,6 +577,73 @@ release artifact. The versioning policy is in the README, under Development.
   fails the same case at the pin of the derived union. Both mutations were reverted and
   never committed.
 
+- **The curation code list has one source, and the check that guards it tells the truth**
+  (Task 5 fix round 3). Round 2 moved the vocabulary into `lib/curation-codes.js` but left
+  a second, unconsumed `CURATION_TRUNCATION_REASONS` in `lib/curation-scan.js`, whose
+  comment claimed "the persisted diagnostic vocabulary is derived from the module that
+  produces the value" — it is not: the codec derives from the leaf, nothing imported the
+  scanner's copy, and the copy was unchecked. Measured: with the round-2 scanner restored
+  and `manifest-budget` deleted from that copy, the codec test file still reports **9 tests
+  / 9 pass / 0 fail**, because the AST scan reads `truncatedReason:` properties and never
+  the export array. The copy is deleted — the file drops from 1257 to 1244 lines and its
+  budget from 1257 to 1247, so the deletion is spent rather than banked — and both comments
+  now describe what actually binds the four emitters: no emitter imports the leaf to raise
+  a code, and the binding is `test/diagnostic-codec.test.js`'s per-module equality, which
+  parses the scanner, the state store, the view builder and the proposal store and requires
+  each module's code literals to *equal* the family declared for it. The same case read
+  only a **literal** first argument to `CurationError`/`CurationStateError`, so a code bound
+  to a name was invisible while `lib/diagnostic-codec.js` promised "a fixed code an emitter
+  can produce and this set lacks is a failing test rather than a silent `other`". Measured:
+  the reviewer's probe (`const hidden = 'curation-blindspot'` plus
+  `throw new CurationStateError(hidden, 'probe')` in `lib/curation-state.js`) leaves the
+  committed round-2 case at **7 tests / 7 pass** and fails the extended one with
+  `lib/curation-state.js names codes lib/curation-codes.js does not declare, or the
+  reverse`, naming `curation-blindspot`. The scan now resolves an identifier or a ternary
+  through the module's own bindings and keeps the literal-only path as the control that
+  shows what it misses; the codec comment states the residual it still does not cover — a
+  code that reaches a constructor through a helper's parameter
+  (`requireText(input.kind, …, 'proposal-kind')` in `lib/curation-proposals.js`) is in that
+  module's found set only because the neighbouring throw repeats the literal. Two coverage
+  gaps close with it. `not-bound`, the one code the codec adds by hand and the one the
+  derived union cannot contain, now has a guard: deleting it from `CODES` fails the case
+  (`expected: 'not-bound'`) instead of leaving all four covering files green. And the
+  **second** coarsened dynamic family is disclosed and pinned: `writePrivateJson` rethrows
+  a raw filesystem error unchanged, so a hint or an acknowledgement that cannot be written
+  hands a raw errno to the catch sites that record `error.code` — probed by putting a file
+  where the private `curation/` directory belongs, which makes `writeCurationViewJson`
+  throw a plain `Error` with `code: 'ENOTDIR'` rather than a `CurationStateError`, and the
+  codec persists that errno as `other`. The codec comment previously read as if
+  `view-unwritable:<code>` were the only such family. `lib/services.js` also said "the
+  reachable ones are `backfill-incomplete`, `entry-unusable` and `view-oversize`" while
+  `view-unwritable:state-oversize` is reachable through the margin between the builder's
+  **compact** check (768 KiB) and the store's **pretty-printed** bound (1 MiB); the comment
+  now names all four and says which route does *not* reach them. `lib/services.js` measured
+  **1578** formatted lines, not the 1575 both entries gave, and those two numbers are
+  corrected in place. Finally, `test/curation-scan.test.js` reads the wall clock only
+  through the stepping clock its `scan` helper injects (the file's own seam), because the
+  500-ms default turned `complete` and `truncatedReason === null` into assertions about
+  machine load. Measured, and wider than the one case the review saw: with only that case
+  fixed, a full suite under eight concurrent fsync loaders (3.2x) failed **four** other
+  cases in this file with `time-budget` — `a directory the resolver cannot enumerate makes
+  it silent, never a false dead link`, `a truncated link universe makes the resolver silent
+  rather than confident`, `the manifest budget is a coverage truncation the pass names and
+  never hides`, and `verifying the covered prefix obeys the deadline`. The injected clock
+  cannot reach a 500-ms budget from a fixture of a handful of notes, and the two cases that
+  are *about* the deadline still exercise it: `maxMs: 0` truncates before the first read,
+  and the case that raises the clock by 100 ms per consultation still reaches its 250-ms
+  budget after two notes. The whole file is **20 tests / 20 pass / 0 fail** under that same
+  load, and the loaded full suite reports no failure. Probed on a scanner where one note
+  read costs 120 ms, the pre-round-3 case fails its `complete` assertion and the round-3
+  case passes. Measured: the covering command
+  `node --test test/diagnostic-codec.test.js test/tools.test.js test/debug.test.js test/architecture.test.js test/curation-scan.test.js`
+  reports **82 tests / 82 pass / 0 fail / 0 skipped**, and `npm test` reports **901 tests /
+  900 pass / 1 skipped / 0 fail** twice — 69.7 s idle and 138.1 s with the eight fsync
+  loaders — so the totals no longer depend on load. Task 7's concurrent commit
+  `b4eccce` carried this round's `lib/curation-codes.js` header rewrite, its
+  `test/architecture.test.js` budget lines (1247 and 1578) and its two `1578` corrections;
+  the rest of the round is in this commit, and nothing in it moves a layer number or the
+  six-tool surface.
+
 - **The parked-candidate signal is no longer thrown away, and the retry barrier is
   pinned** (Task 3 review round). `review` was missing from the diagnostic codec's
   `distill` outcome set, so the one durable record of *why* a parked item produced

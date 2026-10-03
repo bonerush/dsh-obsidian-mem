@@ -92,18 +92,37 @@ function codesOfExpression(node, locals) {
  * @returns {Set<string>} the codes found.
  */
 function codesInSource(kind, relative) {
-  const source = readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8')
-  const file = ts.createSourceFile(relative, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
+  return codesInText(
+    kind,
+    relative,
+    readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8'),
+  )
+}
+
+/**
+ * The same scan over an arbitrary source text, so a control can drive a probe this
+ * repository must not carry.
+ *
+ * @param {'error'|'reason'} kind - how the module carries its code.
+ * @param {string} name - the file name the parse reports, for messages.
+ * @param {string} source - the JavaScript to parse.
+ * @param {boolean} [resolveLocals] - resolve an identifier or ternary first argument
+ *   through the module's own bindings. `false` is the literal-only scan, kept so the
+ *   control can show what that scan misses.
+ * @returns {Set<string>} the codes found.
+ */
+function codesInText(kind, name, source, resolveLocals = true) {
+  const file = ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
   const locals = new Map()
   const found = new Set()
   // Two passes, because the property that carries a truncation reason reads a local
   // whose value is chosen between branches (`truncatedReason: … : truncated`) and that
   // local is assigned from several string literals earlier in the same function.
   const collect = (node) => {
-    const add = (name, value) => {
-      const seen = locals.get(name) ?? []
+    const add = (key, value) => {
+      const seen = locals.get(key) ?? []
       seen.push(value)
-      locals.set(name, seen)
+      locals.set(key, seen)
     }
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
       add(node.name.text, node.initializer)
@@ -121,8 +140,12 @@ function codesInSource(kind, relative) {
       ts.isIdentifier(node.expression) &&
       CODE_ERRORS.has(node.expression.text)
     ) {
-      const code = codeOfLiteral(node.arguments?.[0])
-      if (code !== null) found.add(code)
+      // The first argument is a code whether it is written there or bound to a name
+      // earlier in the module (`const hidden = 'x'; new CurationStateError(hidden, …)`),
+      // which a literal-only read of `arguments[0]` cannot see.
+      const first = node.arguments?.[0]
+      const codes = resolveLocals ? codesOfExpression(first, locals) : [codeOfLiteral(first)]
+      for (const code of codes) if (code !== null) found.add(code)
     }
     if (
       kind === 'reason' &&
@@ -246,6 +269,57 @@ test('every curation outcome the bounded action emits survives the round trip', 
   )
   assert.equal(unknown.outcome, 'other')
   assert.equal(decodeDiagnosticEvent(unknown).outcome, 'other')
+})
+
+test('the emitter scan resolves a code passed by name, not only a literal', () => {
+  // The reviewer's probe, and the blind spot round 2 shipped with: reading
+  // `new CurationError(...)`'s first argument as a literal only makes a code bound to a
+  // name invisible, and appending exactly this pair to `lib/curation-state.js` left the
+  // case below green. The first assertion is the literal-only scan; the second is the
+  // scan the case now uses, which fails the per-module equality on such a probe.
+  const probe = [
+    "const hidden = 'curation-blindspot'",
+    "throw new CurationStateError(hidden, 'probe')",
+  ].join('\n')
+  assert.deepEqual(
+    [...codesInText('error', 'probe.js', probe, false)],
+    [],
+    'a literal-only scan cannot see an identifier first argument',
+  )
+  assert.deepEqual([...codesInText('error', 'probe.js', probe)], ['curation-blindspot'])
+  // The other direction: a code that reaches the constructor through a helper's
+  // parameter is outside both scans, which is why the guarantee is about the site and
+  // not about every code that can flow into a constructor.
+  const helper = [
+    'function requireText(value, code) {',
+    "  if (value === '') throw new CurationError(code, 'blank')",
+    '  return value',
+    '}',
+    "requireText('x', 'proposal-kind')",
+  ].join('\n')
+  assert.deepEqual([...codesInText('error', 'probe.js', helper)], [])
+})
+
+test('the second dynamic family and the hand-added code are both pinned', () => {
+  // `lib/curation-state.js`'s `writePrivateJson` rethrows a raw filesystem error
+  // unchanged, so the hint enqueue and the acknowledgement can carry an errno into a
+  // `curation` event's `code`. That family is coarsened exactly like the
+  // `view-unwritable:<code>` one the round-trip case's control drives.
+  const encoded = encodeDiagnosticEvent(
+    { seq: 1, at, event: 'curation', outcome: 'scanned', code: 'EACCES' },
+    createAliases(),
+  )
+  assert.equal(encoded.code, 'other')
+  assert.equal(decodeDiagnosticEvent(encoded).code, 'other')
+  // `not-bound` is the other direction: a registered code the codec adds by hand, not
+  // one of the four emitter families, so neither the derived union nor the loop above
+  // can cover it. Deleting it from `CODES` otherwise leaves every covering file green.
+  const bound = encodeDiagnosticEvent(
+    { seq: 1, at, event: 'curation', outcome: 'listed', code: 'not-bound' },
+    createAliases(),
+  )
+  assert.equal(bound.code, 'not-bound')
+  assert.equal(decodeDiagnosticEvent(bound).code, 'not-bound')
 })
 
 test('every code a curation emitter can produce survives the round trip', () => {
