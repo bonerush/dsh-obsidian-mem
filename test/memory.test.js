@@ -1127,3 +1127,54 @@ test('a risky item with no propose seam throws and writes nothing', async (t) =>
   )
   assert.deepEqual(await listMarkdown(at(env.vault, `${PROJECT}/Decisions`)), decisionsBefore)
 })
+
+test('a propose seam that answers without an identity is refused, not recorded as applied', async (t) => {
+  // The other half of fail-closed. `{proposalId: null}` is not a throw, so the old
+  // `proposal?.proposalId ?? null` put `null` into `appliedItems` and the receipt
+  // and then `continue`d past the item: the job completed, the candidate was never
+  // parked, and no durable record of it existed anywhere — R7's silent drop wearing
+  // a proposal's shape. `undefined` is the shape a wrapper seam returns when it
+  // forgets to hand the store's record back, which is exactly why it must throw.
+  const env = await fixture(t)
+  const seeded = await writeMemory(
+    env.binding,
+    { type: 'decision', title: '旧结论', body: '旧的正文。\n', status: 'accepted' },
+    env.deps,
+  )
+  const before = await read(env.vault, seeded.path)
+  const item = {
+    type: 'decision',
+    title: '新结论',
+    body: '新的正文。\n',
+    preassignedId: `dec-${randomUUID()}`,
+    idempotencyKey: 'degenerate:1',
+    supersedesId: seeded.id,
+  }
+  for (const degenerate of [undefined, null, {}, { proposalId: null }, { proposalId: '' }]) {
+    await assert.rejects(
+      () =>
+        applyCandidate(env.binding, { sessionId: 'sess-1' }, item, {
+          ...env.deps,
+          propose: async () => degenerate,
+        }),
+      failsWith('propose-failed'),
+      `a seam answering ${JSON.stringify(degenerate) ?? 'undefined'} must throw`,
+    )
+  }
+  assert.equal(await read(env.vault, seeded.path), before, 'the old note is byte-identical')
+  assert.deepEqual(
+    await listMarkdown(at(env.vault, `${PROJECT}/Decisions`)),
+    ['ADR-1-旧结论.md', 'index.md'],
+    'the refused candidates wrote no note',
+  )
+
+  // The control: the same seam answering a real identity is still accepted, so the
+  // refusal above tests the guard and not a seam that can no longer park anything.
+  const parked = await applyCandidate(env.binding, { sessionId: 'sess-1' }, item, {
+    ...env.deps,
+    propose: async () => ({ proposalId: 'a'.repeat(64) }),
+  })
+  assert.equal(parked.review, true)
+  assert.equal(parked.proposalId, 'a'.repeat(64))
+  assert.equal(await read(env.vault, seeded.path), before)
+})

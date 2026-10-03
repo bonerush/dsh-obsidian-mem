@@ -44,6 +44,38 @@ test('the disk format removes content and aliases identifiers consistently', () 
   }
 })
 
+test('every distill outcome a call site emits survives the round trip', () => {
+  // The disk format is a closed vocabulary, so an outcome a call site really
+  // produces but the codec does not list is silently rewritten to `other` — the
+  // one durable trace of why an item produced no note, erased, with a green suite.
+  // `review` is the parked-candidate signal the whole curation gate exists to
+  // raise, and `duplicate-check-failed` was added for the same reason; pin the
+  // whole set so a new call site has to register its token here.
+  const aliases = createAliases()
+  const outcomes = [
+    'deferred',
+    'no-memory',
+    'dry-run',
+    'duplicate',
+    'duplicate-check-failed',
+    'review',
+    'applied',
+  ]
+  for (const outcome of outcomes) {
+    const encoded = encodeDiagnosticEvent({ seq: 1, at, event: 'distill', outcome }, aliases)
+    assert.equal(encoded.outcome, outcome, `${outcome} is not coarsened`)
+    assert.equal(decodeDiagnosticEvent(encoded).outcome, outcome, `${outcome} decodes back`)
+  }
+  // The control: a token the codec does not know is still coarsened, so the loop
+  // above is testing registration rather than a codec that echoes anything.
+  const unknown = encodeDiagnosticEvent(
+    { seq: 1, at, event: 'distill', outcome: 'invented' },
+    createAliases(),
+  )
+  assert.equal(unknown.outcome, 'other')
+  assert.equal(decodeDiagnosticEvent(unknown).outcome, 'other')
+})
+
 test('unknown outcomes are coarsened and unsupported events are rejected', () => {
   const aliases = createAliases()
   assert.equal(encodeDiagnosticEvent({ seq: 1, at, event: 'unknown' }, aliases), null)

@@ -60,7 +60,7 @@ release artifact. The versioning policy is in the README, under Development.
     gate above.
   - `lib/capture.js` (L6) — the real seam, which snapshots the evidence and calls
     `saveCurationProposal`. This is the only layer that may compose the two.
-  Measured: `npm test` 805 tests / 804 pass / 1 skipped / 0 fail, and a test
+  Measured: `npm test` 809 tests / 808 pass / 1 skipped / 0 fail, and a test
   asserts every source-note hash is unchanged before and after every kind of pass.
   Untested: no scan currently emits a *suspected contradiction* finding, so the
   review-only path is exercised for the four kinds the scanner does produce and a
@@ -86,6 +86,35 @@ release artifact. The versioning policy is in the README, under Development.
   degradation (after the entry bound, a note whose frontmatter can be parsed cannot
   reach the 64 KB record bound; the same recovery path is exercised by an
   unwritable record).
+
+### Fixed
+
+- **The parked-candidate signal is no longer thrown away, and the retry barrier is
+  pinned** (Task 3 review round). `review` was missing from the diagnostic codec's
+  `distill` outcome set, so the one durable record of *why* a parked item produced
+  no note was persisted as `other` — a green suite could not see it because the
+  in-process ring carries the token fine and only the disk format coarsens it.
+  `lib/diagnostic-codec.js` now lists it, a case loops the whole `distill`
+  vocabulary through encode/decode, and a second case reads the token off the real
+  ring after a parked pass. `parkRiskyCandidate` also accepted a seam that resolved
+  *something* without an identity: `proposalId: null` went into `appliedItems` and
+  the receipt and the item was then `continue`d past, so the job completed with the
+  candidate recorded as parked and no durable record of it anywhere. A `propose`
+  seam that answers without a non-empty string identity is now refused with
+  `propose-failed`, the same code a refusing seam raises, which keeps the job
+  `validated` and retryable instead of completing it on a lost candidate.
+  Measured: `npm test` **809 tests / 808 pass / 1 skipped / 0 fail**; the
+  round-trip case fails on the pre-fix codec with `review is not coarsened`, and the
+  guard case fails with `Missing expected rejection: a seam answering undefined must
+  throw`. The brief's mandated retry-barrier case is now pinned by
+  `test/auto-capture.test.js` (a throwing `propose` seam through the real
+  `processQueue`: `state: 'validated'`, `attempts: 1`, `lastError.code` of
+  `propose-failed`, `nextAttemptAt` in the future, no receipt, byte-identical
+  vault) — that behaviour already held, so the case is a regression guard rather
+  than a fix, and it passes on the pre-fix code too.
+  Untested: the guard is reached only through a caller-supplied seam, so the case
+  drives a `writeMemory` wrapper with a throwing `propose` rather than a second
+  production seam.
 
 ## 0.1.10 — 2026-09-29
 

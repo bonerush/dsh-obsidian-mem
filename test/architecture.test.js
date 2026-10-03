@@ -241,7 +241,7 @@ const BUDGETS = {
   // this small assembly step belongs here, after the disabled early return.
   'lib/index.js': 200,
   'lib/lint.js': 1450,
-  // Raised from 1400 by Task 3 (1476 measured). The gate itself is deliberately
+  // Raised from 1400 by Task 3 (1499 measured). The gate itself is deliberately
   // here rather than in a helper module: the decision is "is this candidate risky",
   // and it is only answerable beside the ownership pre-check and the duplicate
   // lookup that produce its two inputs. The raise also covers the `propose` seam on

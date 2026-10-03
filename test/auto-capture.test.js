@@ -34,6 +34,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { setTimeout as sleep } from 'node:timers/promises'
 
 import {
   createCapture,
@@ -2145,4 +2146,107 @@ test('a refused job retry is visible without reading the queue', async (t) => {
   assert.equal(retry.length, 1)
   assert.equal(retry[0].outcome, 'retry-missing')
   assert.equal(retry[0].jobId, 'job-absent')
+})
+
+test('a proposal-write failure before markJob leaves the job validated and retryable', async (t) => {
+  // Brief Step 1, the one mandated case the implementation leaned on but nothing
+  // pinned: "inject proposal-write failure before `markJob`: the job must stay
+  // retryable and retain its validated output."
+  //
+  // The seam is a `writeMemory` wrapper rather than a `propose` option because
+  // `processQueue` does not expose the proposal seam (production wires it from the
+  // store). Delegating to the real `applyCandidate` with a throwing `propose` is
+  // the same fault at the same point: the store cannot be written, so the risky
+  // candidate cannot be parked, and the throw is the only honest outcome.
+  const f = await fixture(t)
+  const seeded = await seedDecision(f)
+  const job = validatedJob([itemFixture({ title: '新结论', supersedesId: seeded.id })])
+  await writeJobAtomic(f.queueRoot, job)
+  const before = await snapshotTree(f.vault)
+  const diagnostics = createDiagnostics()
+  const proposalDirectory = join(f.dataRoot, 'curation', 'proposals', PROJECT_ID)
+  // A 100 ms backoff rather than an hour: the retry barrier is the point, and the
+  // scheduled retry has to stay reachable inside one test without a fake clock.
+  const clock = () => new Date(Date.now() + 200)
+  const first = Date.now()
+
+  const summary = await processQueue(
+    queueOptions(f, {
+      diagnostics,
+      retryBackoffMs: 100,
+      writeMemory: (binding, current, item, deps) =>
+        applyCandidate(binding, current, item, {
+          ...deps,
+          propose: async () => {
+            throw new Error('proposal store unavailable')
+          },
+        }),
+    }),
+  )
+
+  assert.equal(summary.completed, 0, 'a failed park is not a completed item')
+  assert.equal(summary.failed, 0, 'one transient failure is not a terminal job')
+  assert.equal(summary.deferred, 1)
+
+  const interrupted = await jobOnDisk(f)
+  assert.equal(interrupted.state, 'validated', 'the validated output is retained, so no re-distill')
+  assert.deepEqual(interrupted.output.items, job.output.items, 'the candidate is not re-derived')
+  assert.equal(interrupted.lastError.code, 'propose-failed')
+  assert.match(interrupted.lastError.message, /proposal store unavailable/)
+  assert.equal(interrupted.attempts, 1)
+  assert.ok(Date.parse(interrupted.nextAttemptAt) > first, 'the retry is scheduled in the future')
+  assert.deepEqual(await readReceipts(f), [], 'no receipt claims a completion that did not happen')
+
+  // Nothing was written and nothing was parked: the candidate is not silently gone,
+  // it is still exactly where it was.
+  assert.deepEqual(await snapshotTree(f.vault), before)
+  assert.equal(existsSync(proposalDirectory), false, 'the failed park created no proposal')
+  assert.deepEqual(
+    eventsOf(diagnostics, 'distill').map((event) => event.outcome),
+    [],
+    'a failed item records no distill outcome, and certainly not one claiming a write',
+  )
+  assert.deepEqual(
+    eventsOf(diagnostics, 'job').map((event) => event.outcome),
+    ['retry'],
+  )
+
+  // The retry barrier is what makes this recoverable: a later pass resumes from the
+  // persisted output with a working seam, re-distills nothing, and parks.
+  await sleep(150)
+  const resumed = await processQueue(queueOptions(f, { now: clock }))
+  assert.equal(resumed.completed, 1)
+  const [receipt] = await readReceipts(f)
+  assert.match(receipt.items[0].proposalId, /^[0-9a-f]{64}$/u)
+  assert.equal(receipt.items[0].id, null, 'the resumed pass parked rather than wrote')
+})
+
+test('a parked candidate persists the review outcome the codec must keep', async (t) => {
+  // The gate's whole signal is `outcome: 'review'`, and the disk format is a closed
+  // vocabulary that rewrites an unlisted token to `other`. This asserts the token
+  // through the REAL ring, so a codec that drops `review` fails here and not only
+  // in the codec's own unit test. `applied` follows it because `completeJob` records
+  // the job's own summary line: the item was parked and the turn still finished,
+  // which is the difference this signal exists to make visible.
+  const f = await fixture(t)
+  const seeded = await seedDecision(f)
+  const diagnostics = createDiagnostics()
+  await writeJobAtomic(f.queueRoot, validatedJob([itemFixture({ supersedesId: seeded.id })]))
+
+  const summary = await processQueue(queueOptions(f, { diagnostics }))
+  assert.equal(summary.completed, 1)
+
+  const distilled = eventsOf(diagnostics, 'distill')
+  assert.equal(distilled[0].outcome, 'review', 'the parked signal is not coarsened to `other`')
+  assert.deepEqual(
+    distilled.map((event) => event.outcome),
+    ['review', 'applied'],
+  )
+  assert.equal(distilled[0].jobId, JOB_ID)
+  assert.equal(distilled[0].projectId, PROJECT_ID)
+  // The parked candidate wrote nothing, so no index refresh happened either.
+  assert.deepEqual(
+    eventsOf(diagnostics, 'index').map((event) => event.outcome),
+    ['none'],
+  )
 })
