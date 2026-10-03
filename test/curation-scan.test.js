@@ -50,7 +50,7 @@ import { MAX_NOTE_BYTES, isIndexableRelativePath } from '../lib/index-db.js'
 import { parseNote } from '../lib/frontmatter.js'
 import { lintVault } from '../lib/lint.js'
 import { writeMemory } from '../lib/memory.js'
-import { noteLinkFindings, noteReviewFinding } from '../lib/note-health.js'
+import { noteLinkFindings, noteReviewFinding, createVaultLinkResolver } from '../lib/note-health.js'
 import { resolveBinding } from '../lib/vault.js'
 import { listMarkdown, makeCurationWorld } from './curation-world.js'
 
@@ -332,9 +332,15 @@ test('the scan-vs-linter link matrix is exactly what the resolver comment states
     [`${project}/Docs/LICENSE`, 'MIT\n'],
     [`${project}/Docs/txt.txt`, 'x\n'],
     [`${project}/Docs/图.png`, 'not really a png\n'],
-    // One directory up from the linking note, so a bare `[[LICENSE]]` is one the
-    // linter's directory-bound rule cannot reach.
+    // The carrier of the basename `a`: a file of the project's own tree whose name is
+    // what the resolver's last-segment rule reads, and which no candidate path of an
+    // `[[Other/a]]` link can match.
+    [`${project}/Docs/a/a`, 'extension-less\n'],
+    // One directory up from the linking note, so a bare `[[LICENSE]]` — or the
+    // `[[README]]` whose only carrier this is — is out of reach of the linter's
+    // directory-bound rule.
     [`${project}/LICENSE`, 'MIT\n'],
+    [`${project}/README`, 'readme\n'],
     // The vault root: a note and an extension-less file the resolver must see.
     ['Home.md', '---\ntitle: Home\n---\n首页。\n'],
     ['Makefile', 'all:\n\techo hi\n'],
@@ -354,6 +360,11 @@ test('the scan-vs-linter link matrix is exactly what the resolver comment states
     'other/LICENSE',
     'Docs/分享',
     'Docs/zzz.txt',
+    'Other/a',
+    `${project}/Other/a`,
+    'README',
+    `${project}/Docs/txt.txt`,
+    `${project}/Docs/图.png`,
     '并不存在',
     `${project}/Docs/并不存在`,
   ]
@@ -376,17 +387,28 @@ test('the scan-vs-linter link matrix is exactly what the resolver comment states
   )
 
   // The probe matrix, run against this fixture and asserted row by row: `DEAD` is
-  // a reported finding, `silent` is none. Five rows have the scan silent and the
-  // linter dead, and they are not one shape. `Docs/nomatch`, `Methods/并不存在`,
-  // `Docs/txt.txt`, `Docs/LICENSE` and `other/LICENSE` share the stated reason: a
+  // a reported finding, `silent` is none. Seven rows have the scan silent and the
+  // linter dead, in two groups. `Docs/nomatch`, `Methods/并不存在`, `Docs/txt.txt`,
+  // `Docs/LICENSE`, `other/LICENSE` and `Other/a` share the first reason: a
   // slash-bearing target that does not start with this project's directory is
-  // answered `true` before any name is looked at, so that silence needs no
-  // basename match anywhere — `Docs/nomatch` has none at all, while
-  // `Docs/LICENSE` and `other/LICENSE` have one. `Docs/分享` is the same rule on a
-  // target that exists (the linter resolves it through the root `Docs/`, the scan
-  // answers `true` without deciding), and `[[LICENSE]]` is the limit of the
-  // matrix: a bare name both sides resolve, the scan through its basename rule
-  // against the project-root `LICENSE` and the linter through the vault-root one.
+  // answered `true` before any name is looked at, so that silence needs no basename
+  // match anywhere — `Docs/nomatch` has none at all, while `Other/a`'s basename is
+  // carried by `${project}/Docs/a/a` and the answer is the same either way.
+  // `Docs/分享` is that same rule on a target that exists (the linter resolves it
+  // through the root `Docs/`, the scan answers `true` without deciding), and the
+  // `${project}/Docs/txt.txt` and `${project}/Docs/图.png` rows are the plain-file
+  // agreement: both surfaces hold them, so both are silent.
+  //
+  // The last two silence rows are about the basename branch itself rather than the
+  // prefix one. `${project}/Other/a` does start with this project's directory, so
+  // that branch never answers and the branch that does is the last-segment one,
+  // reading the `a` of `${project}/Docs/a/a` while the linter's two candidates both
+  // miss — the one-directional under-report this resolver allows. `[[README]]` is
+  // its bare case: the name's only carrier is `${project}/README`, one directory
+  // above the linking note and so unreachable for the linter's directory-bound
+  // rule, and the scan answers `true` on it. `[[LICENSE]]` is the bare case that
+  // does *not* diverge — both surfaces are silent, the linter through the vault-root
+  // copy, which the resolver assertions at the end of this case re-probe directly.
   // Every row is probed rather than described; a comment that went further than
   // this matrix is the failure it exists to prevent.
   const expected = [
@@ -401,6 +423,11 @@ test('the scan-vs-linter link matrix is exactly what the resolver comment states
     ['other/LICENSE', 'silent', 'DEAD'],
     ['Docs/分享', 'silent', 'silent'],
     ['Docs/zzz.txt', 'silent', 'silent'],
+    ['Other/a', 'silent', 'DEAD'],
+    [`${project}/Other/a`, 'silent', 'DEAD'],
+    ['README', 'silent', 'DEAD'],
+    [`${project}/Docs/txt.txt`, 'silent', 'silent'],
+    [`${project}/Docs/图.png`, 'silent', 'silent'],
     ['并不存在', 'DEAD', 'DEAD'],
     [`${project}/Docs/并不存在`, 'DEAD', 'DEAD'],
   ]
@@ -432,6 +459,20 @@ test('the scan-vs-linter link matrix is exactly what the resolver comment states
       [linker.path, inside],
     ],
   )
+  // The two attributions the prose above rests on, probed directly instead of
+  // reasoned about, because a claim that names which file carried an answer is the
+  // exact shape this case exists to keep pinned. `LICENSE` sits at the vault root
+  // *and* one directory above the linker: the linter's own rule reaches only the
+  // vault-root copy, so its `true` above is that copy's, which is why the row is a
+  // limit. `README`'s only carrier is the project-root copy, which the same rule
+  // cannot reach at all, and that is the row that diverges.
+  assert.equal(createVaultLinkResolver([`${project}/LICENSE`])('LICENSE', linker.path), false)
+  assert.equal(createVaultLinkResolver(['LICENSE'])('LICENSE', linker.path), true)
+  assert.equal(
+    createVaultLinkResolver([`${project}/LICENSE`, 'LICENSE'])('LICENSE', linker.path),
+    true,
+  )
+  assert.equal(createVaultLinkResolver([`${project}/README`])('README', linker.path), false)
 })
 
 test('a directory the resolver cannot enumerate makes it silent, never a false dead link', async (t) => {
@@ -617,7 +658,33 @@ test('a truncated link universe makes the resolver silent rather than confident'
   assert.equal(bounded.manifest.count, whole.manifest.count)
   assert.equal(bounded.manifest.truncated, false)
   assert.equal(bounded.complete, true)
-  assert.equal(bounded.cursor === null, false)
+  // "No cursor over a short fingerprint" is the assertion that actually pins this,
+  // and a non-null cursor alone does not make it: the fingerprint the pass returns
+  // and the one it persisted are both the fingerprint of the *whole* manifest, so a
+  // later pass resumes over exactly the note list this pass certified rather than
+  // over the shortened file list the resolver bound stopped.
+  const manifestPaths = await manifestOf(world, binding)
+  assert.equal(bounded.manifest.fingerprint, fingerprintOf(manifestPaths))
+  assert.equal(bounded.cursor.manifestFingerprint, fingerprintOf(manifestPaths))
+  assert.deepEqual(
+    await readCurationCursor(join(world.root, 'bounded'), binding.projectId),
+    bounded.cursor,
+  )
+  // The price of that silence, asserted because it is not a deferral: an unchanged
+  // note is never re-inspected — a covered path is verified by its record's
+  // presence, not re-read — so a later pass over this same root with a whole
+  // universe still reports no dead link for it. The finding returns when the linking
+  // note's own bytes change and a changed-path pass asks the resolver again.
+  const wholeAgain = await scan(world, binding, { dataRoot: join(world.root, 'bounded') })
+  assert.equal(wholeAgain.complete, true)
+  assert.deepEqual(
+    wholeAgain.findings.filter((finding) => finding.kind === 'dead-wikilink'),
+    [],
+  )
+  assert.deepEqual(
+    wholeAgain.findings.filter((finding) => finding.kind === 'resolver-truncated'),
+    [],
+  )
 })
 
 test('the manifest budget is a coverage truncation the pass names and never hides', async (t) => {

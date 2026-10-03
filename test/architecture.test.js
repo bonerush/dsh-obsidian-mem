@@ -263,6 +263,13 @@ const BUDGETS = {
   // truncation message names the bound that actually applied instead of the shipped
   // constant. The rest of the lines are the resolver comment rewritten to the literal
   // probe result, because three rounds of prose had each over-claimed.
+  // Measured again at 1243 formatted lines on `fix: pin every curation link claim to
+  // a probe row` (the fifth and last Task 2 fix round, measured-plus-30 would be
+  // 1273). The budget stays at 1257 rather than following that rule upward: the
+  // round added no code, only the probe-pinned rewrite of the resolver comment, the
+  // sentence stating when a truncated-universe link finding comes back, and the
+  // matching prose in `lib/note-health.js`, and the raise has to be argued for by
+  // what the lines buy.
   'lib/curation-scan.js': 1257,
   // The Task 3 module, on the same measured-plus-30 rule (1113 formatted lines,
   // 1115 with the two-line comment that makes the listing order intentional).
