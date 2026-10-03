@@ -149,8 +149,16 @@ test('the baseline fixture keeps its notes readable, isolated and unquoted-or-qu
     body: '预算是 12 万，超过需要重新审批。',
   })
   const isolated = await services.search({ query: '预算 上限' })
+  const isolatedPaths = isolated.map((hit) => hit.path)
+  // Name the three budget paths again, not just their absence: `[]` satisfies
+  // every exclusion and every `every()` below, so without this line a regression
+  // that empties project-scoped search right after a cross-project write would
+  // read as a passing isolation test.
+  assert.ok(isolatedPaths.includes(budgetLow.path))
+  assert.ok(isolatedPaths.includes(budgetTwin.path))
+  assert.ok(isolatedPaths.includes(budgetNear.path))
   assert.deepEqual(
-    isolated.map((hit) => hit.path).filter((path) => path === other.path),
+    isolatedPaths.filter((path) => path === other.path),
     [],
   )
   assert.ok(isolated.every((hit) => hit.path.startsWith(`${projectDir}/`)))
@@ -167,6 +175,8 @@ test('the baseline fixture keeps its notes readable, isolated and unquoted-or-qu
   assert.ok(brief.text.includes(BRIEF_DATA_NOTICE))
   // The superseded conclusion is not injected as current guidance.
   assert.equal(brief.text.includes(oldRule.path), false)
+  // The current convention *is* injected, and by name: the brief text carries the
+  // entry title (the path is what the superseded note is checked against above).
   assert.ok(brief.text.includes('导出格式'))
   // A body never reaches the brief today; if a later change makes one reachable
   // it must arrive as quoted data, and never as an ATX heading of its own.

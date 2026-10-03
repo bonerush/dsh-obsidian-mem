@@ -80,6 +80,9 @@ export async function makeCurationWorld(t, options = {}) {
 export async function listMarkdown(vault, relativeDir) {
   const base = join(vault, ...relativeDir.split('/'))
   const out = []
+  // Only the nested walk swallows an error: a directory that disappears between
+  // the readdir and the recursion is a race, and a test that asserts on what is
+  // left is still telling the truth.
   const walk = async (directory, prefix) => {
     let entries
     try {
@@ -93,6 +96,10 @@ export async function listMarkdown(vault, relativeDir) {
       else if (entry.name.endsWith('.md')) out.push(`${relativeDir}/${next}`)
     }
   }
+  // The top-level error is the caller's to see. `relativeDir` is usually derived
+  // by slicing up a written path, so swallowing here turned a layout change or a
+  // typo into a silent `[]` and a caller loop that asserted nothing at all.
+  await readdir(base, { withFileTypes: true })
   await walk(base, '')
   return out.sort()
 }
