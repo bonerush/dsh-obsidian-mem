@@ -251,6 +251,27 @@ for you:
   `operation="scan"` runs one bounded pass now and reports `complete` and any
   truncation reason. `autoCurate: false` disables only the automatic passes —
   both operations still work.
+- **The queue is selectable, and `reviewOnly` is the signal.** `status` and
+  `scan` return `proposals.items`: up to 200 pending rows, newest first, each with
+  exactly `proposalId`, `kind`, `reason` and `reviewOnly`. Hand the user the
+  `proposalId` of the row they want. A `reviewOnly: true` row is a finding with no
+  operation — `apply` cannot repair it, so the fix is the source edit the finding
+  names followed by another `operation="scan"`. `proposals.truncated: true` means
+  more pending rows exist than were returned; the user decides the listed ones and
+  asks again. It says nothing about source notes having disappeared.
+- **A refusal is an answer to report, not a failure to retry blindly.**
+  `source-changed` leaves the proposal `pending` for another review;
+  `review-lock-unavailable` means another review may be running; and
+  `review-recovery-required` means an earlier attempt was interrupted after
+  publishing a note, so the user approves with `apply` to finish it — never a
+  rejection, and never something you resolve by editing notes.
+- **A curation pass reads Markdown and makes no model call**, and it never merges,
+  archives, supersedes, promotes or deletes a note. An exact-duplicate group is one
+  displayed entry naming every path; no note is removed.
+- **The claim file beside the records is not scratch.** A running review holds a
+  private claim file so two reviewers cannot both decide one proposal, and
+  `proposals/` is durable review work no scan can recreate. Never delete either,
+  and never present deleting them as routine recovery.
 - **The compact navigation in the brief is a cache.** Every line it adds was
   re-hashed against its source before injection, and any changed, missing or
   unreadable source makes the brief fall back to reading the vault. A fallback

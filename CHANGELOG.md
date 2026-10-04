@@ -1166,6 +1166,39 @@ release artifact. The versioning policy is in the README, under Development.
     is the two-drop cap case in `test/auto-capture.test.js`; the cap is unchanged, only
     the count it reports.
 
+### Changed
+
+- **Both READMEs and both portable skills now describe curation as a workflow a
+  reader can follow** (Task 11). The curation section leads with the loop — check
+  `operation="status"`, `operation="scan"` when you want the check now, take a
+  `proposalId` from `proposals.items`, run the review command from the bound
+  project's directory with the host's own `DSH_HOME`, then look again — and only
+  then explains the implementation. It states that `reviewOnly` (not `kind`) is
+  what separates a decidable proposal from a finding, that a `reviewOnly: true`
+  finding is fixed by editing the source it names and rescanning rather than by
+  `apply`, that a pass makes no model call, and that an exact-duplicate group is one
+  displayed entry — no note is deleted or merged. It names
+  `review-recovery-required`, `review-lock-unavailable` and `source-changed` with
+  what each means and what to do, and both failure-recovery tables carry the first
+  two as rows. The claim file a running review holds is called out as
+  non-disposable alongside `proposals/`. For a project larger than one pass the
+  reader is told to repeat `operation="scan"` until `complete: true`, and the
+  500 ms bound is stated as a bound on *starting* inspections rather than a hard
+  wall-clock ceiling.
+  - The *Automatic distillation* prose on both sides was stale and is corrected: a
+    candidate whose title twins an existing note is **parked** for review rather
+    than silently skipped, and a candidate that proposes to supersede one is parked
+    too. The cases that still apply automatically — no twin, no supersede — are
+    stated beside them.
+  - `README.i18n.yaml` records the new blob hashes of both sides, and the six
+    English-slug anchors the pair already carried are unchanged: this change adds no
+    link to a new heading.
+  - Documentation only: no `lib/` behaviour changes and no new tests. The document
+    checks in `test/repo-hygiene.test.js` (both READMEs and both skill editions
+    naming `autoCurate` and `dsh-obsidian-mem-review`, and the recorded hash
+    matching each side) are what gate the edit, and the controller's full
+    `npm run check` follows.
+
 ## 0.1.10 — 2026-09-29
 
 ### Changed

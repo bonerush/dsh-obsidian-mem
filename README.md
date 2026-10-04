@@ -355,12 +355,21 @@ numbers, and (5) applied idempotently as `decision` / `gotcha` / `convention`
 notes. Aborted and errored turns are recorded but never become conclusions;
 `doc` and `glossary` notes are only ever created through `mem_write`.
 
-A candidate whose title already exists in the bound project is **skipped**, not
-written twice: the lookup is the same project scope and the same tokenizer as
-`mem_search`, narrowed to the candidate's own type, and a skip names the note
-that already covers the fact in the job's receipt. Superseding a note explicitly
-is exempt — that is the one case where writing beside an existing title is the
-point.
+An ordinary candidate — one that supersedes nothing and twins no existing note —
+applies through the same transaction engine as every other write. Two shapes do
+not, because each is a judgment the plugin may not make on its own:
+
+- A candidate whose title twins a note already in the bound project is **parked**,
+  not skipped, so the new fact is never silently discarded. The lookup is the same
+  project scope and the same tokenizer as `mem_search`, narrowed to the
+  candidate's own type. An approved twin is published as a **separate** note beside
+  the existing one.
+- A candidate that proposes to supersede a note is **parked** as well. An approved
+  supersede writes the new note, marks the predecessor `status: superseded`, and
+  links the two — exactly what an explicit `mem_write` supersede does.
+
+Both are review-only until you decide them, and both are described under
+*Automatic curation* below, together with how to approve one.
 
 Start with:
 
@@ -375,73 +384,132 @@ Turn it live by setting `dryRun: false` and restarting.
 
 ### Automatic curation
 
-With `autoCurate: true` (the default) the plugin also keeps a compact,
-rebuildable navigation view of the current project and inspects notes for
-curation work. It is deliberately weaker than the memory layer around it:
+With `autoCurate: true` (the default) the plugin also inspects the notes already
+in the vault and keeps a compact navigation view of the current project. Two
+things about it matter before anything else: the inspection reads Markdown and
+**makes no model call**, and **nothing semantic happens on its own** — no note is
+merged, archived, superseded, promoted or deleted. A finding either becomes a view
+entry or is parked for you to decide.
 
-- **Nothing semantic happens on its own.** An edited note, a past `review_after`,
-  a broken link or an exact-duplicate group only produces a view entry or a
-  review-only finding. A suspected near duplicate, a differing number or date, or
-  a supersede a model proposed is **parked** as a durable proposal under
-  `$DSH_HOME/data/obsidian-mem/curation/proposals/` instead of being applied, and
-  every source fact stays exactly where it is.
-- **The review command is the only approval route.** From the installed package:
-  `dsh-obsidian-mem-review --vault <absolute-path> <proposal-id>`; from a
-  checkout, `node lib/curation-cli.js --vault … <proposal-id>`. It prints the
-  proposal's exact operation and sources, requires a terminal on stdin *and*
-  stdout, and accepts only `apply <id>` or `reject <id>` typed byte-for-byte, one
-  proposal per run — there is no `--all` and no default answer. `reject` changes
-  no source byte. **No `mem_admin` action, parameter or enum value applies,
-  approves or rejects a proposal**, so approval is never model-callable. A
-  proposal whose source changed between the scan and the approval is refused and
-  stays `pending` rather than rebasing itself.
-- **The view is a cache, never a second source of truth.** The cursor, the
-  per-path scan records, the changed-path queue and the view live under
-  `$DSH_HOME/data/obsidian-mem/curation/`. Every view entry carries the sha256 of
-  the bytes it was built from; before a brief uses one it re-hashes every path it
-  stands for — including every member of a collapsed exact-duplicate group — and
-  a missing, edited, unreadable or oversized source makes the brief fall back to
-  the source-navigation path it used before the view existed. Deleting those four
-  rebuildable documents — the cursor, the per-path records, the changed-path queue
-  and the view — costs one scan and nothing else. The `proposals/` subtree of the
-  same directory is **not** rebuildable: it holds every parked candidate and its
-  decision record, so deleting it discards review work that no scan can recreate
-  (the source notes are untouched, but the parked candidate and its reason are
-  gone). A view is injected only when it is
-  marked `complete`: a full pass that stopped at either bound publishes
-  `complete: false`, and a changed-path pass may merge only into a view that is
-  already complete (`backfill-incomplete` otherwise), so a partial backfill can
-  never be published as the project's navigation.
-- **Automatic passes are bounded, host-specific, and resume only when the project
-  is due again.** In DSH a committed write queues its note and session activity
-  checks a due project; the pass runs outside the model request and a failure
-  never fails your turn. In Codex the pass runs in the installed, **trusted**
-  `SessionStart` hook — Codex skips an untrusted hook in silence, and an MCP-only
-  install (no hooks) gets the explicit `mem_admin` scan and **no automatic pass at
-  all**. One pass examines at most 256 notes and stops *starting* new inspections
-  once 500 ms of curation work has elapsed. A pass that hits either bound says so
-  (`truncated`, `complete: false`) and keeps its position: the notes it finished
-  are recorded and the ones it never reached are picked up by the next pass. That
-  next pass is **not** the next session by itself. Both automatic triggers ask only
-  whether the project is due, and a full pass truncated by the note or time bound
-  records a fresh due marker as it scans, so a later session start with an empty hint
-  queue answers `skipped` and the backfill waits. A pass truncated by the *manifest*
-  bound (`manifest-budget`) is the exception: it deliberately leaves the cursor
-  alone, so no fresh marker is written and whether the next trigger finds the project
-  due is decided by whatever marker was already stored. A project becomes due again
-  in exactly three ways: a
-  committed write queues a **changed-path hint**, which is weighed against that
-  queue and not against the marker, so it re-opens the project well inside the 24
-  hours; you request `mem_admin(action="curation", operation="scan")`; or the
-  24-hour marker expires. A completed project is due again on those same three
-  conditions — so a vault larger than one pass advances its backfill at most once
-  per 24 hours per project until a write queues a hint for it.
+#### The everyday loop
 
-`mem_admin(action="curation", operation="status")` reads the cursor, the
-committed view and the bounded proposal queue without inspecting anything;
-`operation="scan"` runs one bounded pass now and adds the pass's own inspected
-count and truncation reason. Both remain available when `autoCurate: false`;
-only the automatic triggers stop.
+Doing nothing is a valid way to use this. The automatic pass keeps the view fresh
+and parked proposals simply wait. When you want to see what it found:
+
+1. **Ask for the state.** `mem_admin(action="curation", operation="status")` reads
+   the stored cursor, the committed view and the bounded proposal queue. It
+   inspects no note, so its `examined`, `counts.findings` and
+   `counts.unexamined` are `0` by design — those numbers describe a pass, not the
+   project.
+2. **Scan when you want the check to run now.**
+   `mem_admin(action="curation", operation="scan")` runs one bounded pass and
+   reports what that pass did. A project larger than one pass is normal: repeat
+   `operation="scan"` until the result says `complete: true`. Do not expect the
+   next session to finish it for you — see *When a pass is incomplete* below.
+3. **Pick a proposal to decide.** The result carries `proposals.items`, up to 200
+   pending rows, newest first, each with exactly `proposalId`, `kind`, `reason`
+   and `reviewOnly`. Tell the two forms apart by `reviewOnly`, not by `kind`: a
+   `near-duplicate` can be either. If `proposals.truncated` is `true`, more pending
+   rows exist than were returned — decide the listed ones, then ask for the state
+   again.
+4. **Run the review command** from the bound project's directory, with the same
+   `DSH_HOME` your host uses:
+
+   ```sh
+   dsh-obsidian-mem-review --vault /absolute/path/to/vault <proposal-id>
+   ```
+
+   From a checkout of this repository,
+   `node /absolute/path/to/repo/lib/curation-cli.js --vault … <proposal-id>` runs
+   the same command — use the absolute script path when the bound project is a
+   different repository. It prints the proposal's exact operation and sources, and
+   accepts only `apply <id>` or `reject <id>` typed byte-for-byte, one proposal per
+   run: there is no `--all` and no default answer. `reject` changes no source note.
+5. **Look again.** `status` shows the queue without the decided item, and the next
+   brief or scan reflects an approved change.
+
+**No `mem_admin` action, parameter or enum value applies, approves or rejects a
+proposal**, so approval is never something a model can do on your behalf. The
+review command is the only route, and it needs a terminal on stdin *and* stdout.
+
+#### What you can approve, and what you can only fix
+
+`apply` is offered only for a proposal that carries an operation —
+`reviewOnly: false` in the listing. There are two, and both are the parked
+distillation candidates described under *Automatic distillation* above:
+
+| Parked candidate | What `apply` does |
+|---|---|
+| A candidate that twins an existing note | Publishes it as a **separate** note beside the existing one. |
+| A candidate that proposes to supersede a note | Writes the new note, marks the predecessor `status: superseded`, and links the two. |
+
+A `reviewOnly: true` row is a finding, not a plan: an expired `review_after`, a
+wikilink that resolves to nothing, a plugin-owned note with no provenance, or the
+scanner's own near-duplicate observation. `apply` cannot repair one, and the review
+command offers no operation to run. Fix the source issue the finding names — edit
+the note, correct the link, refresh or retire it — and run `operation="scan"` again;
+the finding clears once the note no longer shows the problem. A finding you
+disagree with can simply be rejected, which records the decision and changes no
+note.
+
+The command refuses rather than guessing, and each refusal is a code you can act
+on. `source-changed` means a source moved between the scan and the approval: the
+proposal stays `pending`, so review it again. `review-lock-unavailable` means the
+private claim guard could not be acquired safely — another review may be running, or
+the guard storage is unusable. `review-recovery-required` means this proposal has a
+partial or committed application already: a process died between publishing the note
+and recording the decision. Approving with `apply` finishes that interrupted
+attempt; rejecting is refused, because it would leave a published note behind a
+`rejected` record.
+
+#### When a pass is incomplete
+
+A pass examines at most 256 notes and stops *starting* new inspections once 500 ms
+of curation work has elapsed. A pass that hits either bound says so and keeps its
+position: the notes it finished stay recorded and the ones it never reached wait for
+a later pass. Two numbers are deliberately not promises: one slow filesystem call
+can overrun the 500 ms mark, and the manifest walk is not bounded by it at all.
+
+For a project larger than one pass, repeat `operation="scan"` until
+`complete: true`. The automatic triggers are weaker than that: a truncated full
+pass records a fresh due marker as it scans, so a later session start with an empty
+hint queue answers `skipped` and the backfill waits. A project becomes due again in
+exactly three ways — a committed write queueing a changed-path hint (weighed against
+that queue, not the marker), your own `operation="scan"`, or the 24-hour marker
+expiring. So a vault larger than one pass advances at most once per 24 hours per
+project until a write queues a hint for it.
+
+#### Automatic passes are host-specific
+
+In DSH, a committed write queues its note and session activity checks a due project;
+the pass runs outside the model request, and a failure never fails your turn. In
+Codex the pass runs in the installed, **trusted** `SessionStart` hook — Codex skips
+an untrusted hook in silence, and an MCP-only install (no hooks) gets the explicit
+`mem_admin` scan and **no automatic pass at all**. Both `operation="status"` and
+`operation="scan"` remain available when `autoCurate: false`; only the automatic
+triggers stop.
+
+#### The view is a cache, never a second source of truth
+
+The cursor, the per-path scan records, the changed-path queue and the view live
+under `$DSH_HOME/data/obsidian-mem/curation/`. Every view entry carries the sha256
+of the bytes it was built from; before a brief uses one it re-hashes every path it
+stands for — including every member of a collapsed exact-duplicate group — and a
+missing, edited, unreadable or oversized source makes the brief fall back to the
+source-navigation path it used before the view existed. An exact-duplicate group is
+displayed as one entry naming every path; **no note is deleted or merged**. A view
+is injected only when it is marked `complete`: a full pass that stopped at either
+bound publishes `complete: false`, and a changed-path pass may merge only into a
+view that is already complete (`backfill-incomplete` otherwise), so a partial
+backfill can never be published as the project's navigation.
+
+Deleting those four rebuildable documents — the cursor, the per-path records, the
+changed-path queue and the view — costs one scan and nothing else. Two things in
+that directory are **not** disposable. `proposals/` holds every parked candidate
+and its decision record, which no scan can recreate: deleting it loses review work
+and leaves the source notes untouched. And a running review keeps a private claim
+file beside the records so that two reviewers cannot both decide one proposal;
+never delete either while a review is running.
 
 Measured on one 600-note temporary vault on this machine (the probe and its raw
 output are in `CHANGELOG.md`): a full pass inspected 256 notes with a median of
@@ -742,7 +810,10 @@ sandbox.
 | A repository refuses to write | A remote-URL mismatch, a different `projectId` for the same directory, a sibling worktree with conflicting metadata, or an unreadable sibling. The refusal names the reason and leaves the pointer exactly as it was — it never repairs or replaces one. | `mem_admin(action="bind", mode="show")` reports the situation; `mode="retain"` or `mode="fork"` is the explicit fix. A stale worktree needs `git worktree prune`. |
 | A plain directory stays read-only | It is not inside a Git repository, so the plugin will not add it to long-term memory on its own — an implicit first write binds Git repositories only. | `mem_admin(action="bind", mode="local")` to bind it explicitly; the binding is live for the same session. |
 | Memory is silently absent for a session | Any non-`bound` resolution means "no memory for this session" — by design, it never throws and never guesses. Reads never bind a repository, and a Git repository with no pointer is bound by its first write; a repository whose pointer or registry the plugin refuses to trust stays unbound until that is resolved. | Check `mem_admin(action="projects")` and the pointer file, then write once (a Git repository) or run `mem_admin(action="bind", mode="local")` (any directory) — both take effect in the same session. |
-| A curation proposal is `pending` and no note changed | That is the design: a suspected near duplicate or a model-proposed supersede is parked for review and never applied automatically. | `mem_admin(action="curation", operation="status")` lists the queue; approve or reject one proposal with `dsh-obsidian-mem-review --vault <absolute-path> <proposal-id>`. Rejecting touches no source note. |
+| A curation proposal is `pending` and no note changed | That is the design: a suspected near duplicate or a model-proposed supersede is parked for review and never applied automatically. | `mem_admin(action="curation", operation="status")` lists the queue with an id per row; approve or reject one with `dsh-obsidian-mem-review --vault <absolute-path> <proposal-id>`. Rejecting touches no source note. |
+| A review says `review-recovery-required` | This proposal already has a partial or committed application: a process died between publishing the note and recording the decision, so rejecting it would leave a published note behind a `rejected` record. | Run the review again and approve with `apply <id>`, which finishes the interrupted attempt. Rejecting stays refused until that evidence is resolved. |
+| A review says `review-lock-unavailable` | The private claim guard could not be acquired safely — another review of the same project may be running, or the guard file is unreadable or on storage that cannot hold it. | Wait for the other review to finish and retry. If no review is running, inspect the data root; do not delete the guard while a review might be live. |
+| A review says `source-changed` | A source note was edited between the scan and the approval. The proposal stays `pending` rather than rebasing itself onto bytes nobody reviewed. | Review the new state and decide again. |
 | The brief no longer shows the compact navigation, or a claimed duplicate group disappeared | The stored view is a cache: one of its sources changed, vanished or became unreadable, so the brief fell back to the source-navigation path instead of injecting a stale line. | Nothing to repair. The next complete pass rebuilds it; `mem_admin(action="curation", operation="scan")` runs one now and reports `complete` and any truncation reason. |
 
 If a symptom is not in this table, or the fix above did not work, generate the
