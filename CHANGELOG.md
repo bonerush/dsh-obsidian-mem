@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.1.11 — 2026-10-04
+
 ### Added
 
 - **Automatic curation is documented, replayed for quality and measured for cost**
