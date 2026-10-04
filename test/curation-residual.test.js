@@ -320,6 +320,51 @@ test('a stale pass cannot replace a cursor from a newer manifest', async (t) => 
   assert.deepEqual(stored, newer.cursor)
 })
 
+test('a pass that has not yet read a cursor cannot adopt a newer one as its snapshot', async (t) => {
+  // The discriminating window is "manifest already walked, snapshot not yet read".
+  // Before the fix the cursor was read *after* the walk, so this pause landed exactly
+  // there: the older pass read the newer pass's cursor as its own starting point, the
+  // equal-snapshot check therefore found nothing to preserve, and the older manifest
+  // and its older timestamp overwrote the newer fingerprint (RED: the stored cursor
+  // carried the older walk's fingerprint with `scannedAt` 2026-10-03). Reading the
+  // snapshot before the walk removes that window, so the pause below lands before the
+  // walk and the older pass enumerates the same manifest the newer pass did.
+  const made = await world(t)
+  const lstat = fs.lstat
+  let entered
+  const paused = new Promise((resolve) => {
+    entered = resolve
+  })
+  let resume
+  const gate = new Promise((resolve) => {
+    resume = resolve
+  })
+  let intercepted = false
+  fs.lstat = async (path, ...args) => {
+    if (!intercepted && String(path).includes('/curation/cursor/')) {
+      intercepted = true
+      entered()
+      await gate
+    }
+    return lstat(path, ...args)
+  }
+  const older = scan(made, { now: new Date('2026-10-03') })
+  await paused
+  let newer
+  try {
+    await raw(made, `${made.binding.relativeDir}/Docs/new.md`, 'new')
+    newer = await scan(made)
+  } finally {
+    resume()
+    fs.lstat = lstat
+  }
+  await older
+  const stored = await readCurationCursor(made.dataRoot, made.binding.projectId)
+  assert.deepEqual(stored, newer.cursor)
+  assert.equal(stored.manifestFingerprint, newer.cursor.manifestFingerprint)
+  assert.equal(stored.scannedAt, newer.cursor.scannedAt)
+})
+
 test('record persistence programming defects remain exceptions', async (t) => {
   const made = await world(t)
   const open = fs.open

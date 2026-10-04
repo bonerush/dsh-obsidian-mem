@@ -642,9 +642,30 @@ release artifact. The versioning policy is in the README, under Development.
   and equal-prefix/retry defects 2/2. Identity ordering, findings byte caps and the
   compact/pretty persistence boundary add coverage for existing behavior. The first
   boundary fixture was incorrect and corrected; it is not counted as a product
-  defect. The final focused lane passed 115/115. Live host/model delivery, timing
+  defect. Live host/model delivery, timing
   optimality and historical run/commit limitations remain unchanged and disclosed;
   the controller runs the whole-branch gate after the follow-up tasks.
+  - **Fix round 1 corrected the cursor ordering the task review falsified.** The
+    conditional publication compared the re-read cursor against a snapshot that was
+    itself read *after* the manifest walk, so a pass that had already enumerated an
+    older manifest could read a newer pass's cursor as its own starting point; the
+    equal-snapshot check then had nothing to catch and the older fingerprint and its
+    older `scannedAt` overwrote the newer one. Measured in the review's isolated
+    probe: `newerFingerprint 4de77ac3…`, `storedFingerprint dc3a0af5…` (the older
+    walk's), `newerDate 2026-10-04`, `storedDate 2026-10-03`,
+    `overwroteNewerCursor: true`. The snapshot is now read before
+    `walkManifest`, which is what makes the equal-snapshot check mean "nobody
+    published between my snapshot and this write". Same-manifest progress and the
+    equal-prefix timestamp merge are unchanged, and the vault lock stays short.
+    RED/GREEN on the new case (*a pass that has not yet read a cursor cannot adopt a
+    newer one as its snapshot*, gated on the cursor-path `lstat`): against
+    `f22c982`'s scanner it fails with the stored cursor carrying the older
+    `manifestFingerprint e1946da1…` and `scannedAt 2026-10-03T00:00:00.000Z` where
+    the newer pass wrote `1bf8db01…` and `2026-10-04T00:00:00.000Z`; with the fix
+    it passes, and the focused lane (`test/curation-residual.test.js`,
+    `test/curation-proposals.test.js`, `test/curation-scan.test.js`,
+    `test/curation-view.test.js`, `test/curation-baseline.test.js`,
+    `test/tools.test.js`, `test/codex-mcp.test.js`) is **116/116**.
 
 - **Review claims remain exclusive across competing apply/reject reviewers**
   (Task 9). A private `0600` `.review-lock.sqlite` beside the existing proposal JSON
