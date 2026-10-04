@@ -625,6 +625,27 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Fixed
 
+- **Curation scanner/store residuals and selectable status** (Task 10): status and
+  scan now expose up to 200 pending `proposals.items` with only `proposalId`, `kind`,
+  bounded `reason` and `reviewOnly` (from the stored operation, including both forms
+  of near duplicate). The six tools and their inputs stay unchanged; choose an ID
+  from that listing for interactive review. Proposal bytes are fsynced privately
+  before exclusive atomic publication, and findings process every queue row for
+  retirement while retaining only metadata. Creation/replay accounting comes from
+  the publishing producer; `updated` remains empty because candidates are immutable.
+  Full titles drive near identity; legacy records are reinspected. Scan enumeration
+  uses the indexer's vault-relative depth, concurrent cursor updates preserve a
+  newer manifest or equal-prefix timestamp, and programming defects escape both
+  record-write catches. Local date formatting is shared without a new dependency.
+  New regressions failed before the changes: seven confirmed residual failures in
+  the initial focused run, cleanup registration 1/1, ToolRuntime/MCP selection 2/2,
+  and equal-prefix/retry defects 2/2. Identity ordering, findings byte caps and the
+  compact/pretty persistence boundary add coverage for existing behavior. The first
+  boundary fixture was incorrect and corrected; it is not counted as a product
+  defect. The final focused lane passed 115/115. Live host/model delivery, timing
+  optimality and historical run/commit limitations remain unchanged and disclosed;
+  the controller runs the whole-branch gate after the follow-up tasks.
+
 - **Review claims remain exclusive across competing apply/reject reviewers**
   (Task 9). A private `0600` `.review-lock.sqlite` beside the existing proposal JSON
   serializes claim read/check/replacement and release in short SQLite transactions.

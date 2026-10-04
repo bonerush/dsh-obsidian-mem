@@ -366,3 +366,76 @@ test('the marketplace plugin is complete, and its generated .mcp.json matches th
     assert.match(mcpConfig().mcpServers['obsidian-mem'].args[0], /codex\/server\.mjs$/)
   }
 })
+
+test('MCP curation returns the same bounded pending selection as the shared service', async (t) => {
+  const { saveCurationProposal, MAX_LIST_LIMIT } = await import('../lib/curation-proposals.js')
+  const { home, dsh, vault, repo } = world()
+  const client = await connect({
+    ...process.env,
+    HOME: home,
+    DSH_HOME: dsh,
+    OBSIDIAN_MEM_VAULT: vault,
+    OBSIDIAN_MEM_CWD: repo,
+  })
+  t.after(async () => {
+    try {
+      await client.close()
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+  const invoke = async (name, arguments_) => {
+    const answer = await client.request('tools/call', { name, arguments: arguments_ })
+    assert.equal(answer.result.isError, undefined, answer.result.content[0]?.text)
+    return JSON.parse(answer.result.content[0].text)
+  }
+  await invoke('mem_write', { type: 'doc', title: 'seed', body: 'source' })
+  const empty = await invoke('mem_admin', { action: 'curation', operation: 'status' })
+  assert.deepEqual(empty.result.proposals.items, [])
+  const dataRoot = join(dsh, 'data', 'obsidian-mem')
+  const common = {
+    dataRoot,
+    projectId: empty.result.projectId,
+    kind: 'near-duplicate',
+    sources: [],
+  }
+  const executable = await saveCurationProposal({
+    ...common,
+    itemKey: 'exec',
+    operation: {
+      kind: 'create-separate',
+      item: { title: 'candidate', body: 'SENTINEL-MCP-CANDIDATE' },
+    },
+  })
+  const finding = await saveCurationProposal({
+    ...common,
+    itemKey: 'scan-finding',
+    reviewOnly: true,
+    reason: 'review this title pair',
+  })
+  for (const operation of ['status', 'scan']) {
+    const answer = await invoke('mem_admin', { action: 'curation', operation })
+    assert.equal(
+      answer.result.proposals.items.find((row) => row.proposalId === executable.proposalId)
+        .reviewOnly,
+      false,
+    )
+    assert.deepEqual(
+      answer.result.proposals.items.find((row) => row.proposalId === finding.proposalId),
+      {
+        proposalId: finding.proposalId,
+        kind: finding.kind,
+        reason: finding.reason,
+        reviewOnly: true,
+      },
+    )
+    assert.equal(JSON.stringify(answer).includes('SENTINEL-MCP-CANDIDATE'), false)
+    assert.equal(JSON.stringify(answer).includes(home), false)
+  }
+  for (let index = 0; index < MAX_LIST_LIMIT; index += 1)
+    await saveCurationProposal({ ...common, itemKey: `limit-${index}`, reviewOnly: true })
+  const bounded = await invoke('mem_admin', { action: 'curation', operation: 'status' })
+  assert.equal(bounded.result.proposals.items.length, MAX_LIST_LIMIT)
+  assert.equal(bounded.result.proposals.pending, MAX_LIST_LIMIT + 2)
+  assert.equal(bounded.result.proposals.truncated, true)
+})

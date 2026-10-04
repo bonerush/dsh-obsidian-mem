@@ -272,7 +272,12 @@ test('one pass classifies active, exact, near, expired, broken-link and unexamin
   const result = await scan(world, binding, { ignoreGlobs: world.config.ignoreGlobs })
   assert.equal(result.complete, true)
   assert.equal(result.truncatedReason, null)
-  assert.ok(result.manifest.count >= result.entries.length)
+  assert.equal(
+    result.manifest.count,
+    (await manifestOf(world, binding)).filter((path) => path !== excluded && path !== dependency)
+      .length,
+  )
+  assert.equal(result.entries.length + result.counts.unexamined, result.manifest.count)
 
   const paths = result.entries.map((entry) => entry.path)
   for (const expected of [active, twinA, twinB, near, expired, linker]) {
@@ -338,7 +343,7 @@ test('one pass classifies active, exact, near, expired, broken-link and unexamin
   assert.equal(activeEntry.type, 'convention')
   assert.equal(activeEntry.title, '导出格式')
   assert.equal(activeEntry.description.includes('\n'), false)
-  assert.ok(activeEntry.description.length <= 200)
+  assert.ok(activeEntry.description.length <= 160)
 })
 
 test('the scan-vs-linter link matrix is exactly what the resolver comment states', async (t) => {

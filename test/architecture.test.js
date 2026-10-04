@@ -274,7 +274,7 @@ const BUDGETS = {
   // concept. The lines are those two functions plus the module comment that says why
   // a damaged view is a cache miss where a damaged cursor is an error.
   'lib/curation-state.js': 950,
-  // The Task 4 module (491 formatted lines at the Task 4 commit, 534 after the fix
+  // The Task 4 module (495 formatted lines at the Task 4 commit, 534 after the fix
   // round's comment corrections). Its measured-plus-30 rounded number would be 600;
   // 550 is deliberately inside that (measured plus 16), so — as with `brief.js` —
   // the next raise has to argue with this line rather than inherit the rounding.
@@ -341,7 +341,12 @@ const BUDGETS = {
   // the matrix's fixture does not contain, and the `resolver-truncated` comment says
   // which two halves the covering case asserts. Both are the finding's demand that a
   // comment not name a shape the matrix does not pin.
-  'lib/curation-scan.js': 1300,
+  // Task 10 raises this to 1350 (1314 formatted lines, plus 30 rounded to 50).
+  // The added lines preserve full-title near identity, explicitly rebuild legacy
+  // records, distinguish operational write failures from programming defects,
+  // and reject a stale cursor publication against another pass's snapshot.
+  // No module or layer is added; the local date formatter is shared at L0.
+  'lib/curation-scan.js': 1350,
   // The Task 3 module, on the same measured-plus-30 rule (1113 formatted lines,
   // 1115 with the two-line comment that makes the listing order intentional).
   // What the size buys: two proposal kinds with different operations, four

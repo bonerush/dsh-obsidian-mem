@@ -42,6 +42,14 @@ function gitEnvironment() {
  */
 export async function makeCurationWorld(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-curation-'))
+  let services = null
+  t.after(async () => {
+    try {
+      await services?.close()
+    } finally {
+      await rm(root, { recursive: true, force: true, maxRetries: 4 })
+    }
+  })
   const vault = join(root, 'vault')
   const repo = join(root, 'repo')
   const home = join(root, 'home')
@@ -52,17 +60,11 @@ export async function makeCurationWorld(t, options = {}) {
   await mkdir(home, { recursive: true })
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo, env: gitEnvironment() })
   const config = validateConfig({ vaultPath: vault, ...(options.config ?? {}) })
-  const services = createMemoryServices({
+  services = createMemoryServices({
     config,
     dataRoot,
     cwd: options.cwd ?? repo,
     home,
-  })
-  t.after(async () => {
-    // The services go first: `close()` awaits every memoized index handle, and a
-    // handle that is still open keeps a descriptor inside the tree being removed.
-    await services.close().catch(() => {})
-    await rm(root, { recursive: true, force: true, maxRetries: 4 })
   })
   return { root, vault, repo, home, dshHome, dataRoot, config, services }
 }

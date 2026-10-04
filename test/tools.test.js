@@ -118,7 +118,7 @@ const adminResult = (action, args = {}) => {
         scannedAt: null,
         examined: 0,
         counts: { entries: 0, exactGroups: 0, findings: 0, unexamined: 0 },
-        proposals: { total: 0, pending: 0, truncated: false, unreadable: [] },
+        proposals: { total: 0, pending: 0, items: [], truncated: false, unreadable: [] },
         truncated: null,
         autoEnabled: true,
       },
@@ -1242,4 +1242,61 @@ test('a changed-path hint the cap evicts is reported as a content-free diagnosti
   assert.equal(queued.length, MAX_CHANGED_PATHS)
   assert.equal(queued.includes(written.path), true)
   assert.equal(queued.includes(synthetic[0]), false)
+})
+
+test('curation exposes a bounded pending selection through real output validation', async (t) => {
+  const { saveCurationProposal, MAX_LIST_LIMIT } = await import('../lib/curation-proposals.js')
+  const made = await curationServices(t, { curationBounds: CURATION_TEST_BOUNDS })
+  const ctx = await toolbed(t)
+  registerTools(ctx, made.services)
+  const status = () => call(ctx, 'mem_admin', { action: 'curation', operation: 'status' })
+  const empty = await status()
+  assert.equal(empty.isError, false, empty.error?.message)
+  assert.deepEqual(empty.value.result.proposals.items, [])
+  const common = {
+    dataRoot: made.dataRoot,
+    projectId: made.binding.projectId,
+    kind: 'near-duplicate',
+    sources: [],
+  }
+  const executable = await saveCurationProposal({
+    ...common,
+    itemKey: 'executable',
+    operation: {
+      kind: 'create-separate',
+      item: { title: 'candidate', body: 'SENTINEL-CANDIDATE-BODY' },
+    },
+  })
+  const finding = await saveCurationProposal({
+    ...common,
+    itemKey: 'finding',
+    reviewOnly: true,
+    reason: 'review the title pair',
+  })
+  for (const operation of ['status', 'scan']) {
+    const answered = await call(ctx, 'mem_admin', { action: 'curation', operation })
+    assert.equal(answered.isError, false, answered.error?.message)
+    const rows = answered.value.result.proposals.items
+    assert.deepEqual(
+      rows.find((row) => row.proposalId === finding.proposalId),
+      {
+        proposalId: finding.proposalId,
+        kind: finding.kind,
+        reason: finding.reason,
+        reviewOnly: true,
+      },
+    )
+    assert.equal(rows.find((row) => row.proposalId === executable.proposalId).reviewOnly, false)
+    for (const row of rows)
+      assert.deepEqual(Object.keys(row).sort(), ['kind', 'proposalId', 'reason', 'reviewOnly'])
+    assert.equal(JSON.stringify(answered.value).includes('SENTINEL-CANDIDATE-BODY'), false)
+    assert.equal(JSON.stringify(answered.value).includes(made.vault), false)
+  }
+  for (let index = 0; index < MAX_LIST_LIMIT; index += 1)
+    await saveCurationProposal({ ...common, itemKey: `limit-${index}`, reviewOnly: true })
+  const bounded = await status()
+  assert.equal(bounded.isError, false, bounded.error?.message)
+  assert.equal(bounded.value.result.proposals.pending, MAX_LIST_LIMIT + 2)
+  assert.equal(bounded.value.result.proposals.items.length, MAX_LIST_LIMIT)
+  assert.equal(bounded.value.result.proposals.truncated, true)
 })
