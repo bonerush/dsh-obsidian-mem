@@ -1300,3 +1300,45 @@ test('curation exposes a bounded pending selection through real output validatio
   assert.equal(bounded.value.result.proposals.items.length, MAX_LIST_LIMIT)
   assert.equal(bounded.value.result.proposals.truncated, true)
 })
+
+test('the pending queue reports its own truncation, not the whole never-deleted store', async (t) => {
+  const { saveCurationProposal, markCurationProposal, MAX_LIST_LIMIT } =
+    await import('../lib/curation-proposals.js')
+  const made = await curationServices(t, { curationBounds: CURATION_TEST_BOUNDS })
+  const ctx = await toolbed(t)
+  registerTools(ctx, made.services)
+  const common = {
+    dataRoot: made.dataRoot,
+    projectId: made.binding.projectId,
+    kind: 'near-duplicate',
+    sources: [],
+    reviewOnly: true,
+  }
+  // Every record is durable and none is ever deleted, so the all-states listing passes
+  // the 200-row bound long before the pending one does. A flag latched on that listing
+  // would stay `true` for the rest of the project's life while `items` was complete —
+  // which is the contract all four shipped documents state the other way round.
+  for (let index = 0; index < MAX_LIST_LIMIT + 6; index += 1) {
+    const decided = await saveCurationProposal({ ...common, itemKey: `decided-${index}` })
+    await markCurationProposal({
+      binding: made.binding,
+      dataRoot: made.dataRoot,
+      proposalId: decided.proposalId,
+      state: 'retired',
+    })
+  }
+  const pending = []
+  for (let index = 0; index < 3; index += 1)
+    pending.push(await saveCurationProposal({ ...common, itemKey: `open-${index}` }))
+  const answer = await call(ctx, 'mem_admin', { action: 'curation', operation: 'status' })
+  assert.equal(answer.isError, false, answer.error?.message)
+  const queue = answer.value.result.proposals
+  assert.equal(queue.total, MAX_LIST_LIMIT + 9)
+  assert.equal(queue.pending, 3)
+  assert.equal(queue.items.length, 3)
+  assert.equal(queue.truncated, false, 'every pending row was returned, so nothing is truncated')
+  assert.deepEqual(
+    queue.items.map((row) => row.proposalId).sort(),
+    pending.map((record) => record.proposalId).sort(),
+  )
+})

@@ -1166,6 +1166,49 @@ release artifact. The versioning policy is in the README, under Development.
     is the two-drop cap case in `test/auto-capture.test.js`; the cap is unchanged, only
     the count it reports.
 
+- **The final follow-up review's findings land, and one of them was a contract the
+  shipped documents got wrong** (release-gate fix round). `proposals.truncated` was
+  `all.truncated || pending.truncated` while `items` is the **pending** selection, and
+  a proposal record is never deleted — so once a project had parked more than
+  `MAX_LIST_LIMIT` (200) candidates the flag latched on the all-states listing and
+  stayed `true` for the rest of the project's life, even when every pending row was
+  returned. All four shipped documents state the contract the other way round ("more
+  pending rows exist than were returned"). The reviewer's probe (206 records, 1
+  pending) measured `{total: 206, allTruncated: true, pending: 1, pendingTruncated:
+  false, reportedTruncated: true, itemsLength: 1}`. The projection now reports
+  `pending.truncated`; `total` still carries the all-states count. RED/GREEN: the new
+  case *the pending queue reports its own truncation, not the whole never-deleted
+  store* (`test/tools.test.js`, >200 retired records and 3 pending, through the real
+  tool output validation) fails against the previous projection with
+  `actual: true, expected: false` and passes after it.
+  - The remaining findings were documentation precision and are corrected in both
+    READMEs and both skill editions: `review-lock-unavailable` no longer reads as
+    "another review may be running" (a healthy competing review is answered
+    `proposal-not-current`; the guard is held only for one synchronous critical
+    section), "apply finishes the interrupted attempt" now says it rolls a
+    non-committed attempt back and a committed one forward, and the 24-hour cadence
+    sentence has its **automatic** qualifier back (an explicit `operation="scan"`
+    runs `force` and is not bound by it).
+  - `publishExclusive`'s JSDoc no longer promises a `'written'|'exists'` return it
+    cannot produce (it always returns `'written'` and throws `EEXIST` for the loser
+    of the exclusive `link`, which the caller branches on), the architecture budget
+    comment re-measures `lib/curation-scan.js` at 1324 formatted lines after the
+    cursor-order fix (1350 budget, unchanged), and the reject path's evidence match
+    is documented as exact for one candidate's own interrupted attempt and
+    deliberately conservative for the positional-key collision the reviewer named.
+  - **One platform limit is now disclosed where it ships.** `withClaimGuard` refuses
+    `review-lock-unavailable` when `O_NOFOLLOW` is not a usable integer, which is the
+    case for Node on Windows: every `apply` and `reject` refuses there, so curation
+    is read-only until a symlink-safe fallback ships. This is fail-closed and was
+    already stated in the task report, but reports are not shipped; `README.md`'s
+    failure-recovery table now carries the row and says to review on macOS or Linux.
+    Reads, writes and scans are unaffected. No such platform was run here — the
+    disclosure is from the code path and the constant's documented absence, not from
+    a measurement on Windows.
+  - Measured after this round, under a throwaway `DSH_HOME`: the Task 10 focused lane
+    `test/tools.test.js` green, and the controller's full `npm run check` is the gate
+    for the push.
+
 ### Changed
 
 - **Both READMEs and both portable skills now describe curation as a workflow a

@@ -260,11 +260,14 @@ for you:
   more pending rows exist than were returned; the user decides the listed ones and
   asks again. It says nothing about source notes having disappeared.
 - **A refusal is an answer to report, not a failure to retry blindly.**
-  `source-changed` leaves the proposal `pending` for another review;
-  `review-lock-unavailable` means another review may be running; and
-  `review-recovery-required` means an earlier attempt was interrupted after
-  publishing a note, so the user approves with `apply` to finish it — never a
-  rejection, and never something you resolve by editing notes.
+  `source-changed` leaves the proposal `pending` for another review; a healthy
+  competing review is answered `proposal-not-current`, while
+  `review-lock-unavailable` means the claim guard could not be taken at all
+  (another review inside its short critical section, or unusable guard storage);
+  and `review-recovery-required` means an earlier attempt was interrupted after
+  publishing a note, so the user approves with `apply` — which rolls that attempt
+  back if it never committed and forward if it did, then publishes the candidate.
+  That one is never a rejection, and never something you resolve by editing notes.
 - **A curation pass reads Markdown and makes no model call**, and it never merges,
   archives, supersedes, promotes or deletes a note. An exact-duplicate group is one
   displayed entry naming every path; no note is removed.

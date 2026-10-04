@@ -454,12 +454,15 @@ note.
 
 The command refuses rather than guessing, and each refusal is a code you can act
 on. `source-changed` means a source moved between the scan and the approval: the
-proposal stays `pending`, so review it again. `review-lock-unavailable` means the
-private claim guard could not be acquired safely — another review may be running, or
+proposal stays `pending`, so review it again. A *healthy* competing review — two
+people deciding the same proposal at once — is answered `proposal-not-current`;
+`review-lock-unavailable` is the different answer that the private claim guard could
+not be taken at all, which means another review is inside its short claim guard or
 the guard storage is unusable. `review-recovery-required` means this proposal has a
 partial or committed application already: a process died between publishing the note
-and recording the decision. Approving with `apply` finishes that interrupted
-attempt; rejecting is refused, because it would leave a published note behind a
+and recording the decision. Approving with `apply` resolves that attempt — rolling
+it back if it never committed, forward if it did — and then publishes the approved
+candidate; rejecting is refused, because it would leave a published note behind a
 `rejected` record.
 
 #### When a pass is incomplete
@@ -476,8 +479,10 @@ pass records a fresh due marker as it scans, so a later session start with an em
 hint queue answers `skipped` and the backfill waits. A project becomes due again in
 exactly three ways — a committed write queueing a changed-path hint (weighed against
 that queue, not the marker), your own `operation="scan"`, or the 24-hour marker
-expiring. So a vault larger than one pass advances at most once per 24 hours per
-project until a write queues a hint for it.
+expiring. So the automatic backfill of a vault larger than one pass advances at most
+once per 24 hours per project until a write queues a hint for it; an explicit
+`operation="scan"` is not subject to that bound, which is why the loop above tells
+you to repeat it.
 
 #### Automatic passes are host-specific
 
@@ -811,8 +816,9 @@ sandbox.
 | A plain directory stays read-only | It is not inside a Git repository, so the plugin will not add it to long-term memory on its own — an implicit first write binds Git repositories only. | `mem_admin(action="bind", mode="local")` to bind it explicitly; the binding is live for the same session. |
 | Memory is silently absent for a session | Any non-`bound` resolution means "no memory for this session" — by design, it never throws and never guesses. Reads never bind a repository, and a Git repository with no pointer is bound by its first write; a repository whose pointer or registry the plugin refuses to trust stays unbound until that is resolved. | Check `mem_admin(action="projects")` and the pointer file, then write once (a Git repository) or run `mem_admin(action="bind", mode="local")` (any directory) — both take effect in the same session. |
 | A curation proposal is `pending` and no note changed | That is the design: a suspected near duplicate or a model-proposed supersede is parked for review and never applied automatically. | `mem_admin(action="curation", operation="status")` lists the queue with an id per row; approve or reject one with `dsh-obsidian-mem-review --vault <absolute-path> <proposal-id>`. Rejecting touches no source note. |
-| A review says `review-recovery-required` | This proposal already has a partial or committed application: a process died between publishing the note and recording the decision, so rejecting it would leave a published note behind a `rejected` record. | Run the review again and approve with `apply <id>`, which finishes the interrupted attempt. Rejecting stays refused until that evidence is resolved. |
-| A review says `review-lock-unavailable` | The private claim guard could not be acquired safely — another review of the same project may be running, or the guard file is unreadable or on storage that cannot hold it. | Wait for the other review to finish and retry. If no review is running, inspect the data root; do not delete the guard while a review might be live. |
+| A review says `review-recovery-required` | This proposal already has a partial or committed application: a process died between publishing the note and recording the decision, so rejecting it would leave a published note behind a `rejected` record. | Run the review again and approve with `apply <id>`, which resolves that attempt — rolling it back if it never committed, forward if it did — and publishes the candidate. Rejecting stays refused until the evidence is resolved. |
+| A review says `review-lock-unavailable` | The private claim guard could not be taken at all: another review is inside its short claim guard, or the guard file is unreadable or on storage that cannot hold it. A healthy competing review of one proposal is answered `proposal-not-current` instead. | Wait a moment and retry; if it persists with no review running, inspect the data root. Do not delete the guard while a review might be live. |
+| A review on a machine without `O_NOFOLLOW` refuses with `review-lock-unavailable` for every proposal | The claim guard refuses to open a path it cannot prove is a regular, single-link file, and some platforms (Node on Windows) do not expose `O_NOFOLLOW`. The refusal is deliberate: the guard protects the only approval route. | Until a symlink-safe fallback ships, review curation proposals on macOS or Linux. Reads, writes and scans are unaffected. |
 | A review says `source-changed` | A source note was edited between the scan and the approval. The proposal stays `pending` rather than rebasing itself onto bytes nobody reviewed. | Review the new state and decide again. |
 | The brief no longer shows the compact navigation, or a claimed duplicate group disappeared | The stored view is a cache: one of its sources changed, vanished or became unreadable, so the brief fell back to the source-navigation path instead of injecting a stale line. | Nothing to repair. The next complete pass rebuilds it; `mem_admin(action="curation", operation="scan")` runs one now and reports `complete` and any truncation reason. |
 
