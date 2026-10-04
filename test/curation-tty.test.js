@@ -20,6 +20,7 @@ import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
 import {
+  curationProposalPath,
   readCurationProposal,
   saveCurationProposal,
   snapshotProposalSources,
@@ -287,6 +288,27 @@ test('a wrong proposal id exits non-zero and writes nothing', async (t) => {
   }
   assert.notEqual(answer.status, 0, answer.output)
   assert.match(answer.output, /proposal-missing/u)
+  assert.deepEqual(await readFile(seedPath), before)
+  assert.deepEqual(await publishedNotes(made), [])
+})
+
+test('a stored record the reader refuses is reported as unreadable, not as missing', async (t) => {
+  const made = await parked(t)
+  const id = made.proposal.proposalId
+  const seedPath = join(made.vault, ...made.seed.path.split('/'))
+  const before = await readFile(seedPath)
+  // Make the record genuinely unreadable rather than absent: the review module answers
+  // this same state as `proposal-unreadable`, and the command used to print
+  // `proposal-missing` — a false statement about a record that is sitting right there.
+  await writeFile(curationProposalPath(made.dataRoot, made.binding.projectId, id), '{ not json\n')
+  const answer = await runOnTty(made, ['--vault', made.vault, id], `apply ${id}`)
+  if (answer === null) {
+    t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
+    return
+  }
+  assert.notEqual(answer.status, 0, answer.output)
+  assert.match(answer.output, /proposal-unreadable/u)
+  assert.doesNotMatch(answer.output, /proposal-missing/u)
   assert.deepEqual(await readFile(seedPath), before)
   assert.deepEqual(await publishedNotes(made), [])
 })

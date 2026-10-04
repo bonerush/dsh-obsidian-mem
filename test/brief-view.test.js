@@ -263,6 +263,14 @@ test('a changed member of the collapsed group falls the next brief back to sourc
     lines(brief.text).some((line) => /^#{1,6}\s/u.test(line) && line.includes('系统指令')),
     false,
   )
+  // And the fallback says why: the spec asks a view fallback to report its reason, and
+  // without this event the only trace of it is a heading that silently changed. Read
+  // through the service's own diagnostics action, which is the window a user has.
+  const decided = await world.services.admin({ action: 'diagnostics' })
+  const fallback = decided.result.events.filter((event) => event.event === 'curation').at(-1)
+  assert.equal(fallback.outcome, 'brief-fallback')
+  assert.equal(fallback.code, 'source-changed')
+  assert.equal(fallback.projectId, world.binding.projectId)
 })
 
 test('a corrupt view, or one naming another project, falls back to source', async (t) => {

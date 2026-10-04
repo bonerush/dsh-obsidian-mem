@@ -288,7 +288,7 @@ Obsidian 应用程序代码。
 | `mem_write` | `type`、`title`、`body`（必填）；`tags`、`status`、`confidence`、`assertion`、`supersedes`、`id`、`idempotencyKey` | 写项目文档和记忆的权威途径。不带 `id` 时**创建**一条带新 id 的笔记；带已存在的 `id` 时更新。取代会校验旧 id，并把链接的两端都写上。 |
 | `mem_log` | `text`（必填）；`session`、`section`、`idempotencyKey` | 往今天的日志追加一条幂等条目；`section: "hot"` 则改为写热记忆文件的进行中区域。 |
 | `mem_brief` | — | 返回会话注入过的那份召回简报，方便你重读或审计预算。 |
-| `mem_admin` | `action`（必填）：`lint`、`index`、`bind`、`projects`、`promote`、`jobs`、`curation`、`diagnostics`；外加 `report`、`prune`（仅 lint）、`rebuild`（index）、`mode`（bind：`show`\|`local`\|`fork`\|`retain`）、`path`（promote）、`jobId`/`retry`（jobs）、`operation`（curation：`status`\|`scan`） | 低频维护。`lint` 默认只读，除非你传 `report: true`（写一条带日期的报告笔记）和/或 `prune: true`（删除过期快照）——这两者刻意保持独立。`curation` 读取或运行下文那条有界的整理回合；它永远不会应用某条待评审提案。`diagnostics` 是唯一什么都不读的动作：它返回**本进程**自己的决策环——最多 200 条事件，取值来自封闭集合 `capture`、`distill`、`index`、`bind`、`job`、`transaction`、`brief`、`skill`、`recall`（九类现在都会写入），每条带一个结局与机器标识，永不包含笔记正文、标题或提示词。因此一个窗口能回答那些否则必须靠复现才能回答的问题：一个已结束的回合为什么没被捕获（`capture` 事件给出原因）、蒸馏是真的没产出还是根本没跑（`distill`、`job`）、索引有没有跟上一次写入（`index`）、一次写入是提交了还是带着错误码被拒绝（`transaction`）。它不需要绑定、不读仓库，所以在其他所有动作都拒绝时它仍能回答；进程退出后它即清空——上文所述的独立本地日志会为用户自行生成的报告保留缩减后的事件。设 `DSH_OBSIDIAN_MEM_DEBUG=1` 可额外把每条事件以 `info` 级写进宿主日志；宿主是否显示这一行由宿主决定，不由本插件决定。 |
+| `mem_admin` | `action`（必填）：`lint`、`index`、`bind`、`projects`、`promote`、`jobs`、`curation`、`diagnostics`；外加 `report`、`prune`（仅 lint）、`rebuild`（index）、`mode`（bind：`show`\|`local`\|`fork`\|`retain`）、`path`（promote）、`jobId`/`retry`（jobs）、`operation`（curation：`status`\|`scan`） | 低频维护。`lint` 默认只读，除非你传 `report: true`（写一条带日期的报告笔记）和/或 `prune: true`（删除过期快照）——这两者刻意保持独立。`curation` 读取或运行下文那条有界的整理回合；它永远不会应用某条待评审提案。`diagnostics` 是唯一什么都不读的动作：它返回**本进程**自己的决策环——最多 200 条事件，取值来自封闭集合 `capture`、`distill`、`index`、`bind`、`job`、`transaction`、`brief`、`skill`、`recall`、`curation`（十类现在都会写入），每条带一个结局与机器标识，永不包含笔记正文、标题或提示词。因此一个窗口能回答那些否则必须靠复现才能回答的问题：一个已结束的回合为什么没被捕获（`capture` 事件给出原因）、蒸馏是真的没产出还是根本没跑（`distill`、`job`）、索引有没有跟上一次写入（`index`）、一次写入是提交了还是带着错误码被拒绝（`transaction`）。它不需要绑定、不读仓库，所以在其他所有动作都拒绝时它仍能回答；进程退出后它即清空——上文所述的独立本地日志会为用户自行生成的报告保留缩减后的事件。设 `DSH_OBSIDIAN_MEM_DEBUG=1` 可额外把每条事件以 `info` 级写进宿主日志；宿主是否显示这一行由宿主决定，不由本插件决定。 |
 
 `mem_write` 的 type 这样路由：
 
@@ -352,7 +352,10 @@ job 的回执里点出已经覆盖这条事实的那条笔记。显式 supersede
   都在 `$DSH_HOME/data/obsidian-mem/curation/` 下。每个视图条目都带着它据以构建的
   字节的 sha256；简报使用某条之前会重新哈希它代表的**每一个**路径——包括被折叠的
   完全重复组里的每一个成员——只要源缺失、被编辑、不可读或过大，简报就回退到视图
-  出现之前那套按源导航的路径。把整个目录删掉，代价只是一次扫描，别无其他。只有被标为
+  出现之前那套按源导航的路径。删掉那四份可重建的文档——游标、逐路径扫描记录、变更
+  路径队列和视图——代价只是一次扫描，别无其他。同一目录下的 `proposals/` 这一支
+  **不可重建**：它保存着每一条被停放的候选及其决定记录，删掉它就丢掉了扫描无法再
+  造出的评审工作（源笔记本身不受影响，但被停放的候选与它的理由一并消失）。只有被标为
   `complete` 的视图才会被注入：撞上任一上限的完整扫描发布 `complete: false`，而变更
   路径的扫描只允许合并进一个已经完整的视图（否则就是 `backfill-incomplete`），所以
   不完整的回填永远不会被当作项目的导航发布出去。
@@ -363,9 +366,11 @@ job 的回执里点出已经覆盖这条事实的那条笔记。显式 supersede
   `mem_admin` 扫描，**完全没有自动回合**。一趟最多检查 256 条笔记，并在整理工作累计
   500 ms 之后停止**开始**新的检查。撞上任一上限的一趟会如实说明（`truncated`、
   `complete: false`）并保住自己的位置：已经检查完的笔记留在记录里，没轮到的交给下一
-  趟。但下一趟**不是**下一次会话自己就会发生。两个自动触发只问项目是否到期，而被截断
-  的完整扫描在扫描过程中写下了新的到期标记，所以之后一次提示队列为空的会话开始只会
-  得到 `skipped`，回填就此等待。项目再次到期只有三条路径：一次提交的写入排队了一条
+  趟。但下一趟**不是**下一次会话自己就会发生。两个自动触发只问项目是否到期，而撞上
+  笔记数或时间上限的完整扫描会在扫描过程中写下新的到期标记，所以之后一次提示队列为空的
+  会话开始只会得到 `skipped`，回填就此等待。撞上**清单**上限（`manifest-budget`）的
+  一趟是例外：它有意不碰游标，因此不会写下新标记，下一次触发是否认为项目到期，取决于
+  此前已存下的那个标记。项目再次到期只有三条路径：一次提交的写入排队了一条
   **变更路径提示**——它只看那条队列、不看到期标记，所以在 24 小时之内就能让项目重新
   到期；你主动请求 `mem_admin(action="curation", operation="scan")`；或者 24 小时到期
   标记过期。已经完成的项目同样按这三条路径到期——所以比一趟更大的仓库，其回填在每个

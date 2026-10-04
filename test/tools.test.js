@@ -25,7 +25,7 @@
 // exactly as a DSH process without the package could not register the tools.
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
-import { readdir } from 'node:fs/promises'
+import { readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -34,8 +34,11 @@ import { Context } from '@deepseek-ai/cordis'
 import toolsPlugin, { defineTool } from '@deepseek-ai/dsh-tools'
 
 import { validateConfig } from '../lib/config.js'
+import { DEFAULT_MAX_MS, DEFAULT_MAX_NOTES } from '../lib/curation-scan.js'
 import {
+  MAX_CHANGED_PATHS,
   ackChangedSources,
+  curationChangedPath,
   enqueueChangedSource,
   readChangedSources,
 } from '../lib/curation-state.js'
@@ -783,6 +786,19 @@ test('mem_admin(action="diagnostics") answers through the real seam without a va
  */
 const CURATION_TEST_BOUNDS = Object.freeze({ maxNotes: 256, maxMs: 60_000 })
 
+test('the scan bounds the tool publishes to the model are the shipped defaults', () => {
+  // `TOOL_PARAMETERS.mem_admin.operation` is the model's only statement of the bound,
+  // and it names both numbers literally. Nothing else pinned them: a change to
+  // `DEFAULT_MAX_NOTES`/`DEFAULT_MAX_MS` could leave the published "256 notes / 500 ms"
+  // describing a bound the scanner no longer had, with a green suite.
+  assert.equal(DEFAULT_MAX_NOTES, 256)
+  assert.equal(DEFAULT_MAX_MS, 500)
+  assert.match(
+    TOOL_PARAMETERS.mem_admin.operation.description,
+    new RegExp(`\\(${DEFAULT_MAX_NOTES} notes / ${DEFAULT_MAX_MS} ms\\)`, 'u'),
+  )
+})
+
 test('curation status and scan answer their own bounded shape, and only their own parameters', async (t) => {
   const { services, diagnostics } = await curationServices(t)
   const ctx = await toolbed(t)
@@ -1179,4 +1195,51 @@ test('a pass whose view build fell back acknowledges nothing', async (t) => {
   const throughTool = await call(ctx, 'mem_admin', { action: 'curation', operation: 'status' })
   assert.equal(throughTool.isError, false, throughTool.error?.message)
   assert.deepEqual(await readEnqueued(), [queued.path])
+})
+
+test('a changed-path hint the cap evicts is reported as a content-free diagnostic', async (t) => {
+  // The cap is the one queue outcome a later pass does not repair by itself: a covered
+  // path is trusted by its record's presence rather than re-read, so a dropped hint for
+  // an edited, already-covered note leaves the view entry holding the pre-edit hash.
+  // Silence about the drop is what the spec forbids ("any truncation … is visible in
+  // the curation status"), and the writer is the only place that knows the count.
+  const { dataRoot, services, diagnostics, binding } = await curationServices(t, { notes: 1 })
+  const synthetic = Array.from(
+    { length: MAX_CHANGED_PATHS },
+    (unused, index) => `${binding.relativeDir}/Docs/合成-${String(index).padStart(4, '0')}.md`,
+  )
+  await writeFile(
+    curationChangedPath(dataRoot, binding.projectId),
+    `${JSON.stringify({ version: 1, projectId: binding.projectId, paths: synthetic, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+    'utf8',
+  )
+  // One committed write through the real service. Its enqueue merges the new path into
+  // a full queue, so exactly the oldest synthetic hint is evicted.
+  const written = await services.write({
+    type: 'convention',
+    title: '第五百一十三条',
+    body: '写满提示队列的那条正文。\n',
+  })
+  assert.equal(binding.kind, 'bound')
+  const dropped = diagnostics
+    .snapshot()
+    .events.filter(
+      (event) => event.event === 'curation' && event.outcome === 'changed-path-dropped',
+    )
+  assert.equal(dropped.length, 1, JSON.stringify(diagnostics.snapshot().events))
+  assert.equal(dropped[0].hits, 1)
+  assert.equal(dropped[0].projectId, binding.projectId)
+  // Content-free: a count, an outcome and the project — no dropped path, no note text.
+  assert.equal(dropped[0].code, undefined)
+  assert.equal(JSON.stringify(dropped[0]).includes(synthetic[0]), false)
+  assert.equal(JSON.stringify(dropped[0]).includes(written.path), false)
+  // And the disk vocabulary knows the outcome, so the drop is not persisted as `other`.
+  const persisted = encodeDiagnosticEvent(dropped[0], createAliases())
+  assert.equal(persisted.outcome, 'changed-path-dropped')
+  assert.equal(decodeDiagnosticEvent(persisted).outcome, 'changed-path-dropped')
+  // The newest hint is still queued, and the evicted one is gone.
+  const queued = await readChangedSources({ binding, dataRoot })
+  assert.equal(queued.length, MAX_CHANGED_PATHS)
+  assert.equal(queued.includes(written.path), true)
+  assert.equal(queued.includes(synthetic[0]), false)
 })

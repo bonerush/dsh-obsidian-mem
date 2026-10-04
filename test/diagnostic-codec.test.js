@@ -253,8 +253,17 @@ test('every curation outcome the bounded action emits survives the round trip', 
   const aliases = createAliases()
   // `failed` is emitted by `curateForBinding`'s per-finding refusal and by Task 6's
   // trigger catchers. It was absent from the outcome set, so every one of those was
-  // persisted as `other` — this case is what would have caught it.
-  const emitted = ['listed', 'scanned', 'skipped', 'failed']
+  // persisted as `other` — this case is what would have caught it. `brief-fallback`
+  // (`lib/brief.js`) and `changed-path-dropped` (`lib/services.js` and
+  // `lib/capture.js`) are the final wave's two additions.
+  const emitted = [
+    'listed',
+    'scanned',
+    'skipped',
+    'failed',
+    'brief-fallback',
+    'changed-path-dropped',
+  ]
   for (const outcome of emitted) {
     const encoded = encodeDiagnosticEvent({ seq: 1, at, event: 'curation', outcome }, aliases)
     assert.equal(encoded.outcome, outcome, `${outcome} is not coarsened`)

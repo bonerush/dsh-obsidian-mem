@@ -932,6 +932,41 @@ test('a crash after the first item resumes with only the unfinished second item'
   )
 })
 
+test('a replayed parked item keeps its proposal id in the receipt', async (t) => {
+  // A parked candidate writes no vault byte, so `appliedItems[].proposalId` is the only
+  // durable handle to its proposal. The replay branch re-reports the item as `skipped`
+  // from that record, and it used to drop the proposal id, so a resumed job's receipt
+  // said a parked item had been skipped without saying what it was parked as.
+  const f = await fixture(t)
+  const old = await seedDecision(f)
+  const items = [
+    itemFixture({ title: '停放的第一条', supersedesId: old.id }),
+    itemFixture({ title: '第二条结论' }),
+  ]
+  await writeJobAtomic(f.queueRoot, validatedJob(items))
+
+  const first = await processQueue(
+    queueOptions(f, {
+      beforeApply: (binding, current, item, index) => {
+        if (index === 1) throw new Error('injected-before-second-item')
+      },
+    }),
+  )
+  assert.equal(first.deferred, 1)
+  const interrupted = await jobOnDisk(f)
+  const parkedId = interrupted.appliedItems[0].proposalId
+  assert.match(parkedId, /^[0-9a-f]{64}$/u, 'the first item really was parked')
+
+  const resumed = await processQueue(queueOptions(f))
+  assert.equal(resumed.completed, 1)
+  const receipt = (await readReceipts(f)).at(-1)
+  const replayed = receipt.items[0]
+  assert.equal(replayed.skipped, true)
+  assert.equal(replayed.id, null)
+  assert.equal(replayed.path, null)
+  assert.equal(replayed.proposalId, parkedId, 'the replay still names the proposal')
+})
+
 test('a crash after a note write but before the progress record replays its receipt', async (t) => {
   const f = await fixture(t)
   const items = [itemFixture({ title: '第一条结论' }), itemFixture({ title: '第二条结论' })]

@@ -325,7 +325,7 @@ with an error that says the field was dropped by design.
 | `mem_write` | `type`, `title`, `body` (required); `tags`, `status`, `confidence`, `assertion`, `supersedes`, `id`, `idempotencyKey` | The authoritative way to write project documents and memories. Without `id` it **creates** a note with a fresh id; with an existing `id` it updates. Superseding verifies the old id and writes both sides of the link. |
 | `mem_log` | `text` (required); `session`, `section`, `idempotencyKey` | Appends one idempotent entry to today's log; `section: "hot"` targets the hot file's 进行中 zone instead. |
 | `mem_brief` | — | Returns the same recall brief the session injected, so you can re-read or audit the budget. |
-| `mem_admin` | `action` (required): `lint`, `index`, `bind`, `projects`, `promote`, `jobs`, `curation`, `diagnostics`; plus `report`, `prune` (lint only), `rebuild` (index), `mode` (bind: `show`\|`local`\|`fork`\|`retain`), `path` (promote), `jobId`/`retry` (jobs), `operation` (curation: `status`\|`scan`) | Low-frequency maintenance. `lint` is read-only unless you pass `report: true` (writes a dated report note) and/or `prune: true` (deletes aged snapshots) — the two are independent on purpose. `curation` reads or runs the bounded curation pass described below; it never applies a review proposal. `diagnostics` is the one action that reads nothing: it returns this process's own ring of decisions — at most 200 events, drawn from the closed set `capture`, `distill`, `index`, `bind`, `job`, `transaction`, `brief`, `skill`, `recall` (all nine emit today), each with an outcome and machine identifiers and never a note body, a title or a prompt. A window therefore answers the questions that otherwise need a reproduction: why a finished turn was not captured (the `capture` event names the reason), whether distillation produced nothing or was never attempted (`distill`, `job`), whether the index followed a write (`index`), and whether a write was committed or refused with a code (`transaction`). It needs no binding and no vault, so it still answers when every other action refuses, and it empties when the process exits — the separate local journal above preserves reduced events for the user-run report. Set `DSH_OBSIDIAN_MEM_DEBUG=1` to additionally emit each event through the host logger at `info` level; whether the host shows that line is the host's decision, not this plugin's. |
+| `mem_admin` | `action` (required): `lint`, `index`, `bind`, `projects`, `promote`, `jobs`, `curation`, `diagnostics`; plus `report`, `prune` (lint only), `rebuild` (index), `mode` (bind: `show`\|`local`\|`fork`\|`retain`), `path` (promote), `jobId`/`retry` (jobs), `operation` (curation: `status`\|`scan`) | Low-frequency maintenance. `lint` is read-only unless you pass `report: true` (writes a dated report note) and/or `prune: true` (deletes aged snapshots) — the two are independent on purpose. `curation` reads or runs the bounded curation pass described below; it never applies a review proposal. `diagnostics` is the one action that reads nothing: it returns this process's own ring of decisions — at most 200 events, drawn from the closed set `capture`, `distill`, `index`, `bind`, `job`, `transaction`, `brief`, `skill`, `recall`, `curation` (all ten emit today), each with an outcome and machine identifiers and never a note body, a title or a prompt. A window therefore answers the questions that otherwise need a reproduction: why a finished turn was not captured (the `capture` event names the reason), whether distillation produced nothing or was never attempted (`distill`, `job`), whether the index followed a write (`index`), and whether a write was committed or refused with a code (`transaction`). It needs no binding and no vault, so it still answers when every other action refuses, and it empties when the process exits — the separate local journal above preserves reduced events for the user-run report. Set `DSH_OBSIDIAN_MEM_DEBUG=1` to additionally emit each event through the host logger at `info` level; whether the host shows that line is the host's decision, not this plugin's. |
 
 `mem_write` types route like this:
 
@@ -401,8 +401,13 @@ curation work. It is deliberately weaker than the memory layer around it:
   the bytes it was built from; before a brief uses one it re-hashes every path it
   stands for — including every member of a collapsed exact-duplicate group — and
   a missing, edited, unreadable or oversized source makes the brief fall back to
-  the source-navigation path it used before the view existed. Deleting the whole
-  directory costs one scan and nothing else. A view is injected only when it is
+  the source-navigation path it used before the view existed. Deleting those four
+  rebuildable documents — the cursor, the per-path records, the changed-path queue
+  and the view — costs one scan and nothing else. The `proposals/` subtree of the
+  same directory is **not** rebuildable: it holds every parked candidate and its
+  decision record, so deleting it discards review work that no scan can recreate
+  (the source notes are untouched, but the parked candidate and its reason are
+  gone). A view is injected only when it is
   marked `complete`: a full pass that stopped at either bound publishes
   `complete: false`, and a changed-path pass may merge only into a view that is
   already complete (`backfill-incomplete` otherwise), so a partial backfill can
@@ -418,9 +423,13 @@ curation work. It is deliberately weaker than the memory layer around it:
   (`truncated`, `complete: false`) and keeps its position: the notes it finished
   are recorded and the ones it never reached are picked up by the next pass. That
   next pass is **not** the next session by itself. Both automatic triggers ask only
-  whether the project is due, and a truncated full pass records a fresh due marker
-  as it scans, so a later session start with an empty hint queue answers `skipped`
-  and the backfill waits. A project becomes due again in exactly three ways: a
+  whether the project is due, and a full pass truncated by the note or time bound
+  records a fresh due marker as it scans, so a later session start with an empty hint
+  queue answers `skipped` and the backfill waits. A pass truncated by the *manifest*
+  bound (`manifest-budget`) is the exception: it deliberately leaves the cursor
+  alone, so no fresh marker is written and whether the next trigger finds the project
+  due is decided by whatever marker was already stored. A project becomes due again
+  in exactly three ways: a
   committed write queues a **changed-path hint**, which is weighed against that
   queue and not against the marker, so it re-opens the project well inside the 24
   hours; you request `mem_admin(action="curation", operation="scan")`; or the

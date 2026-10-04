@@ -110,8 +110,12 @@ release artifact. The versioning policy is in the README, under Development.
     rather than the pseudo-terminal Task 7's cases create.
   - **Known limitation — the backfill of a vault larger than one pass advances at most
     once per 24 hours per project until a write hints it** (recorded in fix round 1 under
-    controller ruling R45). The automatic triggers pass exactly `{dueOnly: true}`
-    (`lib/index.js`, `codex/session-start.mjs`), and `isCurationDue` reads only the
+    controller ruling R45). The *due* automatic triggers pass `{dueOnly: true}` and
+    nothing else on the DSH session-activity half, while Codex's `SessionStart` passes
+    `{dueOnly: true, maxNotes: 256, maxMs: 500}`; the DSH write-path trigger passes
+    `changedPaths` instead and is weighed against the hint queue rather than the marker
+    (`lib/index.js`, `codex/session-start.mjs`), so "exactly `{dueOnly: true}`" was
+    never true of the trigger set. `isCurationDue` reads only the
     cursor's `scannedAt` (`lib/services.js`), which a truncated full pass writes fresh as
     it scans. So such a pass keeps its position but does **not** resume on the next
     eligible session: with an empty hint queue the next `dueOnly` trigger answers
@@ -126,9 +130,14 @@ release artifact. The versioning policy is in the README, under Development.
     write `{status: 'scanned', complete: true}`. The knob is the test seam
     (`maxNotes: 1`), standing in for a vault larger than one batch; the reviewer's route,
     removing the changed-path document after a truncated pass, reproduces the same two
-    steps. The opposite direction is measured as well: while a hint **is** queued, a vault
-    larger than one batch runs a pass on every eligible session start rather than once per
-    24 h (the hook probe above, which had to remove the cursor to measure a single pass).
+    steps. A full pass cut by the *manifest* bound is the exception the same code shows:
+    `truncated !== 'manifest-budget'` gates the cursor write, so that pass leaves the
+    stored marker exactly as it was (`lib/curation-scan.js:1154`). **The other direction
+    is source-inspected, not measured:** `due = force || local.length > 0 ||
+    isCurationDue(cursor)` (`lib/services.js`) makes a queued hint due whatever the marker
+    says, but no run in these records measures a pass on every eligible session start
+    while a hint is queued — the hook probe above removed the cursor to measure a single
+    pass, so it does not show that.
     **The trigger cadence is deliberately unchanged** — the plan's Task 6 step 3 says only
     that "Background DSH passes may continue incomplete cursors while the worker is
     active", which permits this, and changing behaviour inside a documentation fix round
@@ -181,7 +190,14 @@ release artifact. The versioning policy is in the README, under Development.
   claim while the review whose bytes were moved is still running — a case drives that
   ordering and observes two claims for one proposal and two applies — and what still
   leaves one note and one `applied` record is the shared idempotency key, which replays
-  the winner's transaction for the second claimant. Measured on this round's tree, every
+  the winner's transaction for the second claimant. **The same window has a second
+  outcome the idempotency key does not repair, disclosed here rather than left to be
+  found:** a third claimant that decides `reject` can mark the record `rejected` while
+  the review whose claim bytes were moved is still applying, so an apply racing a reject
+  at three reviewers can leave a published note behind a `rejected` record. The key makes
+  two *applies* one note; it does not make an apply and a reject agree. The review
+  command is TTY-only and decides one proposal per run, which is what keeps this a
+  three-way race rather than a routine one. Measured on this round's tree, every
   run under a throwaway `DSH_HOME`: `node --test test/curation-review.test.js
   test/curation-cli.test.js test/curation-tty.test.js test/transaction.test.js
   test/architecture.test.js` → 92 tests / 92 pass / 0 skipped / 0 fail, and `npm test` →
@@ -303,8 +319,8 @@ release artifact. The versioning policy is in the README, under Development.
   decide, its findings are a subset of the linter's; for a target it cannot decide —
   any slash-bearing target that does not name a path under this project, and
   everything when the enumeration failed or was truncated — the scan reports nothing
-  and the linter may still report it.** The probe found eight rows where the scan is
-  silent and the linter reports a dead link, in two shapes. Six are slash-bearing
+  and the linter may still report it.** The probe found nine rows where the scan is
+  silent and the linter reports a dead link, in three shapes. Six are slash-bearing
   targets outside the project prefix, answered `true` before any name is looked at:
   `[[Docs/nomatch]]` (nothing named `nomatch` anywhere), `[[Methods/并不存在]]`,
   `[[Docs/txt.txt]]`, `[[Docs/LICENSE]]`, `[[other/LICENSE]]` and `[[Other/a]]`,
@@ -313,14 +329,22 @@ release artifact. The versioning policy is in the README, under Development.
   carrier is the project-root `README` one directory above the linking note and so
   out of reach of the linter's directory-bound candidates, and the project-prefixed
   `[[<project>/Other/a]]`, where those candidates miss while the scan answers through
-  the `a` of `<project>/Docs/a/a`. A ninth row, the silent/silent `[[LICENSE]]`, is
-  where the attribution is not written from the fixture but probed: the linter's own
-  rule, given the project-root copy alone, answers `false` — asserted in the covering
-  case — so its `true` on that row is the vault-root copy's.
+  the `a` of `<project>/Docs/a/a`. The ninth is the unconditional dot: a bare
+  `[[nomatch.png]]` names nothing anywhere and `lintVault` reports it dead, while the
+  scan's last-segment branch answers `true` before it consults any name, because its
+  name set holds only dot-free stems. The covering case asserts that whole matrix,
+  scan against `lintVault`, row by row, nineteen rows in all (`nine` silent/dead,
+  `eight` silent/silent, `two` dead/dead). The silent/silent `[[LICENSE]]` row is the
+  one whose *attribution* is probed rather than written down, and the final wave
+  corrected the direction of that probe: both surfaces' `true` is carried by the
+  extension-less `<project>/Docs/LICENSE` **beside the linking note** — the linter's
+  own directory-append candidate — not by any vault-root `LICENSE`, which this
+  fixture does not contain. The asserted probes are that the project-root copy alone
+  answers `false`, that the beside-note copy alone answers `true`, and that
+  `['LICENSE']` alone answers `true` only as what a vault-root copy *would* answer.
   `lintVault`'s `filePaths` is every swept *file* (not a `.md`-only
   note set), so the linter's own answer for those targets is a real dead link and the
-  scan's silence is the safe direction. The covering test asserts the whole matrix,
-  scan against `lintVault`, row by row, eighteen rows in all.
+  scan's silence is the safe direction.
   A directory that either half of that universe cannot be enumerated in makes the
   resolver silent rather than guessing, and the pass now says so instead of
   certifying what it did not read: a `readdir` refused for anything but `ENOENT`
@@ -354,7 +378,10 @@ release artifact. The versioning policy is in the README, under Development.
   file the linter cannot reach" is replaced by the two shapes the matrix asserts: a
   slash-bearing target outside the project prefix (`[[Other/a]]` among them, basename
   match and all) and the last-segment branch's own under-report (the bare `[[README]]`,
-  plus the project-prefixed `[[<project>/Other/a]]`). The matrix grew from thirteen
+  plus the project-prefixed `[[<project>/Other/a]]`). That round's own rewritten
+  sentence still credited a **vault-root** `LICENSE` the fixture does not hold; the
+  final whole-branch wave below deleted it, named the beside-note carrier and added the
+  third silence shape. The matrix grew from thirteen
   asserted rows to eighteen, including two agreement rows for a plain extension-less
   file and a `.png`; `lib/note-health.js` and this entry carry the same account. Two
   deferred Minors went with them: the file-bound case now asserts the persisted
@@ -362,7 +389,9 @@ release artifact. The versioning policy is in the README, under Development.
   cursor exists, and the `resolver-truncated` comment states that the missing link
   finding is not a deferral — an unchanged note is verified by its record's presence
   and never re-read, so the finding stays absent until the linking note's own bytes
-  change, which the same case asserts with a second whole-universe pass.
+  change, which the same case asserts with a second whole-universe pass (the final wave
+  added the other half: editing the note and asking a changed-path pass brings the
+  finding back).
   Measured at the fifth fix round: `npm test` 835 tests / 834 pass / 1 skipped / 0 fail,
   and the covering pair `node --test test/curation-scan.test.js test/lint.test.js`
   52 tests / 52 pass under a fresh `mktemp -d` `DSH_HOME`.
@@ -387,9 +416,17 @@ release artifact. The versioning policy is in the README, under Development.
   stored entry by its own path and print each duplicate pair as two lines until the
   next full pass. The document holds at most **2000** displayed entries
   (`VIEW_ENTRY_LIMIT`), a bound applied to the grouped list so it can never split a
-  collapsed group or drop one of its alternative paths; a scan that examined more
-  current facts than that keeps the first entries in path order, which bounds the
-  projection and leaves the scan's own `complete` flag untouched. Historical
+  collapsed group or drop one of its alternative paths. Whether that count cut or the
+  768 KiB compact-size bound decides first is a property of the entries rather than a
+  constant, and the final wave measured both ends: 2000 minimal entries — one-character
+  path, type and title, empty description, a sha256 `exactKey` so none of them group —
+  serialize to 673 878 bytes and stay under the bound, while 2000 entries carrying a
+  real vault path, title and description serialize to 1 287 878 and are refused as
+  `view-oversize` before the count can cut. So the count bound is a backstop for
+  unusually small documents, not the cut a real project meets — a scan that examined
+  more current facts than that keeps the first entries in path order, which bounds the
+  projection and leaves the scan's own `complete` flag untouched, but the earlier
+  sentence here described that cut as the one a large project meets. Historical
   statuses are excluded at build time, as
   current search already excludes them. A full pass replaces the view; a
   changed-path pass merges into a view that is already complete and recomputes the
@@ -873,6 +910,113 @@ release artifact. The versioning policy is in the README, under Development.
   be visible rather than smuggled in with them. Measured on this change: three
   back-to-back `npm test` runs, identical totals **903 tests / 902 pass / 1 skipped / 0
   fail**.
+
+- **The whole-branch review's findings land in one wave, and two of them were behaviour
+  rather than prose** (final fix wave). The automatic recall entrance now actually reads
+  the view it writes, a filesystem failure at the view path is a fallback instead of a
+  throw that skipped every finding, and the changed-path cap's eviction is reported.
+  - **`lib/index.js` consumes the stored view for DSH's own brief.** It handed
+    `registerHooks` the raw `buildBrief`, and `lib/hooks.js` called it with no
+    `curationView`; only `services.brief` passed one. So on DSH the view was written by
+    every pass and read by nobody — the automatic recall entrance its module header says
+    it exists for. The assembly now reads `readCurationView({dataRoot, projectId})` and
+    passes `curationView: view?.complete === true ? view : null`, mirroring
+    `services.brief`, and passes the diagnostics ring so the brief-time verification
+    fallback is reported. `test/curation-session-brief.test.js` mounts the shipped
+    `apply` on a real Cordis context, drives a real `agent/pre-step`, and asserts both
+    halves: the injected brief carries the `记忆视图（引用数据）` section and the view's
+    bounded description, and one changed byte falls it back to the source section. The
+    first case is RED against the un-wired `d73d337` (measured: 1 pass / 1 fail).
+  - **A raw `fs` failure at the view path is a fallback, not a throw.** `buildCurationView`
+    caught only `CurationStateError`, while `writePrivateJson` rethrows an `fs.open`/
+    `fs.rename` failure unchanged. With a directory where `<dataRoot>/curation/view/
+    <projectId>.json` belongs, the build threw a plain `EISDIR` out of
+    `curateForBinding` — before `recordCurationFindings` and the acknowledgement — so that
+    project's automatic passes failed on every trigger and its findings never became
+    proposals. The catch is now unconditional and answers
+    `fallback`/`view-unwritable:${code}`; `test/curation-view.test.js` adds the failing
+    case (RED against `d73d337`: `Error: EISDIR: illegal operation on a directory, rename
+    …`). This also closes the deferred "untested `view-oversize`/`view-unwritable`" item
+    for the raw-`fs` route; `view-oversize` was already covered by the injected-build case
+    in `test/tools.test.js`.
+  - **The changed-path cap's drop is visible.** `MAX_CHANGED_PATHS = 512` evicts the
+    oldest hint and returns `dropped`; both callers discarded it, so the spec's "any
+    truncation … is visible in the curation status" was violated. `queueCurationHint`
+    (`lib/services.js`) and the queue worker's copy (`lib/capture.js`) now record a
+    content-free `curation` diagnostic — `outcome: 'changed-path-dropped'`, `hits: n`,
+    the project id, and no path or note text — and the codec's closed outcome set and its
+    two test lists carry the new token. `test/tools.test.js` fills the durable queue to
+    its cap, commits one real write through the service, and asserts one event with
+    `hits: 1`, the newest hint still queued and the evicted one gone (RED against
+    `d73d337`: no `curation` event at all). **The two comments that justified the drop are
+    corrected:** a full pass does *not* re-read a covered path (it trusts the record's
+    presence), so a dropped hint for an edited, already-covered note leaves the stored
+    record and the view entry holding the pre-edit hash and the brief falls back until
+    that path is queued again — the cap is unchanged, the claim is not.
+  - **Both READMEs no longer promise that deleting `curation/` costs one scan and nothing
+    else.** That directory also holds the durable proposal store at `curation/proposals/
+    <projectId>/`, so the sentence is now scoped to the four rebuildable documents — the
+    cursor, the per-path scan records, the changed-path queue and the view — and states
+    plainly that `proposals/` is not rebuildable and that deleting it discards review work
+    no scan recreates. `README.i18n.yaml` carries the re-recorded blob hashes of both
+    sides.
+  - **Nine prose and count claims corrected, each against a probe or the code.** (i) The
+    link-matrix attribution: both surfaces' `true` for `[[LICENSE]]` is carried by
+    `<project>/Docs/LICENSE` beside the linking note, not by a vault-root copy the fixture
+    does not contain; the resolver comment, the covering case and the Task 2 entry above
+    now say so, and the case asserts the three resolver probes directly. (ii) The matrix's
+    silent-scan/dead-lint count was stated as seven and the asserted rows were eight; the
+    dot-bearing row makes it nine, and the test comment, the resolver comment,
+    `lib/note-health.js` and the Task 2 entry now name three shapes and nineteen rows.
+    (iii) `lib/curation-scan.js`'s "the covering test asserts both halves" over-claimed:
+    the second half — editing the linking note and asking a changed-path pass brings the
+    dead link back — is now asserted in `test/curation-scan.test.js`. (iv) The READMEs
+    listed nine diagnostics events where the code holds ten (`curation`); both now say
+    ten. (v) `lib/curation-proposals.js` said a kind outside its review set "is an error"
+    while the code counts it in `skipped` and continues; the prose matches the code, and
+    the stale state-finding parenthetical gained `enumeration-failed` and
+    `resolver-truncated`. (vi) `lib/brief.js`'s "the coverage answer is about the whole
+    view, never about the slice" was contradicted by the caller reading `renderedPaths`,
+    and "can only make the selection shorter" had the sign backwards (the `+ 3` over-counts
+    the last line by one, but the view section's 14-code-point heading is never charged, so
+    the prefix can run *longer*); both now say what the code does. (vii) The READMEs' "a
+    truncated full pass records a fresh due marker" is false for `manifest-budget`, which
+    deliberately leaves the cursor alone; both qualify it. (viii) This entry's own cadence
+    paragraph said the triggers pass "exactly `{dueOnly: true}`" (Codex also passes
+    `maxNotes`/`maxMs`, the DSH write trigger passes `changedPaths`) and that "the opposite
+    direction is measured as well" (no run measures it); both corrected, the second as
+    source-inspected. (ix) The `VIEW_ENTRY_LIMIT` sentence described a cut a real project
+    never meets; measured, 2000 minimal entries are 673 878 compact bytes against the
+    768 KiB bound while 2000 realistic ones are 1 287 878 and are refused as
+    `view-oversize` first.
+  - **Three smaller fixes with tests.** `lib/curation-cli.js` answered a stored record it
+    cannot read as `proposal-missing` — a false statement about a record that is there —
+    where the review module answers `proposal-unreadable`; `test/curation-tty.test.js`
+    drives the command over a real pty against a corrupt record and asserts the code.
+    `lib/tool-schema.js` publishes "256 notes / 500 ms" to the model and
+    `DEFAULT_MAX_NOTES`/`DEFAULT_MAX_MS` were pinned by no test;
+    `test/tools.test.js` now asserts both constants and that the published description
+    contains them. `lib/capture.js` re-reported an already-parked item as
+    `skipped: true` without its `proposalId`, losing the one handle to the proposal on a
+    replay; the field is carried through. The width-3 apply/reject race is disclosed
+    beside the existing claim limit (above and in `lib/curation-review.js`): an apply
+    racing a reject at three reviewers can still leave a published note behind a
+    `rejected` record, which the shared idempotency key does not repair.
+  - Measured on this wave, every run under a fresh `mktemp -d` `DSH_HOME`: `npm run
+    check` **exit 0** — lint, format, types, `prepack` and `pack:check` — with the full
+    suite at **923 tests / 922 pass / 1 skipped / 0 fail** (916/915/0/1 before the
+    wave), `verify-pack: OK` (16 required assets, 6 tools) and `verify-tarball: OK` (61
+    entries, 51 lib modules — no new module, so the archive is the size it was);
+    `git diff --check` clean. The new cases are
+    `test/curation-session-brief.test.js` (2), the raw-`fs` fallback case, the
+    cap-diagnostic case, the replayed-parked-item case, the `proposal-unreadable` CLI
+    case and the scan-bounds case, plus the changed-path-return assertion (an added
+    assertion, not a new case). The four falsifications are recorded above; the wave's
+    report (`.superpowers/sdd/2026-10-03-automatic-memory-curation/
+    final-wave-report.md`) carries the raw command output. **Unverified:** the queue
+    worker's own copy of the cap diagnostic (`lib/capture.js`) is the same code as the
+    service's but no case drives a job whose committed paths reach 512 hints — the
+    codec round-trip case pins the outcome's vocabulary on the service path only.
 
 ## 0.1.10 — 2026-09-29
 

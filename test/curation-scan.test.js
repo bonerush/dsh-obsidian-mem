@@ -393,6 +393,7 @@ test('the scan-vs-linter link matrix is exactly what the resolver comment states
     'Other/a',
     `${project}/Other/a`,
     'README',
+    'nomatch.png',
     `${project}/Docs/txt.txt`,
     `${project}/Docs/图.png`,
     '并不存在',
@@ -417,8 +418,8 @@ test('the scan-vs-linter link matrix is exactly what the resolver comment states
   )
 
   // The probe matrix, run against this fixture and asserted row by row: `DEAD` is
-  // a reported finding, `silent` is none. Seven rows have the scan silent and the
-  // linter dead, in two groups. `Docs/nomatch`, `Methods/并不存在`, `Docs/txt.txt`,
+  // a reported finding, `silent` is none. Nine rows have the scan silent and the
+  // linter dead, in three shapes. `Docs/nomatch`, `Methods/并不存在`, `Docs/txt.txt`,
   // `Docs/LICENSE`, `other/LICENSE` and `Other/a` share the first reason: a
   // slash-bearing target that does not start with this project's directory is
   // answered `true` before any name is looked at, so that silence needs no basename
@@ -429,18 +430,22 @@ test('the scan-vs-linter link matrix is exactly what the resolver comment states
   // `${project}/Docs/txt.txt` and `${project}/Docs/图.png` rows are the plain-file
   // agreement: both surfaces hold them, so both are silent.
   //
-  // The last two silence rows are about the basename branch itself rather than the
+  // Two of the silence rows are about the basename branch itself rather than the
   // prefix one. `${project}/Other/a` does start with this project's directory, so
   // that branch never answers and the branch that does is the last-segment one,
   // reading the `a` of `${project}/Docs/a/a` while the linter's two candidates both
   // miss — the one-directional under-report this resolver allows. `[[README]]` is
   // its bare case: the name's only carrier is `${project}/README`, one directory
   // above the linking note and so unreachable for the linter's directory-bound
-  // rule, and the scan answers `true` on it. `[[LICENSE]]` is the bare case that
-  // does *not* diverge — both surfaces are silent, the linter through the vault-root
-  // copy, which the resolver assertions at the end of this case re-probe directly.
-  // Every row is probed rather than described; a comment that went further than
-  // this matrix is the failure it exists to prevent.
+  // rule, and the scan answers `true` on it.
+  //
+  // The third shape is the unconditional dot: `nomatch.png` names nothing anywhere
+  // and the linter reports it dead, while the scan's last-segment branch answers
+  // `true` before it consults any name, because `names` holds only dot-free stems.
+  // The bare `[[LICENSE]]` row is the case that does *not* diverge — both surfaces
+  // are silent — and the resolver assertions at the end of this case re-probe which
+  // file carries both answers. Every row is probed rather than described; a comment
+  // that went further than this matrix is the failure it exists to prevent.
   const expected = [
     ['Docs/nomatch', 'silent', 'DEAD'],
     ['Methods/并不存在', 'silent', 'DEAD'],
@@ -456,6 +461,7 @@ test('the scan-vs-linter link matrix is exactly what the resolver comment states
     ['Other/a', 'silent', 'DEAD'],
     [`${project}/Other/a`, 'silent', 'DEAD'],
     ['README', 'silent', 'DEAD'],
+    ['nomatch.png', 'silent', 'DEAD'],
     [`${project}/Docs/txt.txt`, 'silent', 'silent'],
     [`${project}/Docs/图.png`, 'silent', 'silent'],
     ['并不存在', 'DEAD', 'DEAD'],
@@ -489,20 +495,33 @@ test('the scan-vs-linter link matrix is exactly what the resolver comment states
       [linker.path, inside],
     ],
   )
-  // The two attributions the prose above rests on, probed directly instead of
-  // reasoned about, because a claim that names which file carried an answer is the
-  // exact shape this case exists to keep pinned. `LICENSE` sits at the vault root
-  // *and* one directory above the linker: the linter's own rule reaches only the
-  // vault-root copy, so its `true` above is that copy's, which is why the row is a
-  // limit. `README`'s only carrier is the project-root copy, which the same rule
-  // cannot reach at all, and that is the row that diverges.
+  // The attributions the prose above rests on, probed directly instead of reasoned
+  // about, because a claim that names which file carried an answer is the exact shape
+  // this case exists to keep pinned. Both surfaces' `true` on the `[[LICENSE]]` row is
+  // carried by the extension-less file *beside the linking note*: the linter's own rule
+  // answers `false` given the project-root copy alone and `true` given the beside-note
+  // copy alone, and the fixture has no vault-root `LICENSE` at all — the `['LICENSE']`
+  // probe below is what a vault-root copy *would* answer, asserted as that and nothing
+  // more. Neither answer rests on the project-root copy.
   assert.equal(createVaultLinkResolver([`${project}/LICENSE`])('LICENSE', linker.path), false)
+  assert.equal(createVaultLinkResolver([`${project}/Docs/LICENSE`])('LICENSE', linker.path), true)
   assert.equal(createVaultLinkResolver(['LICENSE'])('LICENSE', linker.path), true)
   assert.equal(
     createVaultLinkResolver([`${project}/LICENSE`, 'LICENSE'])('LICENSE', linker.path),
     true,
   )
+  // `README`'s only carrier is the project-root copy, which the linter's directory-bound
+  // candidates cannot reach at all, and that is the row that diverges.
   assert.equal(createVaultLinkResolver([`${project}/README`])('README', linker.path), false)
+  // The dot row is a real dead link on the linter's side rather than a rule of its own:
+  // with a candidate named `nomatch.png` beside the linking note the same rule resolves
+  // the target, and the fixture holds no such file — so its `false` above is the absent
+  // file, and the scan's silence is the last-segment branch never consulting a dotted
+  // name.
+  assert.equal(
+    createVaultLinkResolver([`${project}/Docs/nomatch.png`])('nomatch.png', linker.path),
+    true,
+  )
 })
 
 test('a directory the resolver cannot enumerate makes it silent, never a false dead link', async (t) => {
@@ -717,6 +736,22 @@ test('a truncated link universe makes the resolver silent rather than confident'
   assert.deepEqual(
     wholeAgain.findings.filter((finding) => finding.kind === 'resolver-truncated'),
     [],
+  )
+  // The second half of the same sentence, and the reason the absence above is a price
+  // rather than a loss: editing the linking note's bytes makes its stored record stale,
+  // and a changed-path pass re-inspects it — this time against the whole resolver
+  // universe — so the dead link the truncated pass could not name comes back.
+  const before = await readFile(vaultFile(world, linker.path), 'utf8')
+  await writeFile(vaultFile(world, linker.path), `${before}\n另见 [[${target}]]。\n`, 'utf8')
+  const changed = await scan(world, binding, {
+    dataRoot: join(world.root, 'bounded'),
+    changedPaths: [linker.path],
+  })
+  assert.deepEqual(
+    changed.findings
+      .filter((finding) => finding.kind === 'dead-wikilink')
+      .map((finding) => [finding.path, finding.target]),
+    [[linker.path, target]],
   )
 })
 

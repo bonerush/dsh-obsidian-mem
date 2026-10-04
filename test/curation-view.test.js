@@ -295,6 +295,33 @@ test('a corrupt or mis-versioned view reads as absent instead of partly usable',
   )
 })
 
+test('a raw filesystem failure at the view path is a fallback, never a throw', async (t) => {
+  const world = await viewWorld(t)
+  const path = curationViewPath(world.dataRoot, world.binding.projectId)
+  // A *directory* where the view document belongs. The write then fails inside
+  // `fs.rename` with a plain `EISDIR`, which `writePrivateJson` rethrows unchanged —
+  // not a `CurationStateError` — so a build that catches only the store's own refusal
+  // throws out to its caller. That call sits in `curateForBinding` *before* the
+  // findings are recorded and the hints acknowledged, so a throw here fails every
+  // automatic pass for this project and its findings never become proposals.
+  await mkdir(path, { recursive: true })
+  const built = await buildCurationView({
+    binding: world.binding,
+    dataRoot: world.dataRoot,
+    scan: await scanOf(world, world.binding),
+    now: NOW,
+  })
+  assert.equal(built.status, 'fallback')
+  assert.match(built.reason, /^view-unwritable:/u)
+  assert.equal(built.reason.includes('EISDIR'), true, built.reason)
+  // Nothing was published, so the reader still answers "no view" and the source stays
+  // the authority.
+  assert.equal(
+    await readCurationView({ dataRoot: world.dataRoot, projectId: world.binding.projectId }),
+    null,
+  )
+})
+
 test('a view naming another project is refused as absent', async (t) => {
   const world = await viewWorld(t)
   const built = await buildCurationView({

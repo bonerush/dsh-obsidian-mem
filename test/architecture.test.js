@@ -252,7 +252,12 @@ const BUDGETS = {
   // `failed` with no receipt, and a rejected promise used to be an unhandled
   // rejection. The alternative, letting the callback's owner be the only guard, is
   // what the review found: the seam has no owner when the wiring omits one.
-  'lib/capture.js': 2200,
+  // Raising this from 2200 by the final whole-branch fix wave (2211 formatted lines
+  // measured; measured-plus-30 is 2241, which rounds up to 2250). What the 11 lines
+  // buy: the queue worker's copy of the changed-path cap report — the accumulated
+  // `dropped` count and its one content-free `curation` diagnostic per job — beside a
+  // comment that no longer claims a full pass re-reads the paths it already covered.
+  'lib/capture.js': 2250,
   'lib/config.js': 300,
   // The curation plan's three Task 2 modules, on the same rule as every other
   // entry (measured plus 30, rounded up). What the size buys: the scanner carries
@@ -329,7 +334,14 @@ const BUDGETS = {
   // source) and its comment claimed a derivation that did not exist. 1247 is the
   // measured 1244 plus 3, so the deletion is spent as budget instead of slack and the
   // file is tighter than every round before it.
-  'lib/curation-scan.js': 1247,
+  // Raised from 1247 by the final whole-branch fix wave (1259 formatted lines measured;
+  // measured-plus-30 is 1289, which rounds up to 1300). What the 12 lines buy: the
+  // resolver comment now names the third silence shape (a bare dot-bearing target) and
+  // states the probed carrier of the `[[LICENSE]]` answer instead of a vault-root copy
+  // the matrix's fixture does not contain, and the `resolver-truncated` comment says
+  // which two halves the covering case asserts. Both are the finding's demand that a
+  // comment not name a shape the matrix does not pin.
+  'lib/curation-scan.js': 1300,
   // The Task 3 module, on the same measured-plus-30 rule (1113 formatted lines,
   // 1115 with the two-line comment that makes the listing order intentional).
   // What the size buys: two proposal kinds with different operations, four
@@ -528,7 +540,16 @@ const BUDGETS = {
   // `buildView` seam that lets a case drive a fallback the service's own inputs
   // cannot reach, and the comments that withdraw the two claims the review found
   // false (the scanner's cursor, and the code precedence).
-  'lib/services.js': 1600,
+  // The final whole-branch fix wave raises it to 1650 (1619 formatted lines measured;
+  // measured-plus-30 is 1649, which rounds up to 1650 — the rule's number, argued rather
+  // than inherited). What the 19 lines buy: the `dropped` count `enqueueChangedSource`
+  // returns is now reported as one content-free `curation` diagnostic in
+  // `queueCurationHint` (a dropped hint is the one queue outcome a later pass does not
+  // repair by itself), the diagnostics ring is threaded into `buildBrief` so the
+  // brief-time verification fallback reports `brief-fallback`/`source-changed` instead of
+  // falling back silently, and the `view-unwritable` comment no longer claims a raw `fs`
+  // failure throws out of the build — `lib/curation-view.js` catches it now.
+  'lib/services.js': 1650,
   // Raised from 2200 by Task 7 (2229 formatted lines measured; measured-plus-30
   // rounds up to 2300, which is this number — the entry above the old one had no
   // note of its own, so this number states the rule it follows). What the 29 lines
