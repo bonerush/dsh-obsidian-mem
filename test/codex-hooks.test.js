@@ -491,6 +491,81 @@ test('a bound start injects the real brief and the due pass never reaches stdout
   assert.match(receipt.path, /Decisions\//u)
 })
 
+test('the automatic pass parks a real candidate, and the other adapter reads it back', async (t) => {
+  // One throwaway world, two real adapter inputs: an MCP write pair that leaves a
+  // durable hint, then the installed hook's own due pass over it. What that pass
+  // finds is what the MCP status surface has to report, because both adapters
+  // derive one data root from `DSH_HOME` — nothing here is a second queue.
+  const space = world()
+  const memory = openMemory({
+    cwd: space.repo,
+    dshHome: space.dsh,
+    vaultPath: space.vault,
+    home: space.home,
+  })
+  const first = await memory.services.write({
+    type: 'decision',
+    title: '钩子注入的决定',
+    body: 'Codex 侧用 SessionStart 钩子注入简报。',
+  })
+  // Same title and type, a different body: the scanner's near-duplicate finding,
+  // which is parked for review rather than merged or dropped.
+  const second = await memory.services.write({
+    type: 'decision',
+    title: '钩子注入的决定',
+    body: '同一标题，另一条不同的结论。',
+  })
+  await memory.services.close()
+  assert.notEqual(second.path, first.path)
+
+  const dataRoot = join(space.dsh, 'data', 'obsidian-mem')
+  const projectId = hintedProjectId(dataRoot)
+
+  // The real hook process: one JSON line, exit zero, the real brief inside it.
+  const run = hook(
+    { HOME: space.home, DSH_HOME: space.dsh, OBSIDIAN_MEM_VAULT: space.vault },
+    JSON.stringify(payload(space.repo)),
+  )
+  assert.equal(run.status, 0)
+  assert.equal(run.lines.length, 1)
+  assert.match(run.answer.hookSpecificOutput.additionalContext, /钩子注入的决定/u)
+
+  // The other adapter's read-only status surface, over the same data root.
+  const reader = openMemory({
+    cwd: space.repo,
+    dshHome: space.dsh,
+    vaultPath: space.vault,
+    home: space.home,
+  })
+  t.after(() => reader.services.close?.())
+  const status = await reader.services.admin({ action: 'curation', operation: 'status' })
+  assert.equal(status.action, 'curation')
+  assert.equal(status.result.status, 'listed')
+  assert.equal(status.result.operation, 'status')
+  assert.equal(status.result.projectId, projectId)
+  assert.equal(status.result.complete, true, JSON.stringify(status.result))
+  assert.equal(status.result.examined, 0, 'status inspects nothing')
+  assert.equal(status.result.autoEnabled, true)
+  assert.ok(status.result.counts.entries >= 2, JSON.stringify(status.result.counts))
+  assert.ok(
+    status.result.proposals.pending >= 1,
+    `the hook pass must park the near duplicate: ${JSON.stringify(status.result.proposals)}`,
+  )
+
+  // The index followed both writes, and their receipts are durable under the one
+  // data root the two adapters derive from `DSH_HOME`.
+  const hits = await reader.services.search({ query: '钩子注入的决定' })
+  for (const written of [first, second]) {
+    assert.equal(
+      hits.some((hit) => hit.path === written.path),
+      true,
+      `${written.path} is missing from mem_search`,
+    )
+    assert.equal((await reader.services.read({ path: written.path })).path, written.path)
+  }
+  assert.ok(readdirSync(join(dataRoot, 'receipts'), { recursive: true }).length >= 2)
+})
+
 test('a source that injects nothing opens no vault and claims no pass', async () => {
   // `resume` and `compact` continue a conversation that already carries the
   // earlier injection, so the hook returns before `openMemory` is reached: the

@@ -210,7 +210,7 @@ original result instead of a duplicate note.
 | `mem_write` | `type`, `title`, `body` (all required), `tags`, `status`, `confidence`, `assertion`, `supersedes`, `id`, `idempotencyKey` | Creates a note at the routed destination and updates the MOC, receipts and index transactionally. **Without `id` it always creates a new note; to update, you must pass the existing `id`.** `supersedes` is validated against the old note's id. |
 | `mem_log` | `text` (required), `session`, `section`, `idempotencyKey` | Appends one entry to today's log, idempotently per session. `section: hot` (or 强约束/进行中/已完成) updates that controlled hot zone instead; if it would exceed the hot capacity it archives first or refuses. |
 | `mem_brief` | — | Returns the current hot brief — the same text injected at session start — so you can re-read or check the budget. |
-| `mem_admin` | `action` (required: `lint`\|`index`\|`bind`\|`projects`\|`promote`\|`jobs`), `path`, `rebuild`, `mode`, `jobId`, `retry`, `report`, `prune` | Low-frequency maintenance. All six actions are implemented. `lint` is read-only unless a report is explicitly requested (`report: true`); `index` rebuilds the search index; `bind mode=show` reports the binding without writing; `projects` lists registered projects; `promote` copies a note into `Methods/` keeping its source link; `jobs` inspects and explicitly retries failed background jobs. |
+| `mem_admin` | `action` (required: `lint`\|`index`\|`bind`\|`projects`\|`promote`\|`jobs`\|`curation`\|`diagnostics`), `path`, `rebuild`, `mode`, `jobId`, `retry`, `report`, `prune`, `operation` (curation: `status`\|`scan`) | Low-frequency maintenance. All eight actions are implemented. `lint` is read-only unless a report is explicitly requested (`report: true`); `index` rebuilds the search index; `bind mode=show` reports the binding without writing; `projects` lists registered projects; `promote` copies a note into `Methods/` keeping its source link; `jobs` inspects and explicitly retries failed background jobs; `curation` reads or runs one bounded curation pass (see below) and never applies a proposal; `diagnostics` returns this process's own content-free decision ring. |
 
 Working rules:
 
@@ -228,6 +228,33 @@ Working rules:
 - Without `mem_*` tools, perform the equivalent edit by hand: pick the routed
   path, write the full frontmatter from §4, update the directory `index.md` if
   one exists, and append a receipt line to `_meta/log.md`.
+
+### Automatic curation, and what a proposal is
+
+With `autoCurate: true` (the default) the plugin also runs bounded curation
+passes and keeps a rebuildable navigation view of the project. What that means
+for you:
+
+- **A curation proposal is not a fact, and it is not an outcome.** A suspected
+  near duplicate, a same-title claim with a different number or date, or a
+  supersede a model proposed is *parked* under the plugin's own data root
+  (outside the vault) and changes nothing. Never tell the user such a change
+  happened, and never write it yourself to "finish the job".
+- **There is no model-callable approval.** No `mem_admin` action, parameter or
+  value applies or rejects a proposal, and you cannot approve one on the user's
+  behalf. The only route is the interactive command shipped with the package:
+  `dsh-obsidian-mem-review --vault <absolute-path> <proposal-id>`, which needs a
+  real terminal and a byte-for-byte typed `apply <id>` or `reject <id>`. Point
+  the user at it; do not simulate it by editing the source notes.
+- `mem_admin(action="curation", operation="status")` lists the queue and reads
+  the private cursor and the committed view without inspecting anything;
+  `operation="scan"` runs one bounded pass now and reports `complete` and any
+  truncation reason. `autoCurate: false` disables only the automatic passes —
+  both operations still work.
+- **The compact navigation in the brief is a cache.** Every line it adds was
+  re-hashed against its source before injection, and any changed, missing or
+  unreadable source makes the brief fall back to reading the vault. A fallback
+  is not a memory outage: use `mem_search` → `mem_read`, as always.
 
 ## 8. Safety: hard prohibitions
 

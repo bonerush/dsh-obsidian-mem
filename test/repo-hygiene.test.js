@@ -102,6 +102,38 @@ test('README.i18n.yaml records the current blob hash of both READMEs', () => {
   }
 })
 
+/**
+ * The four documents that must each carry the curation switch and its approval route.
+ *
+ * The bilingual pair carries equal authority and both portable skill editions are
+ * loaded by a real agent, so a switch documented on one side only is a language (or
+ * a harness) reading a different plugin. `autoCurate` is the field a reader has to
+ * find before turning automation off, and `dsh-obsidian-mem-review` is the only
+ * route that can approve a parked proposal — a document that omits the second one
+ * leaves "how do I approve this?" with no answer that is not a model call.
+ */
+const CURATION_DOCUMENTS = [
+  'README.md',
+  'README.zh.md',
+  'skills/obsidian-mem/SKILL.md',
+  'codex/marketplace/plugins/dsh-obsidian-mem/skills/obsidian-mem/SKILL.md',
+]
+
+test('both README sides and both skill editions name the curation switch and its approval route', () => {
+  const missing = []
+  for (const document of CURATION_DOCUMENTS) {
+    const text = readFileSync(join(ROOT, document), 'utf8')
+    for (const needle of ['autoCurate', 'dsh-obsidian-mem-review']) {
+      if (!text.includes(needle)) missing.push(`${document} does not name ${needle}`)
+    }
+  }
+  assert.deepEqual(
+    missing,
+    [],
+    'a switch documented on one side only is how one language goes stale',
+  )
+})
+
 test('every npm run command named in the documentation exists', () => {
   const scripts = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts
   const missing = []

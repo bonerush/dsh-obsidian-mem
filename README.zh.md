@@ -217,6 +217,7 @@ Obsidian 应用程序代码。
     hotCapacityChars: 9000
     hotArchiveRatio: 0.67
     autoCapture: true
+    autoCurate: true
     captureIdleMs: 90000
     distill:
       provider: ""
@@ -254,6 +255,7 @@ Obsidian 应用程序代码。
 | `hotCapacityChars` | `9000` | 整数 1024–50000 | `_meta/hot.md` 的容量。是存储容量，*不是*注入预算。 |
 | `hotArchiveRatio` | `0.67` | 开区间 (0,1) | 填充率高于此值时，插件在写入前先归档已完成条目。 |
 | `autoCapture` | `true` | boolean | 捕获已完成的回合。`false` 停止新的捕获，但仍会排空已入队的 job。 |
+| `autoCurate` | `true` | boolean | 自动整理（curation）回合。`false` 只关掉自动触发：`mem_admin(action="curation", operation="scan")` 和评审命令照常可用，而且两种取值都不会改动任何源笔记。 |
 | `captureIdleMs` | `90000` | 整数 1000–3600000 | 被捕获的回合进入蒸馏前的空闲去抖时间。 |
 | `distill.provider` | `""` | string | 模型路由。必须和 `model` 一起设置，或者两个都留空（留空 = 复用会话最近记录的路由）。从别的 harness 导入的会话没有这条路由，所以导入的历史会一直停在 `deferred`，直到设了这一项。 |
 | `distill.model` | `""` | string | 见上。 |
@@ -286,7 +288,7 @@ Obsidian 应用程序代码。
 | `mem_write` | `type`、`title`、`body`（必填）；`tags`、`status`、`confidence`、`assertion`、`supersedes`、`id`、`idempotencyKey` | 写项目文档和记忆的权威途径。不带 `id` 时**创建**一条带新 id 的笔记；带已存在的 `id` 时更新。取代会校验旧 id，并把链接的两端都写上。 |
 | `mem_log` | `text`（必填）；`session`、`section`、`idempotencyKey` | 往今天的日志追加一条幂等条目；`section: "hot"` 则改为写热记忆文件的进行中区域。 |
 | `mem_brief` | — | 返回会话注入过的那份召回简报，方便你重读或审计预算。 |
-| `mem_admin` | `action`（必填）：`lint`、`index`、`bind`、`projects`、`promote`、`jobs`、`diagnostics`；外加 `report`、`prune`（仅 lint）、`rebuild`（index）、`mode`（bind：`show`\|`local`\|`fork`\|`retain`）、`path`（promote）、`jobId`/`retry`（jobs） | 低频维护。`lint` 默认只读，除非你传 `report: true`（写一条带日期的报告笔记）和/或 `prune: true`（删除过期快照）——这两者刻意保持独立。`diagnostics` 是唯一什么都不读的动作：它返回**本进程**自己的决策环——最多 200 条事件，取值来自封闭集合 `capture`、`distill`、`index`、`bind`、`job`、`transaction`、`brief`、`skill`、`recall`（九类现在都会写入），每条带一个结局与机器标识，永不包含笔记正文、标题或提示词。因此一个窗口能回答那些否则必须靠复现才能回答的问题：一个已结束的回合为什么没被捕获（`capture` 事件给出原因）、蒸馏是真的没产出还是根本没跑（`distill`、`job`）、索引有没有跟上一次写入（`index`）、一次写入是提交了还是带着错误码被拒绝（`transaction`）。它不需要绑定、不读仓库，所以在其他所有动作都拒绝时它仍能回答；进程退出后它即清空——上文所述的独立本地日志会为用户自行生成的报告保留缩减后的事件。设 `DSH_OBSIDIAN_MEM_DEBUG=1` 可额外把每条事件以 `info` 级写进宿主日志；宿主是否显示这一行由宿主决定，不由本插件决定。 |
+| `mem_admin` | `action`（必填）：`lint`、`index`、`bind`、`projects`、`promote`、`jobs`、`curation`、`diagnostics`；外加 `report`、`prune`（仅 lint）、`rebuild`（index）、`mode`（bind：`show`\|`local`\|`fork`\|`retain`）、`path`（promote）、`jobId`/`retry`（jobs）、`operation`（curation：`status`\|`scan`） | 低频维护。`lint` 默认只读，除非你传 `report: true`（写一条带日期的报告笔记）和/或 `prune: true`（删除过期快照）——这两者刻意保持独立。`curation` 读取或运行下文那条有界的整理回合；它永远不会应用某条待评审提案。`diagnostics` 是唯一什么都不读的动作：它返回**本进程**自己的决策环——最多 200 条事件，取值来自封闭集合 `capture`、`distill`、`index`、`bind`、`job`、`transaction`、`brief`、`skill`、`recall`（九类现在都会写入），每条带一个结局与机器标识，永不包含笔记正文、标题或提示词。因此一个窗口能回答那些否则必须靠复现才能回答的问题：一个已结束的回合为什么没被捕获（`capture` 事件给出原因）、蒸馏是真的没产出还是根本没跑（`distill`、`job`）、索引有没有跟上一次写入（`index`）、一次写入是提交了还是带着错误码被拒绝（`transaction`）。它不需要绑定、不读仓库，所以在其他所有动作都拒绝时它仍能回答；进程退出后它即清空——上文所述的独立本地日志会为用户自行生成的报告保留缩减后的事件。设 `DSH_OBSIDIAN_MEM_DEBUG=1` 可额外把每条事件以 `info` 级写进宿主日志；宿主是否显示这一行由宿主决定，不由本插件决定。 |
 
 `mem_write` 的 type 这样路由：
 
@@ -329,6 +331,51 @@ job 的回执里点出已经覆盖这条事实的那条笔记。显式 supersede
 失败原因，可以用 `mem_admin(action="jobs", jobId="…", retry=true)` 复活。把
 `dryRun: false` 设上再重启，就正式启用。
 
+### 自动整理
+
+`autoCurate: true`（默认值）时，插件还会为当前项目维护一份可重建的紧凑导航视图，
+并检查笔记、生成整理工作。它刻意比周围那层记忆更弱：
+
+- **不会有任何语义动作自己发生。** 一条笔记被编辑、`review_after` 过期、链接断裂、
+  或出现完全相同的副本，只会产出视图条目或一条仅供评审的 finding。疑似近似重复、
+  数字/日期有差异、或模型提出的取代，都会被**停放**成 `$DSH_HOME/data/obsidian-mem/curation/proposals/`
+  下的一条持久提案，而不是被应用；每一处源事实都原样留在原地。
+- **评审命令是唯一的批准途径。** 安装包下：
+  `dsh-obsidian-mem-review --vault <绝对路径> <提案 id>`；从代码检出运行时：
+  `node lib/curation-cli.js --vault … <提案 id>`。它会打印提案的确切操作与来源，
+  要求 stdin **和** stdout 都是终端，并且只接受逐字节输入的 `apply <id>` 或
+  `reject <id>`，一次一条提案——没有 `--all`，也没有默认答案。`reject` 不改动任何
+  源字节。**没有任何 `mem_admin` 动作、参数或枚举值能应用、批准或拒绝提案**，所以
+  批准永远不可能由模型调用。若源在扫描与批准之间被改动，提案会被拒绝并保持
+  `pending`，绝不自动 rebase。
+- **视图是缓存，永远不是第二事实来源。** 游标、逐路径扫描记录、变更路径队列和视图
+  都在 `$DSH_HOME/data/obsidian-mem/curation/` 下。每个视图条目都带着它据以构建的
+  字节的 sha256；简报使用某条之前会重新哈希它代表的**每一个**路径——包括被折叠的
+  完全重复组里的每一个成员——只要源缺失、被编辑、不可读或过大，简报就回退到视图
+  出现之前那套按源导航的路径。把整个目录删掉，代价只是一次扫描，别无其他。只有被标为
+  `complete` 的视图才会被注入：撞上任一上限的完整扫描发布 `complete: false`，而变更
+  路径的扫描只允许合并进一个已经完整的视图（否则就是 `backfill-incomplete`），所以
+  不完整的回填永远不会被当作项目的导航发布出去。
+- **自动回合有界，而且按宿主不同。** DSH 侧，一次提交的写入会把笔记入队，会话活动
+  时检查项目是否到期；整理在模型请求之外运行，失败永远不会让你的回合失败。Codex 侧，
+  整理运行在已安装且**被信任**的 `SessionStart` 钩子里——未受信任的钩子会被 Codex
+  静默跳过；只装 MCP（没有钩子）的安装方式只有显式的 `mem_admin` 扫描，**完全没有
+  自动回合**。一趟最多检查 256 条笔记，并在整理工作累计 500 ms 之后停止**开始**新的
+  检查；撞上任一上限的一趟会如实说明（`truncated`、`complete: false`），并在下一次
+  符合条件的会话从游标继续。已完成的项目 24 小时之后才再次到期，除非有源发生变化或
+  你主动请求扫描。
+
+`mem_admin(action="curation", operation="status")` 读取游标、已提交的视图和有界的
+提案队列，不检查任何东西；`operation="scan"` 立刻跑一趟有界整理，并额外返回这一趟
+自己检查的条数与截断原因。`autoCurate: false` 时两者都仍然可用，停掉的只有自动触发。
+
+在一台机器上、一个 600 条笔记的临时仓库里实测（探针与原始输出见 `CHANGELOG.md`）：
+一趟完整整理检查 256 条笔记，15 轮的中位数 136 ms、最差 171 ms；一次真实的
+`SessionStart` 钩子运行比同一进程跳过整理的那次多付中位数 172 ms、最差 179 ms。
+在这个规模上 500 ms 截止时间从未被触及——先撞上的是笔记数上限——所以这些数字说明
+上限在这里不是约束，而**不**说明 256/500 就是最优；大到让截止时间真正生效的项目，
+本仓库没有跑过。未验证清单在 `CHANGELOG.md`，这里不重复。
+
 ### 插件自己的数据放在哪里
 
 仓库之外的一切都在 data root 下，而 data root 只在一个地方从 `DSH_HOME` 推导出来
@@ -341,6 +388,8 @@ $DSH_HOME/data/obsidian-mem/
 ├── transactions/   journal for crash recovery
 ├── receipts/       per-write and per-job receipts
 ├── pending/        queued distillation jobs (0700/0600)
+├── curation/       可重建的整理状态：游标、逐路径扫描记录、
+│                   变更路径队列、紧凑视图与停放中的提案 (0700/0600)
 ├── diagnostics/    不含正文的限量决策日志 (0700/0600)
 └── processed/      per-session processed floor (0700/0600)
 ```
@@ -572,6 +621,8 @@ Obsidian 里冲突。要补上这个缺口，要么在仓库侧读 `types.json`�
 | 一个代码库拒绝写入 | remote URL 不匹配、同一个目录对应了不同的 `projectId`、同级 worktree 元数据冲突，或者同级不可读。拒绝信息会说明原因，并让指针文件保持原样——它从不修复或替换指针文件。 | `mem_admin(action="bind", mode="show")` 报告现状；`mode="retain"` 或 `mode="fork"` 是显式的修正手段。过期的 worktree 需要 `git worktree prune`。 |
 | 一个普通目录保持只读 | 它不在 Git 仓库里，所以插件不会自行把它纳入长期记忆——隐式的第一次写入只绑定 Git 仓库。 | 用 `mem_admin(action="bind", mode="local")` 显式绑定它；绑定在同一会话里立即生效。 |
 | 某个会话的记忆悄悄缺席 | 任何非 `bound` 的解析结果都意味着“这个会话没有记忆”——这是设计使然，它从不抛错，也从不猜。读取永不绑定代码库；没有指针文件的 Git 仓库由它的第一次写入完成绑定；指针文件或注册表不被插件信任的代码库会保持未绑定，直到问题解决。 | 检查 `mem_admin(action="projects")` 和指针文件，然后写一次（Git 仓库）或跑 `mem_admin(action="bind", mode="local")`（任何目录）——两者都在同一会话内生效。 |
+| 有一条整理提案停在 `pending`，但没有笔记被改动 | 这就是设计：疑似近似重复、或模型提出的取代，会被停放等待评审，绝不自动应用。 | 用 `mem_admin(action="curation", operation="status")` 查看队列；用 `dsh-obsidian-mem-review --vault <绝对路径> <提案 id>` 批准或拒绝其中一条。拒绝不改动任何源笔记。 |
+| 简报不再显示紧凑导航，或某个声称的重复组消失了 | 已存视图只是缓存：它的某个源被改动、消失或变得不可读，于是简报回退到按源导航的路径，而不是注入一条过时的行。 | 无需修复。下一次完整整理会重建它；`mem_admin(action="curation", operation="scan")` 可以立刻跑一趟，并报告 `complete` 与任何截断原因。 |
 
 如果症状不在上表，或者按上表的做法仍未解决，请生成诊断报告并把 JSON 附到 Issue
 上——见[用于 Issue 的诊断报告](#diagnostic-report-for-an-issue)。命令不会自动上传：

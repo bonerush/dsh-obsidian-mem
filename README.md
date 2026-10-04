@@ -249,6 +249,7 @@ every field, `distill` included. Put it in the home-level patch layer,
     hotCapacityChars: 9000
     hotArchiveRatio: 0.67
     autoCapture: true
+    autoCurate: true
     captureIdleMs: 90000
     distill:
       provider: ""
@@ -289,6 +290,7 @@ explanation instead of doing nothing.
 | `hotCapacityChars` | `9000` | integer 1024–50000 | Capacity of `_meta/hot.md`. Storage capacity, *not* injection budget. |
 | `hotArchiveRatio` | `0.67` | open interval (0,1) | Above this fill level the plugin archives 已完成 entries before writing. |
 | `autoCapture` | `true` | boolean | Capture completed turns. `false` stops new capture but still drains jobs already queued. |
+| `autoCurate` | `true` | boolean | Automatic curation passes. `false` disables the automatic triggers only: `mem_admin(action="curation", operation="scan")` and the review command keep working, and no source note is changed either way. |
 | `captureIdleMs` | `90000` | integer 1000–3600000 | Idle debounce before a captured turn is distilled. |
 | `distill.provider` | `""` | string | Model route. Must be set together with `model`, or both left empty (empty = reuse the session's last recorded route). A session imported from another harness has no recorded route, so imported history stays `deferred` until this is set. |
 | `distill.model` | `""` | string | See above. |
@@ -323,7 +325,7 @@ with an error that says the field was dropped by design.
 | `mem_write` | `type`, `title`, `body` (required); `tags`, `status`, `confidence`, `assertion`, `supersedes`, `id`, `idempotencyKey` | The authoritative way to write project documents and memories. Without `id` it **creates** a note with a fresh id; with an existing `id` it updates. Superseding verifies the old id and writes both sides of the link. |
 | `mem_log` | `text` (required); `session`, `section`, `idempotencyKey` | Appends one idempotent entry to today's log; `section: "hot"` targets the hot file's 进行中 zone instead. |
 | `mem_brief` | — | Returns the same recall brief the session injected, so you can re-read or audit the budget. |
-| `mem_admin` | `action` (required): `lint`, `index`, `bind`, `projects`, `promote`, `jobs`, `diagnostics`; plus `report`, `prune` (lint only), `rebuild` (index), `mode` (bind: `show`\|`local`\|`fork`\|`retain`), `path` (promote), `jobId`/`retry` (jobs) | Low-frequency maintenance. `lint` is read-only unless you pass `report: true` (writes a dated report note) and/or `prune: true` (deletes aged snapshots) — the two are independent on purpose. `diagnostics` is the one action that reads nothing: it returns this process's own ring of decisions — at most 200 events, drawn from the closed set `capture`, `distill`, `index`, `bind`, `job`, `transaction`, `brief`, `skill`, `recall` (all nine emit today), each with an outcome and machine identifiers and never a note body, a title or a prompt. A window therefore answers the questions that otherwise need a reproduction: why a finished turn was not captured (the `capture` event names the reason), whether distillation produced nothing or was never attempted (`distill`, `job`), whether the index followed a write (`index`), and whether a write was committed or refused with a code (`transaction`). It needs no binding and no vault, so it still answers when every other action refuses, and it empties when the process exits — the separate local journal above preserves reduced events for the user-run report. Set `DSH_OBSIDIAN_MEM_DEBUG=1` to additionally emit each event through the host logger at `info` level; whether the host shows that line is the host's decision, not this plugin's. |
+| `mem_admin` | `action` (required): `lint`, `index`, `bind`, `projects`, `promote`, `jobs`, `curation`, `diagnostics`; plus `report`, `prune` (lint only), `rebuild` (index), `mode` (bind: `show`\|`local`\|`fork`\|`retain`), `path` (promote), `jobId`/`retry` (jobs), `operation` (curation: `status`\|`scan`) | Low-frequency maintenance. `lint` is read-only unless you pass `report: true` (writes a dated report note) and/or `prune: true` (deletes aged snapshots) — the two are independent on purpose. `curation` reads or runs the bounded curation pass described below; it never applies a review proposal. `diagnostics` is the one action that reads nothing: it returns this process's own ring of decisions — at most 200 events, drawn from the closed set `capture`, `distill`, `index`, `bind`, `job`, `transaction`, `brief`, `skill`, `recall` (all nine emit today), each with an outcome and machine identifiers and never a note body, a title or a prompt. A window therefore answers the questions that otherwise need a reproduction: why a finished turn was not captured (the `capture` event names the reason), whether distillation produced nothing or was never attempted (`distill`, `job`), whether the index followed a write (`index`), and whether a write was committed or refused with a code (`transaction`). It needs no binding and no vault, so it still answers when every other action refuses, and it empties when the process exits — the separate local journal above preserves reduced events for the user-run report. Set `DSH_OBSIDIAN_MEM_DEBUG=1` to additionally emit each event through the host logger at `info` level; whether the host shows that line is the host's decision, not this plugin's. |
 
 `mem_write` types route like this:
 
@@ -371,6 +373,67 @@ and watch a few turns. `mem_admin(action="jobs")` lists the queue; a `failed` jo
 keeps its reason and can be revived with `mem_admin(action="jobs", jobId="…", retry=true)`.
 Turn it live by setting `dryRun: false` and restarting.
 
+### Automatic curation
+
+With `autoCurate: true` (the default) the plugin also keeps a compact,
+rebuildable navigation view of the current project and inspects notes for
+curation work. It is deliberately weaker than the memory layer around it:
+
+- **Nothing semantic happens on its own.** An edited note, a past `review_after`,
+  a broken link or an exact-duplicate group only produces a view entry or a
+  review-only finding. A suspected near duplicate, a differing number or date, or
+  a supersede a model proposed is **parked** as a durable proposal under
+  `$DSH_HOME/data/obsidian-mem/curation/proposals/` instead of being applied, and
+  every source fact stays exactly where it is.
+- **The review command is the only approval route.** From the installed package:
+  `dsh-obsidian-mem-review --vault <absolute-path> <proposal-id>`; from a
+  checkout, `node lib/curation-cli.js --vault … <proposal-id>`. It prints the
+  proposal's exact operation and sources, requires a terminal on stdin *and*
+  stdout, and accepts only `apply <id>` or `reject <id>` typed byte-for-byte, one
+  proposal per run — there is no `--all` and no default answer. `reject` changes
+  no source byte. **No `mem_admin` action, parameter or enum value applies,
+  approves or rejects a proposal**, so approval is never model-callable. A
+  proposal whose source changed between the scan and the approval is refused and
+  stays `pending` rather than rebasing itself.
+- **The view is a cache, never a second source of truth.** The cursor, the
+  per-path scan records, the changed-path queue and the view live under
+  `$DSH_HOME/data/obsidian-mem/curation/`. Every view entry carries the sha256 of
+  the bytes it was built from; before a brief uses one it re-hashes every path it
+  stands for — including every member of a collapsed exact-duplicate group — and
+  a missing, edited, unreadable or oversized source makes the brief fall back to
+  the source-navigation path it used before the view existed. Deleting the whole
+  directory costs one scan and nothing else. A view is injected only when it is
+  marked `complete`: a full pass that stopped at either bound publishes
+  `complete: false`, and a changed-path pass may merge only into a view that is
+  already complete (`backfill-incomplete` otherwise), so a partial backfill can
+  never be published as the project's navigation.
+- **Automatic passes are bounded, and host-specific.** In DSH a committed write
+  queues its note and session activity checks a due project; the pass runs
+  outside the model request and a failure never fails your turn. In Codex the
+  pass runs in the installed, **trusted** `SessionStart` hook — Codex skips an
+  untrusted hook in silence, and an MCP-only install (no hooks) gets the explicit
+  `mem_admin` scan and **no automatic pass at all**. One pass examines at most
+  256 notes and stops *starting* new inspections once 500 ms of curation work has
+  elapsed; a pass that hits either bound says so (`truncated`, `complete: false`)
+  and resumes from its cursor on the next eligible session. A completed project
+  is due again after 24 hours unless a source changed or you request a scan.
+
+`mem_admin(action="curation", operation="status")` reads the cursor, the
+committed view and the bounded proposal queue without inspecting anything;
+`operation="scan"` runs one bounded pass now and adds the pass's own inspected
+count and truncation reason. Both remain available when `autoCurate: false`;
+only the automatic triggers stop.
+
+Measured on one 600-note temporary vault on this machine (the probe and its raw
+output are in `CHANGELOG.md`): a full pass inspected 256 notes with a median of
+136 ms and a worst case of 171 ms over 15 rounds, and a real `SessionStart` hook
+run paid a median of 172 ms and a worst case of 179 ms more than the identical
+run that skipped the pass. The 500-ms deadline was never reached at that size —
+the note bound binds first — so these numbers confirm the ceiling is not the
+binding constraint here; they do not claim that 256/500 is optimal, and a project
+large enough to make the deadline bind is not a case this repository has run.
+The untested list is in `CHANGELOG.md`; it is not repeated here.
+
 ### Where the plugin keeps its own data
 
 Everything outside the vault lives under the data root, which is derived from
@@ -383,6 +446,8 @@ $DSH_HOME/data/obsidian-mem/
 ├── transactions/   journal for crash recovery
 ├── receipts/       per-write and per-job receipts
 ├── pending/        queued distillation jobs (0700/0600)
+├── curation/       rebuildable curation state: cursor, per-path scan records,
+│                   changed-path queue, compact view and parked proposals (0700/0600)
 ├── diagnostics/    bounded content-free decision journal (0700/0600)
 └── processed/      per-session processed floor (0700/0600)
 ```
@@ -656,6 +721,8 @@ sandbox.
 | A repository refuses to write | A remote-URL mismatch, a different `projectId` for the same directory, a sibling worktree with conflicting metadata, or an unreadable sibling. The refusal names the reason and leaves the pointer exactly as it was — it never repairs or replaces one. | `mem_admin(action="bind", mode="show")` reports the situation; `mode="retain"` or `mode="fork"` is the explicit fix. A stale worktree needs `git worktree prune`. |
 | A plain directory stays read-only | It is not inside a Git repository, so the plugin will not add it to long-term memory on its own — an implicit first write binds Git repositories only. | `mem_admin(action="bind", mode="local")` to bind it explicitly; the binding is live for the same session. |
 | Memory is silently absent for a session | Any non-`bound` resolution means "no memory for this session" — by design, it never throws and never guesses. Reads never bind a repository, and a Git repository with no pointer is bound by its first write; a repository whose pointer or registry the plugin refuses to trust stays unbound until that is resolved. | Check `mem_admin(action="projects")` and the pointer file, then write once (a Git repository) or run `mem_admin(action="bind", mode="local")` (any directory) — both take effect in the same session. |
+| A curation proposal is `pending` and no note changed | That is the design: a suspected near duplicate or a model-proposed supersede is parked for review and never applied automatically. | `mem_admin(action="curation", operation="status")` lists the queue; approve or reject one proposal with `dsh-obsidian-mem-review --vault <absolute-path> <proposal-id>`. Rejecting touches no source note. |
+| The brief no longer shows the compact navigation, or a claimed duplicate group disappeared | The stored view is a cache: one of its sources changed, vanished or became unreadable, so the brief fell back to the source-navigation path instead of injecting a stale line. | Nothing to repair. The next complete pass rebuilds it; `mem_admin(action="curation", operation="scan")` runs one now and reports `complete` and any truncation reason. |
 
 If a symptom is not in this table, or the fix above did not work, generate the
 diagnostic report and attach the JSON to an Issue — see

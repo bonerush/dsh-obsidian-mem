@@ -13,6 +13,86 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Added
 
+- **Automatic curation is documented, replayed for quality and measured for cost**
+  (Task 8, the plan's last task). No runtime API changes: this entry is the record of
+  what was run, what it measured and what stayed unverified.
+  - **The same-fixture quality comparison** — one throwaway vault
+    (`test/integration-write-read.test.js`, *a stored curation view changes no
+    retrieval answer on the baseline fixture*) holding a cross-project twin of a project
+    fact, an old superseded conclusion, an exact duplicate, a same-title/different-number
+    pair, a same-title/different-date pair, a note whose only relation to its query is
+    shared vocabulary, and a relevant note nothing had retrieved. Every class is queried
+    once with no view at all and again after the shipped
+    `mem_admin(action="curation", operation="scan")` wrote a complete one (asserted:
+    `complete: true`, and a second project's view file is still absent). All eight
+    classes are **PASS**, and the test emits its rows as test diagnostics, so this table
+    is the run's own output rather than a restatement: retrieved source ids are
+    *identical* before and after for cross-project, superseded, superseded-with-history,
+    exact-duplicate, near-duplicate, differing-date, irrelevant-high-similarity and
+    cold-relevant; every returned path reads back through `mem_read` (4/4, 5/5, 6/6, 4/4,
+    4/4, 3/3, 5/5, 3/3); the brief goes from 1128 to 1325 code points against the 6000
+    budget with `omitted` 0 before and after; the exact pair is one line carrying both
+    paths while the near pair keeps two lines; and the superseded and cross-project
+    paths are in neither brief. **No quality regression was found.** This is a
+    comparison on one fixture, not a retrieval-quality benchmark.
+  - **Both adapters over one data root** (`test/codex-hooks.test.js`, *the automatic pass
+    parks a real candidate, and the other adapter reads it back*): an MCP write pair with
+    one title and two different bodies leaves a durable hint, the real
+    `codex/session-start.mjs` process runs its due pass (exit 0, exactly one JSON line
+    carrying the real brief), the pass parks the scanner's near-duplicate finding as a
+    proposal, and the MCP-side `mem_admin(action="curation", operation="status")` reads
+    back the same project id, `complete: true`, `examined: 0`, at least one pending
+    proposal, both notes through `mem_search`/`mem_read`, and the durable receipts under
+    the one `$DSH_HOME`-derived data root.
+  - **The hook ceiling, measured** — probe and raw JSON under the git-ignored
+    `docs/superpowers/plans/`. A 600-note temporary vault (above one 256-note batch)
+    with the cursor removed before every round: a full pass inspected **256** notes and
+    truncated with `file-budget` — never `time-budget` — at p50 **135.7 ms** / p95
+    **171.2 ms** over 15 rounds; a real hook process paid p50 **+172.4 ms** / p95
+    **+178.9 ms** more than the identical process skipping the pass on a fresh cursor
+    (5 pairs; every cold run `scanned` 256, every warm run `skipped`). Both percentiles
+    are nearest-rank, so at these sample counts they are the observed maximum. **No pass
+    started an inspection after the deadline:** with `maxMs: 1` a pass did the untimed
+    manifest walk and nothing else (13.7 ms, `examined: 0`, `time-budget`), so the
+    observed overrun is that walk, not a read. A 5 000-note replay measured the same
+    walk at 30.4 ms and a full pass at 149.3 ms for 256 notes, still `file-budget`. No
+    hook failure was observed (exit 0 and one JSON line in every run), so **no constant
+    was reduced** — and 256/500 are explicitly **not** claimed optimal: the note bound
+    binds first at this size, and a project large enough for the deadline to bind was not
+    run.
+  - **Documentation**: both READMEs (the `autoCurate` field in the example and the
+    config table, a new *Automatic curation* section, `curation`/`operation` in the
+    `mem_admin` row, the `curation/` entry in the data-root tree, two failure-recovery
+    rows) and both portable skill editions (`skills/obsidian-mem/SKILL.md` and the Codex
+    marketplace copy) now state automatic versus reviewed actions, the trusted-hook
+    condition, `autoCurate`, the status/scan calls, the review CLI, and fallback and
+    recovery. Both skill editions' `mem_admin` row had listed six actions and omitted
+    `diagnostics` and `curation`; they list all eight now.
+    `test/repo-hygiene.test.js` gains one check that all four documents name
+    `autoCurate` and `dsh-obsidian-mem-review`, so the switch and its only approval
+    route cannot be documented on one side (or in one language) only.
+    `README.i18n.yaml` records the new blob hashes.
+  - Measured: `npm test` **911 tests / 910 pass / 1 skipped / 0 fail** (908/907/1/0
+    before this task's three added cases, measured on `7c4cd8f`); `node
+    codex/prepare.mjs --check` → `prepare --check: ok (6 tools, skill, .mcp.json and
+    both hooks)` (the regenerated manifests stay git-ignored); `npm run check` → lint,
+    format, types, `prepack` (the suite plus `verify-pack: OK`) and `pack:check`
+    (`verify-tarball: OK`, 61 entries, 51 lib modules) all pass. The measured latency
+    numbers below come from the probe's own JSON, saved beside it under the ignored
+    `docs/superpowers/plans/`.
+  - **Unverified, stated as such.** *Live delivery is unverified:* no real DSH session
+    and no real `codex exec` session was run against a real vault. There is no `dsh` on
+    this machine's `PATH` at all, and a Codex session would need the user's own
+    credentials and a live model call, which this task did not make — discovery, hook
+    trust and injection are covered at the protocol level only
+    (`test/codex-hooks.test.js` drives the real hook process, `test/codex-mcp.test.js` a
+    real MCP handshake). Also unverified: the deadline-binding case (a project big enough
+    that the 500 ms deadline truncates a pass); the manifest walk at its own
+    `MAX_MANIFEST_FILES` bound of 50 000 paths (measured only to 5 000, and it is the one
+    part of a pass the deadline does not bound); any *quality* comparison on a fixture
+    other than this one; and the review command driven from a real interactive shell
+    rather than the pseudo-terminal Task 7's cases create.
+
 - **One parked curation proposal can now be reviewed and applied, through the same
   transaction engine every other write uses** (Task 7). `lib/curation-review.js` is the
   executor the Task 3 review found missing: nothing in the tree applied a parked

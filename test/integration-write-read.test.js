@@ -35,10 +35,12 @@ import { validateConfig } from '../lib/config.js'
 import { scanCuration } from '../lib/curation-scan.js'
 import { buildCurationView, readCurationView } from '../lib/curation-view.js'
 import { apply } from '../lib/index.js'
+import { writeMemory } from '../lib/memory.js'
 import { resolveDataRoot } from '../lib/paths.js'
 import { queueRootFor, readPendingJobs, writeJobAtomic } from '../lib/pending.js'
 import { createMemoryServices, registerTools } from '../lib/tools.js'
 import { bootstrapVault, resolveBinding } from '../lib/vault.js'
+import { makeCurationWorld } from './curation-world.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -1055,4 +1057,331 @@ test('a stored view reaches the real brief through mem_brief, and a changed sour
   assert.ok(fallen.text.includes(twin.path.replace(/\.md$/u, '')), fallen.text)
   assert.equal(fallen.indexState.status, 'ready')
   assert.ok(fallen.charCount <= 6000)
+})
+
+// ---------------------------------------------------------------------------
+// Task 8 step 1: the same fixture queried before and after the view exists
+// ---------------------------------------------------------------------------
+
+/** A second project's identity, so a cross-project claim names a real project. */
+const OTHER_PROJECT_ID = '6a1f0b52-0f6e-4a0f-9a0e-1d7a2f4b6c31'
+
+/**
+ * Add one note to a second, independent project inside the same vault.
+ *
+ * The service layer is bound to one working directory, so a cross-project fixture
+ * is built through the same shipped writer with a hand-built binding — exactly the
+ * shape `test/curation-baseline.test.js` uses. Bootstrap first, so the second
+ * project is a real project rather than a directory that happens to hold a file.
+ *
+ * @param {object} world - the world `makeCurationWorld` returned.
+ * @param {object} request - a `writeMemory` request.
+ * @returns {Promise<object>} the written identity.
+ */
+async function writeToOtherProject(world, request) {
+  const binding = {
+    kind: 'bound',
+    projectId: OTHER_PROJECT_ID,
+    slug: 'other',
+    displayName: 'Other Project',
+    schema: 1,
+    vaultRoot: world.vault,
+    relativeDir: `Projects/other--${OTHER_PROJECT_ID.slice(0, 8)}`,
+  }
+  await bootstrapVault(binding, { dataRoot: world.dataRoot, home: world.home })
+  return writeMemory(binding, request, { dataRoot: world.dataRoot, home: world.home })
+}
+
+/**
+ * The plan's same-fixture quality comparison (Task 8 step 1).
+ *
+ * The fixture is queried once with no stored view at all — the status quo the
+ * plugin shipped — and once after a real
+ * `mem_admin(action="curation", operation="scan")` has written one. Every class the
+ * design names is in it: a cross-project twin of a project fact, an old superseded
+ * conclusion, an exact duplicate, a same-title/different-number pair, a
+ * same-title/different-date pair, a note whose only relation to its query is shared
+ * vocabulary, and a relevant note nothing has retrieved.
+ *
+ * What is compared is the answer retrieval gives, never the view's internals: the
+ * retrieved source ids, the brief's character count and omission count, and whether
+ * every returned path is still readable. A view that widens, narrows or reorders a
+ * project-scoped search, that loses a fact from the brief, or that pushes the brief
+ * over its budget is a quality regression and is reported as one — the fixture is
+ * the specification and is not adjusted to make a case pass.
+ *
+ * The per-class rows are emitted as test diagnostics so the measured table can be
+ * read from the run's own output rather than restated from memory. A comparison is
+ * collected rather than thrown so one failing class cannot hide the others.
+ */
+test('a stored curation view changes no retrieval answer on the baseline fixture', async (t) => {
+  const world = await makeCurationWorld(t)
+  const { services } = world
+
+  // --- the fixture ---------------------------------------------------------
+  const budgetLow = await services.write({
+    type: 'decision',
+    title: '预算上限',
+    body: '预算是 12 万，超过需要重新审批。',
+  })
+  // Byte-identical to the first: the same project, type, title and body, a
+  // different id and path (a title is a rendering, an id is the identity).
+  const budgetTwin = await services.write({
+    type: 'decision',
+    title: '预算上限',
+    body: '预算是 12 万，超过需要重新审批。',
+  })
+  // Same title, a different number: a near duplicate, never an exact one.
+  const budgetNear = await services.write({
+    type: 'decision',
+    title: '预算上限',
+    body: '预算是 13 万，超过需要重新审批。',
+  })
+  const ruleOld = await services.write({
+    type: 'convention',
+    title: '导出格式',
+    body: '导出时使用 CSV。',
+  })
+  const ruleNew = await services.write({
+    type: 'convention',
+    title: '导出格式',
+    body: '导出时使用 JSON。',
+    supersedes: ruleOld.id,
+  })
+  // Same title, a different date: the design's "differing dates/numbers" class.
+  const windowEarly = await services.write({
+    type: 'decision',
+    title: '发布窗口',
+    body: '发布窗口定在 2026-10-01 开始。',
+  })
+  const windowLate = await services.write({
+    type: 'decision',
+    title: '发布窗口',
+    body: '发布窗口定在 2026-10-15 开始。',
+  })
+  // Shares the query's vocabulary and nothing else: high lexical similarity, no
+  // answer. Retrieval has to keep returning it exactly as it did before.
+  const noise = await services.write({
+    type: 'gotcha',
+    title: '格式讨论历史',
+    body: '这里只记录导出格式的讨论历史，结论与当前导出无关。',
+  })
+  // Nothing has ever retrieved this note: the view must not read "never recalled"
+  // as "not memory".
+  const cold = await services.write({
+    type: 'decision',
+    title: '冷门但相关的约束',
+    body: '只在导出时保留原始编号。',
+  })
+  const other = await writeToOtherProject(world, {
+    type: 'decision',
+    title: '预算上限',
+    body: '预算是 12 万，超过需要重新审批。',
+  })
+  assert.notEqual(budgetTwin.path, budgetLow.path)
+  assert.notEqual(other.path, budgetLow.path)
+
+  /** Readable aliases for the diagnostic table, so a row names notes and not hashes. */
+  const aliasById = new Map(
+    [
+      ['budget-low', budgetLow.id],
+      ['budget-twin', budgetTwin.id],
+      ['budget-near', budgetNear.id],
+      ['rule-old', ruleOld.id],
+      ['rule-new', ruleNew.id],
+      ['window-early', windowEarly.id],
+      ['window-late', windowLate.id],
+      ['noise', noise.id],
+      ['cold', cold.id],
+      ['other-project', other.id],
+    ].map(([name, id]) => [id, name]),
+  )
+  const nameOf = (id) => (typeof id === 'string' ? (aliasById.get(id) ?? id) : '(no-id)')
+
+  const cases = [
+    {
+      name: 'cross-project',
+      query: '预算上限',
+      present: [budgetLow.id, budgetTwin.id, budgetNear.id],
+      absent: [other.id],
+    },
+    {
+      name: 'superseded',
+      query: '导出格式',
+      present: [ruleNew.id],
+      absent: [ruleOld.id],
+    },
+    {
+      name: 'superseded-with-history',
+      query: '导出格式',
+      includeHistory: true,
+      present: [ruleOld.id, ruleNew.id],
+      absent: [],
+    },
+    {
+      name: 'exact-duplicate',
+      query: '预算是 12 万',
+      present: [budgetLow.id, budgetTwin.id],
+      absent: [],
+    },
+    {
+      name: 'near-duplicate',
+      query: '预算是 13 万',
+      present: [budgetNear.id],
+      absent: [],
+    },
+    {
+      name: 'differing-date',
+      query: '发布窗口',
+      present: [windowEarly.id, windowLate.id],
+      absent: [],
+    },
+    {
+      name: 'irrelevant-high-similarity',
+      query: '导出格式 讨论历史',
+      present: [noise.id],
+      absent: [],
+    },
+    {
+      name: 'cold-relevant',
+      query: '冷门但相关的约束',
+      present: [cold.id],
+      absent: [],
+    },
+  ]
+
+  const query = (one) =>
+    services.search({
+      query: one.query,
+      ...(one.includeHistory === true ? { includeHistory: true } : {}),
+    })
+
+  // --- before: no stored view exists yet -----------------------------------
+  const briefBefore = await services.brief({})
+  assert.equal(briefBefore.indexState.status, 'ready')
+  const before = new Map()
+  for (const one of cases) {
+    const hits = await query(one)
+    before.set(one.name, hits)
+    // The class's own anchors have to be retrieved *before* anything changed: a
+    // query that matches nothing compares two empty lists and proves nothing.
+    for (const id of one.present) {
+      assert.ok(
+        hits.some((hit) => hit.id === id),
+        `${one.name}: ${nameOf(id)} must be retrieved before the scan`,
+      )
+    }
+    for (const id of one.absent) {
+      assert.equal(
+        hits.some((hit) => hit.id === id),
+        false,
+        `${one.name}: ${nameOf(id)} must be absent before the scan`,
+      )
+    }
+  }
+
+  // --- the view is built by the shipped action, not by a test seam ---------
+  const scanned = await services.admin({ action: 'curation', operation: 'scan' })
+  assert.equal(scanned.action, 'curation')
+  assert.equal(scanned.result.status, 'scanned')
+  assert.equal(
+    scanned.result.complete,
+    true,
+    `the pass must cover this fixture: truncated=${scanned.result.truncated}`,
+  )
+  // The after-brief only proves anything if there really was a view for it to use.
+  const foreignView = await readCurationView({
+    dataRoot: world.dataRoot,
+    projectId: OTHER_PROJECT_ID,
+  })
+  assert.equal(foreignView, null, 'the view belongs to one project only')
+  const ownView = await readCurationView({
+    dataRoot: world.dataRoot,
+    projectId: scanned.result.projectId,
+  })
+  assert.equal(ownView?.complete, true, 'the scan must have written a complete view')
+
+  // --- after: the same fixture, the same queries ---------------------------
+  const briefAfter = await services.brief({})
+  const failures = []
+  for (const one of cases) {
+    const hits = await query(one)
+    const beforeIds = before.get(one.name).map((hit) => hit.id)
+    const afterIds = hits.map((hit) => hit.id)
+    let readable = 0
+    for (const hit of hits) {
+      try {
+        const note = await services.read({ path: hit.path })
+        if (note.path === hit.path) readable += 1
+        else failures.push(`${one.name}: mem_read(${hit.path}) answered ${note.path}`)
+      } catch (error) {
+        failures.push(`${one.name}: mem_read(${hit.path}) threw ${error?.message ?? error}`)
+      }
+    }
+    if (JSON.stringify(afterIds) !== JSON.stringify(beforeIds)) {
+      failures.push(
+        `${one.name}: retrieval changed: before=[${beforeIds.map(nameOf)}] after=[${afterIds.map(nameOf)}]`,
+      )
+    }
+    for (const id of one.present) {
+      if (!afterIds.includes(id))
+        failures.push(`${one.name}: ${nameOf(id)} is missing after the scan`)
+    }
+    for (const id of one.absent) {
+      if (afterIds.includes(id)) failures.push(`${one.name}: ${nameOf(id)} must stay absent`)
+    }
+    const pass =
+      !failures.some((line) => line.startsWith(`${one.name}:`)) && readable === hits.length
+    t.diagnostic(
+      `task8 class=${one.name} query=${JSON.stringify(one.query)} ` +
+        `before=[${beforeIds.map(nameOf).join(' ')}] after=[${afterIds.map(nameOf).join(' ')}] ` +
+        `chars=${briefBefore.charCount}->${briefAfter.charCount} ` +
+        `omitted=${briefBefore.omitted}->${briefAfter.omitted} ` +
+        `reads=${readable}/${hits.length} ${pass ? 'PASS' : 'FAIL'}`,
+    )
+  }
+  assert.deepEqual(failures, [], 'a stored view must not change any retrieval answer')
+
+  // --- the brief's own contract --------------------------------------------
+  assert.ok(briefBefore.charCount <= 6000, `before: ${briefBefore.charCount}`)
+  assert.ok(briefAfter.charCount <= 6000, `after: ${briefAfter.charCount}`)
+  assert.ok(
+    briefAfter.omitted <= briefBefore.omitted,
+    `the view must not omit more than the source path did: ${briefBefore.omitted} -> ${briefAfter.omitted}`,
+  )
+  // The fact nothing had retrieved is still in the brief by name.
+  assert.ok(briefAfter.text.includes(`\`${cold.path}\``), briefAfter.text)
+  // The exact pair is one displayed line carrying both paths, and the near pair is
+  // two lines: the view collapses only what is byte-identical.
+  const lowLines = briefAfter.text
+    .split('\n')
+    .filter((line) => line.includes(`\`${budgetLow.path}\``))
+  assert.equal(lowLines.length, 1, briefAfter.text)
+  assert.ok(lowLines[0].includes(budgetTwin.path), lowLines[0])
+  assert.notEqual(
+    briefAfter.text.split('\n').findIndex((line) => line.includes(`\`${windowEarly.path}\``)),
+    -1,
+    briefAfter.text,
+  )
+  assert.notEqual(
+    briefAfter.text.split('\n').findIndex((line) => line.includes(`\`${windowLate.path}\``)),
+    -1,
+    briefAfter.text,
+  )
+  // The near duplicate keeps its own line: a differing number is not an exact copy.
+  const nearLine = briefAfter.text
+    .split('\n')
+    .find((line) => line.includes(`\`${budgetNear.path}\``))
+  assert.ok(nearLine !== undefined, briefAfter.text)
+  assert.equal(nearLine.includes(budgetLow.path), false, nearLine)
+  assert.equal(
+    briefAfter.text.includes(`\`${ruleOld.path}\``),
+    false,
+    'history is not current guidance',
+  )
+  assert.equal(
+    briefAfter.text.includes(`\`${other.path}\``),
+    false,
+    'another project is not this brief',
+  )
 })

@@ -10,7 +10,7 @@ A project's long-term memory is plain Markdown in a directory the user opened as
 ## 1. What Codex changes
 
 - **The six `mem_*` tools are optional.** They exist only when the companion MCP server for this vault is installed and registered — installing the Codex plugin adds both that server and this skill — and then they are the same six names with the same meanings as under DSH (§8). If they are not in your tool list, §9 does the same work with `rg`, your file-read tool and edits.
-- **Recall is automatic with the installed plugin.** `SessionStart` injects the project brief and `UserPromptSubmit` may offer a short map of relevant note titles and paths. Open the cited note with `mem_read` before relying on its contents. The hooks are absent in an MCP-only setup; then call `mem_brief` yourself or read `_meta/hot.md`. No finished turn is distilled automatically under Codex: call `mem_log`/`mem_write`, or edit Markdown, when something is worth keeping.
+- **Recall is automatic with the installed plugin.** `SessionStart` injects the project brief and `UserPromptSubmit` may offer a short map of relevant note titles and paths. Open the cited note with `mem_read` before relying on its contents. The hooks are absent in an MCP-only setup; then call `mem_brief` yourself or read `_meta/hot.md`. No finished turn is distilled automatically under Codex: call `mem_log`/`mem_write`, or edit Markdown, when something is worth keeping. Automatic curation also belongs to the hook: a due, bounded pass runs at `SessionStart` **only when the installed hook is trusted** (Codex skips an untrusted hook in silence), so an MCP-only setup has the explicit scan and no automatic pass.
 - **Nothing here touches DSH.** No DSH configuration is read or written, DSH need not be installed, and the vault depends on neither harness.
 
 ## 2. The binding: `.obsidian-mem`
@@ -149,7 +149,7 @@ These keep their DSH names and meanings. Codex exposes an MCP server's tools as 
 | `mem_write` | `type`, `title`, `body` (all required), `tags`, `status`, `confidence`, `assertion`, `supersedes`, `id`, `idempotencyKey` | Creates a note at the routed destination and updates the MOC, receipts and index transactionally. **Without `id` it always creates a new note; to update, you must pass the existing `id`.** `supersedes` is validated against the old note's id. |
 | `mem_log` | `text` (required), `session`, `section`, `idempotencyKey` | Appends one entry to today's log, idempotently per session. `section: hot` (or 强约束/进行中/已完成) updates that controlled hot zone instead; if it would exceed the hot capacity it archives first or refuses. |
 | `mem_brief` | — | Returns the current hot brief — call it when you start work on a project, since nothing injects it for you — and use it to check the budget; an unbound directory answers `status: 'unbound'`. |
-| `mem_admin` | `action` (required: `lint`\|`index`\|`bind`\|`projects`\|`promote`\|`jobs`), `path`, `rebuild`, `mode`, `jobId`, `retry`, `report`, `prune` | Low-frequency maintenance; all six actions are implemented. `lint` is read-only unless a report is explicitly requested (`report: true`); `index` rebuilds the search index; `bind mode=show` reports the binding without writing; `projects` lists registered projects; `promote` copies a note into `Methods/` keeping its source link; `jobs` inspects and explicitly retries failed background jobs. |
+| `mem_admin` | `action` (required: `lint`\|`index`\|`bind`\|`projects`\|`promote`\|`jobs`\|`curation`\|`diagnostics`), `path`, `rebuild`, `mode`, `jobId`, `retry`, `report`, `prune`, `operation` (curation: `status`\|`scan`) | Low-frequency maintenance; all eight actions are implemented. `lint` is read-only unless a report is explicitly requested (`report: true`); `index` rebuilds the search index; `bind mode=show` reports the binding without writing; `projects` lists registered projects; `promote` copies a note into `Methods/` keeping its source link; `jobs` inspects and explicitly retries failed background jobs; `curation` reads or runs one bounded pass and **never** applies a proposal; `diagnostics` returns this process's content-free decision ring. |
 
 Working rules:
 
@@ -157,6 +157,13 @@ Working rules:
 - **Prefer `mem_search` → `mem_read` over guessing.** The vault is the source of truth for project decisions, conventions and gotchas; the conversation is not.
 - When a tool refuses a write (human-owned file, no ownership record, a file changed since the last write), do **not** work around it with a direct file edit or a shell command. Write the finding to `Inbox/` and tell the user which file refused and why.
 - The user decides whether this vault gets an MCP server. Never edit the user's Codex configuration to give yourself these tools.
+
+### Automatic curation here, and what a proposal is
+
+- **A parked proposal is not a fact and not an outcome.** With the plugin installed, a suspected near duplicate, a same-title claim with a different number or date, or a model-proposed supersede is parked under the plugin's own data root (outside the vault); it changes nothing. Never report it as an applied change, and never edit the source notes to make it true.
+- **There is no model-callable approval.** No `mem_admin` action, parameter or value applies or rejects a proposal, and you cannot approve one for the user. The only route is the interactive command from the installed package — `dsh-obsidian-mem-review --vault <absolute-path> <proposal-id>`, needing a real terminal and a byte-for-byte typed `apply <id>` or `reject <id>`. Point the user at it.
+- `mem_admin(action="curation", operation="status")` lists the queue without inspecting anything and `operation="scan"` runs one bounded pass; `autoCurate: false` disables only the automatic `SessionStart` pass, not these two.
+- **The compact navigation the brief carries is a cache.** Its lines were re-hashed against their sources before injection, and any changed, missing or unreadable source makes the brief fall back to reading the vault. Treat a fallback as normal and use `mem_search` → `mem_read`.
 
 ## 9. The file-tool fallback
 
@@ -210,7 +217,7 @@ Entry lines look like `- [hot-<UUIDv4>] <one line>`; the marker is what makes a 
 
 ### What has no fallback
 
-`lint`, `index`, `bind`, `projects`, `promote` and index-backed search exist only with the MCP server. You may inspect the vault by hand, but never present a hand inspection as a `mem_admin` result and never write a lint report or a `Methods/` promotion yourself.
+`lint`, `index`, `bind`, `projects`, `promote`, curation and index-backed search exist only with the MCP server. You may inspect the vault by hand, but never present a hand inspection as a `mem_admin` result and never write a lint report or a `Methods/` promotion yourself. The parked proposal queue and its review command belong to the installed package too: by hand you can read the vault as always, but you can neither run a curation pass nor approve a proposal.
 
 ## 10. Safety: hard prohibitions
 
