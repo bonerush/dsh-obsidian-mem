@@ -42,7 +42,7 @@ import {
 } from '../lib/curation-proposals.js'
 import { CurationStateError } from '../lib/curation-state.js'
 import { applyReviewedMemory, reviewCurationProposal } from '../lib/curation-review.js'
-import { withVaultLock } from '../lib/transaction.js'
+import { recoverTransactions, withVaultLock } from '../lib/transaction.js'
 import { resolveBinding } from '../lib/vault.js'
 import { makeCurationWorld } from './curation-world.js'
 
@@ -928,6 +928,142 @@ test(
   },
 )
 
+test('a symlinked claim guard never creates or modifies outside or vault targets', async (t) => {
+  for (const location of ['outside', 'vault']) {
+    for (const exists of [false, true]) {
+      for (const decision of ['apply', 'reject']) {
+        await t.test(`${location}, existing=${exists}, ${decision}`, async (t) => {
+          const made = await world(t)
+          const { proposal } = await parkCreateSeparate(made)
+          const input = reviewInput(made, proposal)
+          const target = join(location === 'vault' ? made.vault : made.root, 'guard-target.db')
+          // An existing empty regular file is also protected from SQLite initialization.
+          if (exists) await writeFile(target, '')
+          const guard = join(
+            curationProposalDir(made.dataRoot, made.binding.projectId),
+            '.review-lock.sqlite',
+          )
+          await symlink(target, guard)
+          const before = await vaultBytes(made)
+          const answer = await reviewCurationProposal({ ...input, decision })
+          if (exists)
+            assert.equal((await readFile(target)).length, 0, 'outside bytes must not change')
+          else
+            assert.equal(
+              await fileExists(target),
+              false,
+              'a missing outside target must stay missing',
+            )
+          assert.equal(answer.code, 'review-lock-unavailable', JSON.stringify(answer))
+          assert.deepEqual(await vaultBytes(made), before)
+          assert.equal(
+            (await readCurationProposal({ ...input, projectId: made.binding.projectId })).state,
+            'pending',
+          )
+        })
+      }
+    }
+  }
+})
+
+test('reject refuses a partially published or committed application until its recovery is resolved', async (t) => {
+  for (const failAfter of ['new-note', 'receipt', 'receipt-store']) {
+    await t.test(failAfter, async (t) => {
+      const made = await world(t)
+      const { proposal } = await parkCreateSeparate(made)
+      const input = reviewInput(made, proposal)
+      await assert.rejects(
+        reviewCurationProposal({ ...input, decision: 'apply', failAfter }),
+        (error) => error.code === 'injected-failure' && error.when === failAfter,
+      )
+      const before = await vaultBytes(made)
+      const notes = (await listMarkdown(at(made, `${made.binding.relativeDir}/Pitfalls`))).filter(
+        (name) => name !== 'index.md',
+      )
+      assert.equal(notes.length, 1, 'the failure occurred after publication')
+      const rejected = await reviewCurationProposal({ ...input, decision: 'reject' })
+      assert.equal(rejected.code, 'review-recovery-required', JSON.stringify(rejected))
+      assert.deepEqual(
+        await vaultBytes(made),
+        before,
+        'refusing rejection does not reconcile implicitly',
+      )
+      assert.equal(
+        (await readCurationProposal({ ...input, projectId: made.binding.projectId })).state,
+        'pending',
+      )
+
+      // A different proposal/key is still rejectable while this transaction waits.
+      const unrelated = await parkCreateSeparate(made)
+      assert.equal(
+        (
+          await reviewCurationProposal({
+            ...reviewInput(made, unrelated.proposal),
+            decision: 'reject',
+          })
+        ).status,
+        'rejected',
+      )
+      await recoverTransactions(made.binding, {
+        dataRoot: made.dataRoot,
+        home: made.home,
+        notifyIndex: () => {},
+      })
+      const afterRecovery = await reviewCurationProposal({ ...input, decision: 'reject' })
+      if (failAfter !== 'receipt-store') {
+        assert.equal(
+          afterRecovery.status,
+          'rejected',
+          'rollback removes the incomplete application',
+        )
+        const remaining = (
+          await listMarkdown(at(made, `${made.binding.relativeDir}/Pitfalls`))
+        ).filter((name) => name !== 'index.md')
+        assert.equal(remaining.length, 0)
+      } else {
+        assert.equal(
+          afterRecovery.code,
+          'review-recovery-required',
+          'the durable receipt still blocks rejection',
+        )
+        const replay = await reviewCurationProposal({ ...input, decision: 'apply', recover: true })
+        assert.equal(replay.status, 'applied', JSON.stringify(replay))
+        assert.equal(
+          (await readCurationProposal({ ...input, projectId: made.binding.projectId })).state,
+          'applied',
+        )
+      }
+    })
+  }
+})
+
+test('a hardlinked claim guard cannot initialize shared outside bytes', async (t) => {
+  const made = await world(t)
+  const { proposal } = await parkCreateSeparate(made)
+  const target = join(made.vault, 'hardlinked-guard.db')
+  await writeFile(target, '')
+  const guard = join(
+    curationProposalDir(made.dataRoot, made.binding.projectId),
+    '.review-lock.sqlite',
+  )
+  await fsp.link(target, guard)
+  const answer = await reviewCurationProposal({
+    ...reviewInput(made, proposal),
+    decision: 'reject',
+  })
+  assert.equal((await readFile(target)).length, 0, 'SQLite must not initialize another hardlink')
+  assert.equal(answer.code, 'review-lock-unavailable', JSON.stringify(answer))
+  assert.equal(
+    (
+      await readCurationProposal({
+        ...reviewInput(made, proposal),
+        projectId: made.binding.projectId,
+      })
+    ).state,
+    'pending',
+  )
+})
+
 test('a runtime without SQLite refuses review instead of approving without a guard', async (t) => {
   const made = await world(t)
   const { proposal } = await parkCreateSeparate(made)
@@ -1135,11 +1271,11 @@ test('a committed apply whose index notification fails still records the applied
   assert.equal(written.frontmatter.id, proposal.operation.item.preassignedId)
 })
 
-test('a crash before the receipt is stored is replayed only by asking for recovery', async (t) => {
-  // `failAfter: 'receipt'` interrupts *after* the manifest was written `committed`
-  // and after the vault holds the new note, but *before* the receipt store learns the
-  // idempotency key — the window `recover` exists for. `index-notify` (the earlier
-  // value here) fires after both, so nothing about that case needed recovery at all.
+test('a pre-receipt crash can be retried only by asking for recovery', async (t) => {
+  // `receipt` interrupts before the log and durable receipted marker, after the
+  // note is published. Recovery rolls this attempt back before retrying the same
+  // candidate identity. `receipt-store` is the separate committed/roll-forward case
+  // covered by the reject/recovery matrix above.
   const made = await world(t)
   const { proposal } = await parkCreateSeparate(made)
   const attempt = (extra) =>
@@ -1183,7 +1319,7 @@ test('a crash before the receipt is stored is replayed only by asking for recove
   )
 
   // A retry that does not ask for recovery cannot proceed, and it never will on its
-  // own: the committed manifest still owes a receipt, so the retry is refused rather
+  // own: the partial transaction still owns the published id, so the retry is refused rather
   // than allowed to publish a second note. Two attempts, because "it refuses once"
   // would also be true of a transient failure.
   for (const round of ['first', 'second']) {
@@ -1192,19 +1328,15 @@ test('a crash before the receipt is stored is replayed only by asking for recove
     assert.equal(blocked.code, 'proposal-not-current')
   }
 
-  // The one retry that asks for recovery rolls the committed manifest forward and
-  // replays the write, so the published note is the note that stands.
+  // Explicit recovery rolls back the incomplete attempt, then retries the same
+  // candidate. There is one current note at its preassigned identity and path.
   const retry = await attempt({ recover: true })
   assert.equal(retry.status, 'applied', JSON.stringify(retry))
   const notes = (await listMarkdown(at(made, `${made.binding.relativeDir}/Pitfalls`))).filter(
     (name) => name !== 'index.md',
   )
   assert.deepEqual(notes.length, 1, `one note after a crash and a replay, saw ${notes.join(', ')}`)
-  assert.deepEqual(
-    notes,
-    afterCrash,
-    'recovery reused the published note instead of minting another',
-  )
+  assert.deepEqual(notes, afterCrash, 'rollback and retry retain the candidate identity and path')
   const afterRetry = await vaultBytes(made)
 
   const replay = await attempt({})
@@ -1514,6 +1646,18 @@ test('every refusal code this module answers with is declared in one list', asyn
   )
   gate.release()
   assert.equal((await applying).status, 'applied')
+
+  const interrupted = await parkCreateSeparate(made)
+  const interruptedInput = reviewInput(made, interrupted.proposal)
+  await assert.rejects(
+    reviewCurationProposal({
+      ...interruptedInput,
+      decision: 'apply',
+      failAfter: 'receipt',
+    }),
+    (error) => error.code === 'injected-failure',
+  )
+  refused(await reviewCurationProposal({ ...interruptedInput, decision: 'reject' }))
 
   const unavailable = await parkCreateSeparate(made)
   const guard = join(

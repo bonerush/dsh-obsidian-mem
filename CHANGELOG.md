@@ -676,6 +676,26 @@ release artifact. The versioning policy is in the README, under Development.
     unavailable-storage checks. Existing source-hash, ownership, crash replay,
     idempotent create and CLI-only approval checks remain. The model tool surface
     stays at six. The older Task 7 disclosures above remain historical records.
+  - **Fix round 1 closed two findings from the task review, one of them an escape
+    the first implementation introduced.** The guard was opened with
+    `openSync(guard, 'a', 0o600)` and then handed to SQLite by pathname, so a
+    pre-existing `.review-lock.sqlite` **symlink** made even a *rejection* create a
+    4096-byte SQLite file at the link target — measured in an isolated snapshot with
+    the guard pointing at a path inside the bound vault. It is now opened with
+    `O_NOFOLLOW` and must be a regular file with one hardlink whose `ino`/`dev`
+    match the descriptor, so a symlink and a hardlinked outside file are both
+    refused. Second, a **dead apply** can leave a published note behind a still
+    `pending` proposal, and the reject path marked it `rejected` without looking:
+    reproduced with `failAfter: 'receipt'` (status `rejected`, record `rejected`,
+    one published note). Rejection now consults durable application evidence first —
+    the receipt store *and* the transaction manifests, under the vault lock, through
+    the new `hasTransactionEvidence` read-only seam — and fails closed with the
+    declared `review-recovery-required` when evidence exists or cannot be
+    established. `apply` still opts into recovery and finishes the interrupted
+    attempt. Both findings have cases that fail against `1af7bbd`; the covering lane
+    (`test/curation-review.test.js`, `test/curation-cli.test.js`,
+    `test/curation-tty.test.js`, `test/transaction.test.js`) is **104/104** with
+    lint, Prettier, `npm run types` and `git diff --check` clean.
 
 - **An automatic curation trigger can no longer fail a committed job, and DSH session
   activity now consults the 24-hour marker** (Task 6 review round). `lib/capture.js`

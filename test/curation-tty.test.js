@@ -168,6 +168,90 @@ async function publishedNotes(made) {
   }
 }
 
+test('interactive rejection stays read-only after a crash and explicit apply finishes recovery', async (t) => {
+  if (!hasExpect()) {
+    t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
+    return
+  }
+  for (const failAfter of ['new-note', 'receipt-store']) {
+    await t.test(failAfter, async (t) => {
+      const made = await parked(t)
+      const id = made.proposal.proposalId
+      // The engine's injected crash leaves an owned lock. Run it in a process
+      // that actually exits so the subsequent CLI can prove the owner is dead.
+      const moduleUrl = new URL('../lib/curation-review.js', import.meta.url).href
+      const crash = spawnSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `
+        import { reviewCurationProposal } from ${JSON.stringify(moduleUrl)}
+        const input = JSON.parse(process.env.CURATION_CRASH_INPUT)
+        await reviewCurationProposal({ ...input, now: new Date(input.now) })
+      `,
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            DSH_HOME: made.dshHome,
+            CURATION_CRASH_INPUT: JSON.stringify({
+              dataRoot: made.dataRoot,
+              binding: made.binding,
+              home: made.home,
+              proposalId: id,
+              decision: 'apply',
+              now: NOW,
+              failAfter,
+            }),
+          },
+          timeout: 10_000,
+        },
+      )
+      assert.equal(crash.status, 1, crash.stderr)
+      assert.match(crash.stderr, /injected-failure/u)
+      const notes = await publishedNotes(made)
+      assert.equal(notes.length, 1)
+      const notePath = join(
+        made.vault,
+        ...made.binding.relativeDir.split('/'),
+        'Pitfalls',
+        notes[0],
+      )
+      const before = await readFile(notePath)
+      const rejected = await runOnTty(made, ['--vault', made.vault, id], `reject ${id}`)
+      assert.notEqual(rejected.status, 0, rejected.output)
+      assert.match(rejected.output, /review-recovery-required/u)
+      assert.deepEqual(await publishedNotes(made), notes)
+      assert.deepEqual(await readFile(notePath), before)
+      assert.equal(
+        (
+          await readCurationProposal({
+            dataRoot: made.dataRoot,
+            projectId: made.binding.projectId,
+            proposalId: id,
+          })
+        ).state,
+        'pending',
+      )
+      const applied = await runOnTty(made, ['--vault', made.vault, id], `apply ${id}`)
+      assert.equal(applied.status, 0, applied.output)
+      assert.equal((await publishedNotes(made)).length, 1)
+      assert.equal(
+        (
+          await readCurationProposal({
+            dataRoot: made.dataRoot,
+            projectId: made.binding.projectId,
+            proposalId: id,
+          })
+        ).state,
+        'applied',
+      )
+    })
+  }
+})
+
 test('typing the exact confirmation applies the proposal', async (t) => {
   const made = await parked(t)
   const id = made.proposal.proposalId
