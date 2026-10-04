@@ -24,7 +24,7 @@
 // real home, vault or `$DSH_HOME`.
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { promises as fsp, readFileSync } from 'node:fs'
 import { readFile, readdir, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -32,6 +32,7 @@ import ts from 'typescript'
 
 import {
   CURATION_REVIEW_CODES,
+  curationProposalDir,
   readCurationProposal,
   saveCurationProposal,
   snapshotProposalSources,
@@ -48,8 +49,16 @@ const OTHER_PROJECT = '6a1f0b52-0000-4000-8000-000000000001'
 /**
  * The translation tables in `lib/curation-review.js` whose *values* are the answer
  * vocabulary: a key is an engine code, a value is what this module reports for it.
+ * `OWNERSHIP_CODES` is the one table read at a dynamic emitter site rather than by
+ * `refusalCode`, and it is here for the same reason: its values are answers.
  */
-const TABLE_NAMES = new Set(['STORE_CODES', 'TRANSACTION_CODES', 'MEMORY_CODES'])
+const TABLE_NAMES = new Set([
+  'OWNERSHIP_CODES',
+  'STORE_CODES',
+  'TRANSACTION_CODES',
+  'MEMORY_CODES',
+  'STATE_CODES',
+])
 
 /** The sha256 of a byte sequence. */
 function sha256(value) {
@@ -156,6 +165,40 @@ async function parkCreateSeparate(made, overrides = {}) {
     ...(overrides.details ?? {}),
   })
   return { proposal, item }
+}
+
+/**
+ * Park one `supersede` proposal about a note named by a raw path and id.
+ *
+ * `snapshotProposalSources` hashes the bytes it reads without judging who wrote them,
+ * so a target a review must refuse for its *ownership* is built through the same two
+ * public store calls every shipped proposal uses — no hand-written record.
+ *
+ * @param {object} made - the world.
+ * @param {string} relative - the vault-relative note the candidate supersedes.
+ * @param {string} id - the id the snapshot and the operation name.
+ * @returns {Promise<object>} the stored record.
+ */
+async function parkSupersedeAbout(made, relative, id) {
+  const item = itemFixture({ supersedesId: id })
+  return saveCurationProposal({
+    dataRoot: made.dataRoot,
+    now: NOW,
+    projectId: made.binding.projectId,
+    itemKey: item.idempotencyKey,
+    kind: 'supersede',
+    sources: await snapshotProposalSources(made.binding, {
+      supersedesId: id,
+      twin: { id, path: relative },
+      home: made.home,
+    }),
+    operation: { kind: 'supersede', item, supersedesId: id },
+  })
+}
+
+/** The absolute path of one stored proposal record. */
+function recordPath(made, proposalId) {
+  return join(made.dataRoot, 'curation', 'proposals', made.binding.projectId, `${proposalId}.json`)
 }
 
 /** Every `.md` file under one directory, vault-relative, sorted. */
@@ -681,6 +724,196 @@ test('two concurrent reviewers of one proposal: one applies, one is refused', as
 })
 
 /**
+ * Force the ordering a stale-claim reclaim races on, with await gates only.
+ *
+ * The hooks are installed on `node:fs`'s shared `promises` object, which is the object
+ * `lib/curation-review.js` holds, so they reach the claim file's own reads, renames and
+ * creates without a production seam. Two orderings are forced: both reviewers read the
+ * stale claim before either renames it (otherwise one of them would simply see the
+ * other's fresh claim and no reclaim race would happen), and the *second* reclaiming
+ * rename lands only after the first reviewer's claim exists — the ordering in which a
+ * rename can move a fresh claim rather than the stale one.
+ *
+ * @param {string} claimFile - the claim path both reviews share.
+ * @returns {{sequence: string[], installs: string[], restore: () => void}} the observed claim operations.
+ */
+function forceReclaimOrdering(claimFile) {
+  const original = {
+    readFile: fsp.readFile,
+    rename: fsp.rename,
+    open: fsp.open,
+    link: fsp.link,
+  }
+  const deferred = () => {
+    let resolve = null
+    const promise = new Promise((done) => {
+      resolve = done
+    })
+    return { promise, resolve }
+  }
+  const bothRead = deferred()
+  const firstInstall = deferred()
+  const sequence = []
+  const installs = []
+  const claimIdOf = (text) => String(text).match(/"claimId":"([^"]+)"/u)?.[1] ?? '(unreadable)'
+  let reads = 0
+  let renames = 0
+  const installed = (id) => {
+    installs.push(id)
+    firstInstall.resolve()
+  }
+  fsp.readFile = async (file, ...rest) => {
+    if (file === claimFile) {
+      reads += 1
+      if (reads === 2) bothRead.resolve()
+      await bothRead.promise
+    }
+    return original.readFile(file, ...rest)
+  }
+  fsp.rename = async (from, to) => {
+    if (from === claimFile) {
+      renames += 1
+      if (renames === 2) await firstInstall.promise
+    }
+    const answer = await original.rename(from, to)
+    if (from === claimFile) sequence.push('rename')
+    return answer
+  }
+  fsp.open = async (file, flags, ...rest) => {
+    const handle = await original.open(file, flags, ...rest)
+    if (file === claimFile && String(flags).includes('x')) {
+      const write = handle.writeFile.bind(handle)
+      handle.writeFile = async (...args) => {
+        const answer = await write(...args)
+        sequence.push('create')
+        installed(claimIdOf(args[0]))
+        return answer
+      }
+    }
+    return handle
+  }
+  fsp.link = async (from, to) => {
+    const answer = await original.link(from, to)
+    if (to === claimFile) {
+      sequence.push('create')
+      installed(claimIdOf(readFileSync(claimFile, 'utf8')))
+    }
+    return answer
+  }
+  return {
+    sequence,
+    installs,
+    restore: () => {
+      fsp.readFile = original.readFile
+      fsp.rename = original.rename
+      fsp.open = original.open
+      fsp.link = original.link
+    },
+  }
+}
+
+test('two reviewers that both judge one stale claim stale cannot both proceed', async (t) => {
+  const made = await world(t)
+  const { proposal } = await parkCreateSeparate(made)
+  const claimFile = join(
+    curationProposalDir(made.dataRoot, made.binding.projectId),
+    `${proposal.proposalId}.claim`,
+  )
+  // A claim both reviewers must judge stale: written by a live pid, older than the
+  // 15-minute bound, so neither refusal can come from "somebody else is working".
+  await writeFile(
+    claimFile,
+    `${JSON.stringify({ claimId: 'stale-claim', pid: process.pid, at: '2020-01-01T00:00:00.000Z' })}\n`,
+  )
+  const forced = forceReclaimOrdering(claimFile)
+  const review = () =>
+    reviewCurationProposal({
+      dataRoot: made.dataRoot,
+      proposalId: proposal.proposalId,
+      decision: 'apply',
+      binding: made.binding,
+      now: NOW,
+    })
+  const [first, second] = await Promise.all([review(), review()]).finally(forced.restore)
+
+  // The case's own precondition, asserted rather than assumed: both reclaimers renamed,
+  // and the second rename completed after the first claim existed.
+  assert.deepEqual(
+    forced.sequence.slice(0, 3),
+    ['rename', 'create', 'rename'],
+    `the second reclaim must land after the first claim, saw ${forced.sequence.join(',')}`,
+  )
+  const statuses = [first.status, second.status].sort()
+  assert.deepEqual(
+    statuses,
+    ['applied', 'refused'],
+    `${JSON.stringify([first, second])} — installs ${forced.installs.join('|')}`,
+  )
+  const refusedAnswer = [first, second].find((answer) => answer.status === 'refused')
+  assert.equal(refusedAnswer.code, 'proposal-not-current')
+
+  const notes = (await listMarkdown(at(made, `${made.binding.relativeDir}/Pitfalls`))).filter(
+    (name) => name !== 'index.md',
+  )
+  assert.deepEqual(notes.length, 1, `one note from two reclaimers, saw ${notes.join(', ')}`)
+})
+
+test('a reclaim cannot publish a note behind a rejected record', async (t) => {
+  const made = await world(t)
+  const { proposal } = await parkCreateSeparate(made)
+  const claimFile = join(
+    curationProposalDir(made.dataRoot, made.binding.projectId),
+    `${proposal.proposalId}.claim`,
+  )
+  await writeFile(
+    claimFile,
+    `${JSON.stringify({ claimId: 'stale-claim', pid: process.pid, at: '2020-01-01T00:00:00.000Z' })}\n`,
+  )
+  const forced = forceReclaimOrdering(claimFile)
+  const review = (decision) =>
+    reviewCurationProposal({
+      dataRoot: made.dataRoot,
+      proposalId: proposal.proposalId,
+      decision,
+      binding: made.binding,
+      now: NOW,
+    })
+  // The apply is started first, so it is the reclaimer whose fresh claim the reject's
+  // rename moves whenever the two reach their first read in that order; which of the two
+  // then wins the claim is not fixed, so this asserts the invariant that holds either way
+  // — one decision lands, and the vault agrees with it. The harm this closes is the pair:
+  // a note published behind a record marked `rejected`.
+  const [applied, rejected] = await Promise.all([review('apply'), review('reject')]).finally(
+    forced.restore,
+  )
+
+  const decided = [applied, rejected].filter((answer) => answer.status !== 'refused')
+  assert.equal(
+    decided.length,
+    1,
+    `${JSON.stringify([applied, rejected])} — installs ${forced.installs.join('|')}`,
+  )
+  assert.equal(
+    [applied, rejected].find((answer) => answer.status === 'refused').code,
+    'proposal-not-current',
+  )
+  const record = await readCurationProposal({
+    dataRoot: made.dataRoot,
+    projectId: made.binding.projectId,
+    proposalId: proposal.proposalId,
+  })
+  assert.equal(record.state, decided[0].status, 'the record holds the one decision that landed')
+  const notes = (await listMarkdown(at(made, `${made.binding.relativeDir}/Pitfalls`))).filter(
+    (name) => name !== 'index.md',
+  )
+  assert.deepEqual(
+    notes.length,
+    record.state === 'applied' ? 1 : 0,
+    `no note may exist behind a rejected record, saw ${notes.join(', ')}`,
+  )
+})
+
+/**
  * A one-shot gate on the reviewed evidence read.
  *
  * The engine reads each `expectedSourceHashes` path inside the transaction, through
@@ -1083,6 +1316,70 @@ test('every refusal code this module answers with is declared in one list', asyn
     }),
   )
 
+  // Two more ownership proofs the memory layer names, built through the same public
+  // store calls: a note with frontmatter and a valid id but no ownership evidence
+  // (`ownership-unproven`), and a plugin-owned note that is not the one the snapshot
+  // recorded (`ownership-mismatch`). Both are answered under the layer's own names.
+  const unprovenId = `dec-${randomUUID()}`
+  const unprovenPath = `${made.binding.relativeDir}/Docs/no-ownership-proof.md`
+  await writeFile(
+    at(made, unprovenPath),
+    ['---', `id: ${unprovenId}`, 'type: decision', 'title: "没有归属证据"', '---', '正文。\n'].join(
+      '\n',
+    ),
+  )
+  const unproven = await parkSupersedeAbout(made, unprovenPath, unprovenId)
+  refused(
+    await reviewCurationProposal({
+      dataRoot: made.dataRoot,
+      proposalId: unproven.proposalId,
+      decision: 'apply',
+      binding: made.binding,
+      now: NOW,
+    }),
+  )
+
+  const ownId = `dec-${randomUUID()}`
+  const mismatchPath = `${made.binding.relativeDir}/Docs/id-mismatch.md`
+  await writeFile(
+    at(made, mismatchPath),
+    [
+      '---',
+      `id: ${ownId}`,
+      'type: decision',
+      'title: "身份不一致"',
+      'trust: agent',
+      'harness: dsh',
+      '---',
+      '正文。\n',
+    ].join('\n'),
+  )
+  const mismatch = await parkSupersedeAbout(made, mismatchPath, `dec-${randomUUID()}`)
+  refused(
+    await reviewCurationProposal({
+      dataRoot: made.dataRoot,
+      proposalId: mismatch.proposalId,
+      decision: 'apply',
+      binding: made.binding,
+      now: NOW,
+    }),
+  )
+
+  // A stored record whose bytes cannot be read: the private-state reader refuses it,
+  // and a review reports that as an answer (`proposal-unreadable`) instead of letting a
+  // corrupt cache escape as an exception.
+  const corrupt = await parkCreateSeparate(made)
+  await writeFile(recordPath(made, corrupt.proposal.proposalId), '{ this is not a record\n')
+  refused(
+    await reviewCurationProposal({
+      dataRoot: made.dataRoot,
+      proposalId: corrupt.proposal.proposalId,
+      decision: 'apply',
+      binding: made.binding,
+      now: NOW,
+    }),
+  )
+
   const locked = await parkCreateSeparate(made)
   refused(
     await withVaultLock(
@@ -1162,20 +1459,23 @@ test('the review vocabulary and the module’s own emitters are the same set', (
   // The behavioural case above can only observe the codes its own drivers produce, so
   // on its own it cannot fail for a code the module answers and this file never
   // drives — the direction the finding named. This reads the module's source instead:
-  // every code it passes to its own error constructor is an answer it can give, and so
-  // is every value of the three translation tables `refusalCode` answers through. A
-  // refusal added to the module and not declared fails here, and a declared code the
-  // module cannot answer fails here too.
+  // every code it passes to its own error constructor, every `code: '…'` it returns,
+  // and every value of the translation tables it answers through is an answer it can
+  // give. The one *dynamic* emitter — the ownership proof re-emitted from
+  // `assertPluginOwnedNote` — is not skipped: its code must be read out of a declared
+  // table, and a bare `error.code` there is reported as an emitter whose codes cannot
+  // be enumerated. A refusal added to the module and not declared fails here, and a
+  // declared code the module cannot answer fails here too.
   const source = readFileSync(new URL('../lib/curation-review.js', import.meta.url), 'utf8')
 
   /**
-   * Every code one module source can answer with: the constructor's first string
-   * argument and every value of the named translation tables.
+   * Every code one module source can answer with, and every emitter whose code this
+   * scan cannot enumerate.
    *
    * @param {string} sourceText - the JavaScript.
-   * @returns {Set<string>} the answered codes.
+   * @returns {{answers: Set<string>, unbounded: string[]}} the answered codes and the emitter expressions that read no declared table.
    */
-  const answeredCodes = (sourceText) => {
+  const scanAnswers = (sourceText) => {
     const file = ts.createSourceFile(
       'scan.js',
       sourceText,
@@ -1183,13 +1483,73 @@ test('the review vocabulary and the module’s own emitters are the same set', (
       true,
       ts.ScriptKind.JS,
     )
-    const found = new Set()
+    // The tables' *values* are the answers (their keys are the engine's own codes).
+    // They are declared as `Object.freeze({…})`, so the literal is reached through the
+    // call; a spread or shorthand entry is not an answer and is skipped.
+    const tableValues = new Map()
+    const tableLiteral = (name) => {
+      let literal = null
+      const visit = (node) => {
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isIdentifier(node.name) &&
+          node.name.text === name &&
+          node.initializer
+        ) {
+          const initializer =
+            ts.isCallExpression(node.initializer) && node.initializer.arguments.length === 1
+              ? node.initializer.arguments[0]
+              : node.initializer
+          if (ts.isObjectLiteralExpression(initializer)) literal = initializer
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(file)
+      return literal
+    }
+    for (const name of TABLE_NAMES) {
+      const literal = tableLiteral(name)
+      if (literal === null) continue
+      tableValues.set(
+        name,
+        literal.properties.flatMap((property) =>
+          // Only the reading side of a key/value pair is an answer a list may declare.
+          ts.isPropertyAssignment(property) && ts.isStringLiteral(property.initializer)
+            ? [property.initializer.text]
+            : [],
+        ),
+      )
+    }
+    // A `const code = OWNERSHIP_CODES[error.code]` bound to a declared table is an
+    // enumerable source, so an emitter passing that name is bounded by that table.
+    const boundedNames = new Set()
+    const isTableRead = (node) =>
+      ts.isElementAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      tableValues.has(node.expression.text)
+    const answers = new Set()
+    const unbounded = []
+    // One code expression: a literal is an answer, a conditional is judged branch by
+    // branch (an `error.code === 'ENOENT' ? 'a' : 'b'` emitter names exactly those two
+    // codes), a read of a declared table is bounded by that table, and anything else
+    // cannot be enumerated and is reported.
+    const judge = (code) => {
+      if (ts.isStringLiteralLike(code)) answers.add(code.text)
+      else if (ts.isConditionalExpression(code)) {
+        judge(code.whenTrue)
+        judge(code.whenFalse)
+      } else if (isTableRead(code) || boundedNames.has(code.getText(file))) return
+      else unbounded.push(code.getText(file))
+    }
     const walk = (node) => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+        if (isTableRead(node.initializer)) boundedNames.add(node.name.text)
+      }
       if (ts.isNewExpression(node) && node.expression.getText(file) === 'CurationReviewError') {
-        const code = node.arguments?.[0]
         // The code is a quoted string (`'operation-invalid'`) or a substitution-free
         // template; one with a `${}` in it is a message.
-        if (code !== undefined && ts.isStringLiteralLike(code)) found.add(code.text)
+        const code = node.arguments?.[0]
+        if (code !== undefined) judge(code)
       }
       // A refusal the function returns rather than throws is a `code: '…'` entry.
       if (
@@ -1197,54 +1557,57 @@ test('the review vocabulary and the module’s own emitters are the same set', (
         node.name.getText(file) === 'code' &&
         ts.isStringLiteralLike(node.initializer)
       ) {
-        found.add(node.initializer.text)
-      }
-      // The tables' *values* are the answers (their keys are the engine's own codes).
-      // They are declared as `Object.freeze({…})`, so the literal is reached through
-      // the call; a spread or shorthand entry is not an answer and is skipped.
-      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
-        const initializer =
-          ts.isCallExpression(node.initializer) && node.initializer.arguments.length === 1
-            ? node.initializer.arguments[0]
-            : node.initializer
-        if (TABLE_NAMES.has(node.name.text) && ts.isObjectLiteralExpression(initializer)) {
-          for (const property of initializer.properties) {
-            // The keys are *not* answers: a table maps an engine code to the one this
-            // module reports for it, and only the reading side of that pair is a code
-            // `CURATION_REVIEW_CODES` may declare.
-            if (ts.isPropertyAssignment(property) && ts.isStringLiteral(property.initializer)) {
-              found.add(property.initializer.text)
-            }
-          }
-        }
+        answers.add(node.initializer.text)
       }
       ts.forEachChild(node, walk)
     }
     walk(file)
-    return found
+    for (const values of tableValues.values()) for (const value of values) answers.add(value)
+    return { answers, unbounded }
   }
 
-  const answers = answeredCodes(source)
-  assert.ok(answers.size > 0, 'the scan found no emitter, so this check would be vacuous')
+  const scan = scanAnswers(source)
+  assert.ok(scan.answers.size > 0, 'the scan found no emitter, so this check would be vacuous')
+  assert.deepEqual(
+    scan.unbounded,
+    [],
+    'every dynamic refusal code must be read out of a declared table, not an arbitrary expression',
+  )
   // `proposal-state` is a table *key*: the store's own refusal is reported under this
   // module's name for the same fact, so it is not part of the answer vocabulary and a
   // position here would be a promise nothing answers.
   assert.deepEqual(
-    [...answers].sort(),
+    [...scan.answers].sort(),
     [...CURATION_REVIEW_CODES].sort(),
     'the codes lib/curation-review.js can answer with must be exactly the declared list',
   )
 
-  // The control: the same scan reports an answer the list does not declare, so the
-  // case above is a check and not a restatement of the list.
-  // The control changes a table *value*, which is the half that is an answer: the
-  // replacement must be reported as an undeclared code.
-  const control = source.replace(`'human-owned': 'human-owned',`, `'human-owned': 'undeclared-x',`)
-  assert.notEqual(control, source, 'the control must actually change the source')
-  const controlAnswers = answeredCodes(control)
+  // Control 1: the same scan reports an answer the list does not declare. It changes a
+  // table *value*, which is the half that is an answer, so the case above is a check
+  // and not a restatement of the list.
+  const controlValue = source.replace(
+    `'human-owned': 'human-owned',`,
+    `'human-owned': 'undeclared-x',`,
+  )
+  assert.notEqual(controlValue, source, 'the control must actually change the source')
   assert.deepEqual(
-    [...controlAnswers].filter((code) => !CURATION_REVIEW_CODES.includes(code)),
+    [...scanAnswers(controlValue).answers].filter((code) => !CURATION_REVIEW_CODES.includes(code)),
     ['undeclared-x'],
     'an answered-but-undeclared code must be reported',
+  )
+
+  // Control 2: the dynamic emitter site itself. Replacing the table read with the bare
+  // `error.code` — the construction this finding was found through — must be reported,
+  // so an emitter whose codes cannot be enumerated fails this case rather than being
+  // skipped for not being a string literal.
+  const controlDynamic = source.replace(
+    'const code = OWNERSHIP_CODES[error.code]',
+    'const code = error.code',
+  )
+  assert.notEqual(controlDynamic, source, 'the dynamic control must actually change the source')
+  assert.deepEqual(
+    scanAnswers(controlDynamic).unbounded,
+    ['code'],
+    'an emitter reading no declared table must be reported',
   )
 })

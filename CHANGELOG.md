@@ -100,9 +100,11 @@ release artifact. The versioning policy is in the README, under Development.
   risky a second time and parked it again. `reviewCurationProposal({dataRoot,
   proposalId, decision, binding, now})` reads the record, refuses anything that is not a
   pending `create-separate` or `supersede` with a named code (`review-only`,
-  `operation-not-executable`, `proposal-not-current`, `proposal-missing`), verifies every
-  source through the vault jail and the memory layer's ownership proof, applies exactly
-  the approved operation, and only then marks the proposal `applied`. `decision:
+  `operation-not-executable`, `proposal-not-current`, `proposal-missing`), answers a
+  stored record whose bytes cannot be read as `proposal-unreadable` instead of throwing,
+  verifies every source through the vault jail and the memory layer's ownership proof
+  (`human-owned`, `ownership-unproven`, `ownership-mismatch`, the layer's own names),
+  applies exactly the approved operation, and only then marks the proposal `applied`. `decision:
   'reject'` marks it `rejected` and changes no source byte. **A stale proposal never
   auto-rebases:** the record's own `sources` travel into the transaction request as
   `expectedSourceHashes`, which `lib/transaction.js` re-reads and re-hashes *inside the
@@ -115,13 +117,21 @@ release artifact. The versioning policy is in the README, under Development.
   arbitrated by a per-proposal claim file beside the record: one decides, the other is
   refused, and the shared idempotency key would in any case have replayed the winner's
   transaction rather than minting a second note. The claim is taken before **either**
-  decision, so a rejection cannot mark `rejected` a proposal an apply is publishing, and
-  the same claim is the one that makes a stale claim's reclaim exclusive (the obsolete
-  claim is renamed out of the way before the exclusive create). A crash between the
-  publish and the receipt store is replayed by `recover` (the explicit half of
-  `mem_admin(action='jobs')`), which rolls the committed manifest forward before the
+  decision, so a rejection cannot mark `rejected` a proposal an apply is publishing.
+  **The reclaim of a stale claim is decided by an exclusive `link`, not by the rename
+  that clears the way for it**: the new claim is written to a per-process name and
+  linked into place (`EEXIST` for every claimant but one), and a reclaimer whose rename
+  lands after another review installed its claim verifies the bytes it moved, puts them
+  back and refuses. A case that forces that ordering shows exactly one of two reclaimers
+  proceeding, where the earlier rename-then-create let both through and published a note
+  behind a `rejected` record. A crash between the publish and the receipt store is
+  replayed by `recover` (the explicit half of `mem_admin(action='jobs')`), which rolls
+  the committed manifest forward before the
   identity check so the retry returns the receipt the first attempt published instead of
-  refusing with `id-taken`; the CLI passes it, so the human route can replay that window.
+  refusing with `id-taken`; the module-level replay is covered by a case that passes
+  `recover: true`, and the CLI does pass it — the CLI's own call is **not** exercised by
+  a test, so "the human route can replay that window" is a reading of the argument list,
+  not a measurement.
   - `lib/curation-cli.js` — the `dsh-obsidian-mem-review` command, the **only** approval
     route. It requires an absolute `--vault`, resolves the project from the working
     directory in `show` mode, prints the proposed operation, its sources and their

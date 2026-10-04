@@ -346,7 +346,20 @@ const BUDGETS = {
   // verification that names `source-changed` / `source-unsafe` / `human-owned`
   // instead of one generic refusal, the review claim that arbitrates two concurrent
   // reviewers, and the renderer a reviewer reads before typing a confirmation.
-  'lib/curation-review.js': 650,
+  // Raised from 650 by the Task 7 fix round 2 (764 formatted lines measured on
+  // `fix: make the review claim exclusive and its refusals declared`, so 800 is the
+  // same rule's number). What the 114 lines buy, each from a finding that a measurement
+  // rather than a reading produced: the claim is now installed by `link()` and the
+  // stale-claim retirement verifies the bytes it moved, because the rename-then-create
+  // this file used to describe let a second reclaimer move a *fresh* claim and both
+  // reviewers proceeded (before: `renames=2 creates=2 applied=2`; after: one applied);
+  // the ownership translation table so the three refusals `assertPluginOwnedNote`
+  // raises are declared answers instead of codes escaping through a dynamic emitter
+  // site; the private-state table and the wrapped first record read so a corrupt cache
+  // is answered as `proposal-unreadable` rather than thrown; and the prose that has to
+  // name the guarantee the mechanism actually provides, since this module's earlier
+  // comments claimed one it did not.
+  'lib/curation-review.js': 800,
   // The interactive command is mostly argument handling and the refusal text a
   // person reads; 223 lines is the measured size and 250 is the rule's number.
   'lib/curation-cli.js': 250,
