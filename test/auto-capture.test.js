@@ -32,7 +32,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -46,7 +46,11 @@ import {
 import { createDiagnostics } from '../lib/debug.js'
 import { openDiagnosticJournal, readDiagnosticJournal } from '../lib/diagnostic-journal.js'
 import { listCurationProposals, readCurationProposal } from '../lib/curation-proposals.js'
-import { readChangedSources } from '../lib/curation-state.js'
+import {
+  MAX_CHANGED_PATHS,
+  curationChangedPath,
+  readChangedSources,
+} from '../lib/curation-state.js'
 import { openIndex } from '../lib/index-db.js'
 import { registerHooks } from '../lib/hooks.js'
 import { applyCandidate, createMemoryWithId } from '../lib/memory.js'
@@ -2097,6 +2101,43 @@ test('an applied job records the job, the distillation and the index refresh', a
     eventsOf(diagnostics, 'index').map((event) => event.outcome),
     ['none'],
   )
+})
+
+test('a job that drops several changed-path hints reports their sum, not the largest', async (t) => {
+  // The worker enqueues one committed path at a time and the cap evicts at most one
+  // hint per enqueue (the addition is a one-element array), so a job that drops two
+  // hints owes the ring `hits: 2`. Reporting the largest single enqueue would say 1 and
+  // understate work a later pass does not repair by itself — the dropped hint's note is
+  // trusted by its record's presence and keeps its pre-edit hash in the view.
+  const f = await fixture(t)
+  const diagnostics = createDiagnostics()
+  const job = validatedJob([
+    itemFixture({ title: '第一条结论' }),
+    itemFixture({ title: '第二条结论' }),
+  ])
+  await writeJobAtomic(f.queueRoot, job)
+  const synthetic = Array.from(
+    { length: MAX_CHANGED_PATHS },
+    (unused, index) => `${PROJECT}/Docs/合成-${String(index).padStart(4, '0')}.md`,
+  )
+  await mkdir(dirname(curationChangedPath(f.dataRoot, PROJECT_ID)), { recursive: true })
+  await writeFile(
+    curationChangedPath(f.dataRoot, PROJECT_ID),
+    `${JSON.stringify({ version: 1, projectId: PROJECT_ID, paths: synthetic, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+    'utf8',
+  )
+  const summary = await processQueue(queueOptions(f, { diagnostics }))
+  assert.equal(summary.completed, 1)
+  const dropped = diagnostics
+    .snapshot()
+    .events.filter(
+      (event) => event.event === 'curation' && event.outcome === 'changed-path-dropped',
+    )
+  // One event for the job, carrying the sum: the two-item pass evicts one hint per
+  // enqueue into the full queue, and both are the job's own drops.
+  assert.equal(dropped.length, 1, JSON.stringify(diagnostics.snapshot().events))
+  assert.equal(dropped[0].hits, 2)
+  assert.equal(dropped[0].projectId, PROJECT_ID)
 })
 
 test('a failed attempt records the code and the attempt count, never the model text', async (t) => {

@@ -466,7 +466,9 @@ $DSH_HOME/data/obsidian-mem/
 ├── receipts/       per-write and per-job receipts
 ├── pending/        queued distillation jobs (0700/0600)
 ├── curation/       rebuildable curation state: cursor, per-path scan records,
-│                   changed-path queue, compact view and parked proposals (0700/0600)
+│                   changed-path queue and compact view (0700/0600)
+│   └── proposals/  durable, not rebuildable: every parked candidate and its
+│                   decision record (0700/0600)
 ├── diagnostics/    bounded content-free decision journal (0700/0600)
 └── processed/      per-session processed floor (0700/0600)
 ```

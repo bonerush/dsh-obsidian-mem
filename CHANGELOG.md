@@ -132,7 +132,7 @@ release artifact. The versioning policy is in the README, under Development.
     removing the changed-path document after a truncated pass, reproduces the same two
     steps. A full pass cut by the *manifest* bound is the exception the same code shows:
     `truncated !== 'manifest-budget'` gates the cursor write, so that pass leaves the
-    stored marker exactly as it was (`lib/curation-scan.js:1154`). **The other direction
+    stored marker exactly as it was (`lib/curation-scan.js:1172`). **The other direction
     is source-inspected, not measured:** `due = force || local.length > 0 ||
     isCurationDue(cursor)` (`lib/services.js`) makes a queued hint due whatever the marker
     says, but no run in these records measures a pass on every eligible session start
@@ -331,9 +331,11 @@ release artifact. The versioning policy is in the README, under Development.
   `[[<project>/Other/a]]`, where those candidates miss while the scan answers through
   the `a` of `<project>/Docs/a/a`. The ninth is the unconditional dot: a bare
   `[[nomatch.png]]` names nothing anywhere and `lintVault` reports it dead, while the
-  scan's last-segment branch answers `true` before it consults any name, because its
-  name set holds only dot-free stems. The covering case asserts that whole matrix,
-  scan against `lintVault`, row by row, nineteen rows in all (`nine` silent/dead,
+  scan's last-segment branch answers `true` before it consults any name at all, so the
+  answer does not depend on what that set holds — it is built from every file's last
+  segment with only a trailing `.md` stripped, so it does carry `txt.txt` and `图.png`.
+  The covering case asserts that whole matrix, scan against `lintVault`, row by row,
+  nineteen rows in all (`nine` silent/dead,
   `eight` silent/silent, `two` dead/dead). The silent/silent `[[LICENSE]]` row is the
   one whose *attribution* is probed rather than written down, and the final wave
   corrected the direction of that probe: both surfaces' `true` is carried by the
@@ -381,8 +383,8 @@ release artifact. The versioning policy is in the README, under Development.
   plus the project-prefixed `[[<project>/Other/a]]`). That round's own rewritten
   sentence still credited a **vault-root** `LICENSE` the fixture does not hold; the
   final whole-branch wave below deleted it, named the beside-note carrier and added the
-  third silence shape. The matrix grew from thirteen
-  asserted rows to eighteen, including two agreement rows for a plain extension-less
+  third silence shape. That round's matrix grew from thirteen asserted rows to
+  eighteen, including two agreement rows for a plain extension-less
   file and a `.png`; `lib/note-health.js` and this entry carry the same account. Two
   deferred Minors went with them: the file-bound case now asserts the persisted
   cursor's manifest fingerprint equals the whole manifest's rather than only that the
@@ -1013,10 +1015,59 @@ release artifact. The versioning policy is in the README, under Development.
     case and the scan-bounds case, plus the changed-path-return assertion (an added
     assertion, not a new case). The four falsifications are recorded above; the wave's
     report (`.superpowers/sdd/2026-10-03-automatic-memory-curation/
-    final-wave-report.md`) carries the raw command output. **Unverified:** the queue
-    worker's own copy of the cap diagnostic (`lib/capture.js`) is the same code as the
-    service's but no case drives a job whose committed paths reach 512 hints — the
+    final-wave-report.md`) carries the raw command output. **Unverified:** a single job
+    whose committed paths alone reach 512 hints. The queue worker's own copy of the cap
+    diagnostic (`lib/capture.js`) sums a job's per-enqueue drops into one event, where
+    the service emits one event per enqueue with that enqueue's own count, and only the
+    residual wave below pins it (a two-item job against a full queue, `hits: 2`); the
     codec round-trip case pins the outcome's vocabulary on the service path only.
+
+- **The re-review's six residuals close, and one of them was behaviour** (final residual
+  wave). The queue worker's changed-path cap report sums a job's drops, the delta
+  pre-step stops reading a view it discards, and the rest are claims corrected against
+  the code.
+  - **Both READMEs no longer call the whole `curation/` directory rebuildable.** The
+    data-root tree still listed "parked proposals" among the rebuildable documents — the
+    same claim the previous wave corrected in the bullet above, and one that costs every
+    parked candidate and its decision record when a reader acts on it. The tree now
+    splits the label: the cursor, the per-path scan records, the changed-path queue and
+    the compact view are rebuildable, and `proposals/` is shown as the durable child it
+    is. `README.i18n.yaml` carries the re-recorded blob hashes of both sides.
+  - **"`names` holds only dot-free stems" was false at four sites.** The resolver adds
+    every file's last segment and strips only a trailing `.md`, so this fixture's set does
+    hold `txt.txt` and `图.png`. The conclusion — a dot-bearing bare target is answered
+    `true` without a set lookup — holds for the other reason the sentence already leaned
+    on: the `name.includes('.')` branch returns before the set is consulted. The resolver
+    block and the branch comment (`lib/curation-scan.js`), `lib/note-health.js` and the
+    Task 2 entry above now say that.
+  - **Two stale citations in this entry.** The `truncated !== 'manifest-budget'` gate is
+    now cited at `lib/curation-scan.js:1172` rather than `:1154`, and the Task 2 entry's
+    "the matrix grew … to eighteen" reads "that round's matrix grew …", because the
+    nineteen the final wave left is the current count (`:336`, `:970`).
+  - **The worker's cap diagnostic reports the job's total, not its largest single
+    drop.** `lib/capture.js` kept `droppedHints` with `if (hint.dropped > droppedHints)`
+    while its comment said "Accumulated", so a job that dropped five hints reported
+    `hits: 1` — and `mergeChangedPaths` evicts at most one hint per enqueue, so that is
+    the shape a many-item job actually has. It now sums, and
+    `test/auto-capture.test.js` drives a two-item job against a queue already at
+    `MAX_CHANGED_PATHS` and asserts one event with `hits: 2` (RED against the previous
+    line: `actual: 1, expected: 2`).
+  - **A `delta` pre-step no longer reads the stored curation view.** `lib/index.js` read
+    and parsed the view on every pre-step, but `buildBrief` returns for `mode: 'delta'`
+    before it looks at `curationView`, and that pre-step runs on every turn after the
+    first brief. The read is skipped for that mode; the `full` path is unchanged.
+  - **Two claims in `lib/curation-codes.js` reworded to what the code does.**
+    `source-changed` is not consumed by `lib/brief.js` "rather than the diagnostics
+    ring": a view that fails verification is recorded there as `curation`/`brief-fallback`
+    with exactly that code. And the dynamic half of `view-unwritable:<code>` is not
+    coarsened to `other` — the ring's own `code` validator (`lib/debug.js`) admits a
+    lowercase token with no colon, so `view-unwritable:EISDIR` never reaches a recorded
+    event at all: the field is dropped outright.
+  - Measured on this wave under a fresh `mktemp -d` `DSH_HOME`: `npm run check` exit 0 —
+    lint, format, types, `prepack` and `pack:check` — with the full suite at
+    **924 tests / 923 pass / 1 skipped / 0 fail**; `git diff --check` clean. The new case
+    is the two-drop cap case in `test/auto-capture.test.js`; the cap is unchanged, only
+    the count it reports.
 
 ## 0.1.10 — 2026-09-29
 

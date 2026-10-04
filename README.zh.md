@@ -400,7 +400,8 @@ $DSH_HOME/data/obsidian-mem/
 ├── receipts/       per-write and per-job receipts
 ├── pending/        queued distillation jobs (0700/0600)
 ├── curation/       可重建的整理状态：游标、逐路径扫描记录、
-│                   变更路径队列、紧凑视图与停放中的提案 (0700/0600)
+│                   变更路径队列与紧凑视图 (0700/0600)
+│   └── proposals/  持久保存、不可重建：每一个停放中的候选及其决策记录 (0700/0600)
 ├── diagnostics/    不含正文的限量决策日志 (0700/0600)
 └── processed/      per-session processed floor (0700/0600)
 ```
