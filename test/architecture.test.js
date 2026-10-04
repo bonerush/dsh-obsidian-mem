@@ -343,6 +343,9 @@ const BUDGETS = {
   // comment not name a shape the matrix does not pin.
   // Task 10 raises this to 1350 (1314 formatted lines at f22c982, plus 30 rounded to
   // 50; 1324 after the follow-up fix round moved the cursor snapshot before the walk).
+  // Said plainly, because 1350 is now deliberately *inside* the rule above: 1324 + 30
+  // is 1354, which would round up to 1400, so this budget was chosen as the nearest 50
+  // rather than derived from the formula, leaving 26 lines of headroom.
   // The added lines preserve full-title near identity, explicitly rebuild legacy
   // records, distinguish operational write failures from programming defects,
   // and reject a stale cursor publication against another pass's snapshot.
