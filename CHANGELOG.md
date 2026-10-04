@@ -166,7 +166,10 @@ release artifact. The versioning policy is in the README, under Development.
   leaves the record `pending` for another review. The write request is built from an
   explicit field list and goes through `createMemoryWithId`, so a candidate that carries
   an `id` cannot turn an approved create into an update (R6); that path is the R6 guard
-  made structural, because it never reads `id` at all. Two reviewers of one proposal are
+  made structural, because it never reads `id` at all. **Historical claim protocol
+  (Task 7 fix rounds 2–3; superseded by the Task 9 concurrency fix below):**
+  the following concurrency discussion records the mechanism and limits at that revision.
+  Two reviewers of one proposal are
   arbitrated by a per-proposal claim file beside the record: one decides, the other is
   refused, and the shared idempotency key would in any case have replayed the winner's
   transaction rather than minting a second note. The claim is taken before **either**
@@ -622,6 +625,37 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Fixed
 
+- **Review claims remain exclusive across competing apply/reject reviewers**
+  (Task 9). A private `0600` `.review-lock.sqlite` beside the existing proposal JSON
+  serializes claim read/check/replacement and release in short SQLite transactions.
+  The guard contains no proposal data and is released before any vault transaction;
+  no nested vault lock or new runtime dependency is introduced. A live owner never
+  loses its claim merely for age; only confirmed process death (`ESRCH`) permits
+  reclamation. Invalid claims, unavailable SQLite, initialization failures and busy
+  guards fail closed with the declared `review-lock-unavailable` refusal. A wedged
+  live owner must be stopped before recovery; PID reuse can conservatively delay it.
+  Stop old review processes before upgrading: they do not participate in this guard.
+  - RED on `49c7eb1`, under a fresh `DSH_HOME`: changing the old deterministic
+    three-reviewer probe's third decision to reject and requiring refusal,
+    `node --test --test-name-pattern='three reviewers cannot' test/curation-review.test.js`
+    → **1 test / 0 pass / 1 fail**, actual `rejected`, expected `refused`.
+    The replacement behavioural cases, before implementation,
+    `node --test --test-name-pattern='three reviewers cannot|unavailable claim guard'
+    test/curation-review.test.js` → **2 tests / 0 pass / 2 fail**: a competing apply
+    proceeded behind an old live owner, and an unavailable guard did not refuse.
+  - GREEN under a fresh `DSH_HOME`: `node --test test/curation-review.test.js
+    test/curation-cli.test.js test/curation-tty.test.js test/transaction.test.js
+    test/architecture.test.js` → **95 tests / 95 pass / 0 skipped / 0 fail** on
+    Node v26.0.0. This includes a real `--no-experimental-sqlite` child, a busy
+    SQLite transaction released by `SIGKILL`, and `0600` claim/guard permissions.
+    `npm run types` and focused ESLint passed. The controller runs the full final gate.
+  - The former tests encoding the deliberately weak two-reviewer guarantee are
+    replaced by active-owner exclusion, release/retry, real process death with two
+    reclaimers and a third rejection, missing SQLite, busy-guard process death and
+    unavailable-storage checks. Existing source-hash, ownership, crash replay,
+    idempotent create and CLI-only approval checks remain. The model tool surface
+    stays at six. The older Task 7 disclosures above remain historical records.
+
 - **An automatic curation trigger can no longer fail a committed job, and DSH session
   activity now consults the 24-hour marker** (Task 6 review round). `lib/capture.js`
   called `onCurationCompleted` bare, after the job's transactions were durable and
@@ -1000,10 +1034,11 @@ release artifact. The versioning policy is in the README, under Development.
     `test/tools.test.js` now asserts both constants and that the published description
     contains them. `lib/capture.js` re-reported an already-parked item as
     `skipped: true` without its `proposalId`, losing the one handle to the proposal on a
-    replay; the field is carried through. The width-3 apply/reject race is disclosed
-    beside the existing claim limit (above and in `lib/curation-review.js`): an apply
-    racing a reject at three reviewers can still leave a published note behind a
-    `rejected` record, which the shared idempotency key does not repair.
+    replay; the field is carried through. The width-3 apply/reject race was disclosed
+    beside the then-current claim limit: an apply racing a reject at three reviewers
+    could leave a published note behind a `rejected` record, which the shared
+    idempotency key did not repair. Task 9 closes that race; this remains the record
+    of what this earlier wave verified.
   - Measured on this wave, every run under a fresh `mktemp -d` `DSH_HOME`: `npm run
     check` **exit 0** — lint, format, types, `prepack` and `pack:check` — with the full
     suite at **923 tests / 922 pass / 1 skipped / 0 fail** (916/915/0/1 before the

@@ -377,6 +377,8 @@ const BUDGETS = {
   // bytes it moved instead of linking them back, because a restore recreated a claim its
   // owner had already released, and the module names the three-reviewer window that
   // withdrawal opens instead of a mutual exclusion the mechanism does not provide.
+  // Task 9 replaces that historical reclaim/withdrawal protocol with a short SQLite
+  // guard around claim mutations. The module shrinks; the budget and layer stay unchanged.
   'lib/curation-review.js': 800,
   // The interactive command is mostly argument handling and the refusal text a
   // person reads; 223 lines is the measured size and 250 is the rule's number.
