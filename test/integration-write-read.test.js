@@ -1101,7 +1101,11 @@ async function writeToOtherProject(world, request) {
  * design names is in it: a cross-project twin of a project fact, an old superseded
  * conclusion, an exact duplicate, a same-title/different-number pair, a
  * same-title/different-date pair, a note whose only relation to its query is shared
- * vocabulary, and a relevant note nothing has retrieved.
+ * vocabulary, and a cold-but-relevant note: relevant to its own query and recalled
+ * by no earlier activity in the fixture. That last one is deliberately *not* framed
+ * as "never retrieved" — the pre-scan loop below queries it, and two other classes'
+ * queries return it in passing — so the class proves the view keeps a note it has
+ * no history for, which is what it asserts.
  *
  * What is compared is the answer retrieval gives, never the view's internals: the
  * retrieved source ids, the brief's character count and omission count, and whether
@@ -1166,8 +1170,10 @@ test('a stored curation view changes no retrieval answer on the baseline fixture
     title: '格式讨论历史',
     body: '这里只记录导出格式的讨论历史，结论与当前导出无关。',
   })
-  // Nothing has ever retrieved this note: the view must not read "never recalled"
-  // as "not memory".
+  // The cold-relevant note: relevant to its own query, recalled by no earlier
+  // activity in this fixture. Not "never retrieved" — the pre-scan loop above
+  // queries it by name, and the superseded and vocabulary queries return it in
+  // passing — so the class is about a note the view had no history for.
   const cold = await services.write({
     type: 'decision',
     title: '冷门但相关的约束',
@@ -1349,7 +1355,7 @@ test('a stored curation view changes no retrieval answer on the baseline fixture
     briefAfter.omitted <= briefBefore.omitted,
     `the view must not omit more than the source path did: ${briefBefore.omitted} -> ${briefAfter.omitted}`,
   )
-  // The fact nothing had retrieved is still in the brief by name.
+  // The cold-relevant class's own note is still in the brief by name.
   assert.ok(briefAfter.text.includes(`\`${cold.path}\``), briefAfter.text)
   // The exact pair is one displayed line carrying both paths, and the near pair is
   // two lines: the view collapses only what is byte-identical.

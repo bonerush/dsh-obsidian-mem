@@ -407,16 +407,26 @@ curation work. It is deliberately weaker than the memory layer around it:
   `complete: false`, and a changed-path pass may merge only into a view that is
   already complete (`backfill-incomplete` otherwise), so a partial backfill can
   never be published as the project's navigation.
-- **Automatic passes are bounded, and host-specific.** In DSH a committed write
-  queues its note and session activity checks a due project; the pass runs
-  outside the model request and a failure never fails your turn. In Codex the
-  pass runs in the installed, **trusted** `SessionStart` hook — Codex skips an
-  untrusted hook in silence, and an MCP-only install (no hooks) gets the explicit
-  `mem_admin` scan and **no automatic pass at all**. One pass examines at most
-  256 notes and stops *starting* new inspections once 500 ms of curation work has
-  elapsed; a pass that hits either bound says so (`truncated`, `complete: false`)
-  and resumes from its cursor on the next eligible session. A completed project
-  is due again after 24 hours unless a source changed or you request a scan.
+- **Automatic passes are bounded, host-specific, and resume only when the project
+  is due again.** In DSH a committed write queues its note and session activity
+  checks a due project; the pass runs outside the model request and a failure
+  never fails your turn. In Codex the pass runs in the installed, **trusted**
+  `SessionStart` hook — Codex skips an untrusted hook in silence, and an MCP-only
+  install (no hooks) gets the explicit `mem_admin` scan and **no automatic pass at
+  all**. One pass examines at most 256 notes and stops *starting* new inspections
+  once 500 ms of curation work has elapsed. A pass that hits either bound says so
+  (`truncated`, `complete: false`) and keeps its position: the notes it finished
+  are recorded and the ones it never reached are picked up by the next pass. That
+  next pass is **not** the next session by itself. Both automatic triggers ask only
+  whether the project is due, and a truncated full pass records a fresh due marker
+  as it scans, so a later session start with an empty hint queue answers `skipped`
+  and the backfill waits. A project becomes due again in exactly three ways: a
+  committed write queues a **changed-path hint**, which is weighed against that
+  queue and not against the marker, so it re-opens the project well inside the 24
+  hours; you request `mem_admin(action="curation", operation="scan")`; or the
+  24-hour marker expires. A completed project is due again on those same three
+  conditions — so a vault larger than one pass advances its backfill at most once
+  per 24 hours per project until a write queues a hint for it.
 
 `mem_admin(action="curation", operation="status")` reads the cursor, the
 committed view and the bounded proposal queue without inspecting anything;

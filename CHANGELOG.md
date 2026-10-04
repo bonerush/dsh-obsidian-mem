@@ -21,7 +21,13 @@ release artifact. The versioning policy is in the README, under Development.
     retrieval answer on the baseline fixture*) holding a cross-project twin of a project
     fact, an old superseded conclusion, an exact duplicate, a same-title/different-number
     pair, a same-title/different-date pair, a note whose only relation to its query is
-    shared vocabulary, and a relevant note nothing had retrieved. Every class is queried
+    shared vocabulary, and a cold-but-relevant note. That last class is the one this
+    entry first mis-framed, and the framing is corrected here: the note is relevant to
+    its own query and no fixture activity had recalled it, but it is **not** "never
+    retrieved" — the test's own pre-scan loop queries it by name, and the superseded
+    and vocabulary queries return it in passing — so the class asserts what the design
+    actually needs, that a note the view had no history for still reaches the brief by
+    name, and not that an unretrieved note survives. Every class is queried
     once with no view at all and again after the shipped
     `mem_admin(action="curation", operation="scan")` wrote a complete one (asserted:
     `complete: true`, and a second project's view file is still absent). All eight
@@ -56,7 +62,11 @@ release artifact. The versioning policy is in the README, under Development.
     manifest walk and nothing else (13.7 ms, `examined: 0`, `time-budget`), so the
     observed overrun is that walk, not a read. A 5 000-note replay measured the same
     walk at 30.4 ms and a full pass at 149.3 ms for 256 notes, still `file-budget`. No
-    hook failure was observed (exit 0 and one JSON line in every run), so **no constant
+    hook failure was observed in the probe — its saved JSON records exit status **0 for
+    all ten hook runs**, and records exit statuses only: it counted no stdout lines, so
+    "one JSON line" is *not* a claim this probe supports. That half of the hook contract
+    is asserted for a single run by `test/codex-hooks.test.js`
+    (`run.lines.length === 1`), not measured across ten. **No constant
     was reduced** — and 256/500 are explicitly **not** claimed optimal: the note bound
     binds first at this size, and a project large enough for the deadline to bind was not
     run.
@@ -66,12 +76,18 @@ release artifact. The versioning policy is in the README, under Development.
     rows) and both portable skill editions (`skills/obsidian-mem/SKILL.md` and the Codex
     marketplace copy) now state automatic versus reviewed actions, the trusted-hook
     condition, `autoCurate`, the status/scan calls, the review CLI, and fallback and
-    recovery. Both skill editions' `mem_admin` row had listed six actions and omitted
+    recovery. Both READMEs also state the resume cadence the code actually has (fix round
+    1): a pass that hits either bound keeps its position, and the next pass happens when
+    the project is next due — a committed write's changed-path hint, an explicit
+    `operation="scan"`, or the 24-hour marker — not simply on the next eligible session,
+    which is what both sides had said. Both skill editions' `mem_admin` row had listed six
+    actions and omitted
     `diagnostics` and `curation`; they list all eight now.
     `test/repo-hygiene.test.js` gains one check that all four documents name
     `autoCurate` and `dsh-obsidian-mem-review`, so the switch and its only approval
     route cannot be documented on one side (or in one language) only.
-    `README.i18n.yaml` records the new blob hashes.
+    `README.i18n.yaml` records the new blob hashes (re-recorded in fix round 1, after
+    the cadence correction below).
   - Measured: `npm test` **911 tests / 910 pass / 1 skipped / 0 fail** (908/907/1/0
     before this task's three added cases, measured on `7c4cd8f`); `node
     codex/prepare.mjs --check` → `prepare --check: ok (6 tools, skill, .mcp.json and
@@ -92,6 +108,32 @@ release artifact. The versioning policy is in the README, under Development.
     part of a pass the deadline does not bound); any *quality* comparison on a fixture
     other than this one; and the review command driven from a real interactive shell
     rather than the pseudo-terminal Task 7's cases create.
+  - **Known limitation — the backfill of a vault larger than one pass advances at most
+    once per 24 hours per project until a write hints it** (recorded in fix round 1 under
+    controller ruling R45). The automatic triggers pass exactly `{dueOnly: true}`
+    (`lib/index.js`, `codex/session-start.mjs`), and `isCurationDue` reads only the
+    cursor's `scannedAt` (`lib/services.js`), which a truncated full pass writes fresh as
+    it scans. So such a pass keeps its position but does **not** resume on the next
+    eligible session: with an empty hint queue the next `dueOnly` trigger answers
+    `skipped`, and the backfill waits for the 24-hour marker, an explicit
+    `operation="scan"`, or a new committed write's changed-path hint — which is weighed
+    against the queue, not the marker. Measured on throwaway worlds
+    (`docs/superpowers/plans/task-8-fix-cadence-probe.mjs`, raw JSON beside it): a project
+    bound by `mem_admin(action="bind")` with no write, so its queue really is empty and
+    nothing is removed by hand, takes pass 1 `{status: 'scanned', complete: false,
+    truncated: 'file-budget', examined: 1}`, then pass 2 `{status: 'skipped', complete:
+    false, examined: 0}` at the unchanged `scannedAt`, then pass 3 after one committed
+    write `{status: 'scanned', complete: true}`. The knob is the test seam
+    (`maxNotes: 1`), standing in for a vault larger than one batch; the reviewer's route,
+    removing the changed-path document after a truncated pass, reproduces the same two
+    steps. The opposite direction is measured as well: while a hint **is** queued, a vault
+    larger than one batch runs a pass on every eligible session start rather than once per
+    24 h (the hook probe above, which had to remove the cursor to measure a single pass).
+    **The trigger cadence is deliberately unchanged** — the plan's Task 6 step 3 says only
+    that "Background DSH passes may continue incomplete cursors while the worker is
+    active", which permits this, and changing behaviour inside a documentation fix round
+    would invalidate two completed task reviews. Both READMEs state the shipped cadence
+    rather than the per-session resume they described before.
 
 - **One parked curation proposal can now be reviewed and applied, through the same
   transaction engine every other write uses** (Task 7). `lib/curation-review.js` is the
