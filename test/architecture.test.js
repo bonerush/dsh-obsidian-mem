@@ -350,15 +350,21 @@ const BUDGETS = {
   // `fix: make the review claim exclusive and its refusals declared`, so 800 is the
   // same rule's number). What the 114 lines buy, each from a finding that a measurement
   // rather than a reading produced: the claim is now installed by `link()` and the
-  // stale-claim retirement verifies the bytes it moved, because the rename-then-create
-  // this file used to describe let a second reclaimer move a *fresh* claim and both
-  // reviewers proceeded (before: `renames=2 creates=2 applied=2`; after: one applied);
-  // the ownership translation table so the three refusals `assertPluginOwnedNote`
-  // raises are declared answers instead of codes escaping through a dynamic emitter
-  // site; the private-state table and the wrapped first record read so a corrupt cache
-  // is answered as `proposal-unreadable` rather than thrown; and the prose that has to
-  // name the guarantee the mechanism actually provides, since this module's earlier
-  // comments claimed one it did not.
+  // stale-claim retirement content-checks the bytes it moved, because the
+  // rename-then-create this file used to describe let a second reclaimer move a *fresh*
+  // claim and both reviewers proceeded (before: `renames=2 creates=2 applied=2`; after:
+  // one applied); the ownership translation table so the three refusals
+  // `assertPluginOwnedNote` raises are declared answers instead of codes escaping
+  // through a dynamic emitter site; the private-state table and the wrapped first
+  // record read so a corrupt cache is answered as `proposal-unreadable` rather than
+  // thrown; and the prose that has to name the guarantee the mechanism actually
+  // provides, since this module's earlier comments claimed one it did not.
+  // Fix round 3 leaves this number alone — 787 formatted lines measured on
+  // `fix: never reinstate a claim its owner released`, still inside the same rule. What
+  // changed is one behaviour and the prose around it: the retirement now *withdraws* the
+  // bytes it moved instead of linking them back, because a restore recreated a claim its
+  // owner had already released, and the module names the three-reviewer window that
+  // withdrawal opens instead of a mutual exclusion the mechanism does not provide.
   'lib/curation-review.js': 800,
   // The interactive command is mostly argument handling and the refusal text a
   // person reads; 223 lines is the measured size and 250 is the rule's number.

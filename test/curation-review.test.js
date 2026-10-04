@@ -25,18 +25,21 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { promises as fsp, readFileSync } from 'node:fs'
-import { readFile, readdir, symlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import ts from 'typescript'
 
 import {
   CURATION_REVIEW_CODES,
+  MAX_PROPOSAL_BYTES,
+  PROPOSAL_SCHEMA,
   curationProposalDir,
   readCurationProposal,
   saveCurationProposal,
   snapshotProposalSources,
 } from '../lib/curation-proposals.js'
+import { CurationStateError } from '../lib/curation-state.js'
 import { applyReviewedMemory, reviewCurationProposal } from '../lib/curation-review.js'
 import { withVaultLock } from '../lib/transaction.js'
 import { resolveBinding } from '../lib/vault.js'
@@ -199,6 +202,26 @@ async function parkSupersedeAbout(made, relative, id) {
 /** The absolute path of one stored proposal record. */
 function recordPath(made, proposalId) {
   return join(made.dataRoot, 'curation', 'proposals', made.binding.projectId, `${proposalId}.json`)
+}
+
+/** Whether a path is there, without caring why it is not. */
+async function fileExists(path) {
+  return fsp.access(path).then(
+    () => true,
+    () => false,
+  )
+}
+
+/**
+ * The absolute path of one vault-relative path, spelled as the *binding* spells it.
+ *
+ * `at()` reads and writes the same file, but a hook that must recognize the path
+ * `lib/curation-review.js` reads has to use the resolved vault root: the binding resolves
+ * the temporary directory's symlink (`/var/…` → `/private/var/…` on macOS) and `at()`
+ * does not.
+ */
+function boundPath(made, relative) {
+  return join(made.binding.vaultRoot, ...relative.split('/'))
 }
 
 /** Every `.md` file under one directory, vault-relative, sorted. */
@@ -914,6 +937,328 @@ test('a reclaim cannot publish a note behind a rejected record', async (t) => {
 })
 
 /**
+ * Force the ordering where a reclaimer's content check lands after the claim's owner
+ * released it.
+ *
+ * The hooks are installed on `node:fs`'s shared `promises` object, which is the object
+ * `lib/curation-review.js` holds. Three gates establish the ordering the reviewer's
+ * probe used: both reviewers read the same stale claim before either renames it; the
+ * *second* reclaiming rename waits until the first reviewer's claim exists, so it moves
+ * a fresh claim rather than the stale one; and the first reviewer's evidence read is
+ * held until that rename has happened, so its refusal — and the release in its
+ * `finally` — cannot come earlier. The reclaimer then resumes with the claim path
+ * empty, which is the state the restore used to run in.
+ *
+ * @param {string} claimFile - the claim path both reviews share.
+ * @param {string} sourceFile - the evidence path the refusing review reads.
+ * @returns {{sequence: string[], restore: () => void}} the observed claim operations and the hook teardown.
+ */
+function forceRestoreAfterRelease(claimFile, sourceFile) {
+  const original = { readFile: fsp.readFile, rename: fsp.rename, link: fsp.link, rm: fsp.rm }
+  const deferred = () => {
+    let resolve = null
+    const promise = new Promise((done) => {
+      resolve = done
+    })
+    return { promise, resolve }
+  }
+  const bothRead = deferred()
+  const firstInstall = deferred()
+  const renamed = deferred()
+  const released = deferred()
+  const sequence = []
+  let reads = 0
+  let renames = 0
+  fsp.readFile = async (file, ...rest) => {
+    if (file === claimFile) {
+      reads += 1
+      if (reads === 2) bothRead.resolve()
+      await bothRead.promise
+    }
+    // The evidence read of whichever review claimed first, held until the second
+    // reclaiming rename has moved that review's claim.
+    if (file === sourceFile) await renamed.promise
+    return original.readFile(file, ...rest)
+  }
+  fsp.rename = async (from, to) => {
+    // The ordinal is captured here rather than read again after the rename: the counter
+    // is shared by both reviews, so a later read would make the *first* renamer take the
+    // second renamer's branch and wait for a release it owes itself.
+    let ordinal = 0
+    if (from === claimFile) {
+      renames += 1
+      ordinal = renames
+      if (ordinal === 2) await firstInstall.promise
+    }
+    const answer = await original.rename(from, to)
+    if (from === claimFile) {
+      sequence.push('rename')
+      if (ordinal === 2) {
+        renamed.resolve()
+        // …and the bytes it moved are not looked at until the review they belonged to
+        // has released its claim, which is the ordering that decides this case.
+        await released.promise
+      }
+    }
+    return answer
+  }
+  fsp.link = async (from, to) => {
+    const answer = await original.link(from, to)
+    if (to === claimFile) {
+      sequence.push('create')
+      firstInstall.resolve()
+    }
+    return answer
+  }
+  fsp.rm = async (file, ...rest) => {
+    if (file === claimFile) released.resolve()
+    return original.rm(file, ...rest)
+  }
+  return {
+    sequence,
+    restore: () => {
+      fsp.readFile = original.readFile
+      fsp.rename = original.rename
+      fsp.link = original.link
+      fsp.rm = original.rm
+    },
+  }
+}
+
+test('a claim its owner released is never reinstated by the reclaimer that moved it', async (t) => {
+  const made = await world(t)
+  const { proposal } = await parkCreateSeparate(made)
+  const source = boundPath(made, made.seed.path)
+  const original = await readFile(source)
+  const claimFile = join(
+    curationProposalDir(made.dataRoot, made.binding.projectId),
+    `${proposal.proposalId}.claim`,
+  )
+  // One claim both reviewers judge stale, and one source edit that refuses both of
+  // them, so the only thing left to observe is what a reclaimer does with the claim it
+  // moved. That is the reviewer's probe: `first=refused/source-changed`,
+  // `second=refused/proposal-not-current`, record still `pending`.
+  await writeFile(
+    claimFile,
+    `${JSON.stringify({ claimId: 'stale-claim', pid: process.pid, at: '2020-01-01T00:00:00.000Z' })}\n`,
+  )
+  await writeFile(source, '被改写。\n')
+
+  const forced = forceRestoreAfterRelease(claimFile, source)
+  const review = () =>
+    reviewCurationProposal({
+      dataRoot: made.dataRoot,
+      proposalId: proposal.proposalId,
+      decision: 'apply',
+      binding: made.binding,
+      now: NOW,
+    })
+  const [first, second] = await Promise.all([review(), review()]).finally(forced.restore)
+
+  // The case's own precondition, asserted rather than assumed, and the invariant: the
+  // second reclaiming rename landed after the first review's claim existed, and no
+  // operation linked the claim path again. A restore shows up here as a second `create`
+  // after the `release`.
+  assert.deepEqual(
+    forced.sequence,
+    ['rename', 'create', 'rename'],
+    `a released claim must not be linked back, saw ${forced.sequence.join(',')}`,
+  )
+  assert.deepEqual(
+    [first.code, second.code].sort(),
+    ['proposal-not-current', 'source-changed'],
+    JSON.stringify([first, second]),
+  )
+  assert.equal(await fileExists(claimFile), false, 'the released claim is gone')
+
+  // And the proposal is answerable rather than walled off by a claim nobody holds:
+  // with its evidence back, a later review applies it. Pre-fix the reinstated claim
+  // made this review answer "another review is deciding it" instead.
+  await writeFile(source, original)
+  const later = await review()
+  assert.equal(later.status, 'applied', JSON.stringify(later))
+  const notes = (await listMarkdown(at(made, `${made.binding.relativeDir}/Pitfalls`))).filter(
+    (name) => name !== 'index.md',
+  )
+  assert.equal(notes.length, 1, `one note from the later review, saw ${notes.join(', ')}`)
+})
+
+/**
+ * Force the window where a reclaiming `rename` has emptied the claim path and the
+ * reclaimer has not yet looked at the bytes it moved.
+ *
+ * The same two gates as `forceReclaimOrdering` (both reviewers read the stale claim
+ * before either renames it; the second reclaiming rename waits for the first claim),
+ * plus two more: the first claimant's evidence read is held so that claimant is still
+ * running with its claim taken, and the reclaimer does not resume until a *third*
+ * review has installed a claim in the emptied path.
+ *
+ * @param {string} claimFile - the claim path the reclaimers share.
+ * @param {string} sourceFile - the evidence path the first claimant reads.
+ * @returns {{sequence: string[], installs: string[], reached: Promise<void>, renamed: Promise<void>, release: () => void, restore: () => void}} the observations and gates.
+ */
+function forceClaimWindow(claimFile, sourceFile) {
+  const original = { readFile: fsp.readFile, rename: fsp.rename, link: fsp.link }
+  const deferred = () => {
+    let resolve = null
+    const promise = new Promise((done) => {
+      resolve = done
+    })
+    return { promise, resolve }
+  }
+  const bothRead = deferred()
+  const firstInstall = deferred()
+  const renamed = deferred()
+  const thirdInstall = deferred()
+  const sequence = []
+  const installs = []
+  const claimIdOf = (text) => String(text).match(/"claimId":"([^"]+)"/u)?.[1] ?? '(unreadable)'
+  let arrived = null
+  const reached = new Promise((resolve) => {
+    arrived = resolve
+  })
+  let release = null
+  const held = new Promise((resolve) => {
+    release = resolve
+  })
+  let reads = 0
+  let renames = 0
+  let renamedDone = false
+  let evidenceHeld = false
+  fsp.readFile = async (file, ...rest) => {
+    if (file === claimFile) {
+      reads += 1
+      if (reads === 2) bothRead.resolve()
+      await bothRead.promise
+    }
+    if (file === sourceFile && !evidenceHeld) {
+      evidenceHeld = true
+      arrived()
+      await held
+    }
+    return original.readFile(file, ...rest)
+  }
+  fsp.rename = async (from, to) => {
+    // The ordinal is captured before the rename, for the same reason as in
+    // `forceRestoreAfterRelease`.
+    let ordinal = 0
+    if (from === claimFile) {
+      renames += 1
+      ordinal = renames
+      if (ordinal === 2) await firstInstall.promise
+    }
+    const answer = await original.rename(from, to)
+    if (from === claimFile) {
+      sequence.push('rename')
+      if (ordinal === 2) {
+        renamedDone = true
+        renamed.resolve()
+        await thirdInstall.promise
+      }
+    }
+    return answer
+  }
+  fsp.link = async (from, to) => {
+    const answer = await original.link(from, to)
+    if (to === claimFile) {
+      sequence.push('create')
+      installs.push(claimIdOf(readFileSync(claimFile, 'utf8')))
+      firstInstall.resolve()
+      if (renamedDone) thirdInstall.resolve()
+    }
+    return answer
+  }
+  return {
+    sequence,
+    installs,
+    reached,
+    renamed,
+    release,
+    restore: () => {
+      fsp.readFile = original.readFile
+      fsp.rename = original.rename
+      fsp.link = original.link
+    },
+  }
+}
+
+test('at three reviewers the claim stops being mutual exclusion and the record decides', async (t) => {
+  const made = await world(t)
+  const { proposal } = await parkCreateSeparate(made)
+  const claimFile = join(
+    curationProposalDir(made.dataRoot, made.binding.projectId),
+    `${proposal.proposalId}.claim`,
+  )
+  await writeFile(
+    claimFile,
+    `${JSON.stringify({ claimId: 'stale-claim', pid: process.pid, at: '2020-01-01T00:00:00.000Z' })}\n`,
+  )
+  const forced = forceClaimWindow(claimFile, boundPath(made, made.seed.path))
+  const review = () =>
+    reviewCurationProposal({
+      dataRoot: made.dataRoot,
+      proposalId: proposal.proposalId,
+      decision: 'apply',
+      binding: made.binding,
+      now: NOW,
+    })
+  // Two reviews both judge the one stale claim stale; whichever clears it first claims
+  // the proposal and is held at its evidence read, so it is still running — claim
+  // taken, nothing released — while the other moves that claim away.
+  const claimant = review()
+  const reclaimer = review()
+  let third
+  try {
+    await forced.reached
+    await forced.renamed
+    // The claim path is empty here and the review whose bytes were moved is still
+    // running, so this review is not excluded by anything.
+    third = await review()
+  } finally {
+    forced.release()
+    forced.restore()
+  }
+
+  // Two claims for one proposal were installed, and they are two different claims:
+  // the claim is not mutual exclusion at three reviewers.
+  assert.deepEqual(
+    forced.sequence,
+    ['rename', 'create', 'rename', 'create'],
+    `two claimants must be visible, saw ${forced.sequence.join(',')}`,
+  )
+  assert.equal(forced.installs.length, 2, `installs ${forced.installs.join('|')}`)
+  assert.notEqual(forced.installs[0], forced.installs[1], 'each claimant wrote its own claim')
+
+  // What decided the outcome is not the claim: the third review applied, and the review
+  // whose claim it moved — still running, and holding no claim file any more — reached
+  // the write too and replayed the *same* transaction, so there is still one note and
+  // one applied record. The other review is the one the claim refused.
+  assert.equal(third.status, 'applied', JSON.stringify(third))
+  const answers = await Promise.all([claimant, reclaimer])
+  const byClaim = answers.filter((answer) => /another review is deciding/u.test(answer.message))
+  const byReplay = answers.filter((answer) => answer.status === 'applied')
+  assert.equal(byClaim.length, 1, JSON.stringify(answers))
+  assert.equal(byClaim[0].code, 'proposal-not-current')
+  assert.equal(byReplay.length, 1, JSON.stringify(answers))
+  assert.equal(
+    byReplay[0].receipt.receipt.txId,
+    third.receipt.receipt.txId,
+    'the second claimant must replay the winner’s transaction, not mint another note',
+  )
+
+  const record = await readCurationProposal({
+    dataRoot: made.dataRoot,
+    projectId: made.binding.projectId,
+    proposalId: proposal.proposalId,
+  })
+  assert.equal(record.state, 'applied', 'one decision, and it is the one the vault holds')
+  const notes = (await listMarkdown(at(made, `${made.binding.relativeDir}/Pitfalls`))).filter(
+    (name) => name !== 'index.md',
+  )
+  assert.equal(notes.length, 1, `two applies, one note, saw ${notes.join(', ')}`)
+})
+
+/**
  * A one-shot gate on the reviewed evidence read.
  *
  * The engine reads each `expectedSourceHashes` path inside the transaction, through
@@ -1453,6 +1798,82 @@ test('every refusal code this module answers with is declared in one list', asyn
     [...CURATION_REVIEW_CODES].sort(),
     'every declared code is answered by a case, and every answered code is declared',
   )
+})
+
+test('every untrustworthy stored record is answered proposal-unreadable', async (t) => {
+  // `STATE_CODES` holds eight keys and the review's one read path
+  // (`readCurationProposal` → `readRecord`) can raise all eight: the four `state-*` ones
+  // are the shared document refusals `lib/curation-state.js` raises too, and the four
+  // `proposal-*` ones belong to `lib/curation-proposals.js` alone. Each row drives one
+  // key through the shipped review, asserts the reader raised *that* key, and asserts
+  // the review answered it as the one declared code instead of throwing.
+  const made = await world(t)
+  const rows = [
+    ['state-corrupt', async (path) => writeFile(path, '{ not a record\n')],
+    ['proposal-invalid', async (path) => writeFile(path, '[]\n')],
+    [
+      'proposal-version',
+      async (path) => writeFile(path, `${JSON.stringify({ version: PROPOSAL_SCHEMA + 1 })}\n`),
+    ],
+    [
+      'proposal-mismatch',
+      async (path) => {
+        const raw = JSON.parse(await readFile(path, 'utf8'))
+        raw.proposalId = 'f'.repeat(64)
+        await writeFile(path, `${JSON.stringify(raw)}\n`)
+      },
+    ],
+    [
+      'proposal-state',
+      async (path) => {
+        const raw = JSON.parse(await readFile(path, 'utf8'))
+        raw.state = 'not-a-state'
+        await writeFile(path, `${JSON.stringify(raw)}\n`)
+      },
+    ],
+    [
+      'state-not-a-file',
+      async (path) => {
+        await rm(path)
+        await mkdir(path)
+      },
+    ],
+    ['state-oversize', async (path) => writeFile(path, 'x'.repeat(MAX_PROPOSAL_BYTES + 1))],
+    // Last, because it replaces the project's proposal directory with a regular file:
+    // every other row needs that directory for the proposal it parks next.
+    [
+      'state-unreadable',
+      async (path) => {
+        await rm(dirname(path), { recursive: true, force: true })
+        await writeFile(dirname(path), 'occupied\n')
+      },
+    ],
+  ]
+  for (const [key, damage] of rows) {
+    const { proposal } = await parkCreateSeparate(made)
+    await damage(recordPath(made, proposal.proposalId))
+    await assert.rejects(
+      () =>
+        readCurationProposal({
+          dataRoot: made.dataRoot,
+          projectId: made.binding.projectId,
+          proposalId: proposal.proposalId,
+        }),
+      (error) => {
+        assert.ok(error instanceof CurationStateError, `${key}: ${error.name}`)
+        assert.equal(error.code, key)
+        return true
+      },
+    )
+    const answer = await reviewCurationProposal({
+      dataRoot: made.dataRoot,
+      proposalId: proposal.proposalId,
+      decision: 'apply',
+      binding: made.binding,
+      now: NOW,
+    })
+    assert.equal(answer.code, 'proposal-unreadable', `${key}: ${JSON.stringify(answer)}`)
+  }
 })
 
 test('the review vocabulary and the module’s own emitters are the same set', () => {

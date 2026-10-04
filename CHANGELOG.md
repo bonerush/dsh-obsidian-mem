@@ -143,7 +143,9 @@ release artifact. The versioning policy is in the README, under Development.
   proposalId, decision, binding, now})` reads the record, refuses anything that is not a
   pending `create-separate` or `supersede` with a named code (`review-only`,
   `operation-not-executable`, `proposal-not-current`, `proposal-missing`), answers a
-  stored record whose bytes cannot be read as `proposal-unreadable` instead of throwing,
+  stored record whose bytes cannot be read as `proposal-unreadable` instead of throwing
+  — all eight keys of that table are now driven by a case, not only the corrupt-JSON one
+  (fix round 3) —
   verifies every source through the vault jail and the memory layer's ownership proof
   (`human-owned`, `ownership-unproven`, `ownership-mismatch`, the layer's own names),
   applies exactly the approved operation, and only then marks the proposal `applied`. `decision:
@@ -159,14 +161,33 @@ release artifact. The versioning policy is in the README, under Development.
   arbitrated by a per-proposal claim file beside the record: one decides, the other is
   refused, and the shared idempotency key would in any case have replayed the winner's
   transaction rather than minting a second note. The claim is taken before **either**
-  decision, so a rejection cannot mark `rejected` a proposal an apply is publishing.
+  decision, so a rejection cannot mark `rejected` a proposal an apply is publishing —
+  at two reviewers, which is the width the claim is exclusive at (fix round 3).
   **The reclaim of a stale claim is decided by an exclusive `link`, not by the rename
   that clears the way for it**: the new claim is written to a per-process name and
   linked into place (`EEXIST` for every claimant but one), and a reclaimer whose rename
-  lands after another review installed its claim verifies the bytes it moved, puts them
-  back and refuses. A case that forces that ordering shows exactly one of two reclaimers
-  proceeding, where the earlier rename-then-create let both through and published a note
-  behind a `rejected` record. A crash between the publish and the receipt store is
+  lands after another review installed its claim content-checks the bytes it moved,
+  **withdraws** them and refuses. A case that forces that ordering shows exactly one of
+  two reclaimers proceeding, where the earlier rename-then-create let both through and
+  published a note behind a `rejected` record. The withdrawal replaced a restore in fix
+  round 3, because a restore is the one operation that can create the claim file: a case
+  that holds a reclaimer between its rename and its content check until the claim's owner
+  has released it (*a claim its owner released is never reinstated by the reclaimer that
+  moved it*, RED against `405ce07`) shows the restored file surviving the release
+  (pre-fix), which answers every later review "another review is deciding it" until the
+  owner's pid disappears or the 15-minute bound passes, while the fixed file is gone and a
+  later review applies the proposal. That window is also why the claim is **not mutual
+  exclusion at three reviewers**: with the path empty, a third review installs its own
+  claim while the review whose bytes were moved is still running — a case drives that
+  ordering and observes two claims for one proposal and two applies — and what still
+  leaves one note and one `applied` record is the shared idempotency key, which replays
+  the winner's transaction for the second claimant. Measured on this round's tree, every
+  run under a throwaway `DSH_HOME`: `node --test test/curation-review.test.js
+  test/curation-cli.test.js test/curation-tty.test.js test/transaction.test.js
+  test/architecture.test.js` → 92 tests / 92 pass / 0 skipped / 0 fail, and `npm test` →
+  **916 tests / 915 pass / 1 skipped / 0 fail** twice (the skip is the suite's own
+  `MARKETPLACE_PROBE_LIVE` case).
+  A crash between the publish and the receipt store is
   replayed by `recover` (the explicit half of `mem_admin(action='jobs')`), which rolls
   the committed manifest forward before the
   identity check so the retry returns the receipt the first attempt published instead of
