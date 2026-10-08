@@ -30,8 +30,16 @@ const README_PAIR = ['README.md', 'README.zh.md']
  * whichever of these documents this checkout actually carries.
  */
 const DOCUMENTS = ['AGENTS.md', 'README.md', 'README.zh.md']
-/** Directories that participate in the type ratchet. */
-const SCANNED_DIRECTORIES = ['lib', 'scripts', 'codex']
+/**
+ * Directories that participate in the type ratchet.
+ *
+ * `client/` is listed although nothing in it carries a marker today: the hole this
+ * test closes — a marker on a file that is neither in `tsconfig.json` nor
+ * imported by a listed file — is exactly what a new marker there would fall
+ * into. `client/graph-worker.js` itself stays unmarked because it runs against
+ * worker globals and the program's `types` is `["node"]` alone.
+ */
+const SCANNED_DIRECTORIES = ['lib', 'scripts', 'codex', 'client']
 
 /** The `files` list from `tsconfig.json`, as repository-relative POSIX paths. */
 function configuredFiles() {

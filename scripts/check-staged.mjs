@@ -35,6 +35,7 @@ export const FITNESS_INPUTS = [
   'lib/',
   'scripts/',
   'codex/',
+  'client/',
   'tsconfig.json',
   'package.json',
   'AGENTS.md',

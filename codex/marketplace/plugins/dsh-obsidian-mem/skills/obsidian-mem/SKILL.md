@@ -116,6 +116,21 @@ This list is **closed**. Do not invent property names: Obsidian registers a prop
 - `assertion` says how strong the claim is: `stated` (the user said it), `inferred` (the model concluded it), `observed` (re-checkable tool evidence exists). A model calling itself "verified" is not evidence.
 - Dates are `YYYY-MM-DD` (or `YYYY-MM-DD HH:mm:ss`); never `toISOString()`. Never use file timestamps to invent a date — a copied file carries an `mtime` unrelated to when the fact was true — and never rewrite a file just to refresh `updated`.
 
+### 5.1 The language a note is measured against
+
+No `lang` field exists: **the title is the language**, and the body is written in it. Keep tool, file, package and command names in their original spelling (`FTS5`, `node:sqlite`, `dsh-obsidian-mem` are not translatable). When importing a note, do not translate its title and leave the body behind — search matches the words a note is written in, so such a note is not found by the title a reader recalls it by.
+
+A note is read alone, out of order, possibly years later, so write each title and body to stand on its own:
+
+- **One fact per note.** More than five sentences is several facts sharing a file; split them, since each needs its own evidence, expiry and successor. (ASD-STE100 Rule 6.6 permits six in a descriptive paragraph; a note gets five because nothing follows it to supply the context.)
+- **Never refer outside the note.** `该` / `此` / `上述` / `前者` and "the above" have no referent at read time — name the object. This is not hypothetical: 26% of the notes in this vault do it.
+- **No open-ended qualifier** — `可能` / `也许` / `应该` / `建议` / `尽量`, `should` / `probably` / `roughly`. State the bound you know (`约 15s`, `≤9000 字符`): a number is not a hedge. `应` inside a quoted GB/T clause is normative; `应该` is a guess.
+- **Keep sentences under 60 characters** (25 English words). Calibrated on this vault's 739 fact notes rather than translated from STE: 40 characters would flag 27% of the corpus, 60 flags 4%.
+
+Deliberately **not** rules, having been measured: **tense** is unrestricted (`已` / `将` is correct in an ADR and wrong in a convention, so the rule would have to differ by `type`), and **mixing Chinese with Latin identifiers is not a defect** (37% of notes here do it, correctly).
+
+Under DSH these are measured by `lib/note-style.js` and reported by `mem_admin(action="lint")` as `style-<rule>`. By hand you can check the four by reading; all four are advisory, and none of them ever justifies moving a fact out of the directory it was routed to.
+
 ## 6. Evidence, supersede, contested
 
 **Evidence before assertion.** Every note that states a fact should say where it came from: `source`, `session`, and for `observed` the concrete command or file the claim rests on. A candidate that cannot point at evidence goes to `Inbox/` with low `confidence` — or is not written at all.

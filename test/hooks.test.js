@@ -1877,3 +1877,135 @@ test('two automatic triggers for one project run exactly one pass', async (t) =>
   const [pass] = (await curationEvents(bed)).slice(baseline)
   assert.equal(pass.outcome, 'scanned')
 })
+
+// ---------------------------------------------------------------------------
+// Failure-triggered recall (Task 18)
+// ---------------------------------------------------------------------------
+
+/** An agent whose session exposes the event list the failure reader consumes. */
+function agentWithEvents(events) {
+  const agent = agentFor()
+  agent.session.snapshotEvents = () => events
+  return agent
+}
+
+/** One `tool/call` + `tool/result` pair that the host marked as an error. */
+function failingPair(callId, name, seq, step) {
+  return [
+    { type: 'tool/call', seq, data: { callId, name, arguments: '{}' } },
+    {
+      type: 'tool/result',
+      seq: seq + 1,
+      data: { turn: 1, step, message: { isError: true, toolCallId: callId } },
+    },
+  ]
+}
+
+test('a run of tool failures retrieves on the next turn, and one failure does not', async (t) => {
+  const path = `${RELATIVE_DIR}/Pitfalls/ENOENT-陷阱.md`
+  const calls = []
+  const h = bed(t, {
+    search: async (args) => {
+      calls.push(args)
+      return [{ path, title: 'ENOENT 陷阱', scoreSignals: ['title-contains', 'token-hits:5'] }]
+    },
+  })
+  const events = []
+  const agent = agentWithEvents(events)
+  h.start(agent)
+  // Turn 1 has no user prompt, so nothing else competes for this turn's retrieval.
+  await h.preStep(agent, undefined, undefined, { turn: 1 })
+  assert.equal(calls.length, 0, 'no prompt and no failures is no query at all')
+
+  // One hard failure is not a run: 2.3% of real tool results are failures, and a
+  // recall on each of them would interrupt ordinary work.
+  events.push(...failingPair('c1', 'bash', 1, 1))
+  await h.preStep(agent, undefined, undefined, { turn: 2 })
+  assert.equal(calls.length, 0, 'a single failure is not a stuck session')
+
+  // Three consecutive failures are. The recall arrives on the turn after the run,
+  // because a step plans its retrieval before the tools it will call.
+  events.push(...failingPair('c2', 'bash', 3, 2), ...failingPair('c3', 'bash', 5, 3))
+  const decision = await h.preStep(agent, undefined, undefined, { turn: 3 })
+  assert.equal(calls.length, 1, 'a run of three retrieves once')
+  assert.match(calls[0].query, /bash/, 'the query names the tool that failed')
+  const [map] = promptMaps(decision)
+  assert.ok(map !== null && map !== undefined, 'the failure map is injected')
+  assert.match(map.content[0].text, /ENOENT-陷阱\.md/)
+})
+
+test('a failure run is reported once, not once per step', async (t) => {
+  const calls = []
+  const h = bed(t, {
+    search: async (args) => {
+      calls.push(args)
+      return [
+        {
+          path: `${RELATIVE_DIR}/Pitfalls/x.md`,
+          title: 'x',
+          scoreSignals: ['title-contains', 'token-hits:5'],
+        },
+      ]
+    },
+  })
+  const events = []
+  const agent = agentWithEvents(events)
+  h.start(agent)
+  events.push(
+    ...failingPair('c1', 'bash', 1, 1),
+    ...failingPair('c2', 'bash', 3, 2),
+    ...failingPair('c3', 'bash', 5, 3),
+  )
+  await h.preStep(agent, undefined, undefined, { turn: 1 })
+  assert.equal(calls.length, 1)
+  // A later step of a later turn must not re-ask: the run is one problem, and the
+  // model has already been given it.
+  await h.preStep(agent, undefined, undefined, { turn: 2 })
+  await h.preStep(agent, undefined, undefined, { turn: 3 })
+  assert.equal(calls.length, 1, 'one run injects once, however many steps follow')
+})
+
+test('failureRecall: false disables the path without disabling the brief', async (t) => {
+  const calls = []
+  const h = bed(t, {
+    config: { failureRecall: false },
+    search: async (args) => {
+      calls.push(args)
+      return [
+        {
+          path: `${RELATIVE_DIR}/Pitfalls/y.md`,
+          title: 'y',
+          scoreSignals: ['title-contains', 'token-hits:5'],
+        },
+      ]
+    },
+  })
+  const events = []
+  const agent = agentWithEvents(events)
+  h.start(agent)
+  events.push(
+    ...failingPair('c1', 'bash', 1, 1),
+    ...failingPair('c2', 'bash', 3, 2),
+    ...failingPair('c3', 'bash', 5, 3),
+  )
+  const decision = await h.preStep(agent, undefined, undefined, { turn: 1 })
+  assert.equal(calls.length, 0, 'the switch turns the retrieval off')
+  assert.ok(decision !== null, 'and the step still proceeds')
+})
+
+test('an unreadable session is not a failed turn', async (t) => {
+  // The reader touches host state, so a shape change must degrade to "no signal"
+  // rather than failing a turn that was otherwise ready to inject its brief.
+  const h = bed(t, {
+    search: async () => {
+      throw new Error('must not be reached')
+    },
+  })
+  const agent = agentFor()
+  agent.session.snapshotEvents = () => {
+    throw new Error('host shape changed')
+  }
+  h.start(agent)
+  const decision = await h.preStep(agent, undefined, undefined, { turn: 1 })
+  assert.ok(decision !== null && decision.kind === 'enter')
+})

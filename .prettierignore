@@ -24,4 +24,9 @@ scratch/
 
 # npm owns this file.
 package-lock.json
+
+# Generated, not written: `node scripts/build-graph-worker.mjs` rebuilds it from
+# the pinned D3 distributions plus client/graph-worker.js, and
+# test/graph-worker.test.js re-runs that build with `--check`. Formatting it here
+# would be undone by the next build and would fail that check until it was.
 lib/graph-worker.js

@@ -13,10 +13,12 @@
   "files": [
     "lib/curation-cli.js",
     "lib/curation-proposals.js",
+    "lib/failure-streak.js",
     "lib/git.js",
     "lib/index.js",
     "lib/naming.js",
     "lib/note-health.js",
+    "lib/note-style.js",
     "lib/paths.js",
     "lib/pointer.js",
     "lib/prompt-recall.js",

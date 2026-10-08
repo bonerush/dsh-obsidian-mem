@@ -708,6 +708,93 @@ test('minConfidence comes from config', () => {
   assert.equal(onlyItem(json([decisionItem({ confidence: 0.91 })]), JOB, config).inbox, true)
 })
 
+// ---------------------------------------------------------------------------
+// The note's language rules (Task 17)
+// ---------------------------------------------------------------------------
+
+test('a wording finding is reported on the item and never reroutes it', () => {
+  // The rules come from `note-style.js` and are measured there; what this file
+  // owns is the DECISION about strength, and it is the one decision that can lose
+  // a fact. A hedge, a deictic reference or a long sentence is recorded so a
+  // receipt can show it, and the candidate still lands where its type routed it —
+  // `Conventions/`, `Pitfalls/` or `Decisions/`. Measured against the author's
+  // 739 real notes, treating these as reroutes would have moved 326 of them.
+  const item = onlyItem(
+    json([
+      decisionItem({
+        body: '这可能有问题，因为该实现依赖上述约定。',
+      }),
+    ]),
+  )
+  assert.equal(item.inbox, false, 'a wording finding must not move a fact')
+  assert.deepEqual(item.downgrades.sort(), ['style-deictic', 'style-hedge'])
+})
+
+test("a body in the title's other language is the one style finding that reroutes", () => {
+  // A note is recalled by the words it is written in, so a Chinese title with an
+  // English body is not found by the title a reader recalls it by. That is a
+  // retrieval defect, not a style preference, so the candidate is parked in
+  // `Inbox/` — and because a candidate that cannot be recalled by its own title
+  // is unfit to replace an established conclusion, it loses its supersede target
+  // exactly as a low-confidence candidate does.
+  const drift = onlyItem(
+    json([
+      decisionItem({
+        title: '调度器改为可插拔后端',
+        body: 'The scheduler now registers its backends through one interface.',
+        supersedesId: 'dec-5d46ff43-1bf8-496d-8b9f-c11e89d4e2aa',
+      }),
+    ]),
+  )
+  assert.equal(drift.inbox, true)
+  assert.equal(drift.supersedesId, null, 'an unrecallable candidate must not supersede')
+  assert.deepEqual(drift.downgrades, ['style-language', 'inbox-language-downgrade'])
+
+  // The same note with a body in the title's language is untouched, so the rule
+  // is about the disagreement and not about English.
+  const agrees = onlyItem(json([decisionItem({ title: 'English title', body: 'One sentence.' })]))
+  assert.equal(agrees.inbox, false)
+  assert.deepEqual(agrees.downgrades, [])
+})
+
+test('a style downgrade does not double-report the supersede clear', () => {
+  // `inbox-supersede-cleared` already means "the inbox flag cleared the target".
+  // Pushing it once per cause would make a receipt show the same event twice and
+  // hide which cause applied, so the language path pushes only its own code.
+  const both = onlyItem(
+    json([
+      decisionItem({
+        title: '中文标题',
+        body: 'This body is in English.',
+        confidence: 0.5,
+        supersedesId: 'dec-5d46ff43-1bf8-496d-8b9f-c11e89d4e2aa',
+      }),
+    ]),
+  )
+  assert.equal(both.inbox, true)
+  assert.equal(both.supersedesId, null)
+  assert.deepEqual(both.downgrades, ['inbox-supersede-cleared', 'style-language'])
+  assert.equal(both.downgrades.filter((code) => code === 'inbox-supersede-cleared').length, 1)
+})
+
+test('the prompt states the language rules the validator reports', () => {
+  // The prompt and the validator are two halves of one contract: a rule the model
+  // is never told about is a rule the receipt will report forever. The thresholds
+  // are asserted as literals on purpose — this test exists to fail if someone
+  // tunes `MAX_SENTENCE_CJK` without updating the sentence the model reads.
+  const prompt = distillerPrompt({ maxItems: 12 })
+  assert.match(prompt, /60 characters/)
+  assert.match(prompt, /5 sentences or fewer/)
+  assert.match(prompt, /open-ended qualifier/)
+  assert.match(prompt, /stands alone/)
+  assert.match(prompt, /same language as the title/)
+  // And the two rules that were measured and deliberately refused must not
+  // reappear as prompt text: a rule about tense would be wrong in an ADR, and a
+  // rule against Latin identifiers would flag 37% of the corpus.
+  assert.doesNotMatch(prompt, /\btense\b|past tense|present perfect/)
+  assert.doesNotMatch(prompt, /do not use Latin|avoid English words/)
+})
+
 test('the resolved settings survive a resolved-settings hand-off (no silent default reset)', () => {
   // runPendingJob resolves the settings once and hands the result to
   // validateDistillation; that hand-off must not quietly restore the defaults.

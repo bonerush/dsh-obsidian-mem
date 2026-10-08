@@ -13,6 +13,79 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Added
 
+- **A session that is failing can now recall what the project already learned, and
+  the trigger fires on a measured run rather than on a single error** (Task 18).
+  Reported by the user as a TIMING problem: retrieval was only offered at turn
+  boundaries and keyed to the user's prompt, so a session stuck in a loop of
+  failing tools had no prompt-shaped text to match on and got nothing from memory.
+  - **The signal comes from events this plugin already reads.** `tool/result`
+    carries `message.isError`, and a tool's name is resolved from `tool/call`
+    through `message.toolCallId` — the same pairing `lib/capture.js` already does
+    for the distillation snapshot. What is new is a decision about it: nothing
+    looked at those outcomes before.
+  - **Two kinds of failure, and the second one was invisible.** `hard` is the
+    host's verdict (`message.isError`, or `data.error`); `soft` is a call the host
+    reported as SUCCESS whose body is error text. Measured over 60 sessions and
+    6,442 tool results: **150 hard failures (2.3%)** and **370 successful results
+    carrying error text** — more than twice as many. The soft signal is not
+    hypothetical: while researching this change, `web_fetch` returned
+    `isError: false`, `len= 0` on every attempt with a body full of
+    `ToolCallError: URL hostname … resolves to a non-public IP address`, and the
+    work only continued after switching to `curl`. An `isError`-only design cannot
+    see that class at all.
+  - **Thresholds, calibrated on the corpus rather than chosen.** Three consecutive
+    hard failures, or two soft matches inside one step. A single failure is not a
+    signal at a 2.3% base rate; a run is (5 of 60 sessions had a run of three or
+    more, the longest being 13). End to end the trigger fires in **6 of 60**
+    sessions, and every one of the six is a session that repeated the same
+    failure — a `subagent` failing three times, a `web_fetch`/`run_code` pair
+    hitting unresolvable hosts, a bash step emitting `[A-Z]+` errors.
+  - **Soft failures may suggest a recall and may never justify a write.** That is
+    the user's own boundary, and the repository's privacy rules agree with it:
+    `capture.js` records "name and outcome only: the result body is raw tool
+    output and is never copied", and the distillation contract downgrades a claim
+    without a verified tool result from `observed` to `inferred`. A pattern match
+    on raw output can do neither, so it cannot open a write path.
+  - **What may become a query is a closed vocabulary**: the tool's name plus one
+    error kind from the fixed table in `lib/failure-streak.js` (ordered so a
+    specific signature outranks a general one). No command text, no path, no URL
+    and no output fragment crosses that boundary, because that text can hold
+    credentials and the vault is a document store rather than a log.
+  - **It shares `recallBudgetChars` rather than adding a budget.** The prompt
+    recall is planned first, so a step carries at most one retrieval; a run that
+    arrives after this step's injection waits for the next step. A second budget
+    would double the per-step ceiling that the existing 0.6%-versus-22.1% firing
+    rate measurement is about. The new `failureRecall` config switch (`true` by
+    default) turns the path off for anyone who wants retrieval keyed strictly to
+    their own prompts.
+  - **Four defects were found by the tests, and three of them made the signal
+    useless.** The soft pattern used `\bE[A-Z]{3,}\b` under `/i`, which under case
+    folding matches any word beginning with `e` — `export`, `Evenly`, `emit`,
+    `emitanaka` — and fired on **63.7% of successful results**. Scoping the scan to
+    the tools whose success can hide a failure (shells, fetchers, code runners)
+    removed the `read`/`grep` false positives that made it fire in 31 of 60
+    sessions. The step number was read from `event.step` instead of
+    `event.data.step`, so the per-step counter silently degraded to a per-session
+    one. And the read was gated on a flag that only a competing injection could
+    set, so a session with no prompt never triggered the path at all. Each has a
+    case in `test/failure-streak.test.js` or `test/hooks.test.js`.
+  - **Verified:** `npm run check` — 994 tests, 993 pass, 1 skipped (the opt-in
+    `test/smoke/` lane, not run), 0 fail; `npm run types` clean; `verify-pack` and
+    `verify-tarball` OK, the tarball now 63 files over 54 `lib/` entries. The
+    classifier was re-measured against the 60-session corpus after every fix: hard
+    **150 of 150 found, none missed**, soft 313, triggers 6/60.
+  - **Unverified:** nothing measures whether a failure-triggered recall makes a
+    problem get solved faster — the 6/60 rate counts how often the trigger speaks,
+    not whether it helped, and the machine-local diagnostics under
+    `~/.dsh/data/obsidian-mem/` are test runs (`project p1`) that were deliberately
+    not used as evidence. The recording half of the user's request — turning a
+    RESOLVED failure run into a `gotcha` candidate — is **not** in this change; only
+    the read path is. The soft-signature table was tuned on one machine's sessions
+    and its false-negative rate on other toolchains is unmeasured (`unknown` is the
+    honest fallback for a hard failure with no signature). Budgets moved and are
+    recorded in `test/architecture.test.js`: `lib/hooks.js` from 1250 to 1400
+    (measured 1364) and the new `lib/failure-streak.js` at 430 (measured 415).
+
 - **Automatic curation is documented, replayed for quality and measured for cost**
   (Task 8, the plan's last task). No runtime API changes: this entry is the record of
   what was run, what it measured and what stayed unverified.
@@ -622,6 +695,63 @@ release artifact. The versioning policy is in the README, under Development.
   the same for the 256-note bound; and no case exercises two hosts curating the
   same project at the same moment, which is the cross-process vault lock rather
   than this task's single-flight set.
+
+- **Notes are measured against a language standard, and the calibration is the
+  author's own vault** (Task 17). `lib/note-style.js` is a new leaf module holding
+  five rules; `lib/distill.js` states them in the prompt and reports them per
+  candidate, and `lib/lint.js` reports them across the vault. The rules are
+  calibrated on **739** existing fact notes (`Conventions/` 243, `Pitfalls/` 285,
+  `Decisions/` 211), measured by `scratch/vault-style-probe.mjs`; the whole study is
+  in `research/memory-note-language-standard.md`.
+  - **The starting point was ASD-STE100, and its two most famous rules were
+    refused by the corpus.** A tense restriction (`已`/`将` forbidden) hit **39%**
+    of notes and is *correct* in an ADR, which records what was decided at a point
+    in time — a rule whose hit rate is explained by the genre is not a rule. A ban
+    on mixing Chinese with Latin identifiers hit **37%** and is wrong for `FTS5`,
+    `node:sqlite` and `[[path|label]]`, which cannot be translated. What
+    transferred is STE's *structure*: a sentence-length budget applied per text
+    type (STE Rules 5.1/5.2/6.3/6.6), not one rule set for everything.
+  - **The rules, with their measured hit rates on the existing corpus:** a sentence
+    over **60 CJK characters** or 25 Latin words (4% — the first threshold tried,
+    40, hit 27% and was rejected, and 50 hit 16%); more than **5 sentences** in one
+    note (13%); an open-ended qualifier such as `可能`/`应该`/`建议`/`should` where a
+    bound belongs (8%); and a reference outside the note — `该`/`此`/`上述`/`前者` —
+    which is unresolvable when a note is read alone (26%). A bound is never a
+    hedge: `约 15s`, `≤9000 字符` and `最多 21 条` pass.
+  - **The severity split is the decision that could lose a fact, and it was
+    measured.** Only the language rule (4 notes say `body script differs from the
+    title script`) *reroutes* a candidate to `Inbox/`; the other four are recorded
+    on the item as `style-<rule>` and never move it. Treating all five as reroutes
+    would have sent **326 of 739 notes (44%)** to `Inbox/` instead of the directory
+    each was distilled for. A language downgrade also clears `supersedesId`: a note
+    not recalled by its own title is unfit to replace an established conclusion.
+  - **Four defects were found by the tests this change adds, three of them in the
+    first draft of the counting rules.** `\b[A-Za-z][A-Za-z-]{2,}\b` never matched
+    `FTS5` or `UTF8` (a digit is a word character, so that boundary does not
+    exist), letting a sentence of identifiers measure as zero words and pass any
+    ceiling; a letters-only remainder then counted `FTS5` as one word but `ES6` as
+    none; a lookahead could not exclude `应该` from the deictic rule, so that single
+    word reported as both a hedge and a deictic; and reading a CJK share of zero as
+    "unclassifiable" switched the language rule off for every English note. Each fix
+    is pinned by a case in `test/note-style.test.js`.
+  - **Verified:** `npm run check` — 978 tests, 977 pass, 1 skipped (the opt-in
+    `test/smoke/` lane, which was not run), 0 fail; `npm run types` clean (the module
+    carries `// @ts-check` and is listed in `tsconfig.json`); `verify-pack` and
+    `verify-tarball` OK, the tarball now 62 entries over 52 `lib/` modules. The probe
+    over the author's vault reports 314 of 739 notes with at least one finding and
+    **4** that would reroute. `test/distill.test.js` adds four cases covering the
+    prompt-and-validator contract and the reroute path.
+  - **Unverified:** the thresholds were *tuned* on this vault, so fewer findings is
+    not evidence that recall improved — no retrieval-quality measurement was made,
+    and the machine-local diagnostics and recall cache under
+    `~/.dsh/data/obsidian-mem/` are all from test runs (`project p1`), so they were
+    deliberately not used as evidence for one. The prompt now carries four more
+    rules and no case measures what a model produces in response; published
+    instruction-following evidence (arXiv 2607.19257) argues for short rule lists,
+    which is why the prompt states four rather than nine. The reported hit rates are
+    counts on one vault at one time, not a benchmark. Budgets moved and are recorded
+    in `test/architecture.test.js`: `lib/note-style.js` at 375 (measured 351) and
+    `lib/distill.js` from 975 to 1050 (measured 1011).
 
 ### Fixed
 

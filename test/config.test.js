@@ -23,6 +23,11 @@ const DEFAULTS = {
   injectBrief: true,
   briefBudgetChars: 6000,
   recallBudgetChars: 900,
+  // Task 18's default switch: a session whose tool calls begin failing in a run may
+  // retrieve the project's pitfalls mid-turn, sharing `recallBudgetChars` with the
+  // prompt-driven recall. `false` keeps retrieval keyed strictly to the user's own
+  // prompts without losing the brief.
+  failureRecall: true,
   hotCapacityChars: 9000,
   hotArchiveRatio: 0.67,
   autoCapture: true,

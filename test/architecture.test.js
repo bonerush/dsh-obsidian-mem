@@ -85,6 +85,19 @@ const LAYERS = {
   // import at all, so both callers point down at it instead of each keeping a
   // copy that could drift.
   'note-health': 0,
+  // The note-level LANGUAGE rules (Task 17), and a leaf for the same reason as
+  // `note-health`: `distill` (L2) tells the model how to write a note and reports
+  // where its own note missed, while `lint` (L5) reports the same rules across a
+  // vault written months earlier by an older prompt. One list, two readers — a
+  // second copy would drift the moment either was tuned, and the drift would read
+  // as a linter bug rather than a decision.
+  'note-style': 0,
+  // The failure signal (Task 18): a leaf like `note-style`, imported downward by
+  // `hooks` (L8), which decides when to ask, and by `capture` (L6), which owns the
+  // same event stream. It sits at L3 beside `prompt-recall` because both answer
+  // the same shape of question — "what should retrieval be given to search with?"
+  // — and because a leaf that imports nothing can sit anywhere below its readers.
+  'failure-streak': 3,
   assets: 1,
   frontmatter: 1,
   git: 1,
@@ -398,8 +411,25 @@ const BUDGETS = {
   // be a literal in a module constant: it costs one exported slot, one substitution
   // helper and their JSDoc. The alternative — a second prompt string beside the
   // validator's vocabulary — is the drift this file's tests exist to prevent.
-  'lib/distill.js': 975,
+  //
+  // Raised again from 975 to 1050 by Task 17 (1011 formatted lines measured). What
+  // the 36 lines over the old budget buy: the note-language rules in the prompt
+  // (5 lines of text plus the comment recording which of STE's rules were measured
+  // and refused), the style call in `validateItem` and its comment explaining why
+  // only `language` reroutes a candidate while the other four rules are reported,
+  // and the import. 1050 rather than the file's earned 1011: the next rule added
+  // should not have to edit a budget, and the rules live in `note-style.js`, which
+  // has its own entry. This one is over the "measured plus 30 rounded up" rule
+  // deliberately — the prompt text is prose, and a prompt that is trimmed to fit a
+  // line budget stops being a prompt.
+  'lib/distill.js': 1050,
   'lib/frontmatter.js': 1100,
+  // The failure classifier and its streak (Task 18). Most of the file is the
+  // pattern table and the comments recording what each pattern had to exclude:
+  // two measured corrections to the soft signal (case folding made `\bE[A-Z]{3,}\b`
+  // match `export`; unscoped, the signal fired in 31 of 60 sessions) live in those
+  // comments, and a reader who cannot see them will reintroduce both.
+  'lib/failure-streak.js': 430,
   'lib/git.js': 300,
   // Raised from 1050 for one per-turn prompt map beside the existing brief
   // state machine. The retrieval policy lives in prompt-recall.js; these lines
@@ -414,7 +444,15 @@ const BUDGETS = {
   // handed to its owner instead of awaited. The alternative was a lifetime hook in
   // `lib/index.js` polling for activity, which would be a timer this plugin
   // deliberately does not have.
-  'lib/hooks.js': 1250,
+  // Raised from 1250 to 1400 by Task 18 (1362 formatted lines measured). What the
+  // 112 lines over the old budget buy: the failure-triggered recall — reading the
+  // session's new tool events, asking `failure-streak` whether this is a run rather
+  // than a one-off, and planning that retrieval inside the SAME `recallBudgetChars`
+  // the prompt-driven recall uses (a second budget would double the per-step
+  // ceiling the 0.6%-firing-rate measurement is about) — plus the three comments
+  // that record why the ordering is what it is. Raised to 1400 rather than the
+  // earned 1362+30=1392 so the next event-shape fix does not have to edit a budget.
+  'lib/hooks.js': 1400,
   'lib/hot.js': 600,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
@@ -471,6 +509,13 @@ const BUDGETS = {
   // path idempotent after a crash between its publish and its receipt store.
   'lib/memory.js': 1650,
   'lib/naming.js': 250,
+  // A leaf with no imports at all, so the whole file is rules, thresholds and the
+  // comments recording which measurement each threshold came from. 375 is the
+  // repository's usual rule — measured (351) plus 30, rounded up — rather than the
+  // 350 this entry first held, which the four bug fixes the tests caught pushed it
+  // past. Nothing here should grow except by adding a rule, and a rule that cannot
+  // cite a measured hit rate on the corpus does not belong in the file.
+  'lib/note-style.js': 375,
   'lib/paths.js': 300,
   'lib/pending.js': 1150,
   'lib/pointer.js': 300,

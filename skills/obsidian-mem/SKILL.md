@@ -159,6 +159,56 @@ they are.
   Never use file timestamps to invent a date, and never rewrite a file just to
   refresh `updated`.
 
+### 4.1 The language a note is measured against
+
+There is no `lang` field: the title is the language. Write the **body in the
+title's language**, and keep tool, file, package and command names in their
+original spelling (`FTS5`, `node:sqlite`, `[[path|label]]`, `dsh-obsidian-mem`
+are not translatable). Do not translate an imported note's title and leave its
+body in the original language: search matches the words a note is written in, so
+a body in another language is not found by the title a reader will recall it by.
+
+**A note is read alone, out of order, possibly years later.** Write each title
+and body to stand on its own:
+
+- **One fact per note.** A body needing more than five sentences is several
+  facts sharing one file — each of which should carry its own evidence, its own
+  expiry and its own successor. (ASD-STE100 Rule 6.6 allows six in a descriptive
+  paragraph; a memory note gets five, because nothing follows it that could
+  supply the missing context.)
+- **Never refer to something outside the note.** `该` / `此` / `上述` / `前者` and
+  "the above" have no referent at read time. Name the object instead. Measured:
+  26% of the notes in this vault do this, which is why the rule is worth stating
+  even though it reads as obvious.
+- **No open-ended qualifier.** `可能` / `也许` / `应该` / `建议` / `尽量`, and
+  `should` / `probably` / `roughly`, record a doubt whose ground was never
+  written down: a later reader can neither obey nor contradict the note. State
+  the bound you actually know (`约 15s`, `≤9000 字符`, `最多 21 条`) — a number is
+  not a hedge. `应` in a quoted GB/T clause is a normative verb, not a hedge;
+  `应该` is.
+- **Keep a sentence under 60 characters** (25 words in English). The threshold is
+  calibrated on this vault's own 739 fact notes, not translated from STE: 40
+  characters would flag 27% of the existing corpus and 60 flags 4%, and the
+  50–60 band holds legitimate sentences that carry their reason inside them.
+
+Two rules that look like they belong here and deliberately do not:
+
+- **Tense is not restricted.** `已` / `将` is correct in an ADR, which records
+  what was decided at a point in time, and wrong in a convention, which is
+  timeless. One rule cannot cover both, so the split is by `type`, not by
+  vocabulary.
+- **Mixing Chinese with Latin identifiers is not a defect.** 37% of the notes
+  here interleave them and are right to. What is worth avoiding is two full
+  clauses in two languages inside one sentence.
+
+`lib/note-style.js` measures these, `lib/distill.js` applies them to each
+distilled candidate, and `mem_admin(action="lint")` reports them across the vault
+as `style-<rule>` findings. A lint pass never rewrites a note. All four rules
+above are advisory — "would read better" must never move a fact out of the
+directory it was routed to. Only a body whose language is not its title's sends a
+distilled candidate to `Inbox/` instead of its destination; a lint report shows
+that case as `style-language` at `error` severity.
+
 ## 5. Evidence, supersede, contested
 
 **Evidence before assertion.** Every note that states a fact should be able to
