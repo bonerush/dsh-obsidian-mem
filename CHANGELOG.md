@@ -52,7 +52,6 @@ release artifact. The versioning policy is in the README, under Development.
   detection of arbitrary Codex tool failures. Fallbacks obey maxItems and require
   a valid distillation; unavailable/truncated model output stays in the retry queue.
 
-
 ### Added
 
 - **A session that is failing can now recall what the project already learned, and
@@ -127,6 +126,10 @@ release artifact. The versioning policy is in the README, under Development.
     honest fallback for a hard failure with no signature). Budgets moved and are
     recorded in `test/architecture.test.js`: `lib/hooks.js` from 1250 to 1400
     (measured 1364) and the new `lib/failure-streak.js` at 430 (measured 415).
+
+## 0.1.11 — 2026-10-04
+
+### Added
 
 - **Automatic curation is documented, replayed for quality and measured for cost**
   (Task 8, the plan's last task). No runtime API changes: this entry is the record of
