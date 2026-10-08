@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.1.12 — 2026-10-08
+
 ### Fixed
 
 - Completed failure recall and recording after the language-standard investigation.
