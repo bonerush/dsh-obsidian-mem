@@ -94,10 +94,10 @@ const LAYERS = {
   'note-style': 0,
   // The failure signal (Task 18): a leaf like `note-style`, imported downward by
   // `hooks` (L8), which decides when to ask, and by `capture` (L6), which owns the
-  // same event stream. It sits at L3 beside `prompt-recall` because both answer
-  // the same shape of question — "what should retrieval be given to search with?"
-  // — and because a leaf that imports nothing can sit anywhere below its readers.
-  'failure-streak': 3,
+  // same event stream. Also read by the L1 failure-memory policy below distill:
+  // this import-free event classifier belongs at L0 with the vocabulary leaves.
+  'failure-streak': 0,
+  'failure-memory': 1,
   assets: 1,
   frontmatter: 1,
   git: 1,
@@ -429,7 +429,11 @@ const BUDGETS = {
   // two measured corrections to the soft signal (case folding made `\bE[A-Z]{3,}\b`
   // match `export`; unscoped, the signal fired in 31 of 60 sessions) live in those
   // comments, and a reader who cannot see them will reintroduce both.
-  'lib/failure-streak.js': 430,
+  // Shared legacy/v4 envelopes, bounded call identities and nested-dispatch
+  // de-duplication add host-format handling (formatted measurement below).
+  'lib/failure-streak.js': 550,
+  // Recording is an independent pure policy below distill; no vault I/O or writer.
+  'lib/failure-memory.js': 175,
   'lib/git.js': 300,
   // Raised from 1050 for one per-turn prompt map beside the existing brief
   // state machine. The retrieval policy lives in prompt-recall.js; these lines

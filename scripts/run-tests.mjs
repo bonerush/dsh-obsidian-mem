@@ -15,7 +15,7 @@
 // are not swept into `npm test`.
 import { spawn } from 'node:child_process'
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
-import { constants, tmpdir } from 'node:os'
+import { availableParallelism, constants, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -64,7 +64,12 @@ if (files.length === 0) {
 const home = mkdtempSync(join(tmpdir(), 'obsidian-mem-test-home-'))
 process.stdout.write(`run-tests: DSH_HOME=${home} (${files.length} files)\n`)
 
-const child = spawn(process.execPath, ['--test', ...files], {
+// Fsync-heavy fixtures and native subprocesses compete for the same host. Full
+// runs missed 500 ms scan and 20 s handshake budgets while the isolated cases
+// passed. Bound file fanout rather than relaxing those behavioural assertions;
+// the cost is less file-level parallelism on large machines.
+const concurrency = Math.min(2, availableParallelism())
+const child = spawn(process.execPath, ['--test', `--test-concurrency=${concurrency}`, ...files], {
   cwd: ROOT,
   env: { ...process.env, DSH_HOME: home },
   stdio: 'inherit',

@@ -175,6 +175,192 @@ function jobFixture(overrides = {}) {
   }
 }
 
+/** A real v4 tool-result turn; the private output must never reach a job. */
+function failureTurn({ recovered = false, soft = false } = {}) {
+  const events = [
+    { seq: 0, type: 'turn/start', data: { turn: 1 } },
+    {
+      seq: 1,
+      type: 'user/message',
+      data: {
+        source: { kind: 'user' },
+        content: [{ type: 'text', text: 'Run the probe and explain its outcome.' }],
+      },
+    },
+  ]
+  for (let i = 0; i < (recovered ? 4 : 3); i += 1) {
+    const ok = recovered && i === 3
+    events.push({
+      seq: events.length,
+      type: 'tool/call',
+      data: { name: 'bash', callId: `c${i}`, turn: 1 },
+    })
+    events.push({
+      seq: events.length,
+      type: 'tool/result',
+      data: {
+        turn: 1,
+        step: i + 1,
+        message: {
+          role: 'tool',
+          toolCallId: `c${i}`,
+          isError: !soft && !ok,
+          content: [{ type: 'text', text: ok ? 'ok' : 'ENOENT /private/OUTPUT-SENTINEL' }],
+        },
+      },
+    })
+  }
+  events.push({
+    seq: events.length,
+    type: 'assistant/message',
+    data: {
+      message: {
+        content: [
+          {
+            type: 'text',
+            text: recovered
+              ? 'The retry succeeded. Its cause remains unverified.'
+              : 'The probe still fails. Its cause remains unverified.',
+          },
+        ],
+      },
+    },
+  })
+  events.push({
+    seq: events.length,
+    type: 'turn/end',
+    data: { turn: 1, reason: { kind: 'completed' } },
+  })
+  return {
+    events,
+    session: {
+      header: { id: SESSION_ID },
+      requestContext: () => ({ provider: 'deepseek-official', model: 'deepseek-flash' }),
+      snapshotEvents: (from = 0, to) => events.slice(from, to ?? events.length),
+    },
+  }
+}
+
+test('v4 repeated failures reach Inbox through the real queue, restart once and park twins', async (t) => {
+  const f = await fixture(t)
+  const { events, session } = failureTurn()
+  const job = await enqueueTurn({
+    session,
+    event: events.at(-1),
+    binding: f.binding,
+    queueRoot: f.queueRoot,
+    config: baseConfig(),
+  })
+  assert.equal(JSON.stringify(job).includes('OUTPUT-SENTINEL'), false)
+  const model = stubLlm('{"items":[]}')
+  const index = await openIndex({
+    vaultRoot: f.vault,
+    dataRoot: f.dataRoot,
+    backend: 'sqlite',
+    projectId: PROJECT_ID,
+    home: f.home,
+  })
+  t.after(() => index.close())
+  await index.waitReady(undefined, 10_000)
+  const options = queueOptions(f, { llm: model, index: async () => index })
+  await processQueue(options)
+  const [note] = await memoryNotes(f)
+  assert.ok(note.path.startsWith(INBOX))
+  assert.equal(note.note.data.assertion, 'inferred')
+  assert.equal(note.note.data.status, 'provisional')
+  await processQueue(options)
+  assert.equal(model.calls.length, 1, 'restart does not distill completed work again')
+  assert.equal((await memoryNotes(f)).length, 1)
+  assert.equal((await readReceipts(f)).length, 1)
+  const repeated = { ...session, header: { ...session.header, id: `session-${randomUUID()}` } }
+  await enqueueTurn({
+    session: repeated,
+    event: events.at(-1),
+    binding: f.binding,
+    queueRoot: f.queueRoot,
+    config: baseConfig(),
+  })
+  await processQueue(options)
+  assert.equal(
+    (await memoryNotes(f)).length,
+    1,
+    'a repeated symptom does not overwrite or duplicate its note',
+  )
+  const proposals = await listCurationProposals({ dataRoot: f.dataRoot, projectId: PROJECT_ID })
+  assert.equal(proposals.total, 1, 'a twin waits for interactive review')
+})
+
+test('a described same-tool recovery is stored provisionally in Pitfalls, with no observed cause', async (t) => {
+  const f = await fixture(t)
+  const { events, session } = failureTurn({ recovered: true })
+  await enqueueTurn({
+    session,
+    event: events.at(-1),
+    binding: f.binding,
+    queueRoot: f.queueRoot,
+    config: baseConfig(),
+  })
+  const raw = JSON.stringify({
+    items: [
+      itemFixture({
+        type: 'gotcha',
+        title: 'Probe retry',
+        body: 'The probe failed repeatedly. A retry succeeded. The cause remains unverified.',
+        assertion: 'observed',
+        status: 'active',
+        evidenceSeqs: [3, 5, 7, 9, 10],
+      }),
+    ],
+  })
+  await processQueue(queueOptions(f, { llm: stubLlm(raw) }))
+  const [note] = await memoryNotes(f)
+  assert.ok(note.path.includes('/Pitfalls/'))
+  assert.equal(note.note.data.assertion, 'inferred')
+  assert.equal(note.note.data.status, 'provisional')
+})
+
+test('soft-only error text creates no automatic failure note through the real queue', async (t) => {
+  const f = await fixture(t)
+  const { events, session } = failureTurn({ soft: true })
+  await enqueueTurn({
+    session,
+    event: events.at(-1),
+    binding: f.binding,
+    queueRoot: f.queueRoot,
+    config: baseConfig(),
+  })
+  const raw = JSON.stringify({
+    items: [itemFixture({ type: 'gotcha', assertion: 'observed', evidenceSeqs: [3, 5, 7, 8] })],
+  })
+  await processQueue(queueOptions(f, { llm: stubLlm(raw) }))
+  assert.deepEqual(await memoryNotes(f), [])
+  const [receipt] = await readReceipts(f)
+  assert.equal(receipt.refused[0].reason, 'soft-only-evidence')
+})
+
+test('a hard-failure fallback obeys dryRun and leaves the vault byte-identical', async (t) => {
+  const f = await fixture(t)
+  const { events, session } = failureTurn()
+  await enqueueTurn({
+    session,
+    event: events.at(-1),
+    binding: f.binding,
+    queueRoot: f.queueRoot,
+    config: baseConfig(),
+  })
+  const before = await snapshotTree(f.vault)
+  await processQueue(
+    queueOptions(f, {
+      config: baseConfig({ distill: { dryRun: true } }),
+      llm: stubLlm('{"items":[]}'),
+    }),
+  )
+  assert.deepEqual(await snapshotTree(f.vault), before)
+  const [receipt] = await readReceipts(f)
+  assert.equal(receipt.result, 'dry-run')
+  assert.equal(receipt.items.length, 1)
+})
+
 /** One complete, well-formed candidate item (the Task 15 contract fields only). */
 function itemFixture(overrides = {}) {
   return {

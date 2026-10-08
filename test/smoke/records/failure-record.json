@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "date": "2026-10-08",
+  "versions": {
+    "dsh": "0.2.0-rc.2",
+    "node": "v25.9.0",
+    "plugin": "0.1.10"
+  },
+  "isolation": {
+    "temporaryHome": true,
+    "temporaryRepo": true,
+    "temporaryVault": true,
+    "realHomeUnchanged": true
+  },
+  "first": {
+    "code": null,
+    "signal": "SIGKILL"
+  },
+  "recovery": {
+    "code": 0,
+    "signal": null
+  },
+  "checks": {
+    "hardFailures": true,
+    "sameTurnRecall": true,
+    "verifiedRecovery": true,
+    "budget": true,
+    "interruptedAfterCapture": true,
+    "recovery": true,
+    "inferredCandidate": true,
+    "realHomeUnchanged": true
+  },
+  "hardFailureSeqs": [
+    21,
+    27,
+    33
+  ],
+  "successfulProbeSeqs": [
+    49
+  ],
+  "failureRecalls": [
+    {
+      "type": "recall",
+      "seq": 39,
+      "trigger": "failure",
+      "chars": 230
+    }
+  ],
+  "receiptCount": 1,
+  "newNotes": [],
+  "reviewCandidates": [
+    {
+      "kind": "near-duplicate",
+      "assertion": "inferred",
+      "status": "provisional",
+      "inbox": true,
+      "evidenceCount": 4
+    }
+  ],
+  "ordinarySmoke": {
+    "checksPassed": 25,
+    "negativeControlsPassed": 11,
+    "positiveControlsPassed": 1,
+    "obsidianGui": "unverified"
+  },
+  "limits": [
+    "Synthetic acceptance, not a measurement of production solving time or retrieval quality.",
+    "Codex MCP does not receive native DSH tool events."
+  ],
+  "repositoryGate": {
+    "tests": 1010,
+    "pass": 1009,
+    "fail": 0,
+    "skipped": 1,
+    "durationMs": 176485.85775,
+    "maxConcurrentFiles": 2,
+    "isolatedCodexRecheckPass": 24
+  }
+}

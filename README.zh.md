@@ -252,6 +252,7 @@ Obsidian 应用程序代码。
 | `injectBrief` | `true` | boolean | 是否注入会话简报和逐轮相关笔记索引。 |
 | `briefBudgetChars` | `6000` | 整数 256–20000 | 会话简报与每周提醒的硬上限，单位是 Unicode 码点。 |
 | `recallBudgetChars` | `900` | 整数 256–20000 | 逐轮相关笔记索引的上限，单位是 Unicode 码点。它与 `briefBudgetChars` 刻意分开：若按简报剩余额度计费，首轮命中率只有 0.6%，而后续轮次是 22.1%。 |
+| `failureRecall` | `true` | boolean | 原生 DSH 工具重复失败时检索相关记忆。与提示词回忆共用每步的 `recallBudgetChars` 上限；不控制留档。 |
 | `hotCapacityChars` | `9000` | 整数 1024–50000 | `_meta/hot.md` 的容量。是存储容量，*不是*注入预算。 |
 | `hotArchiveRatio` | `0.67` | 开区间 (0,1) | 填充率高于此值时，插件在写入前先归档已完成条目。 |
 | `autoCapture` | `true` | boolean | 捕获已完成的回合。`false` 停止新的捕获，但仍会排空已入队的 job。 |
@@ -259,7 +260,7 @@ Obsidian 应用程序代码。
 | `captureIdleMs` | `90000` | 整数 1000–3600000 | 被捕获的回合进入蒸馏前的空闲去抖时间。 |
 | `distill.provider` | `""` | string | 模型路由。必须和 `model` 一起设置，或者两个都留空（留空 = 复用会话最近记录的路由）。从别的 harness 导入的会话没有这条路由，所以导入的历史会一直停在 `deferred`，直到设了这一项。 |
 | `distill.model` | `""` | string | 见上。 |
-| `distill.maxItems` | `12` | 整数 1–50 | 一次蒸馏最多接受多少个候选。同一个数字会写进 system prompt，模型因此知道超过多少条会被拒绝；超限是整批拒绝，绝不裁剪。 |
+| `distill.maxItems` | `12` | 整数 1–50 | 一次蒸馏最多接受多少个候选，包括失败留档的兜底候选。同一个数字会写进 system prompt，模型因此知道超过多少条会被拒绝；超限是整批拒绝，绝不裁剪。 |
 | `distill.minConfidence` | `0.75` | number 0–1 | 低于此值的候选进入 `Inbox/`，而不是成为记忆笔记。 |
 | `distill.maxInputChars` | `24000` | 整数 256–100000 | 那次模型调用的输入上限。 |
 | `distill.maxOutputTokens` | `4000` | 整数 128–32000 | 那次调用的输出上限。 |
@@ -314,6 +315,19 @@ Obsidian 应用程序代码。
 闲窗口之后，由**一次**不带工具的模型调用蒸馏；(4) 用它所引用的证据序号做校验；
 (5) 以 `decision` / `gotcha` / `convention` 笔记幂等地落地。被中止和报错的回合只
 被记录，永不成为结论；`doc` 和 `glossary` 笔记只能通过 `mem_write` 创建。
+
+原生 DSH 的重复硬失败也进入这条证据链。同一捕获回合内，同一工具失败三次后，
+可以生成 `gotcha`：模型遗漏时补低置信度的 `Inbox/` 候选；模型候选只有引用了该工具
+后续的已验证成功，以及文字说明，才可进入 Pitfalls。候选仍保持 `inferred`、
+`provisional`，不自动取代旧笔记；重试成功不能证明根因。成功结果中的软错误文本
+只提示回忆，也不能作为恢复证据。留档遵守 `autoCapture`、`distill.dryRun`、模型路由
+和 `distill.maxItems`；模型输出失败仍留在现有重试队列。同名候选等待评审。
+Codex 共用库和写作规则，但其 MCP 适配器收不到原生 DSH 工具事件；Codex skill 说明
+显式回忆和留档的方法。
+
+语言检查对句长（60 个 CJK 字符或 25 个英文词）、笔记长度（五句）、模糊措辞与悬空
+指代给出提示，排除行内代码和 wikilink。只有标题与正文语言不一致才把蒸馏候选转入
+Inbox。这些是参考 ASD-STE100 的项目规则，不表示标准认证或召回质量已提高。
 
 一个普通候选——既不取代任何笔记、也不与任何已有笔记同名——会像其他任何一次写入
 一样，走同一套事务引擎落地。有两种形态不走，因为它们是插件不该自行做出的判断：

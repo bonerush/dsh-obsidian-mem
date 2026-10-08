@@ -1,0 +1,3 @@
+- insert:
+    - id: failure-probe-driver
+      name: dsh-obsidian-mem-failure-driver

@@ -112,6 +112,106 @@ function jobFixture(overrides = {}) {
 
 const JOB = jobFixture()
 
+const failedRunEvidence = (recovered = false) => [
+  { kind: 'user', seq: 1, source: 'user' },
+  ...[2, 3, 4].map((seq) => ({
+    kind: 'tool',
+    seq,
+    name: 'bash',
+    ok: false,
+    failureKind: 'not-found',
+    turn: 1,
+  })),
+  ...(recovered ? [{ kind: 'tool', seq: 5, name: 'bash', ok: true, turn: 1 }] : []),
+  { kind: 'assistant-final', seq: 6 },
+]
+
+test('an unrecorded hard failure run leaves an Inbox candidate even when the model returns none', () => {
+  const items = validateDistillation(
+    '{"items":[]}',
+    jobFixture({ allowedEvents: failedRunEvidence() }),
+    CONFIG,
+  )
+  assert.equal(items.length, 1)
+  assert.equal(items[0].type, 'gotcha')
+  assert.equal(items[0].inbox, true)
+  assert.equal(items[0].status, 'provisional')
+  assert.equal(items[0].assertion, 'inferred')
+  assert.equal(items[0].supersedesId, null)
+  assert.deepEqual(items[0].evidenceSeqs, [2, 3, 4])
+})
+
+test('a recovered hard run cannot promote a guessed cause or an unverified recovery', () => {
+  const candidate = decisionItem({
+    type: 'gotcha',
+    evidenceSeqs: [2, 3, 4, 5, 6],
+    assertion: 'observed',
+    status: 'active',
+  })
+  const raw = JSON.stringify({ items: [candidate] })
+  const [verified] = validateDistillation(
+    raw,
+    jobFixture({ allowedEvents: failedRunEvidence(true) }),
+    CONFIG,
+  )
+  assert.equal(verified.inbox, false)
+  assert.equal(verified.assertion, 'inferred', 'a successful retry does not verify its root cause')
+  assert.equal(verified.status, 'provisional')
+  const events = failedRunEvidence(true).map((e) => (e.seq === 5 ? { ...e, verified: false } : e))
+  const [soft] = validateDistillation(raw, jobFixture({ allowedEvents: events }), CONFIG)
+  assert.equal(soft.inbox, true, 'error-looking successful output is not recovery evidence')
+})
+
+test('a long hard run still downgrades a model citing its recent failures', () => {
+  const events = [
+    ...Array.from({ length: 70 }, (_, i) => ({
+      kind: 'tool',
+      seq: i + 1,
+      name: 'bash',
+      turn: 1,
+      ok: false,
+      failureKind: 'not-found',
+    })),
+    { kind: 'tool', seq: 71, name: 'bash', turn: 1, ok: true },
+    { kind: 'assistant-final', seq: 72 },
+  ]
+  const raw = JSON.stringify({
+    items: [decisionItem({ type: 'gotcha', assertion: 'observed', evidenceSeqs: [70, 71, 72] })],
+  })
+  const items = validateDistillation(raw, jobFixture({ allowedEvents: events, toSeq: 73 }), CONFIG)
+  assert.equal(items.length, 1)
+  assert.equal(items[0].assertion, 'inferred')
+  assert.equal(items[0].status, 'provisional')
+})
+
+test('single failures and soft-only evidence never generate automatic failure records', () => {
+  for (const events of [
+    failedRunEvidence().filter((e) => e.seq !== 3),
+    failedRunEvidence().map((e) => (e.kind === 'tool' ? { ...e, ok: true, verified: false } : e)),
+  ]) {
+    assert.deepEqual(
+      validateDistillation('{"items":[]}', jobFixture({ allowedEvents: events }), CONFIG),
+      [],
+    )
+  }
+})
+
+test('a model gotcha supported only by soft output and its own summary is refused', () => {
+  const events = failedRunEvidence().map((e) =>
+    e.kind === 'tool' ? { ...e, ok: true, verified: false } : e,
+  )
+  const raw = JSON.stringify({
+    items: [decisionItem({ type: 'gotcha', assertion: 'observed', evidenceSeqs: [2, 3, 4, 6] })],
+  })
+  assert.deepEqual(validateDistillation(raw, jobFixture({ allowedEvents: events }), CONFIG), [])
+  const stated = JSON.stringify({ items: [decisionItem({ type: 'gotcha', evidenceSeqs: [1] })] })
+  assert.equal(
+    validateDistillation(stated, jobFixture({ allowedEvents: events }), CONFIG).length,
+    1,
+    'a human statement is independent evidence, not a soft-output inference',
+  )
+})
+
 /** A fresh private root; nothing in this file uses the process cwd or home. */
 async function temporaryRoot(t, name = 'obsidian-mem-t15-distill-') {
   const root = await mkdtemp(join(tmpdir(), name))

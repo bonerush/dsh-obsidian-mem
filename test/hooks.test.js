@@ -1965,6 +1965,43 @@ test('a failure run is reported once, not once per step', async (t) => {
   assert.equal(calls.length, 1, 'one run injects once, however many steps follow')
 })
 
+test('failures retrieve in the same turn after its initial prompt lookup', async (t) => {
+  const calls = []
+  const h = bed(t, {
+    search: async (args) => {
+      calls.push(args.query)
+      return calls.length === 1
+        ? []
+        : [
+            {
+              path: `${RELATIVE_DIR}/Pitfalls/ENOENT.md`,
+              title: 'ENOENT bash',
+              scoreSignals: ['title-contains', 'token-hits:5'],
+            },
+          ]
+    },
+  })
+  const events = []
+  const agent = agentWithEvents(events)
+  const claimed = [
+    { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '修复编译问题' }] },
+  ]
+  await h.preStep(agent, undefined, undefined, { turn: 1, messages: claimed })
+  events.push(
+    ...failingPair('a', 'bash', 1, 1),
+    ...failingPair('b', 'bash', 3, 2),
+    ...failingPair('c', 'bash', 5, 3),
+  )
+  const decision = await h.preStep(agent, undefined, undefined, { turn: 1 })
+  assert.equal(
+    calls.length,
+    2,
+    'a turn can have many tool steps; its prompt lookup must not block a failure lookup',
+  )
+  assert.equal(promptMaps(decision).length, 1)
+  assert.ok([...promptMaps(decision)[0].content[0].text].length <= RECALL_BUDGET)
+})
+
 test('failureRecall: false disables the path without disabling the brief', async (t) => {
   const calls = []
   const h = bed(t, {

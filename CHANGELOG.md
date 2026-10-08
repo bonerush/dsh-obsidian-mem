@@ -11,6 +11,48 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Fixed
+
+- Completed failure recall and recording after the language-standard investigation.
+  Prompt lookup on an earlier step no longer suppresses failure recall in the same
+  turn. Legacy/v4 tool envelopes and PTC nested outcomes are recognized without
+  copying output; related successes reset counters and soft steps include the turn.
+  Retrieval uses fixed English/Chinese category aliases. A same-tool hard run omitted
+  by a valid model result can leave a bounded Inbox candidate through the existing
+  queue. Recovery needs cited verified success and a written description; causes stay
+  inferred/provisional, with no automatic supersede. Title twins remain review-only.
+  Late evidence from a long failure run is still linked after the saved seq list
+  reaches its bound. Soft output and the model's own summary cannot alone justify a gotcha; the refusal
+  is audited in the receipt. User statements remain independent evidence.
+- Count one- and two-letter English words in sentence limits, and exclude inline code,
+  wikilinks and quoted prose from hedge, reference and language checks. Correct the
+  mistaken attribution that ASD-STE100 forbids simple future: Rule 3.2 allows it.
+  The bilingual README and both harness skills now describe these rules and boundaries.
+- Verification: native DSH 0.2.0-rc.2 on Node v25.9.0, isolated temporary home/repo/vault.
+  The failure probe passed eight assertions: three hard errors, same-turn recall
+  (230 code points <= 900), verified recovery, SIGKILL after durable capture, restart
+  receipt, inferred/provisional candidate and unchanged real-home fingerprints.
+  The ordinary real-model smoke passed 25 checks and its checker passed 11 negative
+  controls plus one positive control. Queue tests cover Inbox/Pitfalls, restart,
+  duplicates, soft-evidence refusal and byte-identical dryRun. Package measured as
+  64 entries over 55 lib assets (54 modules and the worker license).
+  `npm run check`: 1010 tests, 1009 pass, one skipped optional smoke wrapper, zero
+  failures; lint, format, types, pack contract and real tarball all passed (176 s).
+  Full default-parallel runs hit scan/startup timeouts (three cases, then two);
+  the 24 Codex adapter tests passed in isolation. The isolated-home runner now
+  caps file concurrency at two, preserving scan budgets, handshake timeouts and
+  assertions; the complete gate passed with that cap. Large hosts trade some
+  file parallelism for less competition between native/SQLite fixtures.
+  Metadata only: `test/smoke/records/failure-record.json`. Commands and local
+  standard-source evidence: `docs/failure-memory-validation.md`.
+- Remaining limits: these tests do not measure production solving time or retrieval
+  quality, and the earlier 739-note/60-session rates have not been re-calibrated.
+  Obsidian GUI rendering was not exercised. Codex MCP receives no native DSH tool
+  events; its explicit skill workflow and shared library do not imply automatic
+  detection of arbitrary Codex tool failures. Fallbacks obey maxItems and require
+  a valid distillation; unavailable/truncated model output stays in the retry queue.
+
+
 ### Added
 
 - **A session that is failing can now recall what the project already learned, and

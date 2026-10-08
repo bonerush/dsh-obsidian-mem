@@ -14,6 +14,7 @@
     "lib/curation-cli.js",
     "lib/curation-proposals.js",
     "lib/failure-streak.js",
+    "lib/failure-memory.js",
     "lib/git.js",
     "lib/index.js",
     "lib/naming.js",

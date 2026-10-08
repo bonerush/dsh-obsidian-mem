@@ -209,6 +209,23 @@ directory it was routed to. Only a body whose language is not its title's sends 
 distilled candidate to `Inbox/` instead of its destination; a lint report shows
 that case as `style-language` at `error` severity.
 
+### 4.2 Repeated failure and recovery
+
+After three hard failures, search existing project gotchas before retrying the
+same approach. Use the tool name and a closed error category or ordinary error
+code; never copy private output, commands, paths or credentials into a query.
+Two soft error-text matches inside one step may suggest the same lookup, but
+cannot justify a failure note or verify recovery.
+
+Record the symptom, attempted remedy, successful check and evidence separately.
+A successful retry proves the outcome, not its cause: keep an inferred diagnosis
+as `assertion: inferred`, `status: provisional`, and never automatically supersede
+an existing note. Unresolved or unsupported candidates belong in `Inbox/`.
+Search before recording; a twin waits for review rather than overwriting a note.
+Native DSH captures qualifying hard runs through its existing queue. The Codex
+MCP adapter does not observe those native events; use `mem_search` and `mem_write`
+explicitly when this workflow applies and the session authorizes memory writes.
+
 ## 5. Evidence, supersede, contested
 
 **Evidence before assertion.** Every note that states a fact should be able to

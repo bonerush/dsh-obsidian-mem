@@ -126,6 +126,20 @@ test('an English sentence is measured in words, not characters', () => {
   assert.equal(sentenceLength('FTS5 UTF8 ES6'), 3)
 })
 
+test('short English words count and quoted identifiers cannot cause language downgrades', () => {
+  assert.equal(sentenceLength('I am on it and I do it by a rule'), 11)
+  const long = `${Array.from({ length: 26 }, () => 'it').join(' ')}.`
+  assert.equal(only(long, 'sentence-length').severity, 'warn')
+  assert.equal(
+    languagesAgree(
+      '中文标题',
+      '`abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ`. 中文内容。',
+    ),
+    true,
+  )
+  assert.deepEqual(forBody('命令为 `should --该文件`。'), [])
+})
+
 test('a sixth sentence is reported, and five are not', () => {
   const body = (n) => Array.from({ length: n }, (_, i) => `第${i}句。`).join('')
   assert.deepEqual(forBody(body(MAX_SENTENCES)), [])

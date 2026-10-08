@@ -160,6 +160,73 @@ test('the scan is bounded, and reads both ends of a long body', () => {
   assert.equal(kindOf(`${filler}ENOENT${filler}`), null)
 })
 
+test('legacy nested tool results and message-less host errors are hard failures', () => {
+  assert.equal(
+    classifyResult(
+      { message: { content: [{ type: 'tool-result', isError: true, content: [] }] } },
+      'read',
+    ),
+    'hard',
+  )
+  assert.equal(classifyResult({ error: { code: 'EPIPE' } }, 'bash'), 'hard')
+})
+
+test('a success clears soft counters and step numbers are scoped to a turn', () => {
+  const streak = new FailureStreak()
+  streak.observe(result({ text: 'ENOENT', name: 'bash', step: 1 }))
+  streak.observe(result({ text: 'done', name: 'bash', step: 1 }))
+  streak.observe(result({ text: 'ENOENT', name: 'bash', step: 1 }))
+  assert.equal(streak.consume(), null)
+  streak.observe({
+    ...result({ text: 'ENOENT', name: 'bash', step: 1 }),
+    data: { ...result({ text: 'ENOENT', name: 'bash', step: 1 }).data, turn: 2 },
+  })
+  assert.equal(streak.consume(), null, 'step 1 of two turns is not one step')
+})
+
+test('nested dispatch failures count once and their successful wrapper cannot erase them', () => {
+  const streak = new FailureStreak()
+  streak.observe(call('root', 'run_code'))
+  for (let i = 1; i <= 3; i++)
+    streak.observe({
+      type: 'tool/ptc-dispatch',
+      seq: i,
+      data: {
+        rootCallId: 'root',
+        subCallId: `nested${i}`,
+        name: 'bash',
+        isError: true,
+        content: [{ type: 'text', text: 'ENOENT' }],
+        turn: 1,
+        step: 1,
+      },
+    })
+  streak.observe(result({ text: 'done', toolCallId: 'root' }))
+  assert.equal(streak.consume()?.hard, 3)
+})
+
+test('a wrapper failure after successful nested calls remains a hard failure', () => {
+  const streak = new FailureStreak()
+  for (let i = 0; i < 3; i++) {
+    streak.observe(call(`root${i}`, 'run_code'))
+    streak.observe({
+      type: 'tool/ptc-dispatch',
+      data: {
+        rootCallId: `root${i}`,
+        name: 'read',
+        isError: false,
+        content: [{ type: 'text', text: 'ok' }],
+        turn: 1,
+        step: i + 1,
+      },
+    })
+    streak.observe(
+      result({ isError: true, toolCallId: `root${i}`, text: 'TypeError: wrapper failed' }),
+    )
+  }
+  assert.equal(streak.consume()?.hard, 3)
+})
+
 test('a run of hard failures reaches the threshold, and one short of it does not', () => {
   const streak = new FailureStreak()
   for (let i = 1; i < HARD_STREAK_THRESHOLD; i += 1) {
@@ -257,14 +324,14 @@ test('a tool name is resolved through the call, and unknown when it cannot be', 
 test('the query names the error kind before the tool, and is bounded', () => {
   // Kinds first because a kind is distinctive and a tool name is not: every
   // session uses `bash`, so a query of bare tool names would rank nothing.
-  assert.equal(queryForFailure({ kinds: ['not-found'], tools: ['bash'] }), 'not-found bash')
   assert.equal(
-    queryForFailure({ kinds: ['a', 'b', 'c'], tools: ['x', 'y', 'z', 'w'] }),
-    'a b w x y',
+    queryForFailure({ kinds: ['not-found'], tools: ['bash'] }),
+    'ENOENT 找不到文件 not-found bash',
   )
+  assert.equal(queryForFailure({ kinds: ['a', 'b', 'c'], tools: ['x', 'y', 'z', 'w'] }), 'w x y')
   assert.equal(queryForFailure({ kinds: [], tools: [] }), null)
   assert.equal(queryForFailure({}), null)
   assert.equal(queryForFailure(null), null)
   // Duplicates collapse, and blank values never become query tokens.
-  assert.equal(queryForFailure({ kinds: ['x', 'x'], tools: ['', 'bash', 'bash'] }), 'x bash')
+  assert.equal(queryForFailure({ kinds: ['x', 'x'], tools: ['', 'bash', 'bash'] }), 'bash')
 })

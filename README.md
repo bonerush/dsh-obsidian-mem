@@ -287,6 +287,7 @@ explanation instead of doing nothing.
 | `injectBrief` | `true` | boolean | Whether the session brief and per-turn relevant-note map are injected. |
 | `briefBudgetChars` | `6000` | integer 256–20000 | Hard ceiling for the session brief and the weekly hint, in Unicode code points. |
 | `recallBudgetChars` | `900` | integer 256–20000 | Per-turn ceiling for the relevant-note map, in Unicode code points. Deliberately separate from `briefBudgetChars`: charged against the brief's leftovers, the map fired on 0.6% of first turns against 22.1% of later ones. |
+| `failureRecall` | `true` | boolean | Recall related memory on repeated native DSH tool failures. Shares the per-step `recallBudgetChars` ceiling with prompt recall; does not control recording. |
 | `hotCapacityChars` | `9000` | integer 1024–50000 | Capacity of `_meta/hot.md`. Storage capacity, *not* injection budget. |
 | `hotArchiveRatio` | `0.67` | open interval (0,1) | Above this fill level the plugin archives 已完成 entries before writing. |
 | `autoCapture` | `true` | boolean | Capture completed turns. `false` stops new capture but still drains jobs already queued. |
@@ -294,7 +295,7 @@ explanation instead of doing nothing.
 | `captureIdleMs` | `90000` | integer 1000–3600000 | Idle debounce before a captured turn is distilled. |
 | `distill.provider` | `""` | string | Model route. Must be set together with `model`, or both left empty (empty = reuse the session's last recorded route). A session imported from another harness has no recorded route, so imported history stays `deferred` until this is set. |
 | `distill.model` | `""` | string | See above. |
-| `distill.maxItems` | `12` | integer 1–50 | Maximum candidates accepted from one distillation. The same number is written into the system prompt, so the model is told the ceiling it would be refused for exceeding; a batch over it is refused whole, never trimmed. |
+| `distill.maxItems` | `12` | integer 1–50 | Maximum candidates, including failure fallbacks, accepted from one distillation. The same number is written into the system prompt, so the model is told the ceiling it would be refused for exceeding; a batch over it is refused whole, never trimmed. |
 | `distill.minConfidence` | `0.75` | number 0–1 | Below this, a candidate goes to `Inbox/` instead of a memory note. |
 | `distill.maxInputChars` | `24000` | integer 256–100000 | Input ceiling for the single model call. |
 | `distill.maxOutputTokens` | `4000` | integer 128–32000 | Output ceiling for that call. |
@@ -354,6 +355,24 @@ With `autoCapture: true`, a completed root turn is (1) captured after commit,
 numbers, and (5) applied idempotently as `decision` / `gotcha` / `convention`
 notes. Aborted and errored turns are recorded but never become conclusions;
 `doc` and `glossary` notes are only ever created through `mem_write`.
+
+Repeated native DSH hard failures also enter this evidence path. Three failures
+of the same tool within a captured turn can produce a `gotcha`: an omitted run
+gets a low-confidence `Inbox/` candidate, and a model candidate stays in Inbox
+unless it cites a later verified success of that tool and a written explanation.
+The candidate remains `inferred` and `provisional`, with no automatic supersede;
+a successful retry does not prove its root cause. Soft error-text matches only
+suggest recall and cannot supply recovery evidence. Recording respects
+`autoCapture`, `distill.dryRun`, the model route and `distill.maxItems`; failed
+model output stays in the existing retry queue. Title twins wait for review.
+Codex shares the library and writing rules, but its MCP adapter does not receive
+native DSH tool events; its skill describes explicit failure recall and recording.
+
+Language checks report sentence length (60 CJK characters or 25 English words),
+note length (five sentences), hedges and dangling references as advisory findings.
+Inline code and wikilinks are excluded. Only title/body language disagreement
+routes a distilled note to Inbox. These are project rules informed by ASD-STE100,
+not a claim of conformance or improved retrieval quality.
 
 An ordinary candidate — one that supersedes nothing and twins no existing note —
 applies through the same transaction engine as every other write. Two shapes do

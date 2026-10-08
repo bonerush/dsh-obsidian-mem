@@ -103,6 +103,41 @@ const MISSING_CREDENTIAL = {
   error: { code: 'MISSING_CREDENTIAL', message: 'no API key' },
 }
 
+test('v4 flat tool messages retain verification evidence without copying output', async (t) => {
+  const queueRoot = await queueIn(t)
+  const events = [
+    turnStart(0),
+    userMessage(1, '记录修复'),
+    toolCall(2, 'bash'),
+    at(3, 'tool/result', {
+      turn: 1,
+      step: 1,
+      message: {
+        role: 'tool',
+        toolCallId: 'call-bash',
+        isError: false,
+        content: [text('PRIVATE_TOOL_OUTPUT')],
+        source: { kind: 'tool', callId: 'call-bash' },
+      },
+    }),
+    assistantMessage(4, [text('验证完成')]),
+    turnEnd(5, COMPLETED),
+  ]
+  const job = await enqueueTurn({
+    session: sessionOf(events),
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+  })
+  assert.ok(
+    job.allowedEvents.some(
+      (e) => e.kind === 'tool' && e.seq === 3 && e.name === 'bash' && e.ok === true,
+    ),
+  )
+  assert.ok(!JSON.stringify(job).includes('PRIVATE_TOOL_OUTPUT'))
+})
+
 function sessionOf(
   events,
   {
@@ -363,7 +398,7 @@ test('the pre-tool draft is discarded in favour of the last tool-call-free assis
     job.allowedEvents.map((entry) => entry.seq),
     [1, 4, 5],
   )
-  assert.deepEqual(job.allowedEvents[1], { kind: 'tool', seq: 4, name: 'bash', ok: true })
+  assert.deepEqual(job.allowedEvents[1], { kind: 'tool', seq: 4, name: 'bash', ok: true, turn: 1 })
   assert.ok(job.safeInput.includes('FINAL: the parser is fixed'))
   assert.ok(!job.safeInput.includes('DRAFT:'))
   assert.ok(
@@ -396,7 +431,7 @@ test('a tool call that failed is recorded as a failed tool, still without its ou
   })
   assert.deepEqual(
     job.allowedEvents.find((entry) => entry.kind === 'tool'),
-    { kind: 'tool', seq: 4, name: 'bash', ok: false },
+    { kind: 'tool', seq: 4, name: 'bash', ok: false, turn: 1, failureKind: 'unknown' },
   )
   assert.ok(!job.safeInput.includes('SECRET_PERMISSION_DENIED_TAIL'))
 })
