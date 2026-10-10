@@ -41,6 +41,7 @@ import { test } from 'node:test'
 
 import {
   DistillError,
+  HABIT_TAG,
   MAX_ITEMS_SLOT,
   SYSTEM_PROMPT,
   distillCandidates,
@@ -1218,6 +1219,108 @@ test('the raw output is durable before validation, and the validated items after
   assert.equal(stored.output.raw, payload)
   assert.equal(stored.output.items.length, 1)
   assert.equal((await stat(join(queueRoot, `${JOB_ID}.json`))).mode & 0o777, JOB_FILE_MODE)
+})
+
+test('a user-stated habit is recorded as a convention and tagged, so it is findable without its title', () => {
+  // The learned half of the user-habit feature: the pipeline used to have no path to a
+  // habit at all, so "the memory does not account for my habits" was literally true for
+  // anything the agent did not write by hand. A habit is a claim about the user, so the
+  // only admissible evidence is the user's own words in the turn, and the tag is
+  // attached by the plugin — a marker the model must remember is one the validator
+  // cannot enforce.
+  const item = onlyItem(
+    json([
+      decisionItem({
+        type: 'convention',
+        title: '习惯：前端一律 React + TypeScript',
+        body: '前端新页面一律用 React 与 TypeScript，不再引入 Vue。',
+        tags: ['dsh-mem/convention'],
+        assertion: 'stated',
+        status: 'accepted',
+        evidenceSeqs: [2],
+      }),
+    ]),
+  )
+  assert.equal(item.type, 'convention')
+  assert.equal(item.assertion, 'stated')
+  assert.deepEqual(item.tags, ['dsh-mem/convention', 'user-habit'])
+  assert.equal(item.inbox, false, 'a stated habit is a real convention, not an inbox candidate')
+})
+
+test('a habit the user did not state is refused as a habit, with the escape in the reason', () => {
+  // Three shapes of "the model inferred a habit": an explicit `inferred`, an `observed`
+  // claim (a single turn cannot show a pattern, whatever tool output accompanies it),
+  // and `stated` resting only on tool evidence. Each is refused rather than downgraded —
+  // a downgraded habit would still be written as a preference the user never expressed —
+  // and the ASCII colon is caught too, so a model writing either form cannot slip past
+  // the rule.
+  for (const [label, override] of [
+    ['inferred', { assertion: 'inferred' }],
+    ['observed', { assertion: 'observed', evidenceSeqs: [4] }],
+    ['stated without a user seq', { assertion: 'stated', evidenceSeqs: [4] }],
+    ['ascii colon', { title: '习惯: 提交前先跑测试', assertion: 'inferred' }],
+  ]) {
+    const raw = json([
+      decisionItem({
+        type: 'convention',
+        title: '习惯：改动前先跑测试',
+        body: '改动一律先跑测试再提交。',
+        tags: ['dsh-mem/convention'],
+        status: 'accepted',
+        evidenceSeqs: [2],
+        ...override,
+      }),
+    ])
+    const { items, refused } = distillCandidates(raw, JOB)
+    assert.equal(items.length, 0, `${label}: nothing is written`)
+    assert.equal(refused.length, 1, `${label}: the item is reported`)
+    assert.equal(refused[0].reason, 'habit-not-stated', label)
+    assert.equal(refused[0].field, 'title', label)
+  }
+})
+
+test('a convention without the habit prefix is untouched by the habit rule', () => {
+  const item = onlyItem(
+    json([
+      decisionItem({
+        type: 'convention',
+        title: '提交前先跑测试',
+        body: '本仓库的改动一律先跑测试再提交。',
+        tags: ['dsh-mem/convention'],
+        assertion: 'inferred',
+        status: 'provisional',
+        evidenceSeqs: [4],
+      }),
+    ]),
+  )
+  assert.deepEqual(item.tags, ['dsh-mem/convention'], 'no habit tag is invented')
+  assert.equal(item.assertion, 'inferred', 'and no assertion is rewritten')
+})
+
+test('the prompt names the habit rule the validator enforces, and the escape', () => {
+  // Same contract as the enumeration case above: the validator keys on the prefix, so a
+  // prompt that did not name it would ask for a habit that is then refused — and the
+  // sentence about not inferring one is the rule the refusal enforces.
+  assert.ok(SYSTEM_PROMPT.includes('习惯：'), 'the prompt names the prefix the validator reads')
+  assert.ok(
+    SYSTEM_PROMPT.includes('assertion stated'),
+    'the prompt names the assertion it requires',
+  )
+  assert.ok(
+    SYSTEM_PROMPT.includes('Never infer a habit'),
+    'the prompt states the rule it is refused by',
+  )
+  assert.ok(SYSTEM_PROMPT.includes('mem_write'), 'the escape for an observed habit is named')
+  // Measured against the real model (docs/habit-extraction-validation.md): without this
+  // sentence the model titled a user-stated *project* rule 习惯：… as well (2 of 2
+  // control runs), which would have made a repository rule promotable as a personal
+  // habit. With it, the same control produced a plain convention and the stated-habit
+  // cases produced no fewer habits (7 items over 2 rounds against 6).
+  assert.ok(
+    SYSTEM_PROMPT.includes('A rule about this project is a plain convention'),
+    'the rule/habit boundary is stated, not left to the model',
+  )
+  assert.equal(typeof HABIT_TAG, 'string')
 })
 
 test('a dropped foreign-target item is reported, and only survivors reach the validated barrier', async (t) => {

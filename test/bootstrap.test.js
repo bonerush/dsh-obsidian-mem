@@ -441,6 +441,21 @@ test('_meta/user.md is created once from a template and never rewritten (R21)', 
   assert.equal(plain.createdPaths.includes('_meta/user.md'), true)
   const template = await readFile(join(vault, '_meta', 'user.md'), 'utf8')
   assert.match(template, /^---\ntags: \[/)
+  // The template is a habits questionnaire, not a blank page: an empty file
+  // collected nothing, so the memory layer knew nothing about its user. The
+  // examples are comments — `brief.js` strips comments per line — and a section
+  // the user never fills in contributes no label either.
+  for (const heading of [
+    '## 技术与框架偏好',
+    '## 常用技能与工具',
+    '## 惯用方法（按问题类型）',
+    '## 产出与沟通偏好',
+    '## 禁忌',
+  ]) {
+    assert.ok(template.includes(heading), `${heading} is asked for`)
+  }
+  assert.ok(/<!-- 例：- /u.test(template), 'the examples are comments')
+  assert.ok(!/^\s*[-*+]\s/mu.test(template), 'the template carries no active bullet')
   const created = await lstat(join(vault, '_meta', 'user.md'))
 
   // ... and never rewrites it: the second run reports it as existing, byte for byte.

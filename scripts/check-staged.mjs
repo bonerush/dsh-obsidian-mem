@@ -181,7 +181,9 @@ export function main(argv = process.argv.slice(2), root = SELF_ROOT) {
   }
   // Section order is cheap and needs no comparison base, so unlike the Unreleased
   // gate it belongs in the fast path too: a release section inserted above a newer
-  // one used to be caught only by reading the file.
+  // one used to be caught only by reading the file, and a duplicate `###` heading in
+  // Unreleased (an entry appended with its own heading) re-labelled every entry
+  // written before it. Only the first of those two has a `--fix`.
   const order = spawnSync(process.execPath, [join(SELF_ROOT, 'scripts', 'changelog-order.mjs')], {
     cwd: root,
     encoding: 'utf8',
@@ -189,7 +191,10 @@ export function main(argv = process.argv.slice(2), root = SELF_ROOT) {
   process.stderr.write(order.stdout ?? '')
   if (order.status !== 0) {
     process.stderr.write(order.stderr ?? '')
-    process.stderr.write('check:fast: run `node scripts/changelog-order.mjs --fix` to repair it\n')
+    process.stderr.write(
+      'check:fast: `node scripts/changelog-order.mjs --fix` repairs release order; a duplicate ' +
+        '### heading is edited by hand\n',
+    )
     return 1
   }
   process.stdout.write('check:fast: OK (' + checked + ' staged source file(s))\n')

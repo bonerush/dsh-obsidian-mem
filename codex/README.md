@@ -77,12 +77,50 @@ What it does with the answer is the only decision in the file, and it is made in
 
 - **`source: "startup"` and `"clear"`** — the two that open a conversation with no
   project context in it — inject.
-- **`"resume"` and `"compact"`** do not. Both continue a conversation that already
-  carries the earlier injection or its summary, so paying for the same brief twice
-  is the one cost this hook can avoid for nothing.
-- **A directory with no `.obsidian-mem` pointer** injects nothing. That is most
-  directories on any machine, and it is not a refusal: the session starts as if the
-  plugin were not installed.
+- **`"compact"` injects**, and it is the one source here that changed for a measured
+  reason rather than a preference. A rollout records what compaction leaves the model
+  with in the `compacted` record's `replacement_history`, and the brief is not in it:
+  in `~/.codex/sessions/2026/10/04/rollout-…01a106b0…jsonl` (4.0 MB, 813 lines) the
+  injection is at line 9 as a `hooks.additional_context` developer message, and the
+  `compacted` record at line 400 replaces the context with 102 KB that contains no
+  `obsidian-mem:brief` — while the AGENTS.md developer message survives. Compaction
+  therefore drops the brief, and a session that continues after one has no memory
+  until something pays for it again.
+- **`"resume"` is decided per session from the rollout.** A resumed conversation
+  normally still carries its injection, and paying for the brief twice is the one cost
+  this hook can avoid for nothing — so it injects only when the rollout shows the
+  brief is *not* in the current window. `resumeVerdict()` reads at most 8 MiB of the
+  `transcript_path` and answers three ways: `present` (the injection is the latest of
+  the two records and the file was read whole), `absent` (no injection at all — the
+  plugin was installed mid-thread, or the rollout was imported from another agent — or
+  a compaction after it), `unknown` (unreadable, not a rollout, or bigger than the
+  cap). Only `absent` injects; `unknown` keeps the behaviour this hook had before the
+  scan existed. The scan matches the *serialized* injection
+  (`"text":"<!-- obsidian-mem:brief mode=`) rather than the bare string, because the
+  bare string also appears in this repository's own AGENTS.md and in any rollout that
+  grepped it. Both the compact and the spaced JSON spellings are accepted, because the
+  two misses are not symmetric: missing an injection costs a duplicate brief, while
+  missing a compaction would read as "the brief is still there" and leave the session
+  without memory. Every rollout on this machine writes the compact form.
+  **Measured with the real binary** (`docs/codex-hook-validation.md`): `codex exec`
+  delivers `source: "startup"` with a populated `transcript_path`, and
+  `codex exec resume --last` delivers `source: "resume"` with the *same existing*
+  rollout path, readable when the hook runs. The three answers were then driven end to
+  end through real runs: one injection at startup, none on a resume whose rollout still
+  carries it, a new one after a compaction record, and a new one for a rollout that
+  never had a brief (the plugin installed mid-thread, which is also how an imported
+  rollout looks). The scan stays defensive anyway — it speaks only about a file whose
+  first line parses as a `session_meta` record — and `unknown` still falls back to the
+  old behaviour.
+- **A directory that resolves to no usable project** gets the same one-shot notice
+  DSH injects, from the same module (`lib/init-hint.js`): this directory is not
+  bound — or its recorded directory no longer exists — here is why, and, when
+  binding is the fix, the call that answers it, `mem_admin(action="bind",
+  mode="local")`. The session is asked rather than left to discover the plugin by
+  accident. A refusal with no wording injects nothing, `OBSIDIAN_MEM_BIND_HINT=0`
+  turns the notice off, and no automatic curation pass runs, because there is no
+  project to curate. The notice is the same text DSH sends, including its one-line
+  fallback for a session whose `briefBudgetChars` cannot carry the full wording.
 
 Two measured details are worth knowing before you debug it, both from codex-cli
 0.146.0. The hook's `matcher` is left as `"*"` — on this event Codex matches the
@@ -158,6 +196,7 @@ binary; what a model does with the context is not.
 | Index, locks, receipts, queue | `$DSH_HOME/data/obsidian-mem` — **shared with the DSH side** | `DSH_HOME` |
 | Binding pointer | `<repository>/.obsidian-mem`, committed | — |
 | Working directory the tools bind | the client's MCP `roots/list` answer | `OBSIDIAN_MEM_CWD` |
+| Unbound-session notice (the `SessionStart` hook's "this project has no memory" message) | on | `OBSIDIAN_MEM_BIND_HINT=0`, or `bindHint` in the DSH row for DSH sessions |
 
 Sharing the data root is deliberate: one lock, one receipt set, one index for one
 vault whichever harness is writing.
@@ -165,9 +204,9 @@ vault whichever harness is writing.
 ## What behaves differently
 
 - **Recall is automatic; writing is the agent's choice.** A bound repository gets
-  the session brief at startup and may get relevant paths on each new prompt.
-  No finished turn is distilled under Codex; a session where the agent writes
-  nothing still remembers nothing new.
+  the session brief at startup (and again after a compaction, which is measured to drop
+  it), and may get relevant paths on each new prompt. No finished turn is distilled
+  under Codex; a session where the agent writes nothing still remembers nothing new.
 - **The working directory comes from the client.** Codex launches a plugin's MCP
   server with the plugin directory as its cwd, so the server asks for
   `roots/list` and uses the first root. A client that does not answer within two

@@ -21,6 +21,11 @@ const DEFAULTS = {
   vaultPath: '~/Documents/dsh-memory',
   initGitOnCreate: true,
   injectBrief: true,
+  // The unbound-session notice (`lib/init-hint.js`): a session whose directory
+  // resolves to no usable project is told once, so the user is asked whether to
+  // bind it and a moved or deleted directory is reported instead of losing memory
+  // in silence. `false` removes that one injection and nothing else.
+  bindHint: true,
   briefBudgetChars: 6000,
   recallBudgetChars: 900,
   // Task 18's default switch: a session whose tool calls begin failing in a run may

@@ -106,15 +106,27 @@ export function listTools() {
  * harnesses agree about the vault and the data root without any configuration:
  * `OBSIDIAN_MEM_VAULT` (then `OBSIDIAN_MEM_CWD`, `DSH_HOME`) exist so a test —
  * or a second checkout — can point somewhere else without touching the real one.
+ * `OBSIDIAN_MEM_BIND_HINT=0` is the one switch that is read here rather than from a
+ * DSH row, because the SessionStart hook is a separate process with no Cordis row.
  *
- * @param {{ cwd?: string, dshHome?: string, vaultPath?: string, home?: string }} [options] - overrides; every one of them defaults to what the DSH plugin would use.
+ * @param {{ cwd?: string, dshHome?: string, vaultPath?: string, bindHint?: boolean, home?: string }} [options] - overrides; every one of them defaults to what the DSH plugin would use.
  * @returns {{ services: object, config: object, dataRoot: string, cwd: string, diagnostics: object }} the opened layer, with the ring its own `mem_admin` reads.
  */
 export function openMemory(options = {}) {
   const home = options.home ?? homedir()
   const cwd = options.cwd ?? process.env.OBSIDIAN_MEM_CWD ?? process.cwd()
   const vaultPath = options.vaultPath ?? process.env.OBSIDIAN_MEM_VAULT
-  const config = validateConfig(vaultPath === undefined ? {} : { vaultPath })
+  // The one config switch this adapter reads from the environment: the unbound-session
+  // notice (`lib/init-hint.js`), which the SessionStart hook would otherwise have no
+  // way to turn off in a scratch directory. Any value but `0`/`false` is on, so a typo
+  // cannot silently disable a notice the user asked for.
+  const rawBindHint = options.bindHint ?? process.env.OBSIDIAN_MEM_BIND_HINT
+  const bindHint =
+    rawBindHint === undefined ? undefined : !/^(?:0|false)$/i.test(String(rawBindHint).trim())
+  const config = validateConfig({
+    ...(vaultPath === undefined ? {} : { vaultPath }),
+    ...(bindHint === undefined ? {} : { bindHint }),
+  })
   const dataRoot = resolveDataRoot(options.dshHome ?? process.env.DSH_HOME ?? undefined)
   let sink = null
   try {

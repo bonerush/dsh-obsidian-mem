@@ -212,6 +212,7 @@ Obsidian 应用程序代码。
     vaultPath: "~/Documents/dsh-memory"
     initGitOnCreate: true
     injectBrief: true
+    bindHint: true
     briefBudgetChars: 6000
     recallBudgetChars: 900
     hotCapacityChars: 9000
@@ -250,6 +251,7 @@ Obsidian 应用程序代码。
 | `vaultPath` | `~/Documents/dsh-memory` | 非空路径；`~` 会被展开 | 仓库根目录。必须是本地磁盘。 |
 | `initGitOnCreate` | `true` | boolean | **只**对本插件刚创建的仓库目录执行 `git init`，且仅在 `git` 可用时。从不 commit，从不设置 remote。 |
 | `injectBrief` | `true` | boolean | 是否注入会话简报和逐轮相关笔记索引。 |
+| `bindHint` | `true` | boolean | 当会话所在目录解析不出可用项目时，是否一次性告知该会话。这条通知既是「要不要为这个项目建记忆」的提问入口，也是「会话记录的目录已被移动或删除」的报错入口——否则记忆只会静默失效。`false` 只去掉这一条注入，别的都不变；Codex 侧同一个开关是 `OBSIDIAN_MEM_BIND_HINT`。 |
 | `briefBudgetChars` | `6000` | 整数 256–20000 | 会话简报与每周提醒的硬上限，单位是 Unicode 码点。 |
 | `recallBudgetChars` | `900` | 整数 256–20000 | 逐轮相关笔记索引的上限，单位是 Unicode 码点。它与 `briefBudgetChars` 刻意分开：若按简报剩余额度计费，首轮命中率只有 0.6%，而后续轮次是 22.1%。 |
 | `failureRecall` | `true` | boolean | 原生 DSH 工具重复失败时检索相关记忆。与提示词回忆共用每步的 `recallBudgetChars` 上限；不控制留档。 |
@@ -280,6 +282,17 @@ Obsidian 应用程序代码。
 
 ## 使用
 
+### 项目里没有指针时
+
+读取永远不会创建绑定：指针不该出现在一个你只是看了一眼的仓库里。取而代之的是每个会话一次、一条很短的通知（`bindHint: false` 可以关掉它）：这个目录解析不出可用项目、原因是什么、以及这个决定属于你：
+
+- **没有指针**（`no-pointer`）——去问用户。`mem_admin(action="bind", mode="local")` 会创建四字段指针并初始化仓库骨架。隐式首次写入也会做同样的事、但不问，这正是这条通知存在的理由：从不写入的用户否则永远不知道有这个选项。
+- **不在 git 仓库里**（`no-git-root`）——同样是显式 `local` 绑定，它是唯一也能绑定普通目录的模式。
+- **记录的目录已不存在**（`cwd-missing`）——会话的 `header.cwd` 已经没了。导入的对话会带上它当初被**记录**时的目录：可能是另一台机器的路径，也可能只是后来改了名。这种会话里记忆完全不可能工作，而在这个拒绝理由出现之前，插件是静默丢掉它的——一个被每步重试的 `ENOENT`。现在通知会说出来，而且不会为了补偿而创建任何东西。
+- **指针读不出来**（`pointer-corrupt`、`pointer-unsupported-schema`、`pointer-not-a-file`、`pointer-oversize`、`pointer-unreadable`）——报告，绝不修复：插件拒绝猜一个身份，你也应该拒绝。
+
+同一个理由也会传到工具层：`mem_brief` 返回 `status: "unbound"` 并带上机器可读的 `reason`，其他工具的拒绝信息里也会点名它。落在仓库内部的目录、一次输掉的 `pointer-race`、注册表冲突都保持沉默——它们都不是用户能做的决定。
+
 ### 六个工具
 
 | 工具 | 参数 | 作用 |
@@ -307,6 +320,16 @@ Obsidian 应用程序代码。
 记反向链接它。两条无法排序的结论会变成 `status: contested`——不允许有隐形的赢家。
 `assertion` 记录结论*有多强*（`stated`、`inferred`、`observed`），而 `observed`
 需要可复查的证据，不是模型说一句“已验证”。
+
+### 用户习惯
+
+`_meta/user.md` 是你的文件——引导时按模板创建一次，之后插件永不改写。模板会问那些每次都会改变答案的事：技术与框架偏好、常用技能与工具、惯用方法（按问题类型）、产出与沟通偏好、禁忌。模板里的例子都是 HTML 注释，所以一份没动过的文件不会给会话增加任何内容。
+
+你写进去的内容会以「用户习惯」小节注入，并按你自己的标题分组，优先级**高于**最近决策列表。写下来的习惯是长期规则（`前端一律 React`、`改动前先跑测试`），而最近列表只是通往项目已经写下的内容的导航。旧顺序会最先丢掉用户的习惯——而那恰恰是记忆层最不该丢的东西。
+
+插件自己**学到**的习惯不是偏好，永远不会写进那个文件。关于你如何工作的持久习惯写成项目里的 `Conventions/习惯：….md`，一条习惯一个文件；当它比仓库活得更久时再提升到 `Methods/`。
+
+通往那里有两条路，区别在证据。你**说出来**的习惯会被自动记录：蒸馏提示词要求返回标题以 `习惯：` 开头、`assertion: stated` 且引用你自己消息序号的约定，插件再打上 `user-habit` 标签，于是 `mem_search` 不必读标题就能找到它。校验器在没有这条证据时会拒绝该前缀——这是被强制执行的规则，不是期望：你从未表达过的习惯永远不会被写成习惯；如果事实为真但你没说，它就属于不带前缀的普通约定。会话只是**表现出来**的习惯由 agent 自己记录（`mem_write`，`assertion: observed`），因为一个已完成的回合证明不了模式——而一个数据点不构成习惯。
 
 ### 自动蒸馏
 

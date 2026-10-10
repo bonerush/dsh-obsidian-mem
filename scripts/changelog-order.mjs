@@ -81,6 +81,47 @@ export function isDescending(releases) {
   return true
 }
 
+/** A `###` subsection heading inside one version section. */
+const SUBSECTION = /^### (\S.*?)\s*$/
+
+/**
+ * Every `###` heading that appears twice inside one version section.
+ *
+ * This is the failure a release-order check cannot see, and it happened here: an
+ * entry appended with its own `### Added` while the section already had one left two
+ * headings of the same name, and the entries written before the second one were
+ * silently re-labelled — the Fixed notes of an earlier change ended up filed under
+ * Added. The file parsed, the versions stayed in order, and nothing complained.
+ *
+ * `main` applies this to `## Unreleased` only, and that scoping is deliberate: the
+ * released sections are history and one of them (`0.1.1`) legitimately carries more
+ * than one `### Changed`, which is not this gate's to rewrite. Editing happens in
+ * Unreleased, and a release cut moves that body verbatim, so a clean Unreleased is
+ * what keeps the next release clean.
+ *
+ * @param {string} text - the changelog's contents.
+ * @returns {{section: string, heading: string}[]} the duplicates, in file order.
+ */
+export function duplicateSubsections(text) {
+  const parsed = parseChangelog(text)
+  if (parsed === null) return []
+  const sections = [
+    { name: UNRELEASED, lines: parsed.unreleased },
+    ...parsed.releases.map((release) => ({ name: '## ' + release.version, lines: release.lines })),
+  ]
+  const found = []
+  for (const section of sections) {
+    const seen = new Set()
+    for (const line of section.lines) {
+      const match = SUBSECTION.exec(line)
+      if (match === null) continue
+      if (seen.has(match[1])) found.push({ section: section.name, heading: match[1] })
+      seen.add(match[1])
+    }
+  }
+  return found
+}
+
 /**
  * Build the changelog for one new release.
  *
@@ -207,6 +248,17 @@ export function main(argv = process.argv.slice(2), cwd = process.cwd()) {
   const parsed = parseChangelog(text)
   if (parsed === null) {
     process.stderr.write('verify-changelog-order: CHANGELOG.md has no ' + UNRELEASED + ' section\n')
+    return 1
+  }
+  const duplicates = duplicateSubsections(text).filter((entry) => entry.section === UNRELEASED)
+  if (duplicates.length > 0) {
+    process.stderr.write(
+      'verify-changelog-order: FAIL — duplicate subsection heading(s) in ' +
+        UNRELEASED +
+        ': ' +
+        duplicates.map((entry) => entry.heading).join(', ') +
+        '; one section, one ### Added/### Fixed/… each\n',
+    )
     return 1
   }
   if (isDescending(parsed.releases)) {

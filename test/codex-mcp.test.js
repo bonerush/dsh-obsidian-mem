@@ -325,7 +325,12 @@ test(
 
     const still = await client.request('tools/call', { name: 'mem_brief', arguments: {} })
     assert.equal(still.result.isError, undefined)
-    assert.match(still.result.content[0].text, /obsidian-mem:brief|未绑定|no project/i)
+    // The unbound answer names the refusal it actually got: this repository has no
+    // pointer, which is not the same answer as "the recorded directory is gone".
+    const answer = JSON.parse(still.result.content[0].text)
+    assert.equal(answer.status, 'unbound')
+    assert.equal(answer.reason, 'no-pointer')
+    assert.match(answer.message, /no \.obsidian-mem pointer yet/)
   },
 )
 

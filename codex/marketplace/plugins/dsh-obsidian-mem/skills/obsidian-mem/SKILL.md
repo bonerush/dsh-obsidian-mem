@@ -39,6 +39,8 @@ Rules:
 
 If the working directory has no pointer, you have no project memory: say so. Cross-project knowledge (`Methods/`, `_meta/user.md`) is still readable.
 
+**Ask before binding.** When the MCP answers `status: "unbound"`, or the file-tool path finds no pointer, do not create one yourself: ask the user once, with the real options — enable (`mem_admin(action="bind", mode="local")`, which also binds a directory that is not a git repository), or not now (write nothing; the next session asks again). `mode="fork"` and `mode="retain"` are not answers to "there is no pointer here". A `reason` of `cwd-missing` means the directory this session recorded is gone — normal for a conversation imported from another machine, or renamed since: project memory cannot work in that session, so tell the user to open one in the directory that exists now, and never create the missing directory or rewrite a pointer to compensate. A pointer that exists but cannot be read (`pointer-corrupt`, …) is the user's to repair: report it and stop. A user who does not want to be asked can turn the notice off with `bindHint: false` (DSH) or `OBSIDIAN_MEM_BIND_HINT=0` (Codex), and this paragraph then applies only when a tool refuses.
+
 ## 3. Vault layout
 
 ```
@@ -84,6 +86,15 @@ Pick `type` first; it decides the destination. This is the whole routing table:
 | user / environment | `_meta/user.md` | **user-maintained; never written by the agent** |
 
 Never put a long convention into `hot.md` just because it grew: a convention that needs evidence, expiry or a successor must be its own file in `Conventions/`, with at most a short pointer in the hot layer.
+
+### 4.1 用户习惯 — how this user works
+
+| what | where | who writes it |
+|---|---|---|
+| **declared** habits — the frameworks, skills, tools and methods the user says they use | `_meta/user.md`, global, injected into DSH's brief as 用户习惯 | **the user only**; read-only for you |
+| **observed** habits — how the user actually worked | `Conventions/习惯：….md` here, or `Methods/` across projects | you, through a write or the file-tool fallback |
+
+Follow the declared habits — they are standing rules, not suggestions. A habit the user *states* is recorded automatically by DSH's distillation pipeline (a convention titled `习惯：…`, `assertion: stated`, tagged `user-habit`, refused as `habit-not-stated` without the user's own seq) — Codex has no turn boundary, so here it is yours to write. Record an observed habit only when it is durable and about the user rather than a file (a framework chosen twice for the same kind of task, a workflow always asked for, a way they always want a problem attacked), one habit per convention file, `assertion: observed`, and let the user confirm it: one data point is not a habit. Promote a habit that outlives the repository to `Methods/`. **Never write `_meta/user.md`**: a habit the user has not written down is a project convention, not a preference — offer to add it, do not add it.
 
 ## 5. Note frontmatter (closed vocabulary)
 

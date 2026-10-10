@@ -97,6 +97,11 @@ const LAYERS = {
   // same event stream. Also read by the L1 failure-memory policy below distill:
   // this import-free event classifier belongs at L0 with the vocabulary leaves.
   'failure-streak': 0,
+  // The unbound-session notice: which refusal reasons get one injected hint, and
+  // the wording of each. A leaf with no repository import at all — deliberately,
+  // because a hint has to be answerable without reading a vault or a filesystem —
+  // so `hooks` (L8) points down at it for the one decision it does not own.
+  'init-hint': 0,
   'failure-memory': 1,
   assets: 1,
   frontmatter: 1,
@@ -210,8 +215,13 @@ const BUDGETS = {
   // cursor, state, changed-set, view and proposal families were absent, while the case
   // that looped it looped a hand-written copy that could not fail. The measured 233
   // lines are the derivation, the comments naming what stays dynamic
-  // (`view-unwritable:<code>`) and the round trip the new case drives.
-  'lib/diagnostic-codec.js': 250,
+  // (`view-unwritable:<code>`) and the round trip the new case drives. Raised from 250
+  // to 300 by the unbound-session notice (265 formatted lines measured; measured-plus-30
+  // is 295, which rounds up to 300). What the 15 lines buy: the `bind-hint` code the
+  // `brief` event now emits, the `vault`/`not-bound` refusals a `bind` diagnostic can
+  // carry, and the comment recording which part of that vocabulary stays dynamic —
+  // without them the journal wrote `other` where the ring had the token.
+  'lib/diagnostic-codec.js': 300,
   'lib/diagnostic-journal.js': 300,
   'lib/diagnostic-report.js': 350,
   'lib/diagnose-cli.js': 100,
@@ -234,7 +244,14 @@ const BUDGETS = {
   // fell back. Five of the lines over the pre-comment measurement are the prose about
   // why a cut entry is dropped *before* the budget — the first draft of the comment
   // claimed the budget would have covered it, and that is not true.
-  'lib/brief.js': 1310,
+  // Raised from 1310 to 1400 (1356 formatted lines measured; measured-plus-30 is
+  // 1386, so the raise stays inside the rule rather than following it). What the
+  // 46 lines buy: the user's declared habits became a first-class section — the
+  // group-label renderer that keeps 惯用方法 readable as a group and drops a heading
+  // that has no bullet under it, so an untouched template injects nothing — and the
+  // section moved above the recent-decisions list, with the comment that argues the
+  // new order. Both are decisions a reader has to be able to audit in place.
+  'lib/brief.js': 1400,
   // Raised from 1900 when the diagnostics call sites landed here. The alternative
   // was to move the emissions into a module of their own, which would have meant
   // re-exporting each of the ten skip reasons and the six queue outcomes — the
@@ -422,7 +439,14 @@ const BUDGETS = {
   // has its own entry. This one is over the "measured plus 30 rounded up" rule
   // deliberately — the prompt text is prose, and a prompt that is trimmed to fit a
   // line budget stops being a prompt.
-  'lib/distill.js': 1050,
+  // Raised from 1050 to 1130 by the user-habit clause (1076 formatted lines measured;
+  // measured-plus-30 is 1106, which rounds up to the next 50). What the 26 lines buy:
+  // the habit prefix and tag constants, the prompt sentence that names them — including
+  // the rule the validator refuses by, which is the property this file's contract tests
+  // exist to keep — and the one per-item refusal that keeps a habit the user never stated
+  // out of the vault. The alternative, asking a model for habits with no evidence rule
+  // behind it, is the "preference nobody expressed" this pipeline is built not to write.
+  'lib/distill.js': 1130,
   'lib/frontmatter.js': 1100,
   // The failure classifier and its streak (Task 18). Most of the file is the
   // pattern table and the comments recording what each pattern had to exclude:
@@ -456,7 +480,16 @@ const BUDGETS = {
   // ceiling the 0.6%-firing-rate measurement is about) — plus the three comments
   // that record why the ordering is what it is. Raised to 1400 rather than the
   // earned 1362+30=1392 so the next event-shape fix does not have to edit a budget.
-  'lib/hooks.js': 1400,
+  // Raised from 1400 to 1500 by the unbound-session notice (1483 formatted lines
+  // measured, so 1500 is inside the rule's measured-plus-30 by 17 lines). What the 66 lines buy: the resolution memo
+  // now keeps the whole answer instead of only the bound half — `resolutionFor` plus
+  // the `boundBinding` wrapper the four other call sites still use — the once-per-
+  // session hint planner with the `header.cwd` guard that stops it describing the
+  // process directory, `sessionCwdOf` split out of `cwdOf` for that guard, and the
+  // `brief` diagnostic that reports `hint-only` with `bind-hint` instead of claiming
+  // a brief was injected. The alternative was a second resolution pass per step,
+  // which would let the two answers disagree.
+  'lib/hooks.js': 1500,
   'lib/hot.js': 600,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
@@ -609,7 +642,14 @@ const BUDGETS = {
   // brief-time verification fallback reports `brief-fallback`/`source-changed` instead of
   // falling back silently, and the `view-unwritable` comment no longer claims a raw `fs`
   // failure throws out of the build — `lib/curation-view.js` catches it now.
-  'lib/services.js': 1650,
+  // Raised from 1650 to 1700 by the refusal memo (1673 formatted lines measured, so
+  // 1700 is inside the rule's measured-plus-30 by 27 lines). What the 17 lines
+  // buy: `refusalByCwd` and `refusalFor`, so a read that resolves to no project
+  // reports the refusal that actually happened instead of claiming the pointer is
+  // absent — a false statement for a missing directory, a corrupt pointer and a cwd
+  // inside the vault alike — and `mem_brief`'s unbound answer gains the
+  // machine-readable `reason` its output schema now accepts.
+  'lib/services.js': 1700,
   // Raised from 2200 by Task 7 (2229 formatted lines measured; measured-plus-30
   // rounds up to 2300, which is this number — the entry above the old one had no
   // note of its own, so this number states the rule it follows). What the 29 lines
@@ -618,7 +658,23 @@ const BUDGETS = {
   // evidence from inside the vault lock this transaction already holds, so an edit
   // landing between a plan and its write is refused instead of overwritten.
   'lib/transaction.js': 2300,
-  'lib/vault.js': 1750,
+  // Raised from 1750 to 1800 by the `cwd-missing` refusal and the habits template
+  // (1778 formatted lines measured, so 1800 is inside the rule's measured-plus-30
+  // by 22 lines). What the 19 lines buy: `resolveBinding` answers a directory that
+  // no longer exists with the refusal vocabulary instead of throwing `ENOENT` out of
+  // `realpath` — the diagnosis that turned "no memory" into a silent, per-step retry
+  // in every session whose recorded directory had moved — and `userTemplate` became
+  // the habits questionnaire with its five sections and commented examples.
+  'lib/vault.js': 1800,
+  // The unbound-session notice, raised from 175 to 250 when the short form landed (207
+  // formatted lines measured; measured-plus-30 is 237, which rounds up to 250). What the
+  // 60 lines buy: a per-reason one-line notice — the message whose whole job is to ask
+  // the user a question must not be the one `briefBudgetChars` drops, and two of the
+  // detailed forms do not fit its 256 floor — plus `bindHintWithin`, the one chooser DSH
+  // and the Codex hook both call, so the two harnesses cannot drift apart. The original
+  // size bought the reason allowlist, the four wordings and `quotePath`, the one place an
+  // untrusted path is made safe for a one-line injected message.
+  'lib/init-hint.js': 250,
 }
 
 /** Every `lib/*.js` file, by basename without its extension. */

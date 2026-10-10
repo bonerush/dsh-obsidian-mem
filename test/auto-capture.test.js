@@ -319,6 +319,58 @@ test('a described same-tool recovery is stored provisionally in Pitfalls, with n
   assert.equal(note.note.data.status, 'provisional')
 })
 
+test('a user-stated habit reaches Conventions/ through the real queue, tagged', async (t) => {
+  // The learned half of the user-habit feature, end to end: the model output is
+  // validated by the shipped validator, applied by the shipped transaction engine, and
+  // the note on disk carries the plugin's own marker — so a habit is findable by tag
+  // rather than only by reading its title. The evidence rule is the whole point: one
+  // completed turn can prove the user *said* it, and nothing else.
+  const f = await fixture(t)
+  await writeJobAtomic(f.queueRoot, jobFixture())
+  const raw = JSON.stringify({
+    items: [
+      itemFixture({
+        type: 'convention',
+        title: '习惯：前端一律 React + TypeScript',
+        body: '前端新页面一律用 React 与 TypeScript，不再引入 Vue。',
+        tags: ['dsh-mem/convention'],
+        assertion: 'stated',
+        evidenceSeqs: [2],
+      }),
+    ],
+  })
+  await processQueue(queueOptions(f, { llm: stubLlm(raw) }))
+
+  const [note] = await memoryNotes(f)
+  assert.equal(note.note.data.type, 'convention')
+  assert.equal(note.note.data.assertion, 'stated')
+  assert.ok(note.path.startsWith(`${PROJECT}/Conventions/`), note.path)
+  assert.ok(note.note.data.tags.includes('user-habit'), JSON.stringify(note.note.data.tags))
+  const [receipt] = await readReceipts(f)
+  assert.equal(receipt.result, 'applied')
+})
+
+test('a habit the model inferred is refused through the real queue and writes nothing', async (t) => {
+  const f = await fixture(t)
+  await writeJobAtomic(f.queueRoot, jobFixture())
+  const raw = JSON.stringify({
+    items: [
+      itemFixture({
+        type: 'convention',
+        title: '习惯：改动前先跑测试',
+        body: '改动一律先跑测试再提交。',
+        tags: ['dsh-mem/convention'],
+        assertion: 'observed',
+        evidenceSeqs: [4],
+      }),
+    ],
+  })
+  await processQueue(queueOptions(f, { llm: stubLlm(raw) }))
+  assert.deepEqual(await memoryNotes(f), [], 'an inferred habit never becomes a preference')
+  const [receipt] = await readReceipts(f)
+  assert.equal(receipt.refused[0].reason, 'habit-not-stated')
+})
+
 test('soft-only error text creates no automatic failure note through the real queue', async (t) => {
   const f = await fixture(t)
   const { events, session } = failureTurn({ soft: true })

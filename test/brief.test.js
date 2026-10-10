@@ -194,6 +194,64 @@ test('a full brief names the binding, quotes the vault as data and reports its o
 })
 
 // ---------------------------------------------------------------------------
+// The user's own habits
+// ---------------------------------------------------------------------------
+
+test('the user habits arrive under their own group labels, and an empty group carries none', async (t) => {
+  const env = await fixture(t)
+  await writeUserMemory(
+    env,
+    [
+      '# 用户习惯与偏好',
+      '',
+      '## 技术与框架偏好',
+      '',
+      '- 前端一律 React + TypeScript',
+      '<!-- 例：- Python 项目用 uv 管理依赖 -->',
+      '',
+      '## 常用技能与工具',
+      '',
+      '<!-- 例：- 提交前跑 npm run check -->',
+      '',
+      '### 惯用方法',
+      '',
+      '- 报错排查：先复现，再二分定位',
+      '',
+    ].join('\n'),
+  )
+
+  const built = await brief(env)
+  assert.ok(built.text.includes('用户习惯（引用数据）'), 'the section is named for what it is')
+  assert.ok(built.text.includes('技术与框架偏好'), 'a group label reaches the model')
+  assert.ok(built.text.includes('前端一律 React + TypeScript'), 'the habit itself arrives')
+  assert.ok(built.text.includes('惯用方法'), 'a nested group label is carried too')
+  assert.ok(built.text.includes('报错排查：先复现，再二分定位'))
+  assert.ok(!built.text.includes('uv 管理依赖'), 'a commented example is never injected')
+  assert.ok(!built.text.includes('npm run check'), 'an example under an empty group stays out')
+  assert.ok(
+    !built.text.includes('常用技能与工具'),
+    'a group with no visible bullet contributes neither label nor line',
+  )
+})
+
+test('the shipped template contributes nothing until the user writes in it', async (t) => {
+  const env = await fixture(t)
+  // `fixture` bootstrapped the vault, so `_meta/user.md` is the shipped template.
+  const template = await readFile(at(env.vault, '_meta/user.md'), 'utf8')
+  assert.ok(template.includes('## 技术与框架偏好'), 'the template asks for habits')
+  assert.ok(template.includes('## 惯用方法（按问题类型）'))
+  assert.ok(
+    !/^\s*[-*+]\s/mu.test(template),
+    'every example in the template is a comment, so a fresh vault has no habits to inject',
+  )
+
+  const built = await brief(env)
+  assert.ok(!built.text.includes('用户习惯'), 'an untouched template injects no section at all')
+  assert.ok(!built.text.includes('技术与框架偏好'))
+  assert.ok(!built.text.includes('禁忌'))
+})
+
+// ---------------------------------------------------------------------------
 // One source of truth: the tool and the builder agree
 // ---------------------------------------------------------------------------
 
@@ -311,6 +369,19 @@ test('an unbound working directory is answered with a status, not a fabricated e
   assert.equal(value.status, 'unbound')
   assert.equal(typeof value.message, 'string')
   assert.equal(value.text, undefined, 'an unbound project never gets a brief-shaped value')
+  // The reason travels: this fixture's directory is not a git repository, and
+  // "there is no project here at all" and "the recorded directory is gone" are
+  // different answers to the same question.
+  assert.equal(value.reason, 'no-git-root')
+
+  // A session whose recorded directory no longer exists gets the *other* reason.
+  // Before this, `resolveBinding` threw `ENOENT` here and the tool returned a raw
+  // filesystem error instead of naming what had happened.
+  const goneAgent = { session: { header: { id: 'sess-gone', cwd: join(env.repo, 'moved-away') } } }
+  const gone = await services.brief({}, new AbortController().signal, { agent: goneAgent })
+  assert.equal(gone.status, 'unbound')
+  assert.equal(gone.reason, 'cwd-missing')
+  assert.match(gone.message, /moved-away/)
 
   const ctx = new Context()
   ctx.provide('systemPrompt', { tools: () => () => {} })
@@ -402,8 +473,8 @@ test('under truncation the budget goes to higher-priority blocks first', async (
     '优先级-进行中',
     '优先级-hub',
     '优先级-约定',
-    '优先级-决策',
     '优先级-偏好',
+    '优先级-决策',
   ]
 
   for (const budget of [256, 420, 620, 900, 1300, 2000, 3000, 6000]) {
@@ -425,21 +496,40 @@ test('under truncation the budget goes to higher-priority blocks first', async (
   const tiny = await brief(env, { budget: 420 })
   assert.ok(tiny.text.includes('优先级-强约束'), 'hard constraints survive the smallest budget')
   assert.ok(!tiny.text.includes('优先级-hub'), 'the hub outline yields to hot memory')
-  assert.ok(!tiny.text.includes('优先级-偏好'), 'optional preferences are dropped first')
+  assert.ok(
+    !tiny.text.includes('优先级-偏好'),
+    'the user habits are a budgeted block like any other',
+  )
 
   const hubOnly = await brief(env, { budget: 1300 })
   assert.ok(hubOnly.text.includes('优先级-hub'), 'the hub outline arrives before the conventions')
   assert.ok(!hubOnly.text.includes('优先级-约定'))
-  assert.ok(!hubOnly.text.includes('优先级-决策'))
+  assert.ok(!hubOnly.text.includes('优先级-偏好'))
 
   const withNotes = await brief(env, { budget: 3000 })
   assert.ok(withNotes.text.includes('优先级-约定'))
-  assert.ok(
-    withNotes.text.includes('优先级-决策'),
-    'recent decisions arrive before the optional preferences',
-  )
+  // The fixture habit is deliberately oversized (1400+ code points), so it is the
+  // block that does not fit — and because the fill stops at the first block it
+  // cannot carry, the lower tier behind it is dropped too. That is the same
+  // whole-block rule every section obeys; the *order* is what changed here.
   assert.ok(!withNotes.text.includes('优先级-偏好'))
+  assert.ok(!withNotes.text.includes('优先级-决策'))
 
+  // And the order itself is asserted, not just the cut: with a realistic habits
+  // file the user's standing habits arrive before the recent navigation they
+  // used to sit behind.
+  await writeUserMemory(env, '- 优先级-短偏好：改动前先跑测试\n')
+  const withHabits = await brief(env, { budget: 3000 })
+  assert.ok(withHabits.text.includes('优先级-短偏好'), 'a short habit fits')
+  assert.ok(withHabits.text.includes('优先级-决策'), 'the recent list still fits behind it')
+  assert.ok(
+    withHabits.text.indexOf('优先级-短偏好') < withHabits.text.indexOf('优先级-决策'),
+    'the user habits section precedes the recent decisions',
+  )
+
+  // The oversized fixture goes back before the default-budget assertion, so the
+  // "everything fits at 6000" claim is made about the block this test is about.
+  await writeUserMemory(env, `- 优先级-偏好-${'内容'.repeat(700)}\n`)
   const full = await brief(env, { budget: 6000 })
   for (const marker of order)
     assert.ok(full.text.includes(marker), `${marker} fits at the default budget`)

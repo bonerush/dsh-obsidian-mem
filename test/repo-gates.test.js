@@ -18,6 +18,7 @@ import { resolveBase } from '../scripts/ci-base.mjs'
 import {
   compareVersions,
   cutRelease,
+  duplicateSubsections,
   isDescending,
   main as changelogOrderMain,
   parseChangelog,
@@ -354,6 +355,41 @@ test('this repository keeps its own changelog newest-first', () => {
     parsed.releases.map((release) => release.version),
     [...parsed.releases.map((release) => release.version)].sort((a, b) => compareVersions(b, a)),
   )
+  // The duplicate-heading half, on the real file: Unreleased carries one of each.
+  assert.deepEqual(
+    duplicateSubsections(text).filter((entry) => entry.section === '## Unreleased'),
+    [],
+  )
+})
+
+test('a duplicate subsection in Unreleased is a failure, and a released section is history', (t) => {
+  // The mistake this check exists for: appending an entry with its own `### Added`
+  // while the section already had one leaves two headings of the same name, and every
+  // entry written before the second one is silently re-labelled. `0.1.1` in this
+  // repository genuinely repeats `### Changed`, which is why the failure is scoped to
+  // the section that is actually edited — a released section is not this gate's to
+  // rewrite.
+  const { root, changelog } = fixture(t)
+  writeFileSync(
+    changelog,
+    '# Changelog\n\n## Unreleased\n\n### Added\n\n- the first thing\n\n### Added\n\n- a stray entry\n\n## 0.1.0\n\n### Changed\n\n- a\n\n### Changed\n\n- b\n',
+  )
+  const text = readFileSync(changelog, 'utf8')
+  assert.deepEqual(
+    duplicateSubsections(text),
+    [
+      { section: '## Unreleased', heading: 'Added' },
+      { section: '## 0.1.0', heading: 'Changed' },
+    ],
+    'the pure function reports every section',
+  )
+  assert.equal(changelogOrderMain([], root), 1, 'Unreleased duplicates fail the gate')
+  assert.equal(changelogOrderMain(['--fix'], root), 1, 'and --fix is not the answer for them')
+  writeFileSync(
+    changelog,
+    '# Changelog\n\n## Unreleased\n\n### Added\n\n- the first thing\n\n## 0.1.0\n\n### Changed\n\n- a\n\n### Changed\n\n- b\n',
+  )
+  assert.equal(changelogOrderMain([], root), 0, 'a released duplicate is left as history')
 })
 
 test('--cut is the release path, and it refuses an empty section', (t) => {

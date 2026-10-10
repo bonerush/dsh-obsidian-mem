@@ -11,6 +11,224 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Fixed
+
+- **A session whose recorded directory no longer exists lost memory in silence, and
+  every unbound reason was reported as the same wrong one.** Reported by the user as
+  memory failing for imported conversations, and confirmed here rather than guessed:
+  `resolveBinding` called `fs.realpath` on the session's `header.cwd` and let a
+  missing directory throw `ENOENT` out of the function. DSH keeps `header.cwd` for
+  the life of a session, and an imported conversation carries the directory it was
+  *recorded* in — the import tool ships `cwdRemap` for exactly that reason — so this
+  was not an edge case: reading the first line of every session log under
+  `$DSH_HOME/sessions` (`zstd -dc <log> | head -1`, then `os.path.isdir(header.cwd)`)
+  finds **64 of 491 session logs whose recorded `cwd` does not exist on this
+  machine**, across **9 distinct directories** — including
+  `/Users/yukisala/Documents/ChatGPT/玉雯` and `/Users/yukisala/subject/A题`. What
+  each caller did with the throw was measured too:
+  - The pre-step's blanket catch turned it into "attach nothing", so the session got
+    no brief and no recall, retried the same failing resolution on **every step**
+    (the per-session memo clears itself on rejection by design), and logged one
+    `warn` per session. Its `recordDiagnostic('brief', {outcome:'none'})` read
+    exactly like a directory that simply had no memory yet.
+  - The six tools returned the raw filesystem error, and a *read* that resolved to no
+    project still told the model "this working directory has no `.obsidian-mem`
+    pointer" — a false statement for a missing directory, a corrupt pointer and a cwd
+    inside the vault alike.
+
+  Fixed at the source: `cwd-missing` is an ordinary refusal now (`kind: 'unbound'`,
+  carrying the `ENOENT`/`ENOTDIR` code, the path and a hint) for `show` and for every
+  write mode, because nothing can be minted in a directory that is not there. The
+  services layer keeps the refusal per cwd (`refusalByCwd`/`refusalFor`), so
+  `requireProject` and `mem_brief` answer with the reason that actually happened, and
+  `mem_brief`'s unbound arm gained an optional machine-readable `reason` and, when the
+  resolution knows it, `repoRoot` — so a caller composing its own notice names the
+  repository rather than the session's subdirectory. The `kind: 'vault'` arm gained a
+  `reason` of its own for the same reason: it was the one remaining refusal without
+  one, which is how "your cwd is inside the vault" still read as "no pointer yet".
+  `resolveBinding` still throws for every other `realpath` failure: `EACCES` is not
+  "missing". The survey behind the claim — the command, the 64-of-491 count and its
+  evidence boundary — is recorded in `docs/p0-compatibility.md` §14.
+- **The changelog gate gained the check that would have caught this entry's own
+  insertion.** Appending an entry with its own `### Added` while `## Unreleased`
+  already had one left two headings of the same name, and every entry written before
+  the second one was silently re-labelled — the Fixed notes of an earlier change read
+  as Added. The file parsed and the versions stayed in order, so nothing failed.
+  `scripts/changelog-order.mjs` now reports a duplicate `###` heading, and
+  `npm run check:fast` and CI both run it; the failure is scoped to `## Unreleased`
+  because `0.1.1` legitimately repeats `### Changed` and a released section is
+  history rather than this gate's to rewrite.
+- **Both harness skills and the DSH system-prompt section now state the
+  initialization protocol**: a pointerless directory is bound by the user's decision,
+  so the model asks before calling `mem_admin(action="bind", …)`. `mem_admin`'s own
+  tool description carries the same sentence — the one channel Codex reads without a
+  session-start code path.
+
+### Added
+
+- **An unbound session is now told so, once, and asked what to do about it**
+  (`lib/init-hint.js`, `bindHint`, default `true`). Reported by the user first as a
+  discovery problem: a project with no pointer injected nothing at all, so no model
+  ever learned that binding it was an option and no user was ever asked — the only
+  path that ever created a pointer was a write. CodeGraph closes the same hole by
+  answering "not initialized" from a tool call and printing the follow-up question in
+  its agent instructions; this is that half for DSH, plus the answer for the
+  missing-directory case above.
+  - **What is worded, and what stays silent.** `BIND_HINT_REASONS` is a closed
+    allowlist — `no-pointer`, `cwd-missing`, `no-git-root`, and the five
+    untrustworthy-pointer codes — and a test requires every listed reason to have
+    wording, so a reason cannot be added to the list and stay silent. Reasons with no
+    user decision in them stay silent: a cwd inside the vault, a lost
+    `pointer-race`, a registry conflict.
+  - **Once per session, budget-checked, and never a brief.** `state.bindHintChecked`
+    is set even when the message does not fit, so the decision is not re-made every
+    step; the notice goes through the same `fits(text, config)` ceiling as the brief;
+    and the `brief` diagnostic records `outcome: "hint-only"` with
+    `code: "bind-hint"` instead of claiming an injection. It never opens the index,
+    never calls `buildBrief` and writes nothing — asserted through the real waterfall.
+  - **The promise is true inside the session that was asked.** The resolution memo
+    no longer outlives an *actionable* refusal: `no-pointer`, `cwd-missing`,
+    `no-git-root` and the pointer codes are re-resolved on the next pre-step, so when
+    the user says yes and the model calls `mem_admin(action="bind", mode="local")`,
+    the brief arrives in that same session. A bound answer, and a refusal the user
+    cannot act on (a cwd inside the vault, a registry conflict), stay memoised as
+    before. The cost is one `realpath` and a walk per step, and only while the
+    directory is unusable.
+  - **The code survives to disk.** `bind-hint` joined the codec's registered codes
+    (`lib/diagnostic-codec.js`), together with the refusal reasons a `bind`
+    diagnostic can carry (`cwd-missing`, `no-git-root`, `vault`, the pointer family).
+    Without that registration the ring kept the token and the private journal wrote
+    `other` — the same trap `review` and the curation outcomes fell into.
+  - **A session that recorded no `cwd` gets no notice.** `cwdOf` falls back to the
+    process directory, and a notice about the DSH server's own directory would be a
+    message about a project nobody opened; `sessionCwdOf` exists so `planBindHint`
+    can tell the two apart.
+  - **The path is the only untrusted input, and it is made safe.** `quotePath` strips
+    newlines, backticks and control characters and clamps to 200 code points, so a
+    directory name cannot start a line of its own or end the quoted span. The words
+    are static plugin text, never vault text.
+  - **Codex gets the same notice**, so the two harnesses agree: the `SessionStart`
+    hook used to inject nothing for a pointerless directory; it now composes the
+    notice from `brief.status === "unbound"` + `reason` + `repoRoot` through the same
+    module, and still opens no vault beyond the resolution, runs no curation pass, and
+    exits 0 with one document on every path. It reads its own switch
+    (`OBSIDIAN_MEM_BIND_HINT=0`; the hook is a separate process with no Cordis row), so
+    the README's claim that the notice is a switch is true on both harnesses.
+    `codex/README.md` and the hook's own decision comment were updated with it.
+  - **Codex `compact` now injects, on a measurement rather than a preference.** A
+    rollout records what compaction leaves the model with in its `compacted` record's
+    `replacement_history`, and the brief is not in it: in
+    `~/.codex/sessions/2026/10/04/rollout-…01a106b0…jsonl` (4.0 MB, 813 lines) the
+    injection is at line 9 as a `hooks.additional_context` developer message, and the
+    `compacted` record at line 400 replaces the context with 102 KB containing no
+    `obsidian-mem:brief` while the AGENTS.md message survives. The old rule ("resume and
+    compact both continue a conversation that already carries it or its summary") was
+    therefore false for compaction, so `compact` joined `startup`/`clear`.
+  - **Codex `resume` is now decided per session from the rollout.** `resumeVerdict()`
+    reads at most 8 MiB of `transcript_path` and answers `present` (the injection is the
+    latest of the two records and the file was read whole), `absent` (no injection at
+    all — a plugin installed mid-thread, or a rollout imported from another agent — or a
+    compaction after it) or `unknown` (unreadable, not a rollout, or past the cap). Only
+    `absent` injects; `unknown` keeps the previous behaviour of not paying twice. The
+    scan matches the serialized injection rather than the bare string, because the bare
+    string also appears in this repository's own AGENTS.md and in any rollout that
+    grepped for it — a false "present" would silence the reinjection exactly when it is
+    needed. **Now verified with the real binary** (`docs/codex-hook-validation.md`):
+    `codex exec` delivers `source:"startup"` with a populated `transcript_path`, and
+    `codex exec resume --last` delivers `source:"resume"` with the same existing rollout
+    path, readable when the hook runs. Six real runs then drove every branch: one
+    injection at startup, none on a resume whose rollout still carries it, a new one
+    after a `compacted` record (in both JSON spellings), and a new one for a rollout that
+    never had a brief. The needles were widened to accept the spaced spelling after a
+    probe showed the compact-only form missing it — the misses are not symmetric, since
+    missing a compaction reads as "the brief is still there". A read-only survey of all
+    132 rollouts on this machine found 111 `absent` / 19 `unknown` (exactly the 19 over
+    the 8 MiB cap) / 2 `present`, a 24 ms worst case on a 70.2 MiB rollout, and the known
+    compacted rollout answering `absent` with its marker present. **Still not
+    reproduced:** a live `source:"compact"` firing, which needs a completing model turn;
+    the reason compact injects is measured on a real compaction record instead.
+  - **Every reason also has a one-line form, so no budget above the floor is silent.**
+    The detailed notices are 176–270 code points and `briefBudgetChars` goes down to
+    256, so at its floor the two longest (`no-pointer` at 261, `no-git-root` at 270)
+    did not fit — and `state.bindHintChecked` made that silence final for the session.
+    Each reason now has a compact form of 66–94 code points, and `bindHintWithin` (one
+    chooser in `lib/init-hint.js`, called by DSH's pre-step and by the Codex hook)
+    sends the detailed wording when the budget carries it, the one-line form when only
+    that fits, and nothing when neither does. The budget itself stays hard: nothing is
+    truncated and no floor is invented.
+- **The user's own habits are a first-class brief section, and the vault asks for
+  them.** Reported by the user as the memory not accounting for their habits
+  (framework, skills, habitual approach per problem class).
+  - **The template is a questionnaire, not a blank page.** `_meta/user.md` (created
+    once by bootstrap, R21, and never rewritten) now carries 技术与框架偏好 /
+    常用技能与工具 / 惯用方法（按问题类型）/ 产出与沟通偏好 / 禁忌 with commented
+    examples: the empty file it used to be collected nothing, because a user with no
+    prompt writes no preferences. Every example is an HTML comment and
+    `preferenceUnits` strips comments per line, so an untouched template injects
+    **nothing** — asserted by reading the shipped template's bytes and requiring the
+    brief to carry no `用户习惯` section at all.
+  - **Habits render under the user's own headings, and an empty group renders
+    neither.** The section was renamed from 可选偏好 to 用户习惯, and
+    `preferenceUnits` now groups bullets under their `##`/`###` label, dropping a
+    heading with no bullet under it — which is what keeps the five-section template
+    from injecting five empty labels. `- 先复现再二分` under 惯用方法 is not the same
+    fact as the same bullet under 禁忌, and the label is what carries that.
+  - **The section now ranks above the recent list.** `SECTION_ORDER` places
+    `preferences` directly after `conventions` and above `view`/`recent`: a declared
+    habit is a standing rule every answer has to obey, while the recent list is
+    navigation to facts the project already wrote down. The old last place dropped the
+    user's habits first, and this repository's own brief reaches its 6000-character
+    ceiling — so a memory layer that knew its user was the one thing it threw away.
+    The two assertions that pinned "optional preferences are dropped first" were
+    rewritten to the new order, and a new one asserts the habits section precedes the
+    recent list at a budget where both fit.
+  - **Learned habits are not preferences, and a *stated* habit is now learned
+    automatically.** Both harness skills and the DSH system prompt say where a habit
+    goes — `Conventions/习惯：….md` in the project (one habit per file), promoted to
+    `Methods/` when it outlives the repository, and never into `_meta/user.md`, which
+    stays the user's file — and the type vocabulary is deliberately **not** widened
+    (§6.4 forbids it, and `convention` already routes there). The automatic path was
+    missing, so the pipeline was asked for habits and given a rule to obey:
+    - **The prompt asks, and the validator enforces.** A convention titled `习惯：…`
+      (either colon) must carry `assertion: stated` and cite a user seq; anything else
+      is refused per item as `habit-not-stated`, with the escape in the refusal —
+      record the same content without the prefix, or leave it to the agent's own
+      `mem_write` after the user confirms. `distill.test.js` reads the refusal
+      vocabulary back and requires the prompt to name the rule, which is the same
+      contract the enumerated fields already had.
+    - **Why only `stated`.** A habit is a claim about the user, and one completed turn
+      can prove the user *said* something and nothing else. `observed` habits stay the
+      agent's explicit `mem_write`: an automatic extractor that generalises a pattern
+      from a single turn is the "preference nobody expressed" this pipeline exists not
+      to write. Both skills say so where a reader will look for it.
+    - **The marker is the plugin's.** An accepted habit gets the deterministic
+      `user-habit` tag, so `mem_search` finds it without reading titles; the prompt
+      never asks for the tag, because a marker the model must remember is one the
+      validator cannot enforce.
+    - **End to end, through the real queue:** `auto-capture.test.js` drives a stated
+      habit from the stubbed model output to `Conventions/…` with the tag and
+      `assertion: stated`, and drives an inferred one to a receipt whose refusal is
+      `habit-not-stated` with no vault change at all.
+    - **Measured against the real model** (`docs/habit-extraction-validation.md`, probe
+      `scratch/habit-probe/run.mjs`): a user-stated habit produced `习惯：` conventions
+      with `assertion: stated` and the plugin tag on every stated-habit run (6 items over
+      2 runs × 2 cases), and a control where only the *assistant* proposed a workflow
+      produced none. The same probe found the boundary this entry's first draft left
+      implicit: a user-stated **project** rule was also titled `习惯：…` (2 of 2 control
+      runs), which would have made a repository rule promotable as a personal habit. One
+      prompt sentence fixed it — the control became a plain convention (0 of 2 prefixed)
+      while the stated-habit yield did not fall (7 items over the same two rounds) — and
+      `test/distill.test.js` now requires that sentence, since it is a measured fix and
+      not a style choice.
+  - **What is still not done:** nothing measures whether a habit line changes an
+    answer, and the extraction is bounded by the turn — a habit stated once in a
+    session that is never distilled (dryRun, no route, capture off) is not recorded.
+    Budgets moved and are recorded in `test/architecture.test.js`: `lib/brief.js`
+    1310 → 1400 (measured 1356), `lib/hooks.js` 1400 → 1500 (1489), `lib/services.js`
+    1650 → 1700 (1673), `lib/vault.js` 1750 → 1800 (1778), `lib/init-hint.js` 175 →
+    250 (measured 207), `lib/distill.js` 1050 → 1130 (measured 1076), and
+    `lib/diagnostic-codec.js` 250 → 300 (measured 265).
+
 ## 0.1.12 — 2026-10-08
 
 ### Fixed

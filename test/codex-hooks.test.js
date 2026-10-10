@@ -8,7 +8,14 @@
 // is what keeps those measurements from being a story about the wrong process.
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -23,9 +30,11 @@ import {
 import {
   CONTINUE,
   INJECT_SOURCES,
+  MAX_ROLLOUT_BYTES,
   briefFor,
   decide,
   hookOutput,
+  resumeVerdict,
   runHook,
 } from '../codex/session-start.mjs'
 import { openMemory } from '../codex/server.mjs'
@@ -48,6 +57,106 @@ function world() {
   mkdirSync(repo, { recursive: true })
   execFileSync('git', ['init', '-q'], { cwd: repo })
   return { home, dsh: join(home, 'dsh'), vault, repo }
+}
+
+/**
+ * A synthetic Codex rollout.
+ *
+ * The shape is the measured one (`~/.codex/sessions/…/rollout-*.jsonl`): a
+ * `session_meta` first line, then records, with the hook's injection serialized as a
+ * developer message whose `input_text` starts with the brief marker.
+ *
+ * @param {object} options - what the rollout contains.
+ * @param {boolean} [options.marker] - include a hook injection.
+ * @param {boolean} [options.quote] - include a tool output that merely quotes the marker.
+ * @param {boolean} [options.compacted] - append a compaction record after the injection.
+ * @param {boolean} [options.compactedOnly] - append a compaction record with no injection.
+ * @param {string} [options.padding] - extra records, to push past a byte cap.
+ * @returns {string} the rollout text.
+ */
+function rollout({
+  marker = true,
+  quote = false,
+  compacted = false,
+  compactedOnly = false,
+  padding = '',
+} = {}) {
+  const lines = [
+    JSON.stringify({
+      timestamp: '2026-10-04T11:34:00.000Z',
+      ordinal: 0,
+      type: 'session_meta',
+      payload: { id: 'x' },
+    }),
+    JSON.stringify({
+      timestamp: '2026-10-04T11:34:01.000Z',
+      ordinal: 1,
+      type: 'event_msg',
+      payload: { type: 'task_started' },
+    }),
+  ]
+  if (marker) {
+    lines.push(
+      JSON.stringify({
+        timestamp: '2026-10-04T11:34:59.637Z',
+        ordinal: 8,
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'developer',
+          content: [
+            {
+              type: 'input_text',
+              text: '<!-- obsidian-mem:brief mode=full -->\n> 引用数据\n\n<!-- brief: 10/6000 chars -->',
+            },
+          ],
+        },
+      }),
+    )
+  }
+  if (quote) {
+    // A grep of the rollout itself, which is what the vault's own convention
+    // recommends. The marker appears, but escaped inside a JSON string — the exact
+    // case a scan for the bare string gets wrong.
+    lines.push(
+      JSON.stringify({
+        timestamp: '2026-10-04T11:35:00.000Z',
+        ordinal: 9,
+        type: 'response_item',
+        payload: {
+          type: 'function_call_output',
+          output:
+            '9:{"type":"response_item","payload":{"content":[{"type":"input_text","text":"<!-- obsidian-mem:brief mode=full -->',
+        },
+      }),
+    )
+  }
+  if (compacted || compactedOnly) {
+    lines.push(
+      JSON.stringify({
+        timestamp: '2026-10-04T11:40:00.000Z',
+        ordinal: 400,
+        type: 'compacted',
+        payload: {
+          message: '',
+          replacement_history: [
+            { type: 'message', role: 'user', content: [{ type: 'input_text', text: '继续' }] },
+          ],
+          window_number: 1,
+        },
+      }),
+    )
+  }
+  if (padding !== '') lines.push(padding)
+  return `${lines.join('\n')}\n`
+}
+
+/** A rollout on disk under a throwaway directory. */
+function rolloutFile(t, text, name = 'rollout-test.jsonl') {
+  const dir = mkdtempSync(join(tmpdir(), 'codex-rollout-'))
+  const path = join(dir, name)
+  writeFileSync(path, text, 'utf8')
+  return path
 }
 
 /**
@@ -134,30 +243,150 @@ async function bind({ dsh, vault, repo, home }) {
   return receipt
 }
 
-test('the hook injects on the sources that open a conversation with no context', () => {
-  // The choice this pins is a cost decision, not a technicality: `resume` and
-  // `compact` continue a conversation that already carries (or summarises) the
-  // earlier injection, so paying for the same brief twice is the one saving the
-  // hook can make for free.
-  assert.deepEqual([...INJECT_SOURCES], ['startup', 'clear'])
-  assert.equal(decide(payload('/tmp')).inject, true)
-  assert.equal(decide(payload('/tmp', { source: 'clear' })).inject, true)
-  assert.deepEqual(decide(payload('/tmp', { source: 'resume' })), {
-    inject: false,
-    reason: 'source-resume',
+test('the hook injects on the sources that open a conversation with no context', async () => {
+  // This started as a cost decision, not a technicality: `resume` continues a
+  // conversation that already carries the earlier injection, so paying for the same
+  // brief twice is the one saving the hook can make for free. `compact` was measured
+  // out of that group: a rollout records what compaction leaves the model with in its
+  // `compacted` payload's `replacement_history`, and the brief is not in it (see
+  // `codex/README.md` for the sample), so a compacted session is one whose memory is
+  // gone.
+  assert.deepEqual([...INJECT_SOURCES], ['startup', 'clear', 'compact'])
+  assert.equal((await decide(payload('/tmp'))).inject, true)
+  assert.equal((await decide(payload('/tmp', { source: 'clear' }))).inject, true)
+  assert.deepEqual(await decide(payload('/tmp', { source: 'compact' })), {
+    inject: true,
+    reason: 'compact',
   })
-  assert.deepEqual(decide(payload('/tmp', { source: 'compact' })), {
+  // A `resume` is decided per session from the rollout. A payload with no readable
+  // rollout path is `unknown`, and `unknown` keeps the behaviour this hook had before
+  // the scan existed: a resumed conversation is assumed to still carry the brief.
+  assert.deepEqual(await decide(payload('/tmp', { source: 'resume' })), {
     inject: false,
-    reason: 'source-compact',
+    reason: 'resume-unknown',
+  })
+  assert.deepEqual(await decide(payload('/tmp', { source: 'resume', transcript_path: '' })), {
+    inject: false,
+    reason: 'resume-unknown',
   })
 })
 
-test('anything that is not a SessionStart with a cwd injects nothing', () => {
-  assert.equal(decide(null).inject, false)
-  assert.equal(decide({ hook_event_name: 'Stop' }).reason, 'event-Stop')
-  assert.equal(decide(payload('/tmp', { cwd: '' })).reason, 'cwd-missing')
-  assert.equal(decide(payload('/tmp', { cwd: '   ' })).reason, 'cwd-missing')
-  assert.equal(decide(payload('/tmp', { source: undefined })).reason, 'source-missing')
+test('anything that is not a SessionStart with a cwd injects nothing', async () => {
+  assert.equal((await decide(null)).inject, false)
+  assert.equal((await decide({ hook_event_name: 'Stop' })).reason, 'event-Stop')
+  assert.equal((await decide(payload('/tmp', { cwd: '' }))).reason, 'cwd-missing')
+  assert.equal((await decide(payload('/tmp', { cwd: '   ' }))).reason, 'cwd-missing')
+  assert.equal((await decide(payload('/tmp', { source: undefined }))).reason, 'source-missing')
+})
+
+test('a resumed conversation is re-injected only when the rollout proves the brief is gone', async (t) => {
+  // The scan's three answers, on synthetic rollouts shaped like the measured ones.
+  const present = rolloutFile(t, rollout())
+  assert.equal(await resumeVerdict(present), 'present', 'the injection is the latest record')
+  assert.deepEqual(await decide(payload('/tmp', { source: 'resume', transcript_path: present })), {
+    inject: false,
+    reason: 'resume-present',
+  })
+
+  // Measured on a real rollout: the `compacted` record replaces the context and the
+  // brief is not in `replacement_history`. This is the case that used to lose memory
+  // silently for the rest of the conversation.
+  const compacted = rolloutFile(t, rollout({ compacted: true }), 'compacted.jsonl')
+  assert.equal(await resumeVerdict(compacted), 'absent')
+  assert.deepEqual(
+    await decide(payload('/tmp', { source: 'resume', transcript_path: compacted })),
+    {
+      inject: true,
+      reason: 'resume-without-brief',
+    },
+  )
+
+  // A rollout that never received an injection: the plugin was installed mid-thread, or
+  // the session was imported from another agent.
+  const never = rolloutFile(t, rollout({ marker: false }), 'never.jsonl')
+  assert.equal(await resumeVerdict(never), 'absent')
+
+  // A tool output that quotes the marker must not be mistaken for the injection: this
+  // repository's own convention is to grep the rollout for it to verify the hook, and
+  // inside that output every quote is escaped.
+  const quoted = rolloutFile(t, rollout({ marker: false, quote: true }), 'quoted.jsonl')
+  assert.equal(await resumeVerdict(quoted), 'absent', 'a quoted marker is not an injection')
+
+  // Not a rollout, a compaction with no injection, and nothing at all are all
+  // `unknown`/`absent` — never a false `present`.
+  const notARollout = rolloutFile(t, '{"hello":"world"}\n', 'other.jsonl')
+  assert.equal(await resumeVerdict(notARollout), 'unknown')
+  assert.equal(await resumeVerdict(join(tmpdir(), 'definitely-not-here-0123456789')), 'unknown')
+  assert.equal(await resumeVerdict(null), 'unknown')
+  assert.equal(await resumeVerdict(42), 'unknown')
+})
+
+test('a rollout larger than the scan cap is answered conservatively, never as present', async (t) => {
+  // The cap exists so a session start cannot read a 100 MB transcript. Past it the
+  // answer is `unknown` in both directions: an unseen compaction could have dropped a
+  // brief this scan can see, and an unseen injection could be one it cannot.
+  const big = 'x'.repeat(4096)
+  const withMarker = rolloutFile(
+    t,
+    rollout({ padding: JSON.stringify({ type: 'event_msg', payload: big }) }),
+    'big.jsonl',
+  )
+  assert.equal(await resumeVerdict(withMarker, { maxBytes: 64 }), 'unknown')
+  assert.equal(await resumeVerdict(withMarker), 'present', 'the default cap reads it whole')
+
+  const markerBeyondCap = rolloutFile(t, rollout({ padding: big, marker: false }), 'beyond.jsonl')
+  assert.equal(await resumeVerdict(markerBeyondCap, { maxBytes: 64 }), 'unknown')
+  assert.equal(MAX_ROLLOUT_BYTES, 8 * 1024 * 1024)
+})
+
+test('a resume decision reaches the hook: a lost brief is injected, a live one is not', async (t) => {
+  // Driven through `runHook`, so the decision, the reader and the answer document are
+  // the ones a real session gets. `open` is a stub with `autoCurate: false` rather than
+  // the real `openMemory` on purpose: `openMemory` without a `vaultPath` would resolve
+  // this machine's *default* vault, and a test must never read a real one.
+  const opened = []
+  const open = (options) => {
+    opened.push(options)
+    return {
+      config: { autoCurate: false },
+      services: {
+        brief: async () => ({ status: 'bound', text: 'THE BRIEF' }),
+        close: async () => {},
+      },
+    }
+  }
+  const compacted = rolloutFile(t, rollout({ compacted: true }), 'resume-compacted.jsonl')
+  const out = {
+    writes: [],
+    write(text) {
+      this.writes.push(text)
+    },
+  }
+  const answer = await runHook(
+    JSON.stringify(payload('/work/demo', { source: 'resume', transcript_path: compacted })),
+    { open, out, err: { write() {} } },
+  )
+  assert.equal(answer.hookSpecificOutput?.hookEventName, 'SessionStart')
+  assert.equal(answer.hookSpecificOutput.additionalContext, 'THE BRIEF')
+  assert.equal(opened.length, 1, 'the vault is opened once, for the brief that was owed')
+
+  const live = rolloutFile(t, rollout(), 'resume-live.jsonl')
+  const quietOut = {
+    writes: [],
+    write(text) {
+      this.writes.push(text)
+    },
+  }
+  const quiet = await runHook(
+    JSON.stringify(payload('/work/demo', { source: 'resume', transcript_path: live })),
+    { open, out: quietOut, err: { write() {} } },
+  )
+  assert.deepEqual(
+    quiet,
+    { ...CONTINUE },
+    'a conversation that still carries the brief pays nothing',
+  )
+  assert.equal(opened.length, 1, 'and no vault is opened for it')
 })
 
 test('the success answer is the document Codex validates', () => {
@@ -247,7 +476,7 @@ test('UserPromptSubmit is quiet for an unbound directory or malformed input', ()
   assert.equal(readdirSync(join(dataRoot, 'diagnostics')).length, 1)
 })
 
-test('a bound project is skipped on resume, and an unbound directory always', async () => {
+test('a bound project is skipped on resume, and an unbound directory is asked about', async () => {
   const space = world()
   const env = { HOME: space.home, DSH_HOME: space.dsh, OBSIDIAN_MEM_VAULT: space.vault }
   // Bound **before** the cases below, on purpose: the resume control only means
@@ -257,10 +486,17 @@ test('a bound project is skipped on resume, and an unbound directory always', as
   const other = join(space.home, 'not-a-project')
   mkdirSync(other, { recursive: true })
 
-  // A directory that is not this plugin's project: most directories on any
-  // machine. It is not a refusal, and it must not read as one to the model.
+  // A directory that is not this plugin's project gets DSH's one-shot notice — the
+  // question the user is asked, with the call that answers it — instead of silence.
+  // Before this, the two harnesses disagreed: DSH asked, Codex said nothing until a
+  // tool happened to be called.
   const unbound = hook(env, JSON.stringify(payload(other)))
-  assert.deepEqual(unbound.answer, { ...CONTINUE })
+  assert.equal(unbound.status, 0)
+  assert.equal(unbound.answer.hookSpecificOutput?.hookEventName, 'SessionStart')
+  const notice = unbound.answer.hookSpecificOutput?.additionalContext ?? ''
+  assert.ok(notice.includes('mem_admin(action="bind", mode="local")'), notice)
+  assert.ok(notice.includes(other), 'the directory in question is named')
+  assert.ok(!notice.includes('项目绑定'), 'a notice is not a brief')
   assert.equal(unbound.lines.length, 1)
 
   const suspended = join(space.home, 'untouched-dsh')
@@ -280,21 +516,34 @@ test('a bound project is skipped on resume, and an unbound directory always', as
 })
 
 test('a vault that refuses still costs the session nothing', async () => {
-  const space = world()
-  // A vault path that is a file cannot be bootstrapped: this is the failure the
-  // hook must absorb, because the alternative is a session that will not start.
-  const notAVault = join(space.home, 'not-a-vault')
-  mkdirSync(notAVault, { recursive: true })
-  const file = join(notAVault, 'blocker')
-  execFileSync('touch', [file])
-
-  const run = hook(
-    { HOME: space.home, DSH_HOME: space.dsh, OBSIDIAN_MEM_VAULT: file },
-    JSON.stringify(payload(space.repo)),
-  )
-  assert.equal(run.status, 0, 'the hook always exits 0')
-  assert.deepEqual(run.answer, { ...CONTINUE })
-  assert.equal(run.lines.length, 1)
+  // The absorption this file is about, driven at the seam that decides it: an
+  // `openMemory` that throws (a vault path that is a file, an unreadable vault) must
+  // come back as exactly one `continue: true` document with the reason on stderr.
+  // The subprocess cases above cannot reach this — an unbound directory answers from
+  // the resolution and never opens the vault, and a bound project with a different
+  // vault path simply produces no text.
+  const out = {
+    writes: [],
+    write(text) {
+      this.writes.push(text)
+    },
+  }
+  const err = {
+    writes: [],
+    write(text) {
+      this.writes.push(text)
+    },
+  }
+  const answer = await runHook(JSON.stringify(payload('/work/demo')), {
+    open: () => {
+      throw new Error('vault is a file')
+    },
+    out,
+    err,
+  })
+  assert.deepEqual(answer, { ...CONTINUE }, 'a refused vault is not a refused session')
+  assert.equal(out.writes.length, 1, 'exactly one document is written')
+  assert.match(err.writes.join(''), /brief failed/, 'and the reason reaches stderr')
 })
 
 test('the plugin ships its hook at the path Codex discovers, and not in the manifest', () => {
@@ -441,6 +690,41 @@ test('autoCurate:false and an unbound project both claim no automatic pass', asy
   assert.deepEqual(unbound.calls, [], 'an unbound directory must not start a pass')
 })
 
+test('the Codex notice uses the same fallback when the budget cannot carry the full wording', async () => {
+  // Both harnesses compose the notice through `bindHintWithin`, and this is the Codex
+  // half of that claim: a config whose `briefBudgetChars` cannot hold the 261-code-point
+  // `no-pointer` notice still gets the one-line form instead of silence — which is what
+  // a resumed session at that budget would otherwise be left with.
+  const opened = []
+  const open = (options) => {
+    opened.push(options)
+    return {
+      config: { briefBudgetChars: 256, autoCurate: false },
+      services: {
+        brief: async () => ({ status: 'unbound', reason: 'no-pointer', repoRoot: '/work/demo' }),
+        close: async () => {},
+      },
+    }
+  }
+  const text = await briefFor('/work/demo', open)
+  assert.equal(typeof text, 'string', 'the question is still asked at the floor')
+  assert.ok([...text].length <= 256, `the notice respects the budget (${[...text].length})`)
+  assert.ok(text.includes('mem_admin(action="bind", mode="local")'))
+  assert.ok(!text.includes('\n'), 'the one-line form is the one that fit')
+
+  // The same refusal at the default budget gets the detailed wording, so the fallback is
+  // not a replacement for it.
+  const roomy = await briefFor('/work/demo', () => ({
+    config: { briefBudgetChars: 6000, autoCurate: false },
+    services: {
+      brief: async () => ({ status: 'unbound', reason: 'no-pointer', repoRoot: '/work/demo' }),
+      close: async () => {},
+    },
+  }))
+  assert.ok(roomy.includes('\n'), 'the detailed wording is used when it fits')
+  assert.ok([...roomy].length > 200)
+})
+
 test('a bound start injects the real brief and the due pass never reaches stdout', async () => {
   // The process-level half of the contract: whatever the pass answers, the wire
   // carries the brief and nothing else. The counting stub stands in for the seam
@@ -567,15 +851,17 @@ test('the automatic pass parks a real candidate, and the other adapter reads it 
 })
 
 test('a source that injects nothing opens no vault and claims no pass', async () => {
-  // `resume` and `compact` continue a conversation that already carries the
-  // earlier injection, so the hook returns before `openMemory` is reached: the
-  // counterfactual root is never created, which is what "opens no data root"
-  // means when there is a bound repository it *would* have opened.
+  // A `resume` whose rollout says the brief is still there continues a conversation
+  // that already carries it, so the hook returns before `openMemory` is reached: the
+  // counterfactual root is never created, which is what "opens no data root" means
+  // when there is a bound repository it *would* have opened. (`compact` used to be in
+  // this group and is not any more: it is the one source measured to drop the brief,
+  // so it pays for it again — see the sources case above.)
   const space = world()
   await bind(space)
   {
     const env = { HOME: space.home, DSH_HOME: space.dsh, OBSIDIAN_MEM_VAULT: space.vault }
-    for (const source of ['resume', 'compact']) {
+    for (const source of ['resume', 'unknown-source']) {
       const root = join(space.home, `skipped-${source}`)
       const run = hook({ ...env, DSH_HOME: root }, JSON.stringify(payload(space.repo, { source })))
       assert.equal(run.status, 0)
@@ -583,11 +869,30 @@ test('a source that injects nothing opens no vault and claims no pass', async ()
       assert.equal(run.lines.length, 1)
       assert.equal(existsSync(root), false, `${source} must not open a data root`)
     }
-    // An unbound directory is answered by the same one-line document.
+    // An unbound directory on a *startup* source is the other half of this file's
+    // contract, and deliberately not "injects nothing": it gets the notice instead of
+    // the brief, still exactly one document, and still no curation pass (there is no
+    // project to curate) — asserted by the sibling case above.
     const other = join(space.home, 'not-a-project')
     mkdirSync(other, { recursive: true })
     const unbound = hook(env, JSON.stringify(payload(other)))
-    assert.deepEqual(unbound.answer, { ...CONTINUE })
+    assert.equal(unbound.answer.hookSpecificOutput?.hookEventName, 'SessionStart')
     assert.equal(unbound.lines.length, 1)
   }
+})
+
+test('the unbound notice can be turned off in the Codex adapter', async () => {
+  // The SessionStart hook is its own process with no Cordis row, so the switch comes
+  // from the environment (`OBSIDIAN_MEM_BIND_HINT`); without this the README's claim
+  // that the notice is a switch would be a DSH-only promise.
+  const space = world()
+  const other = join(space.home, 'not-a-project')
+  mkdirSync(other, { recursive: true })
+  const env = { HOME: space.home, DSH_HOME: space.dsh, OBSIDIAN_MEM_VAULT: space.vault }
+  const off = hook({ ...env, OBSIDIAN_MEM_BIND_HINT: '0' }, JSON.stringify(payload(other)))
+  assert.equal(off.status, 0)
+  assert.deepEqual(off.answer, { ...CONTINUE }, 'the notice is off')
+  assert.equal(off.lines.length, 1)
+  const on = hook({ ...env, OBSIDIAN_MEM_BIND_HINT: '1' }, JSON.stringify(payload(other)))
+  assert.equal(on.answer.hookSpecificOutput?.hookEventName, 'SessionStart')
 })

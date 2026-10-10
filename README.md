@@ -244,6 +244,7 @@ every field, `distill` included. Put it in the home-level patch layer,
     vaultPath: "~/Documents/dsh-memory"
     initGitOnCreate: true
     injectBrief: true
+    bindHint: true
     briefBudgetChars: 6000
     recallBudgetChars: 900
     hotCapacityChars: 9000
@@ -285,6 +286,7 @@ explanation instead of doing nothing.
 | `vaultPath` | `~/Documents/dsh-memory` | non-blank path; `~` is expanded | The vault root. Must be local disk. |
 | `initGitOnCreate` | `true` | boolean | `git init` **only** on a vault directory this plugin just created, and only if `git` is available. Never commits, never sets a remote. |
 | `injectBrief` | `true` | boolean | Whether the session brief and per-turn relevant-note map are injected. |
+| `bindHint` | `true` | boolean | Whether a session whose directory resolves to no usable project is told so, once. That notice is how the user is asked whether to bind the project, and how a session whose recorded directory has moved or been deleted says so instead of losing memory in silence. `false` removes that injection and nothing else. The Codex adapter has the same switch as `OBSIDIAN_MEM_BIND_HINT`. |
 | `briefBudgetChars` | `6000` | integer 256–20000 | Hard ceiling for the session brief and the weekly hint, in Unicode code points. |
 | `recallBudgetChars` | `900` | integer 256–20000 | Per-turn ceiling for the relevant-note map, in Unicode code points. Deliberately separate from `briefBudgetChars`: charged against the brief's leftovers, the map fired on 0.6% of first turns against 22.1% of later ones. |
 | `failureRecall` | `true` | boolean | Recall related memory on repeated native DSH tool failures. Shares the per-step `recallBudgetChars` ceiling with prompt recall; does not control recording. |
@@ -317,6 +319,34 @@ with an error that says the field was dropped by design.
 
 ## Using it
 
+### A project with no pointer
+
+Reading a project never creates a binding: a pointer must not appear in a
+repository you only looked at. What such a session gets instead is one short
+notice, once per session (`bindHint: false` removes it) — this directory resolves
+to no usable project, here is why, and here is the decision that belongs to you:
+
+- **No pointer** (`no-pointer`) — ask the user. `mem_admin(action="bind", mode="local")`
+  creates the four-field pointer and the vault skeleton. The implicit first write
+  does the same thing without asking, which is exactly why the notice exists: a
+  user who never writes otherwise never learns the option is there.
+- **Not a git repository** (`no-git-root`) — the same explicit `local` bind, which
+  is the one mode that also binds a plain directory.
+- **The recorded directory is gone** (`cwd-missing`) — the session's `header.cwd`
+  no longer exists. An imported conversation carries the directory it was
+  *recorded* in: another machine's path, or one renamed since. Memory cannot work
+  in that session at all, and before this refusal existed the plugin lost it in
+  silence — a thrown `ENOENT` that every step retried. The notice says so, and
+  nothing is created to compensate.
+- **The pointer cannot be read** (`pointer-corrupt`, `pointer-unsupported-schema`,
+  `pointer-not-a-file`, `pointer-oversize`, `pointer-unreadable`) — report, never
+  repair: the plugin refuses to guess an identity, and so should you.
+
+The same reason travels to the tools: `mem_brief` answers `status: "unbound"` with
+a machine-readable `reason`, and every other tool's refusal names it. A directory
+inside the vault, a lost `pointer-race` and a registry conflict stay silent, because
+none of them is a decision the user can make.
+
 ### The six tools
 
 | Tool | Arguments | What it does |
@@ -345,6 +375,35 @@ Supersede never overwrites: the old note stays where it is, marked
 that cannot be ranked become `status: contested` — no silent winner. `assertion`
 records *how strong* a claim is (`stated`, `inferred`, `observed`), and `observed`
 requires re-checkable evidence, not a model saying "verified".
+
+### User habits
+
+`_meta/user.md` is yours — bootstrap creates it once from a template and the plugin
+never writes it afterwards. The template asks for the facts that change every
+answer: 技术与框架偏好, 常用技能与工具, 惯用方法（按问题类型）, 产出与沟通偏好 and 禁忌.
+Its examples are HTML comments, so an untouched file contributes nothing to a
+session.
+
+What you write there is injected as the 用户习惯 section, under your own headings,
+and it ranks **above** the recent-decisions list. A declared habit is a standing
+rule (`前端一律 React`, `改动前先跑测试`); the recent list is navigation to facts the
+project already wrote down. The earlier order dropped the user's habits first,
+which is the one thing a memory layer should not throw away.
+
+Habits the *plugin* learns are not preferences and never go in that file. A
+durable habit about how you work is written as `Conventions/习惯：….md` in the
+project, one habit per file, and promoted to `Methods/` when it outlives the
+repository.
+
+Two paths lead there, and the difference is evidence. A habit you **state** in a
+session is recorded automatically: the distillation prompt asks for a convention
+titled `习惯：…` with `assertion: stated` and your own seq, and the plugin tags it
+`user-habit` so `mem_search` finds it without reading titles. The validator refuses
+the prefix without that evidence, which is the rule rather than a hope — a habit you
+never expressed is never written down as one; if the fact is real but you did not say
+it, it belongs in an ordinary convention without the prefix. A habit the session
+merely **demonstrates** is the agent's to record (`mem_write`, `assertion: observed`),
+because one completed turn cannot show a pattern — and one data point is not a habit.
 
 ### Automatic distillation
 

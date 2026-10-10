@@ -55,6 +55,36 @@ Rules:
 If the working directory has no pointer, you have no project memory: say so.
 Cross-project knowledge (`Methods/`, `_meta/user.md`) is still readable.
 
+### 1.1 A project with no pointer: ask, never decide
+
+When the harness tells you this project has no memory — DSH injects an
+`obsidian-mem：…还没有记忆指针…` notice, and `mem_brief` answers `status: "unbound"`
+with a machine-readable `reason` on either harness — do not bind anything
+yourself. Ask the user, once, with the real options in front of them:
+
+1. **enable** — call `mem_admin(action="bind", mode="local")`. It creates the
+   four-field pointer and the vault skeleton, and `local` is also the answer for
+   a directory that is not a git repository.
+2. **not now** — write nothing. The session continues without memory and the next
+   session asks again.
+3. `mode="fork"` (a new identity for a worktree) and `mode="retain"` (confirm the
+   current binding) are **not** answers to "there is no pointer here".
+
+A `reason` of `cwd-missing` is a different problem: the directory this session
+recorded is gone — normal for a conversation imported from another machine, or
+one renamed since. Project memory cannot work in that session at all. Tell the
+user, and let them open a session in the project directory that exists now. Never
+create the missing directory, and never rewrite a pointer to compensate.
+
+A pointer that exists but cannot be read (`pointer-corrupt`,
+`pointer-unsupported-schema`, `pointer-not-a-file`, …) is the user's to repair.
+Report it and stop: do not delete, rewrite or "repair" it, and do not read the
+`reason` as permission to mint a second identity.
+
+A user who does not want to be asked can turn the notice off — `bindHint: false`
+in the DSH plugin config, `OBSIDIAN_MEM_BIND_HINT=0` for the Codex adapter — and
+this section then applies only when a tool refuses.
+
 ## 2. Vault layout
 
 ```
@@ -115,6 +145,43 @@ Pick `type` first; it decides the destination. This is the whole routing table:
 Never put a long convention into `hot.md` just because it grew: a convention
 that needs evidence, expiry or a successor must be its own file in `Conventions/`,
 with at most a short pointer in the hot layer.
+
+### 3.1 用户习惯 — how this user works
+
+Two layers carry the user, and they are not the same thing:
+
+| what | where | who writes it |
+|---|---|---|
+| **declared** habits — the frameworks, skills, tools and methods the user says they use | `_meta/user.md`, global, injected into every brief as 用户习惯 | **the user only**; read-only for you |
+| **observed** habits — how the user actually worked, learned from sessions | `Conventions/习惯：….md` (this project) or `Methods/` (cross-project) | you, through `mem_write` / `promote` |
+
+Rules:
+
+- **Follow the declared habits.** They arrive grouped under the user's own
+  headings (技术与框架偏好 / 常用技能与工具 / 惯用方法 / 产出与沟通偏好 / 禁忌). They
+  are standing rules, not suggestions, and they outrank your own defaults.
+- **A habit the user *states* is recorded automatically.** The distillation pipeline
+  asks for it: a convention titled `习惯：…` with `assertion: stated`, citing the user's
+  own seq, and the plugin tags it `user-habit`. The validator refuses the prefix
+  without that evidence (`habit-not-stated`), so a habit the user never expressed is
+  never written as a preference — if the fact is real but the user did not say it,
+  write it as an ordinary convention without the prefix.
+- **Record an observed habit only when it is durable and about the user, not
+  about a file, and only yourself.** A framework chosen twice for the same kind of
+  task, a workflow the user always asks for, a way they always want a problem
+  attacked: `mem_write(type="convention", title="习惯：<what the user does>")` — one
+  habit per file, like every convention, and `assertion: observed`. The automatic
+  pipeline cannot take this step, because one completed turn cannot show a pattern;
+  that is why it is yours and why the user should be the one to confirm it.
+- **Cross-project habits go to `Methods/`.** A language preference, a review
+  style or a debugging method outlives the repository; promote it with
+  `mem_admin(action="promote")` instead of leaving it in one project.
+- **One data point is not a habit.** A single use of a library, one hard error
+  and one fix, a preference the user never stated: none of those are habits. The
+  bar is the same as any other convention — evidence in the session, or the
+  user's own words.
+- **Never write `_meta/user.md`.** A habit the user has not written down is a
+  project convention, not a preference. Offer to add it; do not add it.
 
 ## 4. Note frontmatter (closed vocabulary)
 

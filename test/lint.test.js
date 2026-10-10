@@ -1279,7 +1279,7 @@ test('the weekly hint is due only when the last report is older than seven days'
   await f.index.close()
 })
 
-test('the weekly hint rides the first pre-step of a session, exactly once', async (t) => {
+test('the weekly hint rides the first pre-step of a session exactly once, beside the unbound notice', async (t) => {
   const ctx = new Context()
   let asked = 0
   const disposers = registerHooks(ctx, {
@@ -1313,8 +1313,12 @@ test('the weekly hint rides the first pre-step of a session, exactly once', asyn
   const injected = (first.messages ?? []).filter(
     (message) => message?.source?.kind === RECALL_SOURCE.kind,
   )
-  assert.equal(injected.length, 1, JSON.stringify(first.messages))
-  assert.match(injected[0].content[0].text, /体检提醒/)
+  // Two messages on this step, and the test is about the second: the session also
+  // gets the unbound-session notice, because this directory really is unbound.
+  assert.equal(injected.length, 2, JSON.stringify(first.messages))
+  const hints = injected.filter((message) => /体检提醒/.test(message.content[0].text))
+  assert.equal(hints.length, 1)
+  assert.match(hints[0].content[0].text, /体检提醒/)
   const second = await preStep()
   assert.equal(
     (second.messages ?? []).length,
@@ -1396,7 +1400,14 @@ test('the weekly hint rides the first pre-step of a session, exactly once', asyn
     { agent: other, messages: [], turn: 1, step: 1, signal: new AbortController().signal },
     async () => ({ kind: 'enter', messages: [] }),
   )
-  assert.equal(decision.messages.length, 0)
+  // The hint being not due — and its seam throwing — is what this case is about. The
+  // session still gets the unbound-session notice, because this directory really is
+  // unbound; what must not appear is the maintenance reminder.
+  const quietMessages = (decision.messages ?? []).filter(
+    (message) => message?.source?.kind === RECALL_SOURCE.kind,
+  )
+  assert.equal(quietMessages.length, 1)
+  assert.ok(!/体检提醒/.test(quietMessages[0].content[0].text))
 })
 
 test('an unreadable history or queue degrades to a finding instead of failing the lint', async (t) => {

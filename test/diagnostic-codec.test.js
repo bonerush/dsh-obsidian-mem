@@ -280,6 +280,35 @@ test('every curation outcome the bounded action emits survives the round trip', 
   assert.equal(decodeDiagnosticEvent(unknown).outcome, 'other')
 })
 
+test('the unbound-session notice and the binding refusals survive the disk round trip', () => {
+  // Same trap, one layer out: the ring keeps whatever token a call site hands it, and
+  // only the journal coarsens. `bind-hint` is emitted by `lib/hooks.js`, and the
+  // refusals below by `mem_admin(action="bind")` through `lib/services.js`'s
+  // `code: resolution.reason` — an unregistered one reaches disk as `other`, which is
+  // exactly what the first draft of this change did with `bind-hint`.
+  const aliases = createAliases()
+  const emitted = [
+    { event: 'brief', outcome: 'hint-only', code: 'bind-hint' },
+    { event: 'bind', outcome: 'refused', code: 'cwd-missing' },
+    { event: 'bind', outcome: 'refused', code: 'no-git-root' },
+    { event: 'bind', outcome: 'refused', code: 'vault' },
+    { event: 'bind', outcome: 'refused', code: 'pointer-corrupt' },
+  ]
+  for (const entry of emitted) {
+    const encoded = encodeDiagnosticEvent({ seq: 1, at, ...entry }, aliases)
+    assert.equal(encoded.code, entry.code, `${entry.code} is not coarsened`)
+    assert.equal(decodeDiagnosticEvent(encoded).code, entry.code, `${entry.code} decodes back`)
+  }
+  // The control, so the loop above is testing registration rather than a codec that
+  // echoes anything: `lib/vault.js` can hand the `bind` event a raw `error.code` from
+  // the pointer layer, which no list can enumerate and which stays coarsened.
+  const unknown = encodeDiagnosticEvent(
+    { seq: 1, at, event: 'bind', outcome: 'refused', code: 'EACCES' },
+    aliases,
+  )
+  assert.equal(unknown.code, 'other')
+})
+
 test('the emitter scan resolves a code passed by name, not only a literal', () => {
   // The reviewer's probe, and the blind spot round 2 shipped with: reading
   // `new CurationError(...)`'s first argument as a literal only makes a code bound to a

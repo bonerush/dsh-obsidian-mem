@@ -119,6 +119,10 @@ test('README.i18n.yaml records the current blob hash of both READMEs', () => {
  * find before turning automation off, and `dsh-obsidian-mem-review` is the only
  * route that can approve a parked proposal — a document that omits the second one
  * leaves "how do I approve this?" with no answer that is not a model call.
+ * `bindHint` joined them with the unbound-session notice: the one injection whose
+ * reader is the user rather than the project, so a document that describes the
+ * notice without naming how to stop it leaves the question the notice raises with
+ * no answer.
  */
 const CURATION_DOCUMENTS = [
   'README.md',
@@ -131,7 +135,7 @@ test('both README sides and both skill editions name the curation switch and its
   const missing = []
   for (const document of CURATION_DOCUMENTS) {
     const text = readFileSync(join(ROOT, document), 'utf8')
-    for (const needle of ['autoCurate', 'dsh-obsidian-mem-review']) {
+    for (const needle of ['autoCurate', 'dsh-obsidian-mem-review', 'bindHint']) {
       if (!text.includes(needle)) missing.push(`${document} does not name ${needle}`)
     }
   }

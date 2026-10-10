@@ -631,6 +631,48 @@ test('an unreadable pointer stops resolution and is left untouched', async (t) =
   assert.deepEqual(await readFile(path), before)
 })
 
+test('a working directory that no longer exists is a refusal, not an exception', async (t) => {
+  // A session keeps the directory it was created in, and an imported conversation
+  // carries the directory it was *recorded* in — another machine's path, or one
+  // renamed since. This used to throw ENOENT out of `resolveBinding`, which every
+  // caller turned into "no memory, silently" (the pre-step's blanket catch) or a
+  // raw filesystem error (the six tools).
+  const { vault } = await fixture(t)
+  const gone = join(await realpath(vault), 'no-such-directory')
+
+  const shown = await resolveBinding({ cwd: gone, vaultRoot: vault })
+  assert.equal(shown.kind, 'unbound')
+  assert.equal(shown.reason, 'cwd-missing')
+  assert.equal(shown.cwd, gone)
+  assert.match(shown.message, /ENOENT/)
+  assert.equal(typeof shown.hint, 'string')
+
+  // A write mode refuses the same way: nothing can be minted in a directory that
+  // is not there, and the refusal must not be an escaping ENOENT either.
+  for (const mode of ['local', 'fork', 'retain']) {
+    const refused = await resolveBinding({ cwd: gone, vaultRoot: vault, mode })
+    assert.equal(refused.kind, 'unbound', `${mode} refuses`)
+    assert.equal(refused.reason, 'cwd-missing')
+  }
+  assert.deepEqual(await readdir(vault), [], 'a refusal writes nothing')
+})
+
+test('a working directory that is a file, not a directory, is refused the same way', async (t) => {
+  const { root, vault } = await fixture(t)
+  const file = join(root, 'not-a-directory')
+  await writeFile(file, 'x\n', 'utf8')
+
+  // A path *below* a file fails in `realpath`, and the file itself resolves and
+  // would otherwise survive to `findGitRoot`, where the walk hits ENOTDIR one frame
+  // further from the refusal. Both are the same answer.
+  for (const cwd of [join(file, 'nested'), file]) {
+    const refused = await resolveBinding({ cwd, vaultRoot: vault })
+    assert.equal(refused.kind, 'unbound', cwd)
+    assert.equal(refused.reason, 'cwd-missing')
+    assert.match(refused.message, /ENOTDIR/)
+  }
+})
+
 test('a non-git directory stays unbound and read-only', async (t) => {
   const { vault, scratch } = await fixture(t)
   await mkdir(scratch, { recursive: true })
