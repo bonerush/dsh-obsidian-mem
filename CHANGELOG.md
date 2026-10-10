@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.1.13 — 2026-10-10
+
 ### Fixed
 
 - **A session whose recorded directory no longer exists lost memory in silence, and
