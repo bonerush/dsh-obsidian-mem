@@ -401,9 +401,28 @@ titled `习惯：…` with `assertion: stated` and your own seq, and the plugin 
 `user-habit` so `mem_search` finds it without reading titles. The validator refuses
 the prefix without that evidence, which is the rule rather than a hope — a habit you
 never expressed is never written down as one; if the fact is real but you did not say
-it, it belongs in an ordinary convention without the prefix. A habit the session
-merely **demonstrates** is the agent's to record (`mem_write`, `assertion: observed`),
-because one completed turn cannot show a pattern — and one data point is not a habit.
+it, it belongs in an ordinary convention without the prefix. A habit the session merely **demonstrates** is counted, not claimed. The plugin matches
+a closed vocabulary of standing phrases against *your own messages* and counts each
+one once per session; at three distinct sessions it writes a candidate titled `习惯：…`
+with `assertion: observed` and `status: provisional`. A provisional note is quarantined:
+`mem_search` finds it and the brief never injects it, so a candidate cannot influence an
+answer before you confirm it. Confirm by editing the status to `active`, drop it by
+editing it to `archived` — nothing is ever deleted. A habit that stops recurring leaves
+the brief after about a month and is archived once it passes the floor. A habit you
+*stated* is never demoted by time: your silence is not counter-evidence.
+
+The signal is your words and nothing else. The first version of this feature counted
+tool calls, and replaying 137 real session logs falsified it: **99.0% of the tool choices
+it counted had not been requested by the user** (291 of 294), so it was measuring the
+agent's defaults rather than your habits, and it produced 149 "habits" from 107 turns —
+topped by `bash→run_code`, a description of this plugin's own toolchain. The record is in
+`docs/habit-learning-results.md`.
+
+What the mechanism cannot do is tell a preference from a mention: three unrelated uses of
+the word `提交` in three sessions look exactly like one preference stated three times, and
+a measurement under noise promoted 4 of the 6 labels from a corpus of one-off mentions.
+That is why the bar is deliberately low and why the **quarantine is what carries the
+precision** — a wrong candidate costs a line in your review queue, never a rule in a brief.
 
 ### Automatic distillation
 
