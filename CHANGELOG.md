@@ -67,6 +67,27 @@ release artifact. The versioning policy is in the README, under Development.
   end-to-end against a real vault. What is NOT verified is how the sweep behaves on
   real notes at real ages, because no such note exists yet. The trigger to revisit is
   recorded in the plan (Task 8).
+- **The induction bar is far less precise under noise than the calibration suggested,
+  and the number is 67%.** The noise-stress acceptance was run, and it changed the
+  conclusion: against 18 one-off mentions of the vocabulary words — each in its own
+  session, and each a task or an aside rather than a standing preference (把这段提交了吧,
+  commit 之前先跑测试) — **4 of the 6 labels were promoted.** The mechanism is exposed
+  by its own definition: what the counter measures is *word recurrence*, and a preference
+  is a SUBSET of word recurrence, so three unrelated mentions of one word are
+  indistinguishable from one preference stated three times. The Task 0 calibration could
+  not see this, because it counted a word's occurrences per session and never separated a
+  preference from a mention — the "18 sessions" it measured for 提交 included both
+  以后改动完就提交 and 把这段提交了吧. **No threshold fixes it**: a common word recurs in
+  any long history eventually, and raising the bar to 9 admits none of the incidental
+  corpus but also loses the real 解释原因 (5 sessions), 中文回答 (3) and 简洁 (3). What
+  carries precision instead is the quarantine: every promoted candidate is
+  `status: provisional` and `assertion: observed`, so a wrong one costs a line in a review
+  queue and never a rule in a brief — and its content is still *true* (the plugin really
+  did see that word in three sessions); it is only the reading of it as a preference that
+  may be wrong. `promoteAfter` therefore stays at 3, recall-first, with the measured rate
+  pinned as a 75% ceiling in `test/habit-noise.test.js`. **A real false-positive rate has
+  not been measured** — that needs human labels on real messages, so the 67% is the
+  mechanism's order of magnitude rather than a production false-positive rate.
 - **The vocabulary is known to be incomplete.** Four of the twelve markers measured
   hit zero times, so a user who phrases a preference differently is not learned. That
   is a recall ceiling no amount of tuning removes; `habitLearning.markers` extends the
