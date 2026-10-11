@@ -237,3 +237,38 @@ test('the decay pass archives a stale candidate and never deletes it', async (t)
   assert.ok(after.includes('status: "archived"'), 'archived, not deleted')
   assert.ok(after.includes('习惯：提交'), 'the note is still there')
 })
+
+test("the sweep runs on a session's first turn, without anyone asking for it", async (t) => {
+  // The automatic half of "a habit whose actions become rare is dropped". A session
+  // that only states a preference must still age the ones already recorded, which is
+  // why the sweep runs BEFORE the label check — otherwise a session with no matching
+  // marker would leave every stale candidate in the brief forever. A second turn in
+  // the same session must not sweep twice.
+  const f = await fixture(t)
+  const at = (date) =>
+    createHabitPass({ dataRoot: f.dataRoot, config: config(), home: f.home, now: () => date })
+  for (const sessionId of ['s1', 's2', 's3']) {
+    await at(new Date(Date.UTC(2026, 0, 1))).recordTurn({
+      binding: f.binding,
+      sessionId,
+      events: turnWithUser('记得提交'),
+    })
+  }
+  const promoted = await readFile(join(f.vault, CONVENTIONS, '习惯：提交.md'), 'utf8')
+  assert.ok(promoted.includes('status: "provisional"'), 'starts as a candidate')
+
+  // A NEW session, far in the future, that states nothing recognisable. Its first
+  // turn has to sweep, because nothing else will.
+  const unrelated = await at(new Date(Date.UTC(2027, 6, 1))).recordTurn({
+    binding: f.binding,
+    sessionId: 's-later',
+    events: turnWithUser('随便聊点别的'),
+  })
+  assert.deepEqual(unrelated.promoted, [], 'the unrelated message promoted nothing')
+  const archived = await readFile(join(f.vault, CONVENTIONS, '习惯：提交.md'), 'utf8')
+  assert.ok(
+    archived.includes('status: "archived"'),
+    'the sweep ran anyway, and the stale candidate left the brief',
+  )
+  assert.ok(archived.includes('习惯：提交'), 'and it was archived rather than deleted')
+})
