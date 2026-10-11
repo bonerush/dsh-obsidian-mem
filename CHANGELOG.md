@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.1.14 — 2026-10-11
+
 ### Changed
 
 - Habits now arise inside ordinary LLM memory distillation and bounded curation.
