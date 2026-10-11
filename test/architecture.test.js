@@ -118,6 +118,13 @@ const LAYERS = {
   // atomic rename instead of importing that module's, because importing it would
   // put this leaf above L2 for one helper.
   'habit-state': 1,
+  // The counting policy: when an observation becomes a candidate. A pure fold over
+  // the counters that writes nothing, so it sits beside `failure-memory` (the same
+  // shape: a policy `distill`/`capture` composes with the real writer) rather than
+  // above `memory` (L5), which it deliberately does not import.
+  //
+  // It reads `habit-signals` (L0) downward, which is the only edge it needs.
+  'habit-learning': 2,
   'failure-memory': 1,
   assets: 1,
   frontmatter: 1,
@@ -488,6 +495,12 @@ const BUDGETS = {
   // semantic rather than limbic's measured-bad pinned class. Measured 286
   // formatted lines; 300 is measured-plus-30 rounded up to the next 50.
   'lib/habit-state.js': 300,
+  // The counting policy and the attribution boundary. The bulk is the comment
+  // recording why the unit is the session (a median of two usable turns makes a
+  // turn meaningless), why the bar is 3 (6 candidates at 3, 2 at 9, and precision
+  // is bought by quarantine instead), and what `labelsFromTurnEvents` refuses.
+  // Measured 250 formatted lines; 300 is measured-plus-30 rounded up.
+  'lib/habit-learning.js': 300,
   'lib/git.js': 300,
   // Raised from 1050 for one per-turn prompt map beside the existing brief
   // state machine. The retrieval policy lives in prompt-recall.js; these lines
