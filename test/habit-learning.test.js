@@ -67,6 +67,10 @@ test('three distinct sessions promote, and the promotion names its note', () => 
   assert.equal(promotion.status, 'provisional')
   assert.ok(promotion.title.startsWith('习惯：'), `title carries the prefix: ${promotion.title}`)
   assert.ok(promotion.tags.includes('user-habit'), 'carries the plugin-owned tag')
+  assert.ok(
+    promotion.tags.includes('dsh-mem/convention'),
+    'and the type tag every note of this kind has, so a type search finds it',
+  )
 })
 
 test('a label is promoted only once', () => {

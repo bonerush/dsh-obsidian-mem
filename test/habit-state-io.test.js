@@ -140,6 +140,7 @@ test('the stored document never carries message text', async () => {
       'firstSeen',
       'lastReinforcedAt',
       'lastDecayedAt',
+      'lastSession',
       'score',
       'noteId',
     ])

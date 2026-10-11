@@ -125,6 +125,13 @@ const LAYERS = {
   //
   // It reads `habit-signals` (L0) downward, which is the only edge it needs.
   'habit-learning': 2,
+  // The composition: counting on a completed turn and the decay sweep. It imports
+  // `habit-learning` (L2), `habit-state` (L1), `routing` (L1), `receipts` (L2) and
+  // `memory` (L5) — above `memory` is what composing a writer costs, and L6 is the
+  // first layer strictly above it. Its L6 neighbours (`capture`, `hot`,
+  // `curation-scan`, `curation-review`) are unrelated to it: no edge exists in
+  // either direction, which is what the layer rule actually requires.
+  'habit-pass': 6,
   'failure-memory': 1,
   assets: 1,
   frontmatter: 1,
@@ -311,7 +318,18 @@ const BUDGETS = {
   // `dropped` count and its one content-free `curation` diagnostic per job — beside a
   // comment that no longer claims a full pass re-reads the paths it already covered.
   'lib/capture.js': 2250,
-  'lib/config.js': 300,
+  // Raised from 300 by the user-habit learning block (328 formatted lines measured;
+  // measured-plus-30 is 358, so this stays inside the rule rather than following it).
+  // What the 28 lines buy: the `habitLearning` schema and the comments that record
+  // what each default is and is not — `promoteAfter` counts distinct SESSIONS and was
+  // calibrated to 3, while `halfLifeDays` is borrowed from limbic and explicitly NOT
+  // calibrated, which a reader has to be told rather than left to assume. The raise
+  // also covers two checks the block brought with it: the nested unknown-key refusal,
+  // because schemastery's `z.object` is not strict and an unknown nested key would
+  // keep its default in silence, and the demote/archive ordering, because a habit that
+  // could be archived without ever having been demoted is a transition the design does
+  // not describe.
+  'lib/config.js': 400,
   // The curation plan's three Task 2 modules, on the same rule as every other
   // entry (measured plus 30, rounded up). What the size buys: the scanner carries
   // the coverage rules a bounded pass has to keep honest, the state module carries
@@ -501,6 +519,15 @@ const BUDGETS = {
   // is bought by quarantine instead), and what `labelsFromTurnEvents` refuses.
   // Measured 250 formatted lines; 300 is measured-plus-30 rounded up.
   'lib/habit-learning.js': 300,
+  // The composition and its two entry points. Most of the file is the reasoning
+  // behind the three properties a case here protects — attribution (a turn with no
+  // user message contributes nothing, the regression for v1's 291-of-294 mistake),
+  // never-stated (a candidate is observed/provisional, never stated/active), and
+  // no-transcript (the note and the state carry a label and a count, never the
+  // user's sentence) — plus why the pending note identity is safe to mint without
+  // persisting it first. Measured 197 formatted lines; 250 is measured-plus-30
+  // rounded up to the next 50.
+  'lib/habit-pass.js': 250,
   'lib/git.js': 300,
   // Raised from 1050 for one per-turn prompt map beside the existing brief
   // state machine. The retrieval policy lives in prompt-recall.js; these lines

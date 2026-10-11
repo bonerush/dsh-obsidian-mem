@@ -18,6 +18,7 @@
     "lib/habit-signals.js",
     "lib/habit-state.js",
     "lib/habit-learning.js",
+    "lib/habit-pass.js",
     "lib/git.js",
     "lib/index.js",
     "lib/naming.js",
