@@ -102,6 +102,16 @@ const LAYERS = {
   // because a hint has to be answerable without reading a vault or a filesystem —
   // so `hooks` (L8) points down at it for the one decision it does not own.
   'init-hint': 0,
+  // The user-habit vocabulary: which of a user's own statements count as a
+  // standing preference. A leaf with no repository import and no `node:` import,
+  // like `failure-streak` and `note-style` beside it.
+  //
+  // It sits here rather than beside the habit modules because of what the
+  // calibration forced: the FIRST version read tool calls, and 99.0% of tool
+  // choices turned out never to be requested by the user (291 of 294), so it
+  // measured the agent instead. This leaf now takes a user message and nothing
+  // else, which is why it can be the bottom of the habit stack.
+  'habit-signals': 0,
   'failure-memory': 1,
   assets: 1,
   frontmatter: 1,
@@ -458,6 +468,14 @@ const BUDGETS = {
   'lib/failure-streak.js': 550,
   // Recording is an independent pure policy below distill; no vault I/O or writer.
   'lib/failure-memory.js': 175,
+  // The habit vocabulary and its scanner. Most of the file is the measurement
+  // that falsified the first version: 291 of 294 tool choices were the agent's,
+  // not the user's, and the markers are annotated with the session counts that
+  // earned each a place (or, for 「先给结论」, got it removed). A reader who cannot
+  // see that will reintroduce tool-derived signals and the same 149-candidate
+  // over-generation. Measured 166 formatted lines; 200 is measured-plus-30
+  // rounded up to the next 50.
+  'lib/habit-signals.js': 200,
   'lib/git.js': 300,
   // Raised from 1050 for one per-turn prompt map beside the existing brief
   // state machine. The retrieval policy lives in prompt-recall.js; these lines
