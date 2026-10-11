@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.1.15 — 2026-10-11
+
 ### Fixed
 
 - Release notes now go to the notes file instead of overwriting `CHANGELOG.md`
