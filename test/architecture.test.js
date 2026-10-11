@@ -112,6 +112,12 @@ const LAYERS = {
   // measured the agent instead. This leaf now takes a user message and nothing
   // else, which is why it can be the bottom of the habit stack.
   'habit-signals': 0,
+  // The habit decay clock and its private counters. It imports two `node:`
+  // builtins for the state file and nothing from the repository, which keeps it
+  // beside `failure-memory` rather than above `receipts`: it writes its own
+  // atomic rename instead of importing that module's, because importing it would
+  // put this leaf above L2 for one helper.
+  'habit-state': 1,
   'failure-memory': 1,
   assets: 1,
   frontmatter: 1,
@@ -476,6 +482,12 @@ const BUDGETS = {
   // over-generation. Measured 166 formatted lines; 200 is measured-plus-30
   // rounded up to the next 50.
   'lib/habit-signals.js': 200,
+  // The decay clock, the status transitions and the private state file. Most of
+  // the file is the reasoning a reader needs to audit: the limbic 10x bug the
+  // idempotent anchor exists to prevent, and why the stated-habit exemption is
+  // semantic rather than limbic's measured-bad pinned class. Measured 286
+  // formatted lines; 300 is measured-plus-30 rounded up to the next 50.
+  'lib/habit-state.js': 300,
   'lib/git.js': 300,
   // Raised from 1050 for one per-turn prompt map beside the existing brief
   // state machine. The retrieval policy lives in prompt-recall.js; these lines

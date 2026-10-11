@@ -16,6 +16,7 @@
     "lib/failure-streak.js",
     "lib/failure-memory.js",
     "lib/habit-signals.js",
+    "lib/habit-state.js",
     "lib/git.js",
     "lib/index.js",
     "lib/naming.js",
