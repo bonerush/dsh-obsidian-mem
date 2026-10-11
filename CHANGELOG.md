@@ -11,6 +11,12 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Fixed
+
+- Release notes now go to the notes file instead of overwriting `CHANGELOG.md`
+  before packing. Both release branches are covered by regression tests that
+  execute their inline extractors and check the source remains unchanged.
+
 ## 0.1.14 — 2026-10-11
 
 ### Changed
