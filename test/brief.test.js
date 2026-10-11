@@ -711,6 +711,72 @@ test('the convention index carries only the entries that are still in effect', a
   assert.ok(built.text.includes('短链约定'))
 })
 
+test('a provisional habit candidate is quarantined: recorded, findable, never injected', async (t) => {
+  // The whole point of the quarantine. A promoted candidate is written with
+  // `status: provisional` and MUST NOT reach the brief, because the calibration's
+  // finding was that an auto-derived preference is exactly the thing that must not
+  // influence an answer before a human confirms it. CAPTURE's quarantine writes the
+  // node and flags it non-retrievable so "it cannot influence a response".
+  const env = await fixture(t)
+  await addNote(env, 'convention', '习惯：提交', '用户总是及时提交。\n', {
+    request: { status: 'provisional', assertion: 'observed' },
+  })
+
+  const quarantined = await brief(env)
+  assert.ok(
+    !quarantined.text.includes('习惯：提交'),
+    'a provisional candidate must not be injected',
+  )
+
+  // The positive control: the SAME note, made active, must appear. Without this the
+  // assertion above would also pass if the note had simply failed to be written or
+  // if the convention index were empty, which is the false green this pair exists
+  // to exclude.
+  await writeVaultNote(
+    env,
+    `${RELATIVE_DIR}/Conventions/习惯：提交.md`,
+    (await readFile(at(env.vault, `${RELATIVE_DIR}/Conventions/习惯：提交.md`), 'utf8')).replace(
+      'status: "provisional"',
+      'status: "active"',
+    ),
+  )
+  const active = await brief(env)
+  assert.ok(active.text.includes('习惯：提交'), 'an active habit is current guidance')
+})
+
+test('quarantine is not history: a provisional candidate stays searchable', async (t) => {
+  // `provisional` and `HISTORY_STATUSES` (`superseded`, `archived`) are deliberately
+  // different sets. History is excluded from a default search; a quarantined
+  // candidate must stay findable, or the human who has to confirm it cannot find it
+  // and the audit trail the quarantine depends on does not exist.
+  const env = await fixture(t)
+  await addNote(env, 'convention', '习惯：用中文回答', '用户要求中文。\n', {
+    request: { status: 'provisional', assertion: 'observed' },
+  })
+  const built = await brief(env)
+  assert.ok(
+    !built.text.includes('习惯：用中文回答'),
+    'not injected, so the exclusion below is about search rather than the brief',
+  )
+  const index = await openIndex({
+    vaultRoot: env.vault,
+    dataRoot: env.dataRoot,
+    backend: 'sqlite',
+    projectId: PROJECT_ID,
+  })
+  try {
+    const status = await index.waitReady(undefined, 10_000)
+    assert.equal(status.ready, true, `index not ready: ${JSON.stringify(status)}`)
+    const hits = await index.search({ query: '中文', limit: 20 })
+    assert.ok(
+      hits.some((hit) => hit.path.includes('习惯：用中文回答')),
+      'a quarantined candidate is still findable by search',
+    )
+  } finally {
+    await index.close()
+  }
+})
+
 test('the five most recent decisions and gotchas win, in updated order', async (t) => {
   const env = await fixture(t)
   for (let index = 1; index <= 7; index += 1) {
