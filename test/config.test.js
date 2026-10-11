@@ -52,6 +52,18 @@ const DEFAULTS = {
     maxRetries: 3,
     dryRun: false,
   },
+  // The user-habit learning pass. `true` means a completed turn whose user messages
+  // state a standing preference may contribute a session-level count, and three
+  // sessions of evidence may promote a candidate. `false` produces no candidate and
+  // writes no state; nothing already recorded is removed.
+  habitLearning: {
+    enabled: true,
+    promoteAfter: 3,
+    markers: [],
+    halfLifeDays: 30,
+    demoteBelow: 0.5,
+    archiveBelow: 0.15,
+  },
   indexBackend: 'auto',
   ignoreGlobs: [],
 }
@@ -164,6 +176,66 @@ for (const [key, min, max] of DISTILL_BOUNDS) {
     assertRejected(pattern, { distill: { [key]: min + 0.5 } })
   })
 }
+
+const HABIT_INTEGER_BOUNDS = [
+  ['promoteAfter', 1, 100],
+  ['halfLifeDays', 0, 3650],
+]
+
+for (const [key, min, max] of HABIT_INTEGER_BOUNDS) {
+  const pattern = new RegExp(`habitLearning\\.${key}`)
+  test(`habitLearning.${key} accepts the inclusive bounds ${min}..${max}`, () => {
+    assert.equal(validateConfig({ habitLearning: { [key]: min } }).habitLearning[key], min)
+    assert.equal(validateConfig({ habitLearning: { [key]: max } }).habitLearning[key], max)
+  })
+
+  test(`habitLearning.${key} rejects out-of-range and non-integer values`, () => {
+    assertRejected(pattern, { habitLearning: { [key]: min - 1 } })
+    assertRejected(pattern, { habitLearning: { [key]: max + 1 } })
+    assertRejected(pattern, { habitLearning: { [key]: min + 0.5 } })
+  })
+}
+
+test('halfLifeDays accepts 0 as the documented kill switch', () => {
+  // limbic keeps half-life 0 as a switch that disables decay, and a file that
+  // persists 0 must keep it. The lower bound is 0 rather than 1 for that reason.
+  assert.equal(validateConfig({ habitLearning: { halfLifeDays: 0 } }).habitLearning.halfLifeDays, 0)
+})
+
+test('the two habit thresholds must stay ordered', () => {
+  // A habit that could be archived without ever having been demoted is a state
+  // transition the design does not describe, so the ordering is a config error
+  // rather than something the decay code has to cope with.
+  assert.equal(
+    validateConfig({ habitLearning: { demoteBelow: 0.5, archiveBelow: 0.15 } }).habitLearning
+      .demoteBelow,
+    0.5,
+  )
+  assertRejected(/habitLearning\.thresholds/, {
+    habitLearning: { demoteBelow: 0.1, archiveBelow: 0.2 },
+  })
+  assertRejected(/habitLearning\.thresholds/, {
+    habitLearning: { demoteBelow: 0.2, archiveBelow: 0.2 },
+  })
+  assertRejected(/habitLearning\.thresholds/, { habitLearning: { archiveBelow: 0 } })
+  assertRejected(/habitLearning\.thresholds/, { habitLearning: { demoteBelow: 2 } })
+})
+
+test('an unknown key inside habitLearning is refused, like an unknown top-level key', () => {
+  // The nested check exists because schemastery's `z.object` is not strict: an
+  // unknown nested key would keep its default in silence, which is exactly the
+  // typo-becomes-a-different-setting failure the top-level check prevents.
+  assertRejected(/habitLearning\.typo/, { habitLearning: { typo: 1 } })
+  assertRejected(/habitLearning\.promoteafter/, { habitLearning: { promoteafter: 3 } })
+})
+
+test('markers accepts strings and refuses a non-string entry', () => {
+  assert.deepEqual(
+    validateConfig({ habitLearning: { markers: ['照我说的做'] } }).habitLearning.markers,
+    ['照我说的做'],
+  )
+  assertRejected(/markers/, { habitLearning: { markers: [42] } })
+})
 
 test('hotArchiveRatio must be strictly inside (0,1)', () => {
   assert.equal(validateConfig({ hotArchiveRatio: 0.01 }).hotArchiveRatio, 0.01)
