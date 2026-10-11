@@ -94,7 +94,18 @@ Never put a long convention into `hot.md` just because it grew: a convention tha
 | **declared** habits — the frameworks, skills, tools and methods the user says they use | `_meta/user.md`, global, injected into DSH's brief as 用户习惯 | **the user only**; read-only for you |
 | **observed** habits — how the user actually worked | `Conventions/习惯：….md` here, or `Methods/` across projects | you, through a write or the file-tool fallback |
 
-Follow the declared habits — they are standing rules, not suggestions. A habit the user *states* is recorded automatically by DSH's distillation pipeline (a convention titled `习惯：…`, `assertion: stated`, tagged `user-habit`, refused as `habit-not-stated` without the user's own seq) — Codex has no turn boundary, so here it is yours to write. Record an observed habit only when it is durable and about the user rather than a file (a framework chosen twice for the same kind of task, a workflow always asked for, a way they always want a problem attacked), one habit per convention file, `assertion: observed`, and let the user confirm it: one data point is not a habit. Promote a habit that outlives the repository to `Methods/`. **Never write `_meta/user.md`**: a habit the user has not written down is a project convention, not a preference — offer to add it, do not add it. **The habit signal is never tool activity.** The first version of that feature counted tool calls, and replaying 137 real session logs falsified it: 99.0% of what it counted had not been requested by the user (291 of 294), so it measured the agent's defaults. Never propose a habit from which tools ran. **And the DSH-side counter cannot tell a preference from a mention** — three unrelated uses of one word look identical to one preference stated three times, and a noise measurement promoted 4 of 6 labels from a corpus of one-off mentions — so on Codex, where no counter runs, read a candidate before promoting it and confirm only what you can see the user standing by.
+Follow declared habits as standing rules. DSH generates habit candidates inside its
+ordinary memory distillation and curation, combining user statements with bounded
+existing memory. Codex has no completed-turn boundary or background distiller; here,
+apply the same method through explicit memory writes. An explicit standing preference
+uses `assertion: stated`. A possible personal preference uses `assertion: observed`,
+`status: provisional`, and an exact short quote of the user's words. Project requests,
+one-off tasks and the agent's tool activity are not habits. Existing inferred habits
+cannot serve as new user evidence. Review candidates before confirmation; confirmed
+changes follow normal supersession and review. There is no separate vocabulary,
+session counter or automatic time-based archive. Promote a confirmed habit that
+outlives its project to `Methods/`. **Never edit `_meta/user.md`**, which remains the
+user's file.
 
 ## 5. Note frontmatter (closed vocabulary)
 

@@ -684,56 +684,6 @@ test('one flush barrier serializes its captures so several completed turns coale
   assert.equal(jobs[0].toSeq, 11)
 })
 
-test('the habit observation seam rides the turn end with the resolved binding', async (t) => {
-  // The wire that makes the habit pass reachable at all. It is asserted here rather
-  // than only through the pass's own tests, because a seam nobody calls is a feature
-  // that silently does nothing — the failure mode this whole design exists to avoid
-  // (a decay formula that lives only in a prompt is not a mechanism).
-  const queueRoot = await queueIn(t)
-  const events = simpleTurn()
-  const seen = []
-  const capture = createCapture({
-    queueRoot,
-    config: CONFIG,
-    resolveBinding: async () => BINDING,
-    onTurnObserved: (input) => seen.push(input),
-    now: () => 1_000_000,
-  })
-  await capture.recover()
-  await capture.flush(sessionOf(events))
-
-  assert.equal(seen.length, 1, 'a completed turn observed the user exactly once')
-  const [observation] = seen
-  assert.equal(observation.sessionId, SESSION_ID)
-  assert.equal(observation.binding, BINDING, 'the binding this capture already resolved')
-  // The raw committed events, not the whitelisted projection: the habit pass reads
-  // the user's message TEXT, which the capture projection deliberately does not carry.
-  assert.ok(
-    observation.events.some((e) => e.type === 'user/message'),
-    'the events handed over include the user messages',
-  )
-})
-
-test('a throwing habit seam never breaks the capture it rides', async (t) => {
-  // The observation is a side channel. If it throws, the job it rode on must still
-  // be enqueued: losing a capture because a counter failed would trade the memory
-  // layer's real work for an experiment.
-  const queueRoot = await queueIn(t)
-  const events = simpleTurn()
-  const capture = createCapture({
-    queueRoot,
-    config: CONFIG,
-    resolveBinding: async () => BINDING,
-    onTurnObserved: () => {
-      throw new Error('the habit pass exploded')
-    },
-    now: () => 1_000_000,
-  })
-  await capture.recover()
-  await capture.flush(sessionOf(events))
-  const jobs = await loadPending(queueRoot)
-  assert.equal(jobs.length, 1, 'the capture survived a throwing observation')
-})
 test('two concurrent enqueueTurn calls merge instead of racing past each other', async (t) => {
   const queueRoot = await queueIn(t)
   const events = [
@@ -1344,4 +1294,29 @@ test('no raw transcript is written anywhere but the 0600 pending job', async (t)
   // And the safeInput is what the model would be handed: whitelist only.
   assert.ok(job.safeInput.includes('FINAL_TRANSCRIPT_MARKER'))
   assert.ok(!job.safeInput.includes('DRAFT_TRANSCRIPT_MARKER'))
+})
+
+test('an imported instruction block labelled as user is excluded from the committed projection', async (t) => {
+  const queueRoot = await queueIn(t)
+  const events = [
+    turnStart(0, 1),
+    userMessage(1, '# AGENTS.md instructions\n<INSTRUCTIONS>\n以后每次都提交。'),
+    userMessage(2, '请解释当前改动。'),
+    assistantMessage(3, [text('已解释。')], 1),
+    turnEnd(4, COMPLETED, 1),
+  ]
+  const captured = await enqueueTurn({
+    session: sessionOf(events),
+    event: events.at(-1),
+    binding: BINDING,
+    queueRoot,
+    config: CONFIG,
+    now: () => 1000000,
+  })
+  assert.ok(captured)
+  assert.ok(!captured.safeInput.includes('AGENTS.md'))
+  assert.deepEqual(
+    captured.allowedEvents.filter((event) => event.kind === 'user').map((event) => event.seq),
+    [2],
+  )
 })

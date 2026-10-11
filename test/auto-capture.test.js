@@ -350,7 +350,7 @@ test('a user-stated habit reaches Conventions/ through the real queue, tagged', 
   assert.equal(receipt.result, 'applied')
 })
 
-test('a habit the model inferred is refused through the real queue and writes nothing', async (t) => {
+test('a habit without a verifiable user quote is refused through the real queue', async (t) => {
   const f = await fixture(t)
   await writeJobAtomic(f.queueRoot, jobFixture())
   const raw = JSON.stringify({
@@ -366,9 +366,9 @@ test('a habit the model inferred is refused through the real queue and writes no
     ],
   })
   await processQueue(queueOptions(f, { llm: stubLlm(raw) }))
-  assert.deepEqual(await memoryNotes(f), [], 'an inferred habit never becomes a preference')
+  assert.deepEqual(await memoryNotes(f), [], 'an ungrounded habit never becomes a preference')
   const [receipt] = await readReceipts(f)
-  assert.equal(receipt.refused[0].reason, 'habit-not-stated')
+  assert.equal(receipt.refused[0].reason, 'habit-quote-unproven')
 })
 
 test('soft-only error text creates no automatic failure note through the real queue', async (t) => {

@@ -390,39 +390,39 @@ rule (`前端一律 React`, `改动前先跑测试`); the recent list is navigat
 project already wrote down. The earlier order dropped the user's habits first,
 which is the one thing a memory layer should not throw away.
 
-Habits the *plugin* learns are not preferences and never go in that file. A
-durable habit about how you work is written as `Conventions/习惯：….md` in the
+Automatically generated habits are candidates and never go in that file. A
+durable preference about how you work is written as `Conventions/习惯：….md` in the
 project, one habit per file, and promoted to `Methods/` when it outlives the
 repository.
 
-Two paths lead there, and the difference is evidence. A habit you **state** in a
-session is recorded automatically: the distillation prompt asks for a convention
-titled `习惯：…` with `assertion: stated` and your own seq, and the plugin tags it
-`user-habit` so `mem_search` finds it without reading titles. The validator refuses
-the prefix without that evidence, which is the rule rather than a hope — a habit you
-never expressed is never written down as one; if the fact is real but you did not say
-it, it belongs in an ordinary convention without the prefix. A habit the session merely **demonstrates** is counted, not claimed. The plugin matches
-a closed vocabulary of standing phrases against *your own messages* and counts each
-one once per session; at three distinct sessions it writes a candidate titled `习惯：…`
-with `assertion: observed` and `status: provisional`. A provisional note is quarantined:
-`mem_search` finds it and the brief never injects it, so a candidate cannot influence an
-answer before you confirm it. Confirm by editing the status to `active`, drop it by
-editing it to `archived` — nothing is ever deleted. A habit that stops recurring leaves
-the brief after about a month and is archived once it passes the floor. A habit you
-*stated* is never demoted by time: your silence is not counter-evidence.
+Habits are generated inside memory distillation and curation. With
+`distill.learnHabits: true` (the default), the existing no-tool model call combines
+the current dialogue with a bounded selection of existing project habits. It can
+recognize personal working preferences without a fixed vocabulary or repetition
+counter. Explicit standing preferences use `assertion: stated` and cite your own
+message. Possible preferences use `assertion: observed`, `status: provisional`, and
+one exact short quote from your message. Project requirements, one-off requests and
+the agent's tool choices are not personal preferences.
 
-The signal is your words and nothing else. The first version of this feature counted
-tool calls, and replaying 137 real session logs falsified it: **99.0% of the tool choices
-it counted had not been requested by the user** (291 of 294), so it was measuring the
-agent's defaults rather than your habits, and it produced 149 "habits" from 107 turns —
-topped by `bash→run_code`, a description of this plugin's own toolchain. The record is in
-`docs/habit-learning-results.md`.
+Curation can also re-distill up to twelve active, stated project conventions through
+the same durable queue. It checks source hashes before applying output and excludes
+habit notes as new evidence, preventing a candidate from teaching itself. Existing
+habits are matching context, never fresh confirmation. Matching never replaces a
+confirmed rule; changed evidence follows the existing duplicate-review path.
 
-What the mechanism cannot do is tell a preference from a mention: three unrelated uses of
-the word `提交` in three sessions look exactly like one preference stated three times, and
-a measurement under noise promoted 4 of the 6 labels from a corpus of one-off mentions.
-That is why the bar is deliberately low and why the **quarantine is what carries the
-precision** — a wrong candidate costs a line in your review queue, never a rule in a brief.
+Candidates are searchable and excluded from the brief until you confirm them. Set
+`status: active` to confirm or `status: archived` to dismiss; source notes are never
+deleted. Review and retirement use the existing curation lifecycle. There is no
+separate vocabulary, session counter, half-life or automatic time-based archive.
+`_meta/user.md` stays yours. Turning `distill.learnHabits` off stops generating
+observed candidates; explicit user declarations still follow normal distillation.
+
+The model may misclassify a project request or miss a preference; source quoting and
+quarantine bound the effect, not its accuracy. Historical counter measurements remain
+in `docs/habit-learning-results.md`; current validation is recorded in
+`docs/habit-semantic-validation.md`. DSH supplies the automatic worker. Codex has no
+completed-turn boundary or background distiller, so its skill applies this same
+methodology through explicit memory tools rather than claiming automatic parity.
 
 ### Automatic distillation
 

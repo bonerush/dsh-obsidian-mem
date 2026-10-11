@@ -160,31 +160,21 @@ Rules:
 - **Follow the declared habits.** They arrive grouped under the user's own
   headings (技术与框架偏好 / 常用技能与工具 / 惯用方法 / 产出与沟通偏好 / 禁忌). They
   are standing rules, not suggestions, and they outrank your own defaults.
-- **A habit the user *states* is recorded automatically.** The distillation pipeline
-  asks for it: a convention titled `习惯：…` with `assertion: stated`, citing the user's
-  own seq, and the plugin tags it `user-habit`. The validator refuses the prefix
-  without that evidence (`habit-not-stated`), so a habit the user never expressed is
-  never written as a preference — if the fact is real but the user did not say it,
-  write it as an ordinary convention without the prefix.
-- **An observed habit is counted by the plugin, and it is a CANDIDATE, not a rule.**
-  With `habitLearning.enabled` (default on) the plugin matches a closed vocabulary of
-  standing phrases against the user's OWN messages, counts each once per session, and
-  at `promoteAfter` (default 3) distinct sessions writes `Conventions/习惯：….md` with
-  `assertion: observed` and `status: provisional`. A provisional note is quarantined:
-  searchable, never injected. The user confirms it by editing the status to `active`,
-  or drops it to `archived`; nothing is deleted. A candidate whose clock passes the
-  half-life leaves the brief and is archived past the floor.
-- **The signal is the user's words, never tool activity.** The first version of this
-  feature counted tool calls, and replaying 137 real session logs falsified it: 99.0%
-  of what it counted had not been requested by the user (291 of 294), so it measured
-  the agent's defaults. Never propose a habit from what tools were run.
-- **The mechanism cannot tell a preference from a mention — you can.** Three unrelated
-  uses of one word look identical to one preference stated three times, and a noise
-  measurement promoted 4 of 6 labels from a corpus of one-off mentions. So do not treat
-  a candidate as evidence the user holds that preference; read the note, and confirm
-  only what you can see the user actually standing by. Record such a habit yourself with
-  `mem_write(type="convention", title="习惯：<what the user does>")`, `assertion: observed`,
-  and `status: active` once the user has confirmed it — one habit per file.
+- **Distill habits alongside ordinary memory.** DSH's existing model call combines
+  the current dialogue with bounded existing habit context. Explicit standing rules
+  cite a user seq and use `assertion: stated`. A possible personal preference uses
+  `assertion: observed`, `status: provisional`, and an exact short user quote.
+  Project requirements, one-off requests and agent tool activity are not habits.
+- **Curation can propose habits from stated memory.** It reuses the same durable
+  queue, revalidates source hashes, and excludes habit notes as new evidence.
+  Existing habits are matching context, never fresh confirmation. There is no
+  separate vocabulary, session counter or time-based decay pipeline.
+- **Read candidates before confirming.** Provisional notes are searchable and
+  excluded from the brief. Confirm only a preference supported by the user's own
+  words, using `status: active`, or dismiss with `status: archived`; never delete
+  evidence. Changes to confirmed rules follow the existing review and supersession
+  process. `_meta/user.md` is user-owned and never edited automatically.
+
 - **Cross-project habits go to `Methods/`.** A language preference, a review
   style or a debugging method outlives the repository; promote it with
   `mem_admin(action="promote")` instead of leaving it in one project.

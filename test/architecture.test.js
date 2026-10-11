@@ -102,36 +102,10 @@ const LAYERS = {
   // because a hint has to be answerable without reading a vault or a filesystem —
   // so `hooks` (L8) points down at it for the one decision it does not own.
   'init-hint': 0,
-  // The user-habit vocabulary: which of a user's own statements count as a
-  // standing preference. A leaf with no repository import and no `node:` import,
-  // like `failure-streak` and `note-style` beside it.
-  //
-  // It sits here rather than beside the habit modules because of what the
-  // calibration forced: the FIRST version read tool calls, and 99.0% of tool
-  // choices turned out never to be requested by the user (291 of 294), so it
-  // measured the agent instead. This leaf now takes a user message and nothing
-  // else, which is why it can be the bottom of the habit stack.
-  'habit-signals': 0,
-  // The habit decay clock and its private counters. It imports two `node:`
-  // builtins for the state file and nothing from the repository, which keeps it
-  // beside `failure-memory` rather than above `receipts`: it writes its own
-  // atomic rename instead of importing that module's, because importing it would
-  // put this leaf above L2 for one helper.
-  'habit-state': 1,
-  // The counting policy: when an observation becomes a candidate. A pure fold over
-  // the counters that writes nothing, so it sits beside `failure-memory` (the same
-  // shape: a policy `distill`/`capture` composes with the real writer) rather than
-  // above `memory` (L5), which it deliberately does not import.
-  //
-  // It reads `habit-signals` (L0) downward, which is the only edge it needs.
-  'habit-learning': 2,
-  // The composition: counting on a completed turn and the decay sweep. It imports
-  // `habit-learning` (L2), `habit-state` (L1), `routing` (L1), `receipts` (L2) and
-  // `memory` (L5) — above `memory` is what composing a writer costs, and L6 is the
-  // first layer strictly above it. Its L6 neighbours (`capture`, `hot`,
-  // `curation-scan`, `curation-review`) are unrelated to it: no edge exists in
-  // either direction, which is what the layer rule actually requires.
-  'habit-pass': 6,
+  'user-source': 0,
+  'habit-semantic': 1,
+  'habit-store': 4,
+  'habit-curation': 4,
   'failure-memory': 1,
   assets: 1,
   frontmatter: 1,
@@ -318,17 +292,7 @@ const BUDGETS = {
   // `dropped` count and its one content-free `curation` diagnostic per job — beside a
   // comment that no longer claims a full pass re-reads the paths it already covered.
   'lib/capture.js': 2250,
-  // Raised from 300 by the user-habit learning block (328 formatted lines measured;
-  // measured-plus-30 is 358, so this stays inside the rule rather than following it).
-  // What the 28 lines buy: the `habitLearning` schema and the comments that record
-  // what each default is and is not — `promoteAfter` counts distinct SESSIONS and was
-  // calibrated to 3, while `halfLifeDays` is borrowed from limbic and explicitly NOT
-  // calibrated, which a reader has to be told rather than left to assume. The raise
-  // also covers two checks the block brought with it: the nested unknown-key refusal,
-  // because schemastery's `z.object` is not strict and an unknown nested key would
-  // keep its default in silence, and the demote/archive ordering, because a habit that
-  // could be archived without ever having been demoted is a transition the design does
-  // not describe.
+  // Nested unknown-key validation and integrated distillation options.
   'lib/config.js': 400,
   // The curation plan's three Task 2 modules, on the same rule as every other
   // entry (measured plus 30, rounded up). What the size buys: the scanner carries
@@ -499,35 +463,11 @@ const BUDGETS = {
   'lib/failure-streak.js': 550,
   // Recording is an independent pure policy below distill; no vault I/O or writer.
   'lib/failure-memory.js': 175,
-  // The habit vocabulary and its scanner. Most of the file is the measurement
-  // that falsified the first version: 291 of 294 tool choices were the agent's,
-  // not the user's, and the markers are annotated with the session counts that
-  // earned each a place (or, for 「先给结论」, got it removed). A reader who cannot
-  // see that will reintroduce tool-derived signals and the same 149-candidate
-  // over-generation. Measured 166 formatted lines; 200 is measured-plus-30
-  // rounded up to the next 50.
-  'lib/habit-signals.js': 200,
-  // The decay clock, the status transitions and the private state file. Most of
-  // the file is the reasoning a reader needs to audit: the limbic 10x bug the
-  // idempotent anchor exists to prevent, and why the stated-habit exemption is
-  // semantic rather than limbic's measured-bad pinned class. Measured 286
-  // formatted lines; 300 is measured-plus-30 rounded up to the next 50.
-  'lib/habit-state.js': 300,
-  // The counting policy and the attribution boundary. The bulk is the comment
-  // recording why the unit is the session (a median of two usable turns makes a
-  // turn meaningless), why the bar is 3 (6 candidates at 3, 2 at 9, and precision
-  // is bought by quarantine instead), and what `labelsFromTurnEvents` refuses.
-  // Measured 250 formatted lines; 300 is measured-plus-30 rounded up.
-  'lib/habit-learning.js': 300,
-  // The composition and its two entry points. Most of the file is the reasoning
-  // behind the three properties a case here protects — attribution (a turn with no
-  // user message contributes nothing, the regression for v1's 291-of-294 mistake),
-  // never-stated (a candidate is observed/provisional, never stated/active), and
-  // no-transcript (the note and the state carry a label and a count, never the
-  // user's sentence) — plus why the pending note identity is safe to mint without
-  // persisting it first. Measured 197 formatted lines; 250 is measured-plus-30
-  // rounded up to the next 50.
-  'lib/habit-pass.js': 250,
+  // Source guards, quoted proposals and queue composition replace the separate learner.
+  'lib/user-source.js': 100,
+  'lib/habit-semantic.js': 150,
+  'lib/habit-store.js': 125,
+  'lib/habit-curation.js': 175,
   'lib/git.js': 300,
   // Raised from 1050 for one per-turn prompt map beside the existing brief
   // state machine. The retrieval policy lives in prompt-recall.js; these lines

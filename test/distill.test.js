@@ -1247,7 +1247,7 @@ test('a user-stated habit is recorded as a convention and tagged, so it is finda
   assert.equal(item.inbox, false, 'a stated habit is a real convention, not an inbox candidate')
 })
 
-test('a habit the user did not state is refused as a habit, with the escape in the reason', () => {
+test('ungrounded habit claims are refused with the appropriate evidence reason', () => {
   // Three shapes of "the model inferred a habit": an explicit `inferred`, an `observed`
   // claim (a single turn cannot show a pattern, whatever tool output accompanies it),
   // and `stated` resting only on tool evidence. Each is refused rather than downgraded —
@@ -1274,8 +1274,12 @@ test('a habit the user did not state is refused as a habit, with the escape in t
     const { items, refused } = distillCandidates(raw, JOB)
     assert.equal(items.length, 0, `${label}: nothing is written`)
     assert.equal(refused.length, 1, `${label}: the item is reported`)
-    assert.equal(refused[0].reason, 'habit-not-stated', label)
-    assert.equal(refused[0].field, 'title', label)
+    assert.equal(
+      refused[0].reason,
+      label === 'observed' ? 'habit-quote-unproven' : 'habit-not-stated',
+      label,
+    )
+    assert.equal(refused[0].field, label === 'observed' ? 'body' : 'title', label)
   }
 })
 

@@ -15,10 +15,6 @@
     "lib/curation-proposals.js",
     "lib/failure-streak.js",
     "lib/failure-memory.js",
-    "lib/habit-signals.js",
-    "lib/habit-state.js",
-    "lib/habit-learning.js",
-    "lib/habit-pass.js",
     "lib/git.js",
     "lib/index.js",
     "lib/naming.js",
@@ -35,6 +31,10 @@
     "scripts/verify-pack.mjs",
     "codex/server.mjs",
     "codex/session-start.mjs",
-    "codex/prompt-submit.mjs"
+    "codex/prompt-submit.mjs",
+    "lib/user-source.js",
+    "lib/habit-semantic.js",
+    "lib/habit-store.js",
+    "lib/habit-curation.js"
   ]
 }

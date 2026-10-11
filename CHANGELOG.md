@@ -11,114 +11,35 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
-### Added
+### Changed
 
-- **User habits can now be learned from the user's own words, and a habit whose
-  actions stop recurring leaves the brief on its own.** The plugin counted nothing
-  before this: `习惯：` notes existed only when the user stated one or the agent wrote
-  one by hand, and nothing ever aged them.
+- Habits now arise inside ordinary LLM memory distillation and bounded curation.
+  The unpublished vocabulary, session counter and independent decay pass are removed.
+  `distill.learnHabits` defaults to true; existing project habits supply matching
+  context to the same turn-distillation call. Curation queues up to twelve stated
+  conventions through the existing durable worker. Memory-derived candidates cannot
+  claim fresh user confirmation, and changed source hashes cancel their application.
+- Observed habits keep an exact short source quote and remain provisional, searchable
+  and excluded from the brief. Matching never supersedes a confirmed note. Existing
+  duplicate review, source ownership and curation lifecycle apply; `_meta/user.md`
+  remains user-owned. No separate automatic age-based archive is promised.
 
-  The signal is a USER MESSAGE and nothing else. A closed vocabulary of standing
-  phrases (`提交`, `superpowers`, `规格与计划`, `解释原因`, `中文回答`, `简洁`, `先调研`,
-  `先写测试`) is matched against the messages a completed turn committed, and each
-  label is counted once per SESSION — the measured median is two usable turns per
-  session, so counting turns would let one afternoon read as three occurrences. At
-  three distinct sessions a candidate is written as `Conventions/习惯：….md` with
-  `assertion: observed` and `status: provisional`. The brief quarantines a provisional
-  note, so a candidate cannot influence an answer before a human confirms it, and
-  `mem_search` still finds it. Re-observing a candidate refreshes its clock; a
-  candidate whose clock passes one half-life (30 days) leaves the brief, and one that
-  passes CAPTURE's floor (0.15) is ARCHIVED — never deleted, never moved.
+### Validation and remaining risks
 
-  **The first version of this feature was falsified by measurement before it was
-  built, and the record is kept.** It read tool calls — bash command names, file
-  extensions, adjacent tool sequences — and replayed against 137 real session logs it
-  turned out that **99.0% of the tool choices it counted were never requested by the
-  user** (291 of 294): the agent ran `grep` 78 times with the user naming it 0 times,
-  `git` 63 times with 0 mentions. `rg` and `pnpm` ARE installed on the machine and were
-  used 2 and 4 times against grep's 2012 and npm's 303, so those are real choices — the
-  AGENT's real choices, identical for every user. The same replay produced 149
-  candidates from 107 turns, topped by `bash→run_code` (72) and `run_code→bash` (70):
-  a description of this plugin's own toolchain. That counts as success while being
-  worthless, which is the failure mode the prior-art survey warned about. The full
-  numbers, including the version of this claim that was WRONG and corrected, are in
-  [`docs/habit-learning-results.md`](docs/habit-learning-results.md).
+- The earlier counter measurements are historical evidence, preserved in
+  `docs/habit-learning-results.md`, not acceptance of the new implementation.
+- A 24-case semantic calibration after prompt adjustment produced 7/8 and 5/8
+  positive detections in two runs, with 0/16 negative detections in each. This small,
+  partly truncated sample is prompt calibration, not a production accuracy estimate.
+- Full integration and native-host measurements are recorded in
+  `docs/habit-semantic-validation.md`. Model classifications can vary and inferred
+  preferences still need confirmation; no automatic preference confirmation exists.
+- Curation requires DSH's existing worker and an explicit or captured model route;
+  jobs without a route wait. Codex supplies memory tools, not automatic distillation.
+  Context is project-scoped and bounded; long histories and cross-project induction
+  are unverified. Source hashes are rechecked under the existing transaction lock.
+  No production longevity or retirement threshold is claimed.
 
-  The automatic path **never** writes `assertion: stated`. `stated` remains reserved
-  for the pipeline that holds the user's own words, and a stated habit is never demoted
-  by time: its evidence is that the user said so, and their silence is not
-  counter-evidence.
-
-  Off by default? No — `habitLearning.enabled` defaults to `true`, because a candidate
-  is quarantined rather than injected. Set it to `false` to produce no candidate and
-  write no state; nothing already recorded is removed.
-
-### Known limitations of the habit pass
-
-- **`habitLearning.halfLifeDays` is BORROWED, NOT MEASURED.** 30 days is limbic's
-  default, which cites Microsoft's *Human-Inspired Memory Architecture* for "decay
-  half-life ~29 days optimal for production". It has not been calibrated against this
-  vault and cannot be yet: there are **zero `observed` habit notes** to calibrate
-  against, and the whole session corpus spans **67.9 days = 2.26 half-lives**, which is
-  not a range to fit a curve to. `archive_below` (0.15) needs 82 days and is therefore
-  unreachable inside the measured corpus.
-- **The decay's own acceptance is deferred.** The arithmetic and the transitions are
-  covered by unit tests with synthetic clocks, and the archive path is covered
-  end-to-end against a real vault. What is NOT verified is how the sweep behaves on
-  real notes at real ages, because no such note exists yet. The trigger to revisit is
-  recorded in the plan (Task 8).
-- **The induction bar is far less precise under noise than the calibration suggested,
-  and the number is 67%.** The noise-stress acceptance was run, and it changed the
-  conclusion: against 18 one-off mentions of the vocabulary words — each in its own
-  session, and each a task or an aside rather than a standing preference (把这段提交了吧,
-  commit 之前先跑测试) — **4 of the 6 labels were promoted.** The mechanism is exposed
-  by its own definition: what the counter measures is *word recurrence*, and a preference
-  is a SUBSET of word recurrence, so three unrelated mentions of one word are
-  indistinguishable from one preference stated three times. The Task 0 calibration could
-  not see this, because it counted a word's occurrences per session and never separated a
-  preference from a mention — the "18 sessions" it measured for 提交 included both
-  以后改动完就提交 and 把这段提交了吧. **No threshold fixes it**: a common word recurs in
-  any long history eventually, and raising the bar to 9 admits none of the incidental
-  corpus but also loses the real 解释原因 (5 sessions), 中文回答 (3) and 简洁 (3). What
-  carries precision instead is the quarantine: every promoted candidate is
-  `status: provisional` and `assertion: observed`, so a wrong one costs a line in a review
-  queue and never a rule in a brief — and its content is still *true* (the plugin really
-  did see that word in three sessions); it is only the reading of it as a preference that
-  may be wrong. `promoteAfter` therefore stays at 3, recall-first, with the measured rate
-  pinned as a 75% ceiling in `test/habit-noise.test.js`. **A real false-positive rate has
-  not been measured** — that needs human labels on real messages, so the 67% is the
-  mechanism's order of magnitude rather than a production false-positive rate.
-- **The vocabulary is known to be incomplete.** Four of the twelve markers measured
-  hit zero times, so a user who phrases a preference differently is not learned. That
-  is a recall ceiling no amount of tuning removes; `habitLearning.markers` extends the
-  list, and a message matching nothing contributes nothing rather than a guess.
-- **Skill usage is not a signal, and neither is toolchain usage.** The calibration
-  measured the `skill` tool being called **12 times in 8,847 tool calls** (0.14%) while
-  the catalog was injected 319 entries at a time, and the tool-choice signal is 99%
-  the agent's. A design that promised to learn "which skills the user uses" would have
-  been learning noise.
-- **The corpus is small and lopsided**: 40 root sessions, 178 real user messages, 6
-  projects, and 77% of the usable turns from one repository. `promoteAfter = 3` should
-  be re-calibrated as data accumulates.
-- **The noise-stress acceptance has not been run.** TraceRetain (arXiv 2606.29178)
-  shows memory pollution is invisible on clean inputs and only appears under a
-  controlled noisy-write stress, so a passing suite is not evidence that the induction
-  bar is right.
-
-### Fixed
-
-- **The habit counter's "one session counts once" rule survived in memory and died on
-  disk.** The private state file keeps a fixed field allowlist and `lastSession` was
-  not on it, so every pass read a record that no longer remembered which session
-  charged it, counted again, and a single conversation with several turns reached the
-  three-session promotion bar on its own — the exact "one afternoon means three
-  occurrences" failure the session-level unit exists to prevent. Caught by a test that
-  promotes across three sessions and saw the promotion land on the third *call*
-  instead of the third *session*.
-- **A promoted candidate carried only the habit tag.** Without its type tag and its
-  project tag the note was unreachable from a type search and from a project search —
-  a note nobody can find is a note nobody can confirm. Caught by the assertion that the
-  promoted note carries both.
 ## 0.1.13 — 2026-10-10
 
 ### Fixed
