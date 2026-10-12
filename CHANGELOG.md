@@ -30,6 +30,16 @@ release artifact. The versioning policy is in the README, under Development.
   and a pointer carries the same `hot-` marker an entry does, so a 进行中 entry
   drained by the recovery action below would otherwise have reached every session
   prompt as "- [ ] 已归档 → [[…]]".
+- **A queued habit-curation job could wait for a clock that never advanced.**
+  `enqueueHabitCuration` stamped its queue record with the real clock, while
+  `runQueuePass` compares that stamp against the clock *the pass was handed*, so a
+  caller that injects one — the `now` seam `capture.js` already documents as "clock,
+  for tests" — wrote jobs that looked as if they were created after the pass's now
+  and were deferred as `debounce` on every pass. Measured with the real clock at
+  2026-10-12T10:35Z and a pass clock of 2026-10-12T00:00Z: `deferred`, `dueAt`
+  10:35Z, `completed: 0`. The producer now reads the same seam as its sibling,
+  which is what the three `habit-semantic` cases that were red on `main` needed —
+  they fail identically at `5dfb13a` and pass after this change.
 
 ### Added
 
