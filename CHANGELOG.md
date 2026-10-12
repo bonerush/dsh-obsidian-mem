@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.2.0 — 2026-10-12
+
 ### Fixed
 
 - **The hot layer could strand itself at its cap with no way back.** Archival of
