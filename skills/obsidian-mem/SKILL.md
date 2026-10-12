@@ -125,6 +125,19 @@ controlled zones — 强约束 / 进行中 / 已完成 — and holds only what i
 Everything else belongs in the warm layer (the rest of the vault, read on
 demand) or the cold layer (daily logs, searched but never injected).
 
+It has a hard capacity (`hotCapacityChars`, 9000 by default) and archives before
+a write that would cross `hotArchiveRatio` of it. What leaves 已完成 is replaced
+in place by a pointer line (`- [hot-…] 已归档 → [[…/Docs/hot-archive|热记忆归档]]`)
+and the full text lands in `Docs/hot-archive.md`. A pointer is not an entry: it is
+never archived again and never injected. When the file is over its cap and
+automatic archival cannot free what a write needs, the write refuses with
+`hot-over-capacity` and the refusal names every zone — do **not** edit the file by
+hand (the transaction verifies the bytes it read and will fail with
+`hash-mismatch`). Call `mem_admin(action="hot", operation="status")` for the same
+numbers, then `mem_admin(action="hot", operation="compact")`, which folds the
+pointer lines into one summary and archives the oldest movable entries from 已完成
+and 进行中 in one transaction.
+
 ## 3. Type routing — where a note goes
 
 Pick `type` first; it decides the destination. This is the whole routing table:
@@ -344,9 +357,9 @@ original result instead of a duplicate note.
 | `mem_search` | `query` (required), `scope` (`project`\|`global`\|`all`, default `project`), `type`, `projectId`, `includeHistory` (default false), `limit` (default 8) | Searches the vault. `scope=project` only ever searches the bound project — passing another `projectId` is refused, never silently crossed. `global` covers `Methods/` and `_meta/user.md`. `all` crosses projects. Superseded/archived notes are excluded unless `includeHistory` is set. |
 | `mem_read` | `path` (required, vault-relative), `section` (optional ATX heading) | Reads a retrievable `.md` note and returns body, frontmatter and content hash. Absolute paths, `..`, symlinks and internal paths (`_meta/.history/`, generated reports) are refused. |
 | `mem_write` | `type`, `title`, `body` (all required), `tags`, `status`, `confidence`, `assertion`, `supersedes`, `id`, `idempotencyKey` | Creates a note at the routed destination and updates the MOC, receipts and index transactionally. **Without `id` it always creates a new note; to update, you must pass the existing `id`.** `supersedes` is validated against the old note's id. |
-| `mem_log` | `text` (required), `session`, `section`, `idempotencyKey` | Appends one entry to today's log, idempotently per session. `section: hot` (or 强约束/进行中/已完成) updates that controlled hot zone instead; if it would exceed the hot capacity it archives first or refuses. |
+| `mem_log` | `text` (required), `session`, `section`, `idempotencyKey` | Appends one entry to today's log, idempotently per session. `section: hot` (or 强约束/进行中/已完成) updates that controlled hot zone instead; if it would exceed the hot capacity it archives first, and refuses with `hot-over-capacity` when nothing archivable is left — recover with `mem_admin(action="hot", operation="compact")`. |
 | `mem_brief` | — | Returns the current hot brief — the same text injected at session start — so you can re-read or check the budget. |
-| `mem_admin` | `action` (required: `lint`\|`index`\|`bind`\|`projects`\|`promote`\|`jobs`\|`curation`\|`diagnostics`), `path`, `rebuild`, `mode`, `jobId`, `retry`, `report`, `prune`, `operation` (curation: `status`\|`scan`) | Low-frequency maintenance. All eight actions are implemented. `lint` is read-only unless a report is explicitly requested (`report: true`); `index` rebuilds the search index; `bind mode=show` reports the binding without writing; `projects` lists registered projects; `promote` copies a note into `Methods/` keeping its source link; `jobs` inspects and explicitly retries failed background jobs; `curation` reads or runs one bounded curation pass (see below) and never applies a proposal; `diagnostics` returns this process's own content-free decision ring. |
+| `mem_admin` | `action` (required: `lint`\|`index`\|`bind`\|`projects`\|`promote`\|`jobs`\|`curation`\|`hot`\|`diagnostics`), `path`, `rebuild`, `mode`, `jobId`, `retry`, `report`, `prune`, `operation` (curation: `status`\|`scan`; hot: `status`\|`compact`) | Low-frequency maintenance. All nine actions are implemented. `lint` is read-only unless a report is explicitly requested (`report: true`); `index` rebuilds the search index; `bind mode=show` reports the binding without writing; `projects` lists registered projects; `promote` copies a note into `Methods/` keeping its source link; `jobs` inspects and explicitly retries failed background jobs; `curation` reads or runs one bounded curation pass (see below) and never applies a proposal; `hot` reports the injected layer (`status`) or repairs an over-capacity one by folding its pointer lines and archiving the oldest movable entries (`compact`); `diagnostics` returns this process's own content-free decision ring. |
 
 Working rules:
 

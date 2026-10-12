@@ -17,7 +17,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { HOT_ARCHIVE_RATIO, HOT_CAPACITY_CHARS, updateHot } from '../lib/hot.js'
+import {
+  compactHot,
+  hotStatus,
+  HOT_ARCHIVE_RATIO,
+  HOT_CAPACITY_CHARS,
+  updateHot,
+} from '../lib/hot.js'
 import {
   readCurationProposal,
   saveCurationProposal,
@@ -862,6 +868,168 @@ test('updateHot replays a repeated idempotencyKey without a second entry', async
   const again = await updateHot(binding, { section: '强约束', text: '不得自动 commit' }, deps)
   assert.notEqual(again.txId, first.txId)
   assert.equal(countOf(await read(vault, HOT), '不得自动 commit'), 1)
+})
+
+/** The pointer line an archived entry leaves behind, built here so the test owns
+ * the bytes it asserts on rather than asking the module under test for them. */
+function pointerFor(archivePath, id) {
+  return `- [${id}] 已归档 → [[${noExt(archivePath)}|热记忆归档]]`
+}
+
+test('an archival never files a pointer line into the archive note', async (t) => {
+  // The reported bug, at its source: a pointer line matches `HOT_ENTRY_PATTERN`,
+  // so archival used to take it as a candidate. Taking a pointer replaces it with
+  // an identical pointer, which can never bring the file under its trigger, and the
+  // batch it belonged to was rendered straight into the archive — the note absorbed
+  // its own output while the hot layer refused every write.
+  const { vault, binding, deps } = await fixture(t)
+  const real = '- [hot-44444444-4444-4444-8444-444444444444] 一条真实的已完成事项'
+  const pointer = pointerFor(ARCHIVE, 'hot-55555555-5555-4555-8555-555555555555')
+  let hot = await read(vault, HOT)
+  hot = padHot(hot, '进行中', '填充', Math.ceil(HOT_CAPACITY_CHARS * HOT_ARCHIVE_RATIO) + 200)
+  hot = hot.replace('## 已完成\n', `## 已完成\n\n${real}\n${pointer}\n`)
+  hot = hot.replace(/\n+$/, '\n')
+  await writeFile(at(vault, HOT), hot)
+
+  await updateHot(binding, { section: '进行中', text: '新进展' }, deps)
+
+  const archive = await read(vault, ARCHIVE)
+  assert.equal(
+    archive.includes('已归档'),
+    false,
+    'a pointer line carries no text the archive lacks, so it is never filed',
+  )
+  assert.equal(countOf(archive, real), 1, 'the one real entry is filed exactly once')
+  const after = await read(vault, HOT)
+  assert.equal(countOf(after, pointer), 1, 'the pointer stays in place, exactly once')
+})
+
+test('a 已完成 zone holding only pointers refuses with the zone numbers and the compact route', async (t) => {
+  // The reported state: the 已完成 zone is three pointer lines, so nothing may be
+  // archived, and the old refusal said only that no complete 已完成 entry could be
+  // archived — which hid both where the characters actually were and what to do.
+  const { vault, binding, deps } = await fixture(t)
+  const pointers = [
+    'hot-cba84efd-1e75-4741-946d-4474435c2610',
+    'hot-fdff1ba4-e65e-4d7b-8fd8-06c13a5f56ab',
+    'hot-d9b5ed87-bbe6-4a25-800d-75cb081b13b7',
+  ].map((id) => pointerFor(ARCHIVE, id))
+  let hot = await read(vault, HOT)
+  hot = hot.replace('## 已完成\n', `## 已完成\n\n${pointers.join('\n')}\n`)
+  hot = padHot(hot, '进行中', '填充', HOT_CAPACITY_CHARS + 100)
+  hot = hot.replace(/\n+$/, '\n')
+  await writeFile(at(vault, HOT), hot)
+  const before = await read(vault, HOT)
+
+  await assert.rejects(updateHot(binding, { section: '已完成', text: 'probe' }, deps), (error) => {
+    assert.equal(error.code, 'hot-over-capacity')
+    // Every zone, by name, with the numbers that say why nothing could move.
+    for (const zone of ['强约束', '进行中', '已完成']) {
+      assert.ok(error.message.includes(zone), `the refusal must name ${zone}`)
+    }
+    assert.match(error.message, /pointers/)
+    assert.match(error.message, /moveable/)
+    // And the way out, which is a plugin transaction rather than a hand edit.
+    assert.match(error.message, /mem_admin\(action="hot", operation="compact"\)/)
+    return true
+  })
+  assert.equal(await read(vault, HOT), before, 'the refusal writes nothing')
+  assert.equal(await exists(at(vault, ARCHIVE)), false, 'and files nothing')
+})
+
+test('compactHot folds pointer lines and drains 进行中 to recover an over-capacity file', async (t) => {
+  // The whole reported arc: a hot file that cannot be written to, the refusal, the
+  // explicit recovery, and the write that then fits.
+  const { vault, binding, deps } = await fixture(t)
+  const roomy = { ...deps, capacityChars: 50000 }
+  for (const name of ['第一条进行中', '第二条进行中', '第三条进行中']) {
+    await updateHot(binding, { section: '进行中', text: `${name}${'记'.repeat(2900)}` }, roomy)
+  }
+
+  // Ids a foreign tool wrote: only the second is even UUIDv4-shaped. They are
+  // inert either way, because the pointer test reads the payload, not the id.
+  const ids = [
+    'cba84efd-1e75-4741-946d-4474435c2610',
+    '11111111-1111-4111-8111-111111111111',
+    '22222222-2222-4222-8222-222222222222',
+  ]
+  let hot = await read(vault, HOT)
+  hot = hot.replace(
+    '## 已完成\n',
+    `## 已完成\n\n${ids.map((id) => pointerFor(ARCHIVE, `hot-${id}`)).join('\n')}\n`,
+  )
+  await writeFile(at(vault, HOT), hot)
+
+  const before = await hotStatus(binding, {})
+  assert.ok(before.used > before.capacity, 'the fixture starts over the hard cap')
+  assert.equal(before.archivable, 0, 'pointers are never archivable')
+  assert.equal(before.compactable, 3, 'but 进行中 still holds three movable entries')
+  await assert.rejects(
+    updateHot(binding, { section: '已完成', text: 'probe' }, deps),
+    failsWith('hot-over-capacity'),
+  )
+
+  const { receipt, outcome } = await compactHot(binding, deps)
+  assert.equal(receipt.action, 'hot-compact')
+  assert.ok(outcome.folded > 0, 'the pointer lines were folded into one')
+  assert.ok(outcome.moved > 0, 'at least one 进行中 entry was drained')
+  assert.ok(outcome.reclaimed > 0, 'and the file came back under its trigger')
+
+  const after = await read(vault, HOT)
+  assert.ok(codePoints(after) <= before.trigger, 'compact reaches the archival trigger')
+  for (const id of ids) {
+    assert.ok(after.includes(`hot-${id}`), 'the folded summary keeps every id')
+  }
+  assert.equal(after.includes('已归档'), true, 'and keeps the archive link')
+  const doneZone = after.slice(after.indexOf('## 已完成'))
+  assert.equal(
+    doneZone.split('\n').filter((line) => line.startsWith('- [')).length,
+    1,
+    'the 已完成 zone is one folded summary line, not one line per archived entry',
+  )
+  // A drained entry keeps its trace where it was, which is the design — and why
+  // the brief has to know a pointer is not a fact (test/brief.test.js).
+  const progressZone = after.slice(after.indexOf('## 进行中'), after.indexOf('## 已完成'))
+  assert.equal(progressZone.includes('已归档'), true, 'every drained entry keeps its trace')
+
+  const archive = await read(vault, ARCHIVE)
+  assert.equal(archive.includes('已归档'), false, 'the archive never holds a pointer')
+  const filed = archive.split('\n').filter((entry) => entry.startsWith('- ['))
+  assert.equal(filed.length, outcome.moved, 'every drained entry was filed once')
+  for (const line of filed) {
+    assert.equal(line.includes(','), false, 'and a folded summary is never filed as an entry')
+  }
+
+  // The write the refusal rejected now fits.
+  await updateHot(binding, { section: '已完成', text: 'probe' }, deps)
+  assert.equal((await read(vault, HOT)).includes('probe'), true)
+
+  // A second pass has nothing left to do, and says so rather than rewriting.
+  const again = await compactHot(binding, deps)
+  assert.equal(again.outcome.reclaimed, 0)
+  assert.equal(again.outcome.moved, 0)
+  assert.equal(again.outcome.folded, 0)
+})
+
+test('the archive note never files the same hot id twice', async (t) => {
+  const { vault, binding, deps } = await fixture(t)
+  const roomy = { ...deps, capacityChars: 50000 }
+  await updateHot(binding, { section: '进行中', text: `会被归档的条目${'记'.repeat(300)}` }, roomy)
+  const tight = { ...deps, capacityChars: 500 }
+  await compactHot(binding, tight)
+
+  const filed = (await read(vault, ARCHIVE)).split('\n').find((line) => line.startsWith('- [hot-'))
+  assert.ok(filed !== undefined, 'the compact filed the entry')
+  const id = filed.match(/^- \[(hot-[^\]]+)\]/)[1]
+
+  // A restored copy of an already-filed entry: the same id is back in 进行中.
+  let hot = await read(vault, HOT)
+  hot = hot.replace('## 进行中\n', `## 进行中\n\n${filed}\n`)
+  await writeFile(at(vault, HOT), hot)
+  await compactHot(binding, tight)
+
+  const archive = await read(vault, ARCHIVE)
+  assert.equal(countOf(archive, id), 1, 'one id, one line in the archive')
 })
 
 // ---------------------------------------------------------------------------

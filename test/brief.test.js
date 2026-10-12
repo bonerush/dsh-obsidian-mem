@@ -19,7 +19,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { BRIEF_DATA_NOTICE, buildBrief } from '../lib/brief.js'
-import { updateHot } from '../lib/hot.js'
+import { compactHot, updateHot } from '../lib/hot.js'
 import { openIndex } from '../lib/index-db.js'
 import { writeMemory } from '../lib/memory.js'
 import { createMemoryServices, registerTools } from '../lib/tools.js'
@@ -873,6 +873,26 @@ test('hotItems carries stable ids for complete entries only, and a half-written 
   assert.equal(second.hotItems.length, 2, 'the half-written line is not a complete hot item')
   assert.ok(!second.text.includes('半条事实没有换行'))
   assert.deepEqual(idsOf(second.hotItems), idsOf(first.hotItems), 'ids are stable across builds')
+})
+
+test('a pointer line left in 进行中 is never injected as a fact', async (t) => {
+  const env = await fixture(t)
+  await addHot(env, '进行中', `会被归档的进行中条目${'记'.repeat(200)}`)
+  // The pointer is produced by the shipped recovery pass, not written here by the
+  // test: `compact` drains the entry and leaves its trace where the entry was, which
+  // is the only way a pointer ever reaches an *injected* zone.
+  const { outcome } = await compactHot(env.binding, {
+    dataRoot: env.dataRoot,
+    home: env.home,
+    capacityChars: 500,
+  })
+  assert.equal(outcome.moved, 1, 'the entry was drained')
+  const hot = await readFile(at(env.vault, `${RELATIVE_DIR}/_meta/hot.md`), 'utf8')
+  assert.match(hot, /已归档/, 'and left a pointer trace in the injected zone')
+
+  const built = await brief(env)
+  assert.deepEqual(built.hotItems, [], 'a pointer is not a hot item')
+  assert.equal(built.text.includes('已归档'), false, 'and never reaches the prompt')
 })
 
 test("mode:'delta' emits only changed complete hot items and reports the full current list", async (t) => {

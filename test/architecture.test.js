@@ -500,7 +500,17 @@ const BUDGETS = {
   // a brief was injected. The alternative was a second resolution pass per step,
   // which would let the two answers disagree.
   'lib/hooks.js': 1500,
-  'lib/hot.js': 600,
+  // Raised from 600 by the hot-zone deadlock fix (1069 formatted lines measured;
+  // measured-plus-30 is 1099, which rounds up to 1100). What the 469 lines buy:
+  // archival that can tell a pointer line from an entry — the reported bug, since
+  // `HOT_ENTRY_PATTERN` matches both — an archive append that is idempotent per hot
+  // id instead of filing its own output, a refusal that names every zone and the
+  // route out of it, and the route itself: `hotStatus` plus `compactHot`, which
+  // folds the 已完成 zone pointers into one line and drains 已完成 and 进行中 in
+  // one transaction. The alternative was a second module for three functions that
+  // share every one of those helpers, which would have moved the lines rather than
+  // removed them.
+  'lib/hot.js': 1100,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   'lib/index-db.js': 2300,
@@ -599,7 +609,15 @@ const BUDGETS = {
   // without saying which number it was inside, which is the debt this line removes;
   // the fix round added no line to this file, so the raise is bookkeeping rather than
   // new space.
-  'lib/tool-schema.js': 1000,
+  // Raised to 1100 by the hot-zone deadlock fix (1042 formatted lines measured;
+  // measured-plus-30 is 1072, which rounds up to 1100). What the 42 lines buy: the
+  // `hot` action enum value, its `operation` value `compact` and the description
+  // that says what status and compact each answer, the `HOT_RESULT` arm with the
+  // per-zone counters (`chars`/`entries`/`pointers`/`moveable`) a refusal quotes
+  // too, and the `forwardAdminArguments` default that makes an omitted `operation`
+  // the read-only answer. The alternative — reusing the curation arm — would let a
+  // caller validate a hot result against curation’s shape.
+  'lib/tool-schema.js': 1100,
   'lib/tool-registry.js': 250,
   // Raised from 1100 when the explicit-retry wake-up landed here: `kickQueueWorker`
   // is threaded through the option record and the one action that owns retrying, so
@@ -659,7 +677,15 @@ const BUDGETS = {
   // absent — a false statement for a missing directory, a corrupt pointer and a cwd
   // inside the vault alike — and `mem_brief`'s unbound answer gains the
   // machine-readable `reason` its output schema now accepts.
-  'lib/services.js': 1700,
+  // Raised from 1700 to 1800 by the hot-zone deadlock fix (1750 formatted lines
+  // measured; measured-plus-30 is 1780, which rounds up to 1800). What the 50 lines
+  // buy the `mem_admin(action="hot")` branch: the same read-only resolution the
+  // curation branch uses (a repair must not mint a binding), the service-level
+  // narrowing of the shared `operation` enum to `status`/`compact`, the read-only
+  // status answer, and the compact write — one `transacted` call, the index refresh,
+  // the UI cue, and a status report read back after the commit so the numbers
+  // describe the file the transaction left behind.
+  'lib/services.js': 1800,
   // Raised from 2200 by Task 7 (2229 formatted lines measured; measured-plus-30
   // rounds up to 2300, which is this number — the entry above the old one had no
   // note of its own, so this number states the rule it follows). What the 29 lines

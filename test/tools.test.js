@@ -124,6 +124,26 @@ const adminResult = (action, args = {}) => {
       },
     }
   }
+  if (action === 'hot') {
+    return {
+      action,
+      result: {
+        operation: args.operation ?? 'status',
+        projectId: '1c392abb-7b08-42f7-871d-2a379caf9448',
+        missing: false,
+        used: 0,
+        capacity: 9000,
+        trigger: 6030,
+        ratio: 0.67,
+        sections: [],
+        archivable: 0,
+        compactable: 0,
+        moved: 0,
+        folded: 0,
+        reclaimed: 0,
+      },
+    }
+  }
   if (action === 'lint') {
     return {
       action,
@@ -438,8 +458,14 @@ test('the documented enums and defaults are exactly spec §9', async (t) => {
     // `apply`, `approve` or `reject` value here — approval is a TTY-only command
     // (Task 7), never a model-callable action.
     'curation',
+    // The hot layer maintenance surface: `status` reports its fill level and what
+    // could still be moved, `compact` is the recovery write a `hot-over-capacity`
+    // refusal points at. It exists because a hand edit cannot be the fix —
+    // `spliceBody` verifies the bytes it read, so only a plugin transaction can
+    // repair a hot file.
+    'hot',
   ])
-  assert.deepEqual(params('mem_admin').operation.enum, ['status', 'scan'])
+  assert.deepEqual(params('mem_admin').operation.enum, ['status', 'scan', 'compact'])
   assert.equal(params('mem_admin').operation.default, 'status')
   assert.deepEqual(params('mem_admin').mode.enum, ['show', 'local', 'fork', 'retain'])
   assert.equal(params('mem_admin').mode.default, 'show')
@@ -472,9 +498,11 @@ test('mem_admin exposes no approval operation, in the DSL or in the compiled sch
     assert.equal(compiled.includes(name), false)
     assert.equal(operation.includes(name), false)
   }
-  // The closed pair is the whole set: a widened `operation` would be a widened
+  // The closed set is the whole set: a widened `operation` would be a widened
   // contract, so the equality is asserted rather than the absence of four names.
-  assert.deepEqual(operation, ['status', 'scan'])
+  // Each action narrows it again in its own service (curation to status/scan,
+  // hot to status/compact), so the union is not a permission.
+  assert.deepEqual(operation, ['status', 'scan', 'compact'])
 })
 
 test('mem_admin branches its result with a per-action const instead of an unconstrained object', async (t) => {
@@ -487,6 +515,7 @@ test('mem_admin branches its result with a per-action const instead of an uncons
     'bind',
     'curation',
     'diagnostics',
+    'hot',
     'index',
     'jobs',
     'lint',
@@ -861,6 +890,54 @@ test('curation status and scan answer their own bounded shape, and only their ow
     assert.match(refused.error.message, /does not accept/)
   }
   const outOfEnum = await call(ctx, 'mem_admin', { action: 'curation', operation: 'apply' })
+  assert.equal(outOfEnum.isError, true)
+  assert.match(outOfEnum.error.message, /operation/)
+})
+
+test('hot status and compact answer their own shape, and only their own parameters', async (t) => {
+  const services = stubServices()
+  const ctx = await toolbed(t)
+  registerTools(ctx, services)
+
+  // Omitting `operation` is the read-only answer here too: a caller that wanted a
+  // write asks for one by name.
+  const status = await call(ctx, 'mem_admin', { action: 'hot' })
+  assert.equal(status.isError, false, status.error?.message)
+  assert.equal(status.value.action, 'hot')
+  assert.equal(status.value.result.operation, 'status')
+  assert.deepEqual(Object.keys(status.value.result).sort(), [
+    'archivable',
+    'capacity',
+    'compactable',
+    'folded',
+    'missing',
+    'moved',
+    'operation',
+    'projectId',
+    'ratio',
+    'reclaimed',
+    'sections',
+    'trigger',
+    'used',
+  ])
+
+  const compact = await call(ctx, 'mem_admin', { action: 'hot', operation: 'compact' })
+  assert.equal(compact.isError, false, compact.error?.message)
+  assert.equal(compact.value.result.operation, 'compact')
+
+  // `operation` is curation's and hot's parameter; no other action accepts it, and
+  // hot accepts nothing else.
+  for (const args of [
+    { action: 'hot', jobId: 'job-1' },
+    { action: 'hot', report: true },
+    { action: 'hot', path: 'x.md' },
+    { action: 'lint', operation: 'compact' },
+  ]) {
+    const refused = await call(ctx, 'mem_admin', args)
+    assert.equal(refused.isError, true, `${JSON.stringify(args)} must be refused`)
+    assert.match(refused.error.message, /does not accept/)
+  }
+  const outOfEnum = await call(ctx, 'mem_admin', { action: 'hot', operation: 'apply' })
   assert.equal(outOfEnum.isError, true)
   assert.match(outOfEnum.error.message, /operation/)
 })

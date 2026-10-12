@@ -11,6 +11,58 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Fixed
+
+- **The hot layer could strand itself at its cap with no way back.** Archival of
+  `_meta/hot.md` treated a *pointer line* — the `- [hot-…] 已归档 → [[…]]` trace an
+  archived entry leaves behind — as an entry eligible for archiving, because a
+  pointer matches `HOT_ENTRY_PATTERN` exactly as an entry does. Replacing a pointer
+  with an identical pointer frees nothing, so a 已完成 zone holding only pointers
+  turned every later write into `hot-over-capacity`, and the batch that "moved"
+  them was rendered into `Docs/hot-archive.md`: that is how one id came to appear
+  eight times in the archive note, seven of them the note filing its own output.
+  Pointer lines are now inert candidates, the archive append is idempotent per hot
+  id and never files a pointer, and a refusal states every zone's characters,
+  entry and pointer counts plus the route out, instead of claiming that no complete
+  已完成 entry can be archived. Reported with a reproduction in
+  `docs/issue-hot-zone-deadlock-2026-10-12.md`.
+- A pointer line is never injected as a fact. The brief injects 强约束 and 进行中,
+  and a pointer carries the same `hot-` marker an entry does, so a 进行中 entry
+  drained by the recovery action below would otherwise have reached every session
+  prompt as "- [ ] 已归档 → [[…]]".
+
+### Added
+
+- `mem_admin(action="hot")`, the recovery path a `hot-over-capacity` refusal now
+  names, with two operations. `status` reports the file against `hotCapacityChars`
+  and `hotArchiveRatio` and, per zone, its characters, complete non-pointer
+  entries, pointer lines and movable entries. `compact` runs in one transaction
+  with one receipt: it folds the 已完成 zone's pointer lines into a single summary
+  line that keeps every id, then drains the oldest movable entries — 已完成 first,
+  then 进行中, which only an explicit call may cross, because spec §6.1 restricts
+  *automatic* archival to 已完成. It never grows the file and never refuses for
+  being over the cap; it reports what it could not free. A hand edit is not an
+  alternative: `spliceBody` verifies the bytes it read, so any external change
+  between read and write fails the transaction with `hash-mismatch`.
+
+### Validation and remaining risks
+
+- The three defects in `docs/issue-hot-zone-deadlock-2026-10-12.md` §2–§4 were
+  reproduced against the shipped transaction engine and measured again after the
+  fix: a 已完成 zone of pointers refuses with the new message and writes nothing,
+  no pointer line reaches `hot-archive.md`, and `compact` recovers the reported
+  shape (pointers folded, 进行中 drained, the refused write then landing). The
+  fixture is a `mkdtemp` vault, not the reporter's; their `hot.md` and
+  `hot-archive.md` were never read or written here.
+- §5's third item is not a coupling and nothing was changed for it: `mem_log`
+  takes the hot branch or the day-log branch and never both (`lib/services.js`),
+  so a refused hot write cannot cost the same call a day-log block.
+- `compact` cannot always reach the trigger. Moving an entry whose text is shorter
+  than its pointer line costs bytes, so a pass takes only what shrinks the file and
+  reports `reclaimed: 0` when nothing does. The lever there is `hotCapacityChars`,
+  not another automatic move; no threshold makes that case self-healing, and none
+  is claimed.
+
 ## 0.1.15 — 2026-10-11
 
 ### Fixed

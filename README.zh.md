@@ -256,7 +256,7 @@ Obsidian 应用程序代码。
 | `recallBudgetChars` | `900` | 整数 256–20000 | 逐轮相关笔记索引的上限，单位是 Unicode 码点。它与 `briefBudgetChars` 刻意分开：若按简报剩余额度计费，首轮命中率只有 0.6%，而后续轮次是 22.1%。 |
 | `failureRecall` | `true` | boolean | 原生 DSH 工具重复失败时检索相关记忆。与提示词回忆共用每步的 `recallBudgetChars` 上限；不控制留档。 |
 | `hotCapacityChars` | `9000` | 整数 1024–50000 | `_meta/hot.md` 的容量。是存储容量，*不是*注入预算。 |
-| `hotArchiveRatio` | `0.67` | 开区间 (0,1) | 填充率高于此值时，插件在写入前先归档已完成条目。 |
+| `hotArchiveRatio` | `0.67` | 开区间 (0,1) | 填充率高于此值时，插件在写入前先归档已完成条目。已经超出上限、且没有可归档条目的文件，用 `mem_admin(action="hot", operation="compact")` 修复，绝不手工修改。 |
 | `autoCapture` | `true` | boolean | 捕获已完成的回合。`false` 停止新的捕获，但仍会排空已入队的 job。 |
 | `autoCurate` | `true` | boolean | 自动整理（curation）回合。`false` 只关掉自动触发：`mem_admin(action="curation", operation="scan")` 和评审命令照常可用，而且两种取值都不会改动任何源笔记。 |
 | `captureIdleMs` | `90000` | 整数 1000–3600000 | 被捕获的回合进入蒸馏前的空闲去抖时间。 |
@@ -302,7 +302,7 @@ Obsidian 应用程序代码。
 | `mem_write` | `type`、`title`、`body`（必填）；`tags`、`status`、`confidence`、`assertion`、`supersedes`、`id`、`idempotencyKey` | 写项目文档和记忆的权威途径。不带 `id` 时**创建**一条带新 id 的笔记；带已存在的 `id` 时更新。取代会校验旧 id，并把链接的两端都写上。 |
 | `mem_log` | `text`（必填）；`session`、`section`、`idempotencyKey` | 往今天的日志追加一条幂等条目；`section: "hot"` 则改为写热记忆文件的进行中区域。 |
 | `mem_brief` | — | 返回会话注入过的那份召回简报，方便你重读或审计预算。 |
-| `mem_admin` | `action`（必填）：`lint`、`index`、`bind`、`projects`、`promote`、`jobs`、`curation`、`diagnostics`；外加 `report`、`prune`（仅 lint）、`rebuild`（index）、`mode`（bind：`show`\|`local`\|`fork`\|`retain`）、`path`（promote）、`jobId`/`retry`（jobs）、`operation`（curation：`status`\|`scan`） | 低频维护。`lint` 默认只读，除非你传 `report: true`（写一条带日期的报告笔记）和/或 `prune: true`（删除过期快照）——这两者刻意保持独立。`curation` 读取或运行下文那条有界的整理回合；它永远不会应用某条待评审提案。`diagnostics` 是唯一什么都不读的动作：它返回**本进程**自己的决策环——最多 200 条事件，取值来自封闭集合 `capture`、`distill`、`index`、`bind`、`job`、`transaction`、`brief`、`skill`、`recall`、`curation`（十类现在都会写入），每条带一个结局与机器标识，永不包含笔记正文、标题或提示词。因此一个窗口能回答那些否则必须靠复现才能回答的问题：一个已结束的回合为什么没被捕获（`capture` 事件给出原因）、蒸馏是真的没产出还是根本没跑（`distill`、`job`）、索引有没有跟上一次写入（`index`）、一次写入是提交了还是带着错误码被拒绝（`transaction`）。它不需要绑定、不读仓库，所以在其他所有动作都拒绝时它仍能回答；进程退出后它即清空——上文所述的独立本地日志会为用户自行生成的报告保留缩减后的事件。设 `DSH_OBSIDIAN_MEM_DEBUG=1` 可额外把每条事件以 `info` 级写进宿主日志；宿主是否显示这一行由宿主决定，不由本插件决定。 |
+| `mem_admin` | `action`（必填）：`lint`、`index`、`bind`、`projects`、`promote`、`jobs`、`curation`、`hot`、`diagnostics`；外加 `report`、`prune`（仅 lint）、`rebuild`（index）、`mode`（bind：`show`\|`local`\|`fork`\|`retain`）、`path`（promote）、`jobId`/`retry`（jobs）、`operation`（curation：`status`\|`scan`；hot：`status`\|`compact`） | 低频维护。`lint` 默认只读，除非你传 `report: true`（写一条带日期的报告笔记）和/或 `prune: true`（删除过期快照）——这两者刻意保持独立。`curation` 读取或运行下文那条有界的整理回合；它永远不会应用某条待评审提案。`hot` 维护热层：`status` 按 `hotCapacityChars` 报告它的填充率，并逐区报告一次搬出还能移走多少条完整条目；`compact` 把「已完成」区的指针行折叠成一行摘要，并在同一个事务里归档最旧的、可搬出的条目——这是 `hot-over-capacity` 拒绝信息指名的唯一恢复路径，手工改文件不是替代方案：那会让事务以 `hash-mismatch` 失败。`diagnostics` 是唯一什么都不读的动作：它返回**本进程**自己的决策环——最多 200 条事件，取值来自封闭集合 `capture`、`distill`、`index`、`bind`、`job`、`transaction`、`brief`、`skill`、`recall`、`curation`（十类现在都会写入），每条带一个结局与机器标识，永不包含笔记正文、标题或提示词。因此一个窗口能回答那些否则必须靠复现才能回答的问题：一个已结束的回合为什么没被捕获（`capture` 事件给出原因）、蒸馏是真的没产出还是根本没跑（`distill`、`job`）、索引有没有跟上一次写入（`index`）、一次写入是提交了还是带着错误码被拒绝（`transaction`）。它不需要绑定、不读仓库，所以在其他所有动作都拒绝时它仍能回答；进程退出后它即清空——上文所述的独立本地日志会为用户自行生成的报告保留缩减后的事件。设 `DSH_OBSIDIAN_MEM_DEBUG=1` 可额外把每条事件以 `info` 级写进宿主日志；宿主是否显示这一行由宿主决定，不由本插件决定。 |
 
 `mem_write` 的 type 这样路由：
 
@@ -734,6 +734,7 @@ Obsidian 里冲突。要补上这个缺口，要么在仓库侧读 `types.json`�
 | DSH 在写入中途崩溃 | 未完成的事务被记在 `$DSH_HOME/data/obsidian-mem/transactions/` 下。 | 重启会话：恢复会在新的写入之前运行。如果崩溃期间文件被外部编辑过，两个版本都会被保留并报告——没有任何内容被覆盖。 |
 | `lock-corrupt` | 仓库的写锁文件（`$DSH_HOME/data/obsidian-mem/locks/vault-<hash>.lock`）存在但不可读——通常是零长度或被截断，因为进程在创建它和写入记录之间被杀掉。插件从不把不可读的锁当作“没人持有”，也从不抢占它，所以每次写入都会等完超时，然后以这个错误码拒绝。 | 读出错误里给出的路径，手工（`rm`）删掉**那一个文件**，然后重试。不需要清理别的：锁会在下一次写入时重建，仓库内容也不依赖它。 |
 | `lock-timeout` | 另一个活着的进程持有仓库的写锁，或者某个进程死了但它持有的锁记录仍可读、其 pid 尚未被观察到消失。 | 等其他会话结束再重试。如果你确定持有者已死，一旦记录的 pid 消失，锁会被自动打破——在可能还有 `dsh` 进程在跑时，不要手工删除一个可读的锁。 |
+| `mem_log(section="hot")` 以 `hot-over-capacity` 拒绝 | 热文件超出了 `hotCapacityChars`，而自动归档腾不出这次写入需要的空间：它只搬「已完成」区的完整条目，而该区可能只剩指针行（指针永远不会被归档——它没有归档笔记里没有的正文），甚至一条都没有。拒绝信息会列出每个区的字符数、条目数、指针数与可搬出条数。 | 先用 `mem_admin(action="hot", operation="status")`看同样的数字（不写入），再用 `mem_admin(action="hot", operation="compact")` 在同一个事务里折叠指针行、归档「已完成」与「进行中」里最旧的可搬出条目。如果这样仍到不了归档触发线，剩下的文本要么比它自己的指针行还短，要么不是插件写的：把 `hotCapacityChars` 调大，或者自己搬走那段文本，并接受下一次事务看不到这次改动。 |
 | 一个代码库拒绝写入 | remote URL 不匹配、同一个目录对应了不同的 `projectId`、同级 worktree 元数据冲突，或者同级不可读。拒绝信息会说明原因，并让指针文件保持原样——它从不修复或替换指针文件。 | `mem_admin(action="bind", mode="show")` 报告现状；`mode="retain"` 或 `mode="fork"` 是显式的修正手段。过期的 worktree 需要 `git worktree prune`。 |
 | 一个普通目录保持只读 | 它不在 Git 仓库里，所以插件不会自行把它纳入长期记忆——隐式的第一次写入只绑定 Git 仓库。 | 用 `mem_admin(action="bind", mode="local")` 显式绑定它；绑定在同一会话里立即生效。 |
 | 某个会话的记忆悄悄缺席 | 任何非 `bound` 的解析结果都意味着“这个会话没有记忆”——这是设计使然，它从不抛错，也从不猜。读取永不绑定代码库；没有指针文件的 Git 仓库由它的第一次写入完成绑定；指针文件或注册表不被插件信任的代码库会保持未绑定，直到问题解决。 | 检查 `mem_admin(action="projects")` 和指针文件，然后写一次（Git 仓库）或跑 `mem_admin(action="bind", mode="local")`（任何目录）——两者都在同一会话内生效。 |

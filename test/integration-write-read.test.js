@@ -569,6 +569,102 @@ test('mem_log section=hot writes the controlled 进行中 zone, not a day log', 
   assert.match(hot.slice(start, end), /正在实现六个工具。/)
 })
 
+test('mem_admin(hot) reports the fill level and compacts a stranded hot file', async (t) => {
+  const f = await fixture(t)
+  // A small capacity keeps the fixture readable: what is under test is the shape of
+  // the answer and the recovery, not the default 9000.
+  const { ctx } = await memoryBed(t, f, { hotCapacityChars: 2000 })
+  const hotPath = at(f.vault, `${f.binding.relativeDir}/_meta/hot.md`)
+  const archivePath = at(f.vault, `${f.binding.relativeDir}/Docs/hot-archive.md`)
+  const pointer = (id) =>
+    `- [${id}] 已归档 → [[${f.binding.relativeDir}/Docs/hot-archive|热记忆归档]]`
+
+  // Three real entries through the shipped writer …
+  for (const name of ['甲甲甲甲', '乙乙乙乙', '丙丙丙丙']) {
+    value(
+      await call(
+        ctx,
+        'mem_log',
+        { text: `${name}${'记'.repeat(400)}`, session: 'sess-hot', section: 'hot' },
+        { cwd: f.repo },
+      ),
+      'hot log',
+    )
+  }
+  // … then the two things a long-lived vault accumulates by hand: a pointer per
+  // archived entry, and text the plugin did not write. Together they push the file
+  // over its cap with nothing archivable left in 已完成.
+  const ids = [
+    'cba84efd-1e75-4741-946d-4474435c2610',
+    '11111111-1111-4111-8111-111111111111',
+    '22222222-2222-4222-8222-222222222222',
+  ]
+  let hot = await readFile(hotPath, 'utf8')
+  hot = hot.replace(
+    '## 已完成\n',
+    `## 已完成\n\n${ids.map((id) => pointer(`hot-${id}`)).join('\n')}\n`,
+  )
+  hot = hot.replace('## 进行中\n', `## 进行中\n\n- 手写填充${'x'.repeat(500)}\n`)
+  await writeFile(hotPath, hot, 'utf8')
+
+  const status = value(
+    await call(ctx, 'mem_admin', { action: 'hot' }, { cwd: f.repo }),
+    'hot status',
+  )
+  assert.equal(status.result.operation, 'status')
+  assert.ok(status.result.used > status.result.capacity, 'the fixture starts over its cap')
+  assert.equal(status.result.archivable, 0, 'pointers are never archivable')
+  assert.equal(status.result.compactable, 3, 'and 进行中 still holds three movable entries')
+  assert.equal(status.result.sections.find((zone) => zone.name === '已完成').pointers, 3)
+
+  // The write the bug made impossible now fails with a message that names the way out.
+  const refused = await call(
+    ctx,
+    'mem_log',
+    { text: '溢出', session: 'sess-hot', section: 'hot' },
+    { cwd: f.repo },
+  )
+  assert.equal(refused.isError, true)
+  // The tool runtime surfaces the message, not the error code, so the message has
+  // to carry both the reason and the route out of it.
+  assert.match(refused.error.message, /above the 2000 character cap/)
+  assert.match(refused.error.message, /已完成: .*0 moveable/)
+  assert.match(refused.error.message, /mem_admin\(action="hot", operation="compact"\)/)
+
+  const compacted = value(
+    await call(ctx, 'mem_admin', { action: 'hot', operation: 'compact' }, { cwd: f.repo }),
+    'hot compact',
+  )
+  assert.equal(compacted.result.operation, 'compact')
+  assert.ok(compacted.result.moved > 0, 'entries left the injected zone')
+  assert.ok(compacted.result.folded > 0, 'and the pointer lines were folded')
+  assert.ok(compacted.result.reclaimed > 0, 'so the file came back under its trigger')
+  assert.ok(
+    compacted.result.used <= compacted.result.trigger,
+    `compact must reach the trigger: ${JSON.stringify(compacted.result)}`,
+  )
+  assert.equal(compacted.result.sections.find((zone) => zone.name === '已完成').pointers, 1)
+
+  // The archive holds the entries and no pointer, and the same write now lands.
+  const archive = await readFile(archivePath, 'utf8')
+  assert.equal(archive.includes('已归档'), false)
+  value(
+    await call(
+      ctx,
+      'mem_log',
+      { text: '溢出', session: 'sess-hot', section: 'hot' },
+      { cwd: f.repo },
+    ),
+    'hot log after compact',
+  )
+  assert.equal((await readFile(hotPath, 'utf8')).includes('溢出'), true)
+
+  // The shared enum admits curation's `scan`; the hot service narrows it again.
+  const wrong = await call(ctx, 'mem_admin', { action: 'hot', operation: 'scan' }, { cwd: f.repo })
+  assert.equal(wrong.isError, true)
+  assert.match(wrong.error.message, /does not accept operation/)
+})
+
 test('mem_brief returns the real budgeted brief through the tool runtime', async (t) => {
   const f = await fixture(t)
   const { ctx } = await memoryBed(t, f)
