@@ -103,6 +103,15 @@ jobs:
             echo "${tag} is already tagged; nothing to do"
             exit 0
           fi
+          # An annotated tag carries a committer, and a fresh runner has no git
+          # identity. Measured on this branch's first real run (2026-10-12, the
+          # hand-prepared v0.2.0): `git tag -a` died with `fatal: empty ident name`,
+          # exit 128, before anything was pushed — so neither the tag nor the
+          # Release was created. The bump branch sets these two values before its
+          # commit; that step does not run in this branch, so this branch sets them
+          # itself rather than depending on the other branch having run first.
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git tag -a "$tag" -m "dsh-obsidian-mem ${tag}"
           git push origin "$tag"
           notes="$(mktemp)"

@@ -42,6 +42,14 @@ release artifact. The versioning policy is in the README, under Development.
   10:35Z, `completed: 0`. The producer now reads the same seam as its sibling,
   which is what the three `habit-semantic` cases that were red on `main` needed —
   they fail identically at `5dfb13a` and pass after this change.
+- **The bootstrap release branch had never been exercised, and it could not have
+  worked.** `git tag -a` needs a committer and a fresh runner has no git identity,
+  while only the bump branch configured one. The first hand-prepared version
+  (`0.2.0`) therefore died at the tag step with `fatal: empty ident name` and exit
+  128 before anything was pushed: no tag, no Release, and no half-state to clean up.
+  The bootstrap branch now sets the same identity the bump branch sets. This is
+  recorded because a real runner ran it — no test can exercise one, which is why
+  the branch stayed untested through fifteen releases.
 
 ### Added
 

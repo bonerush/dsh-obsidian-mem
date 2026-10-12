@@ -1007,13 +1007,18 @@ What the workflow does, in order:
 After a release `## Unreleased` is empty on purpose; add an entry as you work, or
 the next push is refused.
 
-The workflow has now run on a real GitHub runner: it published `v0.1.2`, and
-`v0.1.1` was published by hand at the commit that declared it, so the bootstrap
-branch itself has still not been exercised. Two defects were found by running it
-and are recorded in `CHANGELOG.md` under Unreleased: a checkout fetches no tags,
-so the classification has to ask the remote; and the branch that tags an
-untagged version must not also be the only branch a tagged version can take, or
-nothing would ever bump again.
+The workflow has run on a real GitHub runner. Every release up to `0.1.15` came
+out of the bump branch; `0.2.0` was the first version prepared by hand, and
+exercising the bootstrap branch found a third defect: `git tag -a` needs a
+committer, a fresh runner has no git identity, and only the bump branch ever
+configured one — so the tag step died with `fatal: empty ident name` before
+anything was pushed, and neither the tag nor the Release was created. All three
+defects were found by running it rather than by reading it, and each is recorded
+in the `CHANGELOG.md` section of the release whose run exposed it: a checkout
+fetches no tags, so the classification has to ask the remote (`0.1.3`); the
+branch that tags an untagged version must not also be the only branch a tagged
+version can take, or nothing would ever bump again (`0.1.3`); and the bootstrap
+branch needs the identity the bump branch was setting (`0.2.0`).
 
 Contribution rules, house style and the non-negotiable constraints live in the
 maintainer's `AGENTS.md`, and the measured host facts in
