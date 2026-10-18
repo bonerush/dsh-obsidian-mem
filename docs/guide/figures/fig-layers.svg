@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="790" viewBox="0 0 1200 790" role="img">
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+  </marker>
+</defs>
+<rect width="1200" height="790" fill="#ffffff"/>
+<style>text { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif; }</style>
+<text x="50" y="26" font-size="13" font-weight="600" fill="#64748b" text-anchor="start" opacity="1">依赖只能向下</text>
+<path d="M 70 42 L 70 748" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="130" y="40" width="1020" height="64" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+<line x1="236" y1="52" x2="236" y2="92" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 4"/>
+<text x="183" y="77" font-size="13.5" font-weight="650" fill="#64748b" text-anchor="middle" opacity="1">宿主 API</text>
+<text x="255" y="78" font-size="13.5" font-weight="400" fill="#64748b" text-anchor="start" opacity="1">ctx.tools · ctx.on · ctx.get('llm')</text>
+<rect x="130" y="122" width="1020" height="92" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+<line x1="236" y1="134" x2="236" y2="202" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 4"/>
+<text x="183" y="164" font-size="13.5" font-weight="650" fill="#64748b" text-anchor="middle" opacity="1">入口</text>
+<text x="183" y="182" font-size="13.5" font-weight="650" fill="#64748b" text-anchor="middle" opacity="1">L10 / L9</text>
+<rect x="255" y="140" width="420" height="56" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="465" y="163" font-size="14" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">index.js</text><text x="465" y="181" font-size="12" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">装配：配置、服务、工具、钩子</text>
+<rect x="695" y="140" width="420" height="56" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="905" y="163" font-size="14" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">tools.js</text><text x="905" y="181" font-size="12" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">稳定对外导出面</text>
+<rect x="130" y="232" width="1020" height="126" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+<line x1="236" y1="244" x2="236" y2="346" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 4"/>
+<text x="183" y="291" font-size="13.5" font-weight="650" fill="#64748b" text-anchor="middle" opacity="1">编排</text>
+<text x="183" y="309" font-size="13.5" font-weight="650" fill="#64748b" text-anchor="middle" opacity="1">L8 / L7</text>
+<rect x="255" y="256" width="280" height="78" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="395" y="290" font-size="14" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">services.js</text><text x="395" y="308" font-size="12" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">六个工具的服务</text>
+<rect x="550" y="256" width="280" height="78" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="690" y="290" font-size="14" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">hooks.js</text><text x="690" y="308" font-size="12" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">会话事件与注入</text>
+<rect x="845" y="256" width="280" height="78" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="985" y="290" font-size="14" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">brief.js</text><text x="985" y="308" font-size="12" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">预算内组装简报</text>
+<rect x="130" y="376" width="1020" height="156" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+<line x1="236" y1="388" x2="236" y2="520" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 4"/>
+<text x="183" y="450" font-size="13.5" font-weight="650" fill="#64748b" text-anchor="middle" opacity="1">领域</text>
+<text x="183" y="468" font-size="13.5" font-weight="650" fill="#64748b" text-anchor="middle" opacity="1">L5 / L6</text>
+<rect x="255" y="406" width="170" height="96" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="340" y="448.75" font-size="13" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">memory.js</text><text x="340" y="466.25" font-size="11.5" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">笔记与取代</text>
+<rect x="435" y="406" width="170" height="96" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="520" y="448.75" font-size="13" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">vault.js</text><text x="520" y="466.25" font-size="11.5" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">绑定与注册表</text>
+<rect x="615" y="406" width="170" height="96" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="700" y="448.75" font-size="13" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">capture.js</text><text x="700" y="466.25" font-size="11.5" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">队列与重试</text>
+<rect x="795" y="406" width="170" height="96" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="880" y="448.75" font-size="13" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">hot.js</text><text x="880" y="466.25" font-size="11.5" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">热层与归档</text>
+<rect x="975" y="406" width="170" height="96" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="1060" y="448.75" font-size="13" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">curation</text><text x="1060" y="466.25" font-size="11.5" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">整理与提案</text>
+<rect x="130" y="550" width="1020" height="116" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+<line x1="236" y1="562" x2="236" y2="654" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 4"/>
+<text x="183" y="604" font-size="13.5" font-weight="650" fill="#64748b" text-anchor="middle" opacity="1">基础</text>
+<text x="183" y="622" font-size="13.5" font-weight="650" fill="#64748b" text-anchor="middle" opacity="1">L0–L4</text>
+<rect x="255" y="573" width="195" height="70" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="352.5" y="602.5" font-size="12.5" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">transaction.js</text><text x="352.5" y="620" font-size="11.5" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">锁与恢复</text>
+<rect x="465" y="573" width="195" height="70" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="562.5" y="602.5" font-size="12.5" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">search / index-db</text><text x="562.5" y="620" font-size="11.5" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">检索与索引</text>
+<rect x="675" y="573" width="195" height="70" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="772.5" y="602.5" font-size="12.5" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">frontmatter / pointer</text><text x="772.5" y="620" font-size="11.5" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">解析与路径</text>
+<rect x="885" y="573" width="195" height="70" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="982.5" y="602.5" font-size="12.5" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">note-style.js</text><text x="982.5" y="620" font-size="11.5" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">语言规则</text>
+<rect x="130" y="684" width="1020" height="86" rx="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1"/>
+<line x1="236" y1="696" x2="236" y2="758" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 4"/>
+<text x="183" y="732" font-size="13.5" font-weight="650" fill="#64748b" text-anchor="middle" opacity="1">存储</text>
+<rect x="255" y="703" width="280" height="50" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="395" y="722.5" font-size="12.5" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">vault Markdown</text><text x="395" y="740" font-size="11.5" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">事实来源</text>
+<rect x="555" y="703" width="280" height="50" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="695" y="722.5" font-size="12.5" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">SQLite 索引</text><text x="695" y="740" font-size="11.5" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">可重建缓存</text>
+<rect x="855" y="703" width="280" height="50" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="995" y="722.5" font-size="12.5" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">数据根</text><text x="995" y="740" font-size="11.5" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">锁 / 队列 / 回执</text>
+<path d="M 600 210 L 600 222" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 600 364 L 600 376" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 600 538 L 600 550" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M 600 666 L 600 678" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#arrow)"/>
+<text x="1170" y="782" font-size="11.5" font-weight="400" fill="#64748b" text-anchor="end" opacity="1">简化视图：真实层号 0–12，59 个模块</text>
+</svg>
