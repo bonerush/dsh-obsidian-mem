@@ -1,0 +1,4 @@
+{
+  "executablePath": "/path/to/Google Chrome",
+  "args": ["--no-sandbox"]
+}

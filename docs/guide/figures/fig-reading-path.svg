@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="380" viewBox="0 0 1200 380" role="img">
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+  </marker>
+</defs>
+<rect width="1200" height="380" fill="#ffffff"/>
+<style>text { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif; }</style>
+<path d="M 80 190 L 1140 190" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#arrow)"/>
+<line x1="80" y1="185" x2="80" y2="195" stroke="#cbd5e1" stroke-width="1.2"/>
+<line x1="255" y1="185" x2="255" y2="195" stroke="#cbd5e1" stroke-width="1.2"/>
+<line x1="430" y1="185" x2="430" y2="195" stroke="#cbd5e1" stroke-width="1.2"/>
+<line x1="605" y1="185" x2="605" y2="195" stroke="#cbd5e1" stroke-width="1.2"/>
+<line x1="780" y1="185" x2="780" y2="195" stroke="#cbd5e1" stroke-width="1.2"/>
+<line x1="955" y1="185" x2="955" y2="195" stroke="#cbd5e1" stroke-width="1.2"/>
+<line x1="1130" y1="185" x2="1130" y2="195" stroke="#cbd5e1" stroke-width="1.2"/>
+<text x="80" y="212" font-size="11" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">0 分钟</text>
+<text x="1120" y="212" font-size="11" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">60 分钟</text>
+<circle cx="123.75" cy="190" r="7" fill="#4f46e5" stroke="#ffffff" stroke-width="2"/>
+<rect x="33.75" y="56" width="180" height="78" rx="10" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.2"/><text x="123.75" y="90" font-size="13" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">本页</text><text x="123.75" y="107" font-size="11" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">判断与路线</text>
+<path d="M 123.75 134 L 123.75 183" fill="none" stroke="#64748b" stroke-width="1.6"/>
+<circle cx="255" cy="190" r="7" fill="#4f46e5" stroke="#ffffff" stroke-width="2"/>
+<rect x="165" y="244" width="180" height="78" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="255" y="278" font-size="13" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">01 项目是什么</text><text x="255" y="295" font-size="11" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">定位、边界</text>
+<path d="M 255 197 L 255 244" fill="none" stroke="#64748b" stroke-width="1.6"/>
+<circle cx="517.5" cy="190" r="7" fill="#4f46e5" stroke="#ffffff" stroke-width="2"/>
+<rect x="427.5" y="56" width="180" height="78" rx="10" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.2"/><text x="517.5" y="90" font-size="13" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">02 快速开始</text><text x="517.5" y="107" font-size="11" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">安装、第一条记忆</text>
+<path d="M 517.5 134 L 517.5 183" fill="none" stroke="#64748b" stroke-width="1.6"/>
+<circle cx="823.75" cy="190" r="7" fill="#4f46e5" stroke="#ffffff" stroke-width="2"/>
+<rect x="733.75" y="244" width="180" height="78" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/><text x="823.75" y="278" font-size="13" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">03 + 05</text><text x="823.75" y="295" font-size="11" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">概念、会话</text>
+<path d="M 823.75 197 L 823.75 244" fill="none" stroke="#64748b" stroke-width="1.6"/>
+<circle cx="1042.5" cy="190" r="7" fill="#4f46e5" stroke="#ffffff" stroke-width="2"/>
+<rect x="952.5" y="56" width="180" height="78" rx="10" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.2"/><text x="1042.5" y="90" font-size="13" font-weight="650" fill="#1e293b" text-anchor="middle" opacity="1">09 + 12</text><text x="1042.5" y="107" font-size="11" font-weight="400" fill="#64748b" text-anchor="middle" opacity="1">排障、术语</text>
+<path d="M 1042.5 134 L 1042.5 183" fill="none" stroke="#64748b" stroke-width="1.6"/>
+<text x="50" y="360" font-size="12" font-weight="400" fill="#64748b" text-anchor="start" opacity="1">一小时只需要这条主线；04、06、07、08、10、11 按需查阅。</text>
+</svg>
