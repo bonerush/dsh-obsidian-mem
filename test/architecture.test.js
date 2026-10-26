@@ -167,6 +167,22 @@ const LAYERS = {
   // reach an approval, and an edge from `tools` to this module is the edge that
   // would create one.
   'curation-cli': 9,
+  // The two pure halves the hot/brief refactor split out, and why they sit at the
+  // bottom: `hot-text` is the hot file's format itself (no repository import at
+  // all), `hot-archive` is the planner over it (the text layer only), and
+  // `brief-coverage` is the brief's budget/render half (also import-free, so the
+  // brief's L7 edge down at it cannot cycle through the hot layer). The three
+  // callers keep their old layers — `hot` (L6) and `brief` (L7) — because a
+  // module that composes a lower layer is not a peer of it.
+  'hot-text': 0,
+  'hot-archive': 1,
+  'brief-coverage': 0,
+  // The browser route fence is import-free; the panel route imports only the
+  // fence and receives the services through its arguments. `appraisal` is the
+  // pure deterministic rule set the digest uses and imports note-health (L0).
+  'route-guard': 0,
+  'panel-route': 1,
+  appraisal: 1,
   memory: 5,
   capture: 6,
   hot: 6,
@@ -256,6 +272,11 @@ const BUDGETS = {
   // section moved above the recent-decisions list, with the comment that argues the
   // new order. Both are decisions a reader has to be able to audit in place.
   'lib/brief.js': 1400,
+  // The composition half extracted from `brief.js` (207 formatted lines measured;
+  // measured-plus-30 is 237, which rounds up to 250). The budget fixpoint, the
+  // section renderer and the footer are what a plain string can exercise, so they
+  // live below the module that reads a vault.
+  'lib/brief-coverage.js': 250,
   // Raised from 1900 when the diagnostics call sites landed here. The alternative
   // was to move the emissions into a module of their own, which would have meant
   // re-exporting each of the ten skip reasons and the six queue outcomes — the
@@ -511,9 +532,26 @@ const BUDGETS = {
   // share every one of those helpers, which would have moved the lines rather than
   // removed them.
   'lib/hot.js': 1100,
+  // The two halves extracted from `hot.js`, on the same measured-plus-30 rule as
+  // every entry here (222 and 267 formatted lines measured; 252 and 297 round up
+  // to 300). Separate files, so a breach names the half that grew: the format and
+  // its predicates in `hot-text`, the archive planner in `hot-archive`.
+  'lib/hot-text.js': 300,
+  'lib/hot-archive.js': 300,
+  // Measured 83, 374 and 263 formatted lines; measured-plus-30 is 113, 404 and
+  // 293, rounded to 150, 450 and 300. `panel-route` is larger than the plan's
+  // estimate because it owns the action allowlist, the asset list and the
+  // unbound state in one place rather than splitting a 60-line helper out.
+  'lib/route-guard.js': 150,
+  'lib/panel-route.js': 450,
+  'lib/appraisal.js': 300,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
-  'lib/index-db.js': 2300,
+  // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})
+  // are read projections over the existing notes/links tables and belong beside
+  // the graph projection rather than in a second index implementation. Measured
+  // 2490 formatted lines; measured-plus-30 is 2520, rounded to 2550.
+  'lib/index-db.js': 2550,
   // The loader owns React controls; the renderer owns cached labels, culling
   // and frame scheduling. Neither the renderer nor Worker imports React.
   // Raised from 600 when the panel's controls started outliving the page: the host
