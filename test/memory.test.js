@@ -901,7 +901,18 @@ test('an archival never files a pointer line into the archive note', async (t) =
   )
   assert.equal(countOf(archive, real), 1, 'the one real entry is filed exactly once')
   const after = await read(vault, HOT)
-  assert.equal(countOf(after, pointer), 1, 'the pointer stays in place, exactly once')
+  assert.equal(
+    countOf(after, pointer),
+    0,
+    'the legacy per-entry pointer is migrated into the aggregate line, not kept beside it',
+  )
+  const doneZone = after.slice(after.indexOf('## 已完成'))
+  assert.equal(countOf(doneZone, '已归档'), 1, 'the zone is left with one aggregate pointer')
+  assert.match(
+    doneZone,
+    /已归档 2 条/,
+    'the real entry and the migrated pointer are counted together',
+  )
 })
 
 test('a 已完成 zone holding only pointers refuses with the zone numbers and the compact route', async (t) => {
@@ -978,14 +989,19 @@ test('compactHot folds pointer lines and drains 进行中 to recover an over-cap
   const after = await read(vault, HOT)
   assert.ok(codePoints(after) <= before.trigger, 'compact reaches the archival trigger')
   for (const id of ids) {
-    assert.ok(after.includes(`hot-${id}`), 'the folded summary keeps every id')
+    assert.equal(after.includes(`hot-${id}`), false, 'the ids leave the injected text')
   }
   assert.equal(after.includes('已归档'), true, 'and keeps the archive link')
   const doneZone = after.slice(after.indexOf('## 已完成'))
   assert.equal(
-    doneZone.split('\n').filter((line) => line.startsWith('- [')).length,
+    doneZone.split('\n').filter((line) => line.includes('已归档')).length,
     1,
-    'the 已完成 zone is one folded summary line, not one line per archived entry',
+    'the 已完成 zone is one aggregate pointer line, not one line per archived entry',
+  )
+  assert.equal(
+    doneZone.split('\n').filter((line) => line.startsWith('- [hot-')).length,
+    0,
+    'and no entry is left behind',
   )
   // A drained entry keeps its trace where it was, which is the design — and why
   // the brief has to know a pointer is not a fact (test/brief.test.js).
