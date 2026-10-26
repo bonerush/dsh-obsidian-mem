@@ -80,6 +80,11 @@ release artifact. The versioning policy is in the README, under Development.
   the returned coverage object and the paging call close that gap.
 - **The graph's truncation was silent.** The route already returned
   `truncated`/`total`; the view now renders `仅显示前 X / 共 Y`.
+- **An unreachable `autoApply` config guard was removed.** `validateConfig`
+  refuses unknown keys, so `config.autoApply !== false` could never be false; the
+  curation enqueue now depends only on the worker seam. The audit's other
+  dead-code candidates are recorded for a focused cleanup rather than removed in
+  this release.
 
 ### Validation and remaining risks
 
