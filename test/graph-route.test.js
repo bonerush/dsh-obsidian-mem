@@ -141,6 +141,44 @@ test('graph route serves only same-origin requests for a live session', async (t
   assert.equal(routes.size, 0)
 })
 
+test('an unbound graph reply names the refusal reason', async (t) => {
+  const routes = new Map()
+  const ctx = {
+    sessions: { get: () => ({ header: { id: SESSION, cwd: '/work/demo' } }) },
+    webServer: {
+      register: (route) => {
+        routes.set(route.path, route)
+        return () => routes.delete(route.path)
+      },
+    },
+  }
+  const dispose = registerGraphRoute(ctx, {
+    activity: createGraphActivity(),
+    resolveBinding: async () => ({ kind: 'unbound', reason: 'no-pointer' }),
+    services: {
+      indexForBinding: async () => {
+        throw new Error('an unbound project must not open an index')
+      },
+    },
+  })
+  t.after(dispose)
+  const server = createServer((request, response) =>
+    routes.get(request.url).handler(request, response),
+  )
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  t.after(() => server.close())
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/obsidian-mem/graph`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId: SESSION, scope: 'project' }),
+  })
+  const envelope = await response.json()
+  assert.equal(response.status, 200)
+  assert.equal(envelope.value.unbound, true)
+  assert.equal(envelope.value.reason, 'no-pointer')
+})
+
 test('a changed asset is served without re-registering the route', async (t) => {
   // Registration runs once per plugin load. A buffer captured there would keep the
   // browser on the previous build after `lib/` changed, so the handler re-reads.
