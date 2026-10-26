@@ -275,12 +275,17 @@ const BUDGETS = {
   // that has no bullet under it, so an untouched template injects nothing — and the
   // section moved above the recent-decisions list, with the comment that argues the
   // new order. Both are decisions a reader has to be able to audit in place.
-  'lib/brief.js': 1400,
+  // Raised from 1400 by the coverage-first brief: the coverage return value, the
+  // paging dispatcher and the conventions preview. Measured 1413 formatted lines;
+  // measured-plus-30 is 1443, rounded to 1500.
+  'lib/brief.js': 1500,
   // The composition half extracted from `brief.js` (207 formatted lines measured;
   // measured-plus-30 is 237, which rounds up to 250). The budget fixpoint, the
   // section renderer and the footer are what a plain string can exercise, so they
   // live below the module that reads a vault.
-  'lib/brief-coverage.js': 250,
+  // Raised from 250 by the coverage note/footer and the small-budget fallback:
+  // measured 362 formatted lines; measured-plus-30 is 392, rounded to 400.
+  'lib/brief-coverage.js': 400,
   // Raised from 1900 when the diagnostics call sites landed here. The alternative
   // was to move the emissions into a module of their own, which would have meant
   // re-exporting each of the ten skip reasons and the six queue outcomes — the
@@ -524,7 +529,9 @@ const BUDGETS = {
   // `brief` diagnostic that reports `hint-only` with `bind-hint` instead of claiming
   // a brief was injected. The alternative was a second resolution pass per step,
   // which would let the two answers disagree.
-  'lib/hooks.js': 1500,
+  // Raised from 1500 by the coverage summary the brief diagnostic carries.
+  // Measured 1514 formatted lines; measured-plus-30 is 1544, rounded to 1550.
+  'lib/hooks.js': 1550,
   // Raised from 600 by the hot-zone deadlock fix (1069 formatted lines measured;
   // measured-plus-30 is 1099, which rounds up to 1100). What the 469 lines buy:
   // archival that can tell a pointer line from an entry — the reported bug, since
@@ -668,7 +675,10 @@ const BUDGETS = {
   // too, and the `forwardAdminArguments` default that makes an omitted `operation`
   // the read-only answer. The alternative — reusing the curation arm — would let a
   // caller validate a hot result against curation’s shape.
-  'lib/tool-schema.js': 1100,
+  // Raised from 1100 by the mem_brief paging parameters/page arm, the brief
+  // coverage object and the appraise action result. Measured 1142 formatted lines;
+  // measured-plus-30 is 1172, rounded to 1200.
+  'lib/tool-schema.js': 1200,
   'lib/tool-registry.js': 250,
   // Raised from 1100 when the explicit-retry wake-up landed here: `kickQueueWorker`
   // is threaded through the option record and the one action that owns retrying, so

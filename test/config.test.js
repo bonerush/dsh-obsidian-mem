@@ -27,6 +27,9 @@ const DEFAULTS = {
   // in silence. `false` removes that one injection and nothing else.
   bindHint: true,
   briefBudgetChars: 6000,
+  // The conventions preview: `summary` shows five lines and pages the rest;
+  // `flat` is the pre-0.3 list.
+  briefConventionMode: 'summary',
   recallBudgetChars: 900,
   // Task 18's default switch: a session whose tool calls begin failing in a run may
   // retrieve the project's pitfalls mid-turn, sharing `recallBudgetChars` with the
