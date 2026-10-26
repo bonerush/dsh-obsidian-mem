@@ -464,6 +464,9 @@ test('the documented enums and defaults are exactly spec §9', async (t) => {
     // `spliceBody` verifies the bytes it read, so only a plugin transaction can
     // repair a hot file.
     'hot',
+    // The deterministic appraisal: a bounded recent window, closed finding
+    // vocabulary, no write and no model call.
+    'appraise',
   ])
   assert.deepEqual(params('mem_admin').operation.enum, ['status', 'scan', 'compact'])
   assert.equal(params('mem_admin').operation.default, 'status')
@@ -512,6 +515,7 @@ test('mem_admin branches its result with a per-action const instead of an uncons
   assert.equal(Array.isArray(schema.oneOf), true)
   const actions = schema.oneOf.map((arm) => arm.properties.action.const)
   assert.deepEqual(actions.slice().sort(), [
+    'appraise',
     'bind',
     'curation',
     'diagnostics',
