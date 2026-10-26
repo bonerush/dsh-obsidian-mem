@@ -328,3 +328,120 @@ test('the asset routes read per request and keep the same-origin fence', async (
   const missing = await h.get('/obsidian-mem/memory-overview.js')
   assert.equal(missing.status, 404)
 })
+
+test('a status filter is applied before hasMore is decided', async (t) => {
+  const hits = Array.from({ length: 50 }, (_x, index) => ({
+    path: 'Projects/alpha--11111111/Decisions/' + index + '.md',
+    title: 'note ' + index,
+    type: 'decision',
+    status: 'active',
+    source: 'body',
+    snippet: 'x',
+    scoreSignals: [],
+  }))
+  Object.defineProperty(hits, 'candidatesScored', { value: 100, enumerable: false })
+  let searchArgs
+  const services = {
+    async indexForBinding() {
+      return {
+        boundProjectId: BOUND.projectId,
+        search: async (args) => {
+          searchArgs = args
+          return hits
+        },
+      }
+    },
+    async admin() {
+      return { action: 'jobs', result: { jobs: [], failed: 0, deferred: 0 } }
+    },
+  }
+  const h = await harness(t, { services })
+  const result = await h.post({
+    sessionId: SESSION,
+    action: 'search',
+    query: 'note',
+    status: 'provisional',
+    limit: 5,
+  })
+  assert.equal(result.status, 200)
+  assert.equal(searchArgs.limit, 50, 'the route asks for the largest page before filtering')
+  assert.equal(result.body.value.hits.length, 0)
+  assert.equal(result.body.value.hasMore, true, 'rows beyond the page still exist')
+})
+
+test('overview trims its lists to stay inside the 16 KB ceiling', async (t) => {
+  const byType = Array.from({ length: 500 }, (_x, index) => ({
+    type: 'type-' + index + '-' + 'x'.repeat(20),
+    n: index,
+  }))
+  const byStatus = Array.from({ length: 500 }, (_x, index) => ({
+    status: 'status-' + index + '-' + 'x'.repeat(20),
+    n: index,
+  }))
+  const recent = Array.from({ length: 50 }, (_x, index) => ({
+    path: 'Projects/alpha--11111111/Decisions/' + index + '.md',
+    title: 'note ' + index + ' ' + 'x'.repeat(40),
+    type: 'decision',
+    status: 'active',
+    updated: null,
+  }))
+  const services = {
+    async indexForBinding() {
+      return {
+        boundProjectId: BOUND.projectId,
+        status: () => ({
+          backend: 'sqlite',
+          ready: true,
+          degraded: false,
+          stale: false,
+          scanning: false,
+          notes: 500,
+          lastScan: null,
+          quarantined: [],
+          skipped: {},
+          fts: true,
+        }),
+        stats: async () => ({
+          notes: 500,
+          links: 1000,
+          orphans: 20,
+          byType,
+          byStatus,
+          updatedAt: null,
+        }),
+        recent: async () => recent,
+      }
+    },
+    async admin(args) {
+      if (args.action === 'jobs')
+        return { action: 'jobs', result: { jobs: [], failed: 0, deferred: 0 } }
+      if (args.action === 'hot')
+        return {
+          action: 'hot',
+          result: {
+            missing: false,
+            used: 1,
+            capacity: 9,
+            trigger: 6,
+            ratio: 0.67,
+            archivable: 0,
+            compactable: 0,
+            sections: [],
+          },
+        }
+      if (args.action === 'diagnostics')
+        return {
+          action: 'diagnostics',
+          result: {
+            window: { capacity: 200, size: 0, oldestSeq: null, newestSeq: null, dropped: 0 },
+            events: [],
+          },
+        }
+      return { action: 'jobs', result: { jobs: [], failed: 0, deferred: 0 } }
+    },
+  }
+  const h = await harness(t, { services })
+  const result = await h.post({ sessionId: SESSION, action: 'overview' })
+  assert.equal(result.status, 200)
+  assert.ok(result.bytes <= 16 * 1024, 'overview is ' + result.bytes + ' bytes')
+})
