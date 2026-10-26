@@ -182,3 +182,26 @@ test('a stored view an older version wrote cannot inject a provisional entry eit
   assert.equal(brief.text.includes(world.provisional.path), false, brief.text)
   assert.equal(brief.text.includes('习惯：中文回复'), false)
 })
+
+test('a provisional decision or gotcha never reaches the recent navigation', async (t) => {
+  // The recent decisions/gotchas list is automatic injection too, and a proposed
+  // decision is written `provisional` until the user confirms it. Both halves matter:
+  // the quarantined candidate must stay out, and a confirmed note must still arrive.
+  const world = await seamWorld(t)
+  await world.services.write({
+    type: 'decision',
+    title: '候选决策',
+    body: '这是一条待确认的候选决策。',
+    status: 'provisional',
+    assertion: 'observed',
+  })
+  await world.services.write({
+    type: 'gotcha',
+    title: '当前踩坑',
+    body: '这是一个已经确认的踩坑。',
+  })
+
+  const brief = await world.services.brief({})
+  assert.ok(brief.text.includes('当前踩坑'), brief.text)
+  assert.equal(brief.text.includes('候选决策'), false, brief.text)
+})
