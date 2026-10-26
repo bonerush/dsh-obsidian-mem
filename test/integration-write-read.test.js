@@ -44,11 +44,13 @@ import { makeCurationWorld } from './curation-world.js'
 
 const execFileAsync = promisify(execFile)
 
-const DATE = (() => {
+/** Today at call time, not at module load: a suite that crosses midnight must not
+ * look for yesterday's day-log or lint-report file. */
+function today() {
   const now = new Date()
   const pad = (value) => String(value).padStart(2, '0')
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-})()
+}
 
 function gitEnvironment() {
   const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
@@ -537,7 +539,7 @@ test('mem_log appends exactly one idempotent day-log block', async (t) => {
   assert.equal(first.action, 'log')
   assert.equal(replay.txId, first.txId)
 
-  const logPath = at(f.vault, `${f.binding.relativeDir}/Daily/${DATE}.md`)
+  const logPath = at(f.vault, `${f.binding.relativeDir}/Daily/${today()}.md`)
   const text = await readFile(logPath, 'utf8')
   assert.equal(text.split('本轮修好了索引刷新。').length - 1, 1, 'the block is written once')
   assert.match(text, /## 20260923-120000-abcd · 会话/)
@@ -750,7 +752,7 @@ test('mem_admin(lint) stays read-only by default and reports real vault facts', 
   )
   assert.ok(report.result.safetyExclusions.length > 0)
   // The dated report note is written only when the caller asks for it.
-  await assert.rejects(readFile(at(f.vault, `_meta/Lint Report ${DATE}.md`)), { code: 'ENOENT' })
+  await assert.rejects(readFile(at(f.vault, `_meta/Lint Report ${today()}.md`)), { code: 'ENOENT' })
 
   const written = value(
     await call(ctx, 'mem_admin', { action: 'lint', report: true }, { cwd: f.repo }),

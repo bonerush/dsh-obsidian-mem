@@ -746,7 +746,10 @@ const BUDGETS = {
   // status answer, and the compact write — one `transacted` call, the index refresh,
   // the UI cue, and a status report read back after the commit so the numbers
   // describe the file the transaction left behind.
-  'lib/services.js': 1800,
+  // Raised from 1800 by the appraisal action and the coverage page dispatch;
+  // measured 1802 formatted lines after the dead autoApply guard was removed.
+  // measured-plus-30 is 1832, rounded to 1850.
+  'lib/services.js': 1850,
   // Raised from 2200 by Task 7 (2229 formatted lines measured; measured-plus-30
   // rounds up to 2300, which is this number — the entry above the old one had no
   // note of its own, so this number states the rule it follows). What the 29 lines
