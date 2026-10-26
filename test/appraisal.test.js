@@ -29,17 +29,33 @@ test('the vocabulary is closed and every code has a severity', () => {
 })
 
 test('a past review_after is an error, a future one is not', () => {
-  const past = appraiseNotes([note({ data: { ...note().data, review_after: '2026-10-01' } })], { today: TODAY })
-  assert.deepEqual(past.findings.map((f) => f.code), ['review-overdue'])
-  const future = appraiseNotes([note({ data: { ...note().data, review_after: '2026-11-01' } })], { today: TODAY })
+  const past = appraiseNotes([note({ data: { ...note().data, review_after: '2026-10-01' } })], {
+    today: TODAY,
+  })
+  assert.deepEqual(
+    past.findings.map((f) => f.code),
+    ['review-overdue'],
+  )
+  const future = appraiseNotes([note({ data: { ...note().data, review_after: '2026-11-01' } })], {
+    today: TODAY,
+  })
   assert.deepEqual(future.findings, [])
 })
 
 test('missing assertion or low confidence is unverified; high confidence is not', () => {
-  const missing = appraiseNotes([note({ data: { type: 'convention', status: 'active', confidence: 0.9 } })], { today: TODAY })
-  assert.deepEqual(missing.findings.map((f) => f.code), ['unverified'])
+  const missing = appraiseNotes(
+    [note({ data: { type: 'convention', status: 'active', confidence: 0.9 } })],
+    { today: TODAY },
+  )
+  assert.deepEqual(
+    missing.findings.map((f) => f.code),
+    ['unverified'],
+  )
   const low = appraiseNotes([note({ data: { ...note().data, confidence: 0.2 } })], { today: TODAY })
-  assert.deepEqual(low.findings.map((f) => f.code), ['unverified'])
+  assert.deepEqual(
+    low.findings.map((f) => f.code),
+    ['unverified'],
+  )
   assert.equal(UNVERIFIED_CONFIDENCE, 0.5)
 })
 
@@ -47,7 +63,12 @@ test('exact title groups are one finding, and different types do not group', () 
   const rows = [
     note({ path: 'a.md', title: 'Same  Title' }),
     note({ path: 'b.md', title: 'same title' }),
-    note({ path: 'c.md', title: 'same title', type: 'decision', data: { type: 'decision', status: 'active', assertion: 'stated', confidence: 0.9 } }),
+    note({
+      path: 'c.md',
+      title: 'same title',
+      type: 'decision',
+      data: { type: 'decision', status: 'active', assertion: 'stated', confidence: 0.9 },
+    }),
   ]
   const out = appraiseNotes(rows, { today: TODAY })
   const duplicates = out.findings.filter((f) => f.code === 'duplicate-title')
@@ -61,7 +82,10 @@ test('dead links use the injected resolver and ignore external targets', () => {
     note({ path: 'a.md', body: 'see [[Conventions/missing|alias]] and https://example.com' }),
     note({ path: 'b.md', body: 'see [[Conventions/alive]]' }),
   ]
-  const out = appraiseNotes(rows, { today: TODAY, resolves: (target) => target === 'Conventions/alive' })
+  const out = appraiseNotes(rows, {
+    today: TODAY,
+    resolves: (target) => target === 'Conventions/alive',
+  })
   const dead = out.findings.filter((f) => f.code === 'dead-link')
   assert.equal(dead.length, 1)
   assert.equal(dead[0].path, 'a.md')
@@ -70,12 +94,23 @@ test('dead links use the injected resolver and ignore external targets', () => {
 
 test('contested is info, and the findings sort severity then path', () => {
   const rows = [
-    note({ path: 'z.md', title: 'z', status: 'contested', data: { ...note().data, review_after: '2026-01-01' } }),
+    note({
+      path: 'z.md',
+      title: 'z',
+      status: 'contested',
+      data: { ...note().data, review_after: '2026-01-01' },
+    }),
     note({ path: 'a.md', title: 'a', data: { ...note().data, review_after: '2026-01-01' } }),
   ]
   const out = appraiseNotes(rows, { today: TODAY })
-  assert.deepEqual(out.findings.map((f) => f.code), ['review-overdue', 'review-overdue', 'contested'])
-  assert.deepEqual(out.findings.map((f) => f.path), ['a.md', 'z.md', 'z.md'])
+  assert.deepEqual(
+    out.findings.map((f) => f.code),
+    ['review-overdue', 'review-overdue', 'contested'],
+  )
+  assert.deepEqual(
+    out.findings.map((f) => f.path),
+    ['a.md', 'z.md', 'z.md'],
+  )
 })
 
 test('the note and time bounds are honest about truncation', () => {
@@ -90,7 +125,13 @@ test('the note and time bounds are honest about truncation', () => {
 })
 
 test('the finding bound keeps the total real and rejects bad inputs', () => {
-  const rows = Array.from({ length: 5 }, (_, i) => note({ path: 'n' + i + '.md', title: 'n' + i, data: { ...note().data, review_after: '2026-01-01' } }))
+  const rows = Array.from({ length: 5 }, (_, i) =>
+    note({
+      path: 'n' + i + '.md',
+      title: 'n' + i,
+      data: { ...note().data, review_after: '2026-01-01' },
+    }),
+  )
   const out = appraiseNotes(rows, { today: TODAY, maxFindings: 2 })
   assert.equal(out.findings.length, 2)
   assert.equal(out.total, 5)
