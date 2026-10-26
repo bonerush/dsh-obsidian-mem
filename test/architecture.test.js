@@ -73,7 +73,7 @@ const LAYERS = {
   'graph-renderer': 1,
   'graph-worker': 0,
   'graph-activity': 0,
-  'graph-route': 0,
+  'graph-route': 1,
   'graph-links': 0,
   // Graph-only metadata reads and projection import path/link leaves; recall owns the index.
   'graph-data': 1,
