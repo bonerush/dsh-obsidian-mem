@@ -154,15 +154,18 @@ dsh --profile web --dump-config | grep -n obsidian-mem
 | 中文搜索可用 | 写一条笔记，然后用 `mem_search` 搜一个两字中文词 |
 | 仓库文件是真的 | `ls "$vault/Projects/"`——纯 Markdown，卸载插件后照样能读 |
 
-### 在 DSH 侧边栏查看记忆图谱
+### 在 DSH 侧边栏查看记忆面板
 
 在 DSH `0.1.7-rc.2` 和 `dsh-better-sidebar` `0.21.1` 下，打开右侧原生侧边栏，
-选择 **+ → 记忆图谱**。设置按钮打开与 Obsidian 关系图谱相同的四个区块：筛选、
-颜色组、外观、力度。筛选中的 **范围** 可切换全部记忆/当前项目，初始显示全部记忆。
+选择 **+ → 记忆**。页签有四个只读视图：**概览**（项目身份、笔记/关系/孤立/待处理计数、
+类型构成与最近变化）、**图谱**（下文的关系图谱）、**检索**（本地索引与摘录）、
+**健康**（索引、队列、热层与诊断）。面板不写入；六个工具仍是唯一写入路径。
+**图谱** 视图的设置按钮打开与 Obsidian 关系图谱相同的四个区块：筛选、颜色组、
+外观、力度。筛选中的 **范围** 可切换全部记忆/当前项目，初始显示全部记忆。
 配色按 Obsidian 关系图谱的方式解析：从宿主主题读取十一个 `.graph-view.color-*` 槽位，
 所以视图跟随 DSH 的浅色/深色主题，就像 Obsidian 的图谱跟随它自己的主题一样。默认是灰色
 节点与连线，悬停和记忆调用用强调色高亮；颜色组初始为空。标签按 Obsidian 的
-`14 + 节点大小 / 4` 的 50% 栅格化（默认值，可在滑块里调），因为它位于窄侧栏；位置、`√缩放` 缩放和悬停节点的
+`14 + 节点大小 / 4` 的 85% 栅格化（默认值，可在滑块里调），因为它位于窄侧栏；位置、`√缩放` 缩放和悬停节点的
 固定字号都与原版一致；外观区块的 **标题文字大小** 滑块可在 0.4–1.6 之间调整这个系数。
 连线按 Obsidian 的文件名和相对路径规则，
 解析双链、Markdown 链接、嵌入及 YAML 中的双链。
@@ -253,6 +256,7 @@ Obsidian 应用程序代码。
 | `injectBrief` | `true` | boolean | 是否注入会话简报和逐轮相关笔记索引。 |
 | `bindHint` | `true` | boolean | 当会话所在目录解析不出可用项目时，是否一次性告知该会话。这条通知既是「要不要为这个项目建记忆」的提问入口，也是「会话记录的目录已被移动或删除」的报错入口——否则记忆只会静默失效。`false` 只去掉这一条注入，别的都不变；Codex 侧同一个开关是 `OBSIDIAN_MEM_BIND_HINT`。 |
 | `briefBudgetChars` | `6000` | 整数 256–20000 | 会话简报与每周提醒的硬上限，单位是 Unicode 码点。 |
+| `briefConventionMode` | `summary` | `summary` 或 `flat` | 长约定索引的渲染方式。`summary` 只显示 5 行 MOC，其余通过 `mem_brief(section="conventions", offset=5)` 逐页取回；`flat` 是 0.3 之前的列表，完全由预算决定显示多少。只影响渲染：分页始终能读到全部条目。 |
 | `recallBudgetChars` | `900` | 整数 256–20000 | 逐轮相关笔记索引的上限，单位是 Unicode 码点。它与 `briefBudgetChars` 刻意分开：若按简报剩余额度计费，首轮命中率只有 0.6%，而后续轮次是 22.1%。 |
 | `failureRecall` | `true` | boolean | 原生 DSH 工具重复失败时检索相关记忆。与提示词回忆共用每步的 `recallBudgetChars` 上限；不控制留档。 |
 | `hotCapacityChars` | `9000` | 整数 1024–50000 | `_meta/hot.md` 的容量。是存储容量，*不是*注入预算。 |
@@ -301,8 +305,8 @@ Obsidian 应用程序代码。
 | `mem_read` | `path`（必填，仓库相对路径）、`section` | 重新校验文件后返回正文、解析出的 frontmatter 和内容哈希。拒绝 `_meta/.history/` 这类内部目录。 |
 | `mem_write` | `type`、`title`、`body`（必填）；`tags`、`status`、`confidence`、`assertion`、`supersedes`、`id`、`idempotencyKey` | 写项目文档和记忆的权威途径。不带 `id` 时**创建**一条带新 id 的笔记；带已存在的 `id` 时更新。取代会校验旧 id，并把链接的两端都写上。 |
 | `mem_log` | `text`（必填）；`session`、`section`、`idempotencyKey` | 往今天的日志追加一条幂等条目；`section: "hot"` 则改为写热记忆文件的进行中区域。 |
-| `mem_brief` | — | 返回会话注入过的那份召回简报，方便你重读或审计预算。 |
-| `mem_admin` | `action`（必填）：`lint`、`index`、`bind`、`projects`、`promote`、`jobs`、`curation`、`hot`、`diagnostics`；外加 `report`、`prune`（仅 lint）、`rebuild`（index）、`mode`（bind：`show`\|`local`\|`fork`\|`retain`）、`path`（promote）、`jobId`/`retry`（jobs）、`operation`（curation：`status`\|`scan`；hot：`status`\|`compact`） | 低频维护。`lint` 默认只读，除非你传 `report: true`（写一条带日期的报告笔记）和/或 `prune: true`（删除过期快照）——这两者刻意保持独立。`curation` 读取或运行下文那条有界的整理回合；它永远不会应用某条待评审提案。`hot` 维护热层：`status` 按 `hotCapacityChars` 报告它的填充率，并逐区报告一次搬出还能移走多少条完整条目；`compact` 把「已完成」区的指针行折叠成一行摘要，并在同一个事务里归档最旧的、可搬出的条目——这是 `hot-over-capacity` 拒绝信息指名的唯一恢复路径，手工改文件不是替代方案：那会让事务以 `hash-mismatch` 失败。`diagnostics` 是唯一什么都不读的动作：它返回**本进程**自己的决策环——最多 200 条事件，取值来自封闭集合 `capture`、`distill`、`index`、`bind`、`job`、`transaction`、`brief`、`skill`、`recall`、`curation`（十类现在都会写入），每条带一个结局与机器标识，永不包含笔记正文、标题或提示词。因此一个窗口能回答那些否则必须靠复现才能回答的问题：一个已结束的回合为什么没被捕获（`capture` 事件给出原因）、蒸馏是真的没产出还是根本没跑（`distill`、`job`）、索引有没有跟上一次写入（`index`）、一次写入是提交了还是带着错误码被拒绝（`transaction`）。它不需要绑定、不读仓库，所以在其他所有动作都拒绝时它仍能回答；进程退出后它即清空——上文所述的独立本地日志会为用户自行生成的报告保留缩减后的事件。设 `DSH_OBSIDIAN_MEM_DEBUG=1` 可额外把每条事件以 `info` 级写进宿主日志；宿主是否显示这一行由宿主决定，不由本插件决定。 |
+| `mem_brief` | 可选 `section`、`offset`、`limit` | 不带参数时返回会话注入过的那份召回简报，方便你重读或审计预算。带 `section` 时返回该区块的一页（`hot`、`hot-constraints`、`hot-active`、`hub`、`conventions`、`preferences`、`view`、`recent`），1–50 行、最多 8,000 码点；简报计为省略的每一条都能这样取回。 |
+| `mem_admin` | `action`（必填）：`lint`、`index`、`bind`、`projects`、`promote`、`jobs`、`curation`、`hot`、`appraise`、`diagnostics`；外加 `report`、`prune`（仅 lint）、`rebuild`（index）、`mode`（bind：`show`\|`local`\|`fork`\|`retain`）、`path`（promote）、`jobId`/`retry`（jobs）、`operation`（curation：`status`\|`scan`；hot：`status`\|`compact`） | 低频维护。`lint` 默认只读，除非你传 `report: true`（写一条带日期的报告笔记）和/或 `prune: true`（删除过期快照）——这两者刻意保持独立。`curation` 读取或运行下文那条有界的整理回合；它永远不会应用某条待评审提案。`hot` 维护热层：`status` 按 `hotCapacityChars` 报告它的填充率，并逐区报告一次搬出还能移走多少条完整条目；`compact` 把「已完成」区的指针行折叠成一行摘要，并在同一个事务里归档最旧的、可搬出的条目——这是 `hot-over-capacity` 拒绝信息指名的唯一恢复路径，手工改文件不是替代方案：那会让事务以 `hash-mismatch` 失败。`diagnostics` 是唯一什么都不读的动作：它返回**本进程**自己的决策环——最多 200 条事件，取值来自封闭集合 `capture`、`distill`、`index`、`bind`、`job`、`transaction`、`brief`、`skill`、`recall`、`curation`（十类现在都会写入），每条带一个结局与机器标识，永不包含笔记正文、标题或提示词。因此一个窗口能回答那些否则必须靠复现才能回答的问题：一个已结束的回合为什么没被捕获（`capture` 事件给出原因）、蒸馏是真的没产出还是根本没跑（`distill`、`job`）、索引有没有跟上一次写入（`index`）、一次写入是提交了还是带着错误码被拒绝（`transaction`）。它不需要绑定、不读仓库，所以在其他所有动作都拒绝时它仍能回答；进程退出后它即清空——上文所述的独立本地日志会为用户自行生成的报告保留缩减后的事件。`appraise` 读取最近 50 条笔记，返回确定性鉴定结果（过期复核、未验证、重名、断链、有争议），不调用模型、不写入。设 `DSH_OBSIDIAN_MEM_DEBUG=1` 可额外把每条事件以 `info` 级写进宿主日志；宿主是否显示这一行由宿主决定，不由本插件决定。 |
 
 `mem_write` 的 type 这样路由：
 

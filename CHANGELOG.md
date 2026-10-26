@@ -11,6 +11,109 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Added
+
+- **A coverage-first brief with addressable paging.** `buildBrief` now returns a
+  machine-readable `coverage` object — per section and in total,
+  `shown + omitted === considered` — and the footer carries the same counts
+  (`coverage=...`). When a section is cut, the brief prints one bounded plugin
+  notice naming the section, its shown/total and the exact
+  `mem_brief(section="…", offset="…")` call; the note costs at most 300 code
+  points and is dropped in favour of the short omission count when the budget is
+  too small to carry both. `mem_brief` keeps its no-argument full-brief answer and
+  gains optional `section`/`offset`/`limit`, returning one bounded page
+  (1–50 lines, at most 8,000 code points) from the same private readers the brief
+  uses. A new `briefConventionMode` (default `summary`) renders five MOC lines
+  and makes the rest pageable; `flat` is the pre-0.3 list. Measured above: a
+  2,000-line MOC now builds in about 23 ms (was about 81 s when every note was read
+  for its status), because the statuses come from one batched
+  `index.statusesForPaths` call.
+- **A read-only 记忆 panel in the DSH sidebar.** The tab id stays
+  `obsidian-mem:graph`; the title becomes 记忆 and the panel adds 概览/图谱/检索/健康
+  views. 概览 shows the project, note/link/orphan/pending counts, type composition
+  and recent changes; 检索 uses the local index and shows excerpts; 健康 shows
+  index, queue, hot and diagnostics cards. The graph is unchanged except for a
+  `显示 X / 共 Y` truncation notice. The panel's only endpoint is a read-only
+  `POST /obsidian-mem/panel` behind the same loopback/same-origin fence and a
+  4 KB body cap; it never exposes a write action or the cross-project registry.
+  One route-served browser module (`lib/memory-panel.js`, 799 lines) is imported
+  by the shell, which keeps the single-bundle constraint.
+- **Deterministic memory appraisal.** `mem_admin(action="appraise")` reads at
+  most the 50 most recent notes and returns bounded findings from a closed
+  vocabulary: `review-overdue`, `dead-link`, `unverified`,
+  `duplicate-title`, `contested`, with `error`/`warn`/`info` severities. It
+  is read-only, makes no model call and returns `scanned`/`truncated` rather
+  than pretending it saw the whole vault.
+- **One automatic-injection eligibility predicate.** `lib/note-health.js` now
+  owns `AUTOMATIC_EXCLUDED_STATUSES` and `isAutomaticallyEligible`; the brief's
+  convention index, the stored-view navigation, prompt recall and the recent
+  decisions section all use it. `superseded`, `archived` and `provisional`
+  no longer reach an automatic prompt by any of those paths. Explicit search is
+  unchanged: a provisional note remains findable for the human who must confirm it.
+- **Aggregate hot archive lines and a working compact.** Archiving no longer leaves
+  one pointer per entry; each affected zone gets one
+  `- 已归档 N 条 → [[…/hot-archive]]` line, and `foldPointers` migrates legacy
+  per-entry pointers. `compactHot` now evaluates the post-aggregate text and can
+  free short 进行中 entries: the 104-entry fixture at 8,983/9,000 cp is refused
+  before the pass and succeeds after it, with every moved payload preserved once in
+  the archive and no pointer ever archived.
+- **A reusable development workflow.** `WORKFLOW.md` composes the Superpowers
+  process (brainstorming → plan → subagent-driven TDD → verification) with the ECC
+  gated pipeline (research → plan gate → TDD → review → commit gate). It records the
+  Codex `gpt-6.1-sol` xhigh route (the bundled 0.163 CLI, not the PATH 0.146
+  one that refuses the model), the time-box/fallback rule, the task-board and
+  review-package conventions, the measured repository gates, and the artifact
+  layout. `AGENTS.md` points at it.
+
+### Fixed
+
+- **Provisional memory could reach an automatic prompt.** The brief excluded
+  provisional conventions, but prompt recall could still fire on one, a stored
+  curation view could inject one, and the recent-decisions section could show one.
+  All three now use the same predicate; a regression test covers each path.
+- **`compactHot` could not free short 进行中 entries.** A per-entry pointer line
+  is about 100 code points and a short entry about 86, so `mustHelp` refused every
+  batch and the recovery path was a no-op. Aggregate lines plus a post-fold shrink
+  test make the pass free space; a refused write at the cap succeeds after it.
+- **The brief's omission count was the only honest half of a cut.** The footer said
+  `omitted N` but the model could not name the omitted items. The coverage note,
+  the returned coverage object and the paging call close that gap.
+- **The graph's truncation was silent.** The route already returned
+  `truncated`/`total`; the view now renders `仅显示前 X / 共 Y`.
+
+### Validation and remaining risks
+
+- **Measured (E1, 2026-10-26, synthetic `mkdtemp` vaults).** At 100/500/2,000
+  conventions the old brief showed 45/44/44 lines (45.0%/8.8%/2.2% coverage) and
+  0/5 recent decisions; the conventions preview plus the paging note frees about
+  4,700 code points (note cost 77–79 cp). A 2,000-line MOC built in about 23 ms
+  with the batch status path; the per-note path measured about 81 s at that size.
+  These are synthetic-vault measurements, not a promise about a user's vault.
+- **Measured (hot).** 104 entries fill 8,983/9,000 cp; at a 6,000-cp brief the old
+  text carried 66/104 ids. After the pass, `compactHot` reclaims space and a
+  subsequent write at the boundary succeeds; the paging test walks all 104 ids
+  exactly once.
+- **Tests run.** `test/brief.test.js`, `test/brief-page.test.js`,
+  `test/tools.test.js`, `test/config.test.js`, `test/hooks.test.js`,
+  `test/appraisal.test.js`, `test/appraisal-action.test.js`,
+  `test/hot-planner.test.js`, `test/memory.test.js`,
+  `test/panel-route.test.js`, `test/panel-client.test.js`,
+  `test/panel-assets.test.js`, `test/recall-eligibility.test.js`,
+  `test/architecture.test.js`, plus `npm run lint`, `npm run types` and
+  `npm run format:check`. `npm test` on 2026-10-26: **1,123 tests, 1,122 pass,
+  1 skipped, 0 fail**. (The first full run was 1,119 pass / 3 fail: four size
+  budgets, the diagnostics schema missing `coverage`, and the graph asset walk
+  not registering the panel route. All three were fixed and the suite re-ran
+  green.) `npm run check` (lint, format, types, prepack, pack:check) also passed:
+  `verify-pack: OK`, and the real archive reported `76 entries, 66 lib modules`.
+- **Not run.** A mounted browser check of the panel (no browser was available):
+  first paint, tab switching, live-region announcements and the canvas truncation
+  notice are asserted at source level only. The E1 build-time and coverage figures
+  were not re-measured on the real vault. The Codex `gpt-6.1-sol` xhigh spec run
+  exceeded its 30-minute cap and was stopped; the Lead froze the spec from the
+  completed research, and the read-only architecture audit did finish (339 lines,
+  `research/codex-architecture-audit-2026-10.md`).
+
 ## 0.2.0 — 2026-10-12
 
 ### Fixed
