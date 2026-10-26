@@ -795,3 +795,30 @@ test('the entry bound cuts the grouped list, and never splits a group', () => {
   // The grouped list itself is what a document stores, so its length is the bound.
   assert.ok(grouped.length <= VIEW_ENTRY_LIMIT)
 })
+
+test('an ineligible entry never stands for a view entry, alone or inside an exact group', () => {
+  // The scanner may report a provisional note as an entry — it is a real finding —
+  // but the stored view must not let it stand for an injectable fact. The active
+  // member of the same exact group still does, which is the positive control.
+  const provisional = { ...syntheticEntry(1, 'pair'), status: 'provisional' }
+  const active = syntheticEntry(2, 'pair')
+  const provisionalSolo = { ...syntheticEntry(3), status: 'provisional' }
+  const archived = { ...syntheticEntry(4), status: 'archived' }
+  const grouped = groupExactEntries([provisional, active, provisionalSolo, archived])
+  assert.deepEqual(
+    grouped.map((entry) => entry.path),
+    [active.path],
+  )
+  assert.equal(
+    grouped.some((entry) => entry.paths.includes(provisional.path)),
+    false,
+  )
+  assert.equal(
+    grouped.some((entry) => entry.paths.includes(provisionalSolo.path)),
+    false,
+  )
+  assert.equal(
+    grouped.some((entry) => entry.paths.includes(archived.path)),
+    false,
+  )
+})

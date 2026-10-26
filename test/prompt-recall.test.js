@@ -208,6 +208,28 @@ test('weak matches, already shown paths, and tiny prompts stay silent', async ()
   )
 })
 
+test('a hit whose status automatic injection excludes is never offered', async () => {
+  // A provisional note is recorded and searchable on purpose; the recall map is part
+  // of automatic injection, so offering it back would leak the quarantine through the
+  // prompt instead of the brief. History is normally filtered by the index already,
+  // but a caller-supplied search need not be that index — the refusal belongs here.
+  const withStatus = (status) => async () => [
+    { path, title: 'FTS5 中文索引', status, scoreSignals: ['title-contains'] },
+  ]
+  for (const status of ['provisional', 'superseded', 'archived']) {
+    const result = await promptRecall({ prompt: 'FTS5 中文索引', search: withStatus(status) })
+    assert.equal(result.text, null, status)
+    assert.deepEqual(result.paths, [], status)
+  }
+  // An active — or unrecorded — status stays eligible: a missing status is never
+  // allowed to hide a note, which is the keep-on-doubt rule the brief already had.
+  for (const status of ['active', undefined]) {
+    const result = await promptRecall({ prompt: 'FTS5 中文索引', search: withStatus(status) })
+    assert.equal(result.outcome, 'fired', String(status))
+    assert.deepEqual(result.paths, [path])
+  }
+})
+
 test('only producer-owned user messages become the DSH query', () => {
   assert.equal(
     promptFromMessages([

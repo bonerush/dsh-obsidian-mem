@@ -11,6 +11,7 @@
 // block was dropped because no fragment of it does, and a budget is respected by
 // counting `[...text]` (Unicode code points), which is the unit the spec names.
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { Context } from '@deepseek-ai/cordis'
 import toolsPlugin from '@deepseek-ai/dsh-tools'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -19,6 +20,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { BRIEF_DATA_NOTICE, buildBrief } from '../lib/brief.js'
+import { VIEW_SCHEMA } from '../lib/curation-view.js'
 import { compactHot, updateHot } from '../lib/hot.js'
 import { openIndex } from '../lib/index-db.js'
 import { writeMemory } from '../lib/memory.js'
@@ -775,6 +777,60 @@ test('quarantine is not history: a provisional candidate stays searchable', asyn
   } finally {
     await index.close()
   }
+})
+
+test('a stored view cannot stand for a provisional or historical entry', async (t) => {
+  // A view is an accelerator, and one written before the eligibility rule (or edited
+  // by hand) can carry a note that must never be injected. The entries below are real
+  // bytes with real hashes — hand-written notes no generated index lists — so the only
+  // thing that can exclude them is the status rule itself.
+  const env = await fixture(t)
+  const noteOf = async (name, status) => {
+    const relative = `${RELATIVE_DIR}/Conventions/${name}.md`
+    await writeVaultNote(
+      env,
+      relative,
+      `---\ntitle: ${name}\nstatus: ${status}\ntype: convention\n---\n正文。\n`,
+    )
+    const hash = createHash('sha256')
+      .update(await readFile(at(env.vault, relative)))
+      .digest('hex')
+    return {
+      path: relative,
+      hash,
+      paths: [relative],
+      sourceHashes: [hash],
+      exactKey: null,
+      status,
+      title: name,
+      description: `${status} 条目`,
+    }
+  }
+  const provisional = await noteOf('候选约定', 'provisional')
+  const superseded = await noteOf('作废约定', 'superseded')
+  const active = await noteOf('当前约定', 'active')
+
+  const built = await buildBrief(env.binding, {
+    index: await env.open(),
+    config: { briefBudgetChars: BUDGET, hotCapacityChars: HOT_CAPACITY },
+    curationView: {
+      version: VIEW_SCHEMA,
+      projectId: PROJECT_ID,
+      complete: true,
+      generatedAt: '2026-10-03T04:00:00.000Z',
+      entries: [provisional, superseded, active],
+    },
+  })
+
+  // The positive control: the view is verified and rendered, so the exclusions below
+  // are about the status rather than about a view that fell back to the source.
+  assert.ok(built.text.includes(active.path), built.text)
+  assert.equal(
+    built.text.includes(provisional.path),
+    false,
+    'a provisional entry does not reach the brief through a stored view',
+  )
+  assert.equal(built.text.includes(superseded.path), false, 'nor does a historical one')
 })
 
 test('the five most recent decisions and gotchas win, in updated order', async (t) => {
