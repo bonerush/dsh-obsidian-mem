@@ -85,6 +85,13 @@ release artifact. The versioning policy is in the README, under Development.
   curation enqueue now depends only on the worker seam. The audit's other
   dead-code candidates are recorded for a focused cleanup rather than removed in
   this release.
+- **The panel's status filter and overview ceiling had two measured bugs.** A
+  status filter was applied after the index page was cut, so a page with no
+  matching row could report `hasMore:false` while matches sat beyond it; the
+  route now asks for the largest page (50) and filters before deciding `hasMore`.
+  The overview could exceed its 16 KB ceiling when its type/status lists were
+  large; it now halves those lists and, as a last resort, returns the required
+  shape with the list payloads empty.
 
 ### Validation and remaining risks
 
@@ -105,12 +112,13 @@ release artifact. The versioning policy is in the README, under Development.
   `test/panel-route.test.js`, `test/panel-client.test.js`,
   `test/panel-assets.test.js`, `test/recall-eligibility.test.js`,
   `test/architecture.test.js`, plus `npm run lint`, `npm run types` and
-  `npm run format:check`. `npm test` on 2026-10-26: **1,123 tests, 1,122 pass,
+  `npm run format:check`. `npm test` on 2026-10-26: **1,125 tests, 1,124 pass,
   1 skipped, 0 fail**. (The first full run was 1,119 pass / 3 fail: four size
   budgets, the diagnostics schema missing `coverage`, and the graph asset walk
   not registering the panel route. All three were fixed and the suite re-ran
-  green.) `npm run check` (lint, format, types, prepack, pack:check) also passed:
-  `verify-pack: OK`, and the real archive reported `76 entries, 66 lib modules`.
+  green.) `npm run check` (lint, format, types, prepack, pack:check) also passed on the
+  final tree: `verify-pack: OK`, and the real archive reported `76 entries, 66 lib
+  modules`.
 - **Not run.** A mounted browser check of the panel (no browser was available):
   first paint, tab switching, live-region announcements and the canvas truncation
   notice are asserted at source level only. The E1 build-time and coverage figures
