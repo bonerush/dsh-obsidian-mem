@@ -183,6 +183,10 @@ const LAYERS = {
   'route-guard': 0,
   'panel-route': 1,
   appraisal: 1,
+  // The one served browser module the panel shell imports at runtime. It has no
+  // repository import (React arrives through createMemoryViews), so its layer is
+  // the browser-entry layer rather than a host layer.
+  'memory-panel': 1,
   memory: 5,
   capture: 6,
   hot: 6,
@@ -537,7 +541,11 @@ const BUDGETS = {
   // to 300). Separate files, so a breach names the half that grew: the format and
   // its predicates in `hot-text`, the archive planner in `hot-archive`.
   'lib/hot-text.js': 300,
-  'lib/hot-archive.js': 300,
+  // Raised from 300 by the aggregate-pointer fix: the one-archive-line-per-zone
+  // planner, the legacy fold and the post-aggregate shrink test are cohesive in
+  // this module. Measured 329 formatted lines; measured-plus-30 is 359, rounded
+  // up to 400.
+  'lib/hot-archive.js': 400,
   // Measured 83, 374 and 263 formatted lines; measured-plus-30 is 113, 404 and
   // 293, rounded to 150, 450 and 300. `panel-route` is larger than the plan's
   // estimate because it owns the action allowlist, the asset list and the
@@ -545,6 +553,10 @@ const BUDGETS = {
   'lib/route-guard.js': 150,
   'lib/panel-route.js': 450,
   'lib/appraisal.js': 300,
+  // Measured 806 formatted lines; measured-plus-30 is 836, rounded up to 850.
+  // The one module holds the three view components and their shared card kit;
+  // the alternative was four assets and a second host-remount constraint.
+  'lib/memory-panel.js': 850,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})
@@ -558,7 +570,8 @@ const BUDGETS = {
   // rebuilds this tab on every load and the graph route is read-only, so the restore
   // and its gated save live here. The record shape and its validation are the part
   // that earned a module of its own (`lib/graph-settings.js`), not the wiring.
-  'lib/client.js': 650,
+  // Measured 835 formatted lines; measured-plus-30 is 865, rounded up to 900.
+  'lib/client.js': 900,
   'lib/graph-renderer.js': 700,
   // The eleven-slot table, its two CSS forms and the probe read, split out of the
   // renderer when the label-size work pushed that file past its budget.

@@ -258,7 +258,7 @@ test('method, fence, body cap and unknown action are refused before any read', a
   const h = await harness(t, { services: stub.services })
   const { routes, origin } = h
   assert.ok(routes.has('/obsidian-mem/panel'))
-  assert.ok(routes.has('/obsidian-mem/memory-kit.js'))
+  assert.ok(routes.has('/obsidian-mem/memory-panel.js'))
   const getResponse = await h.get('/obsidian-mem/panel')
   assert.equal(getResponse.status, 405)
   const foreign = await h.post(
