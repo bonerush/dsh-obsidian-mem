@@ -8,19 +8,27 @@ import { test } from 'node:test'
 
 import { createGraphActivity } from '../lib/graph-activity.js'
 import { registerGraphRoute } from '../lib/graph-route.js'
+import { registerPanelRoute } from '../lib/panel-route.js'
 
 const SESSION = 'session-graph-test'
 
 test('every module imported by the renderer is served by the registered routes', async (t) => {
   const routes = new Map()
-  const dispose = registerGraphRoute({
-    webServer: {
-      register: (route) => {
-        routes.set(route.path, route)
-        return () => routes.delete(route.path)
-      },
+  const webServer = {
+    register: (route) => {
+      routes.set(route.path, route)
+      return () => routes.delete(route.path)
     },
-  })
+  }
+  const dispose = registerGraphRoute({ webServer })
+  // The memory panel is a second route (and the shell imports its one module by
+  // URL), so the asset walk must register it too or the panel's module looks like
+  // a 404. The POST handler is not exercised here; only the asset route is.
+  const disposePanel = registerPanelRoute(
+    { webServer, sessions: { get: () => undefined } },
+    { services: {}, resolveBinding: async () => ({ kind: 'unbound', reason: 'no-pointer' }) },
+  )
+  t.after(disposePanel)
   t.after(dispose)
   const server = createServer((request, response) => {
     const route = routes.get(request.url)
