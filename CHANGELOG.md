@@ -80,6 +80,76 @@ release artifact. The versioning policy is in the README, under Development.
   review-package conventions, the measured repository gates, and the artifact
   layout. `AGENTS.md` points at it.
 
+- **v0.4 hot delivery receipts, bounded continuations and convention rotation.**
+  The hot half of the brief is now versioned per injectable unit — the version
+  hashes id, zone, text and source, because "the same id" is not "the same bytes
+  the model read" — and a private receipt under
+  `dataRoot/delivery/<vaultHash>/<projectId>/<sessionHash>.json` records exactly
+  the ids/versions a composed message emitted (128 KiB, 512 acknowledged
+  identities, 16 pending, 24 h retention, private modes, symlink refusal, atomic
+  replace, one short per-state lock, idempotent duplicate acknowledgements, epoch
+  reset on restore/clear/compact). A unit too large for the page is skipped and
+  named with its source route instead of clipping later units; an unchanged
+  overflow is not re-sent blindly; removals are acknowledged separately and
+  withdraw provenance without inventing "resolved"; a changed source invalidates
+  the cursor with `stale-continuation` and a fresh handle. After the first brief
+  at most two automatic continuations per unchanged hot generation (one per user
+  turn) each fit `briefBudgetChars`, and the rest is addressable through the new
+  `mem_brief(section="hot", cursor=…)` page. DSH acknowledges the committed
+  producer-owned `session/event` that carried the final message; Codex stdout is
+  a pending receipt until the next trusted hook reconciles the exact marker/hash
+  against its own transcript (8 MiB ceiling), and missing evidence leaves the unit
+  unacknowledged. In `summary` mode the five convention lines rotate across
+  acknowledged sessions behind
+  `dataRoot/cursors/<vaultHash>/<projectId>/conventions.json` (8 KiB, CAS
+  advance), so a long MOC is not the same five forever.
+- **Three confirmed panel maintenance operations.** The 记忆 panel can now run
+  exactly `retry-job`, `compact-hot` and `refresh-digest`, each through a
+  preview and a separate confirmation: a single-use 32-byte token, 60 s TTL,
+  bound to session/project/operation/arguments/canonical fingerprint, at most 128
+  per process, revalidated before the service runs. A stale preview answers
+  `409 preview-stale`; a replayed confirmation returns the recorded result instead
+  of writing twice; previews write nothing. Mutations require loopback + a present
+  same-origin `Origin` + JSON and keep the 4 KB body cap; they reuse the existing
+  `services.admin` ownership/path/transaction guards. Read values gain
+  `capabilities.mutations` and a bounded `queue.failedJobs` (5), so the panel
+  stays fully usable read-only when the route is absent. The route's read-only
+  action list and its single served asset are unchanged.
+- **Deterministic sparse retrieval (v0.4 §5 baseline) and a disabled-by-default
+  provider contract.** New `retrievalEngine: lexical|sparse` (default
+  `lexical`; `semantic` is deliberately not a schema value). `sparse` retrieves
+  at most 24 lexical candidates, re-reads and hash-verifies each source, chunks at
+  1,200 code points, ranks at most 256 records with local TF-IDF/cosine
+  (`lib/retrieval-rank.js`), fuses lexical and sparse orders with RRF k=60, and
+  breaks ties by exact title/alias then path; stale or missing sources fall back to
+  lexical with a named reason. The default lexical path stays one `index.search`
+  call (byte-identical, asserted). The loopback embedding/rerank contract
+  (`lib/retrieval-provider.js`) validates configuration, refuses non-loopback
+  endpoints, never follows redirects, validates every returned number and makes
+  zero requests while disabled; no provider or model is selected and no semantic
+  quality is claimed. The shared tokenizer moved to the import-free
+  `lib/index-text.js` leaf so the ranker can use it without a lateral edge on
+  `search`.
+- **The 记忆 panel is now a vault ledger.** The sidebar tab keeps its id
+  `obsidian-mem:graph` and title 记忆 but is restyled as an editorial ledger: a
+  masthead with the project name in the serif display stack (Iowan Old Style,
+  Palatino, Songti SC, serif), a binding stamp, vault/project metadata, the
+  last-read clock and refresh; ordinal tabs `01 概览 / 02 图谱 / 03 检索 / 04 健康`;
+  large tabular KPI numerals, a composition index, numbered recent rows, health
+  stamps and thin meters in place of a card grid; a border-bottom search field
+  with underlined filter groups and numbered rows; a newspaper-column digest. One
+  preview sheet serves all three mutations (`alertdialog`, Cancel focused, scrim
+  does not dismiss, Escape closes, busy until the POST settles, inline stale/error
+  states, replay named as "not written twice"). One staggered 160 ms entrance is
+  removed under `prefers-reduced-motion`; the tablist keeps roles, roving focus,
+  Arrow/Home/End and aria-live status; the graph tab and renderer/settings are
+  untouched except shell chrome. The single served module
+  `lib/memory-panel.js` remains import-free (React is passed in).
+- **`mem_brief` gained a `cursor` page option.** Section `"hot"` accepts the bounded
+  continuation handle a cut brief prints in place of `offset`; a source that moved
+  underneath it answers `stale-continuation` with a fresh handle. The result shape
+  and the closed output schema are unchanged.
+
 ### Fixed
 
 - **Cached statuses could quarantine-bypass after an external edit.** The batch
@@ -148,6 +218,48 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Validation and remaining risks
 
+- **v0.4 gate (2026-10-27, final tree).** `npm run check` exited 0: eslint,
+  prettier, `tsc --noEmit`, the suite, `scripts/verify-pack.mjs` and the real archive
+  all passed. The suite reported **1,309 tests / 1,308 pass / 1 optional skip /
+  0 fail**; `verify-pack: OK`; `verify-tarball: OK — 85 entries, 75 lib modules,
+  every required asset present`. `git diff --check` exited 0.
+- **Mounted browser evidence (v0.4).** An isolated native DSH host (validation
+  profile, separate `DSH_HOME`, synthetic repo + vault under `/tmp`) mounted the
+  redesigned 记忆 tab against a bound project: the ledger rendered its counts
+  (515 notes / 8 links / 512 orphans / 0 pending), the masthead project name
+  computed to the serif stack, the ordinal tablist switched all four views, the
+  graph tab kept its canvas, and the panel had no horizontal overflow at
+  320/375/768/1440. Screenshots are under `scratch/ui-shots/` (git-ignored). The
+  three mutation confirmations were **not** clicked against the live route: they
+  are covered by 37 contract/route tests (preview → confirm → replay) and a
+  mocked-fetch UI suite; this is a rendering check, not a mutation receipt.
+- **Measured sparse retrieval.** Fixed 23-note fixture, 11 queries (5 development,
+  4 held-out paraphrases, 2 distractors): development Recall@3 1.000 for both
+  engines, MRR@3 0.867 lexical → 0.900 sparse; both paraphrase groups 0.000
+  because they share no index token with the target; false injection identical;
+  warm latency p50 2.55 ms lexical / 4.85 ms sparse in the quiet run (a loaded run
+  measured 21.9/29.2 ms; both are in the record). This is a small-fixture baseline,
+  not a relevance guarantee, and **semantic retrieval is unverified**.
+- **Measured panel geometry (taste-skill inspect).** `inspect.mjs --app` over the
+  shipped CSS + mirrored DOM at 1440/768/375/320 reports 0 FAIL and one accepted
+  WARN per page (`tiny-text`: the body is the host's 12 px token) with 0 px
+  horizontal overflow at 320/375; `lint.mjs --app` reports 0 FAIL/0 WARN. The
+  harness is a static mirror, so this is a layout measurement; the native mount
+  above is the visual acceptance.
+- **Not run.** Native DSH `session/event` acknowledgement against a live session
+  and native `codex exec` reconciliation against a real rollout (both are tested
+  against measured message shapes only); two-OS-process lock contention; token
+  (vs code-point) costs. The Codex `gpt-6.1-sol` xhigh independent review could
+  not run — the bundled CLI reported the account usage limit until 2026-10-28
+  01:46 — so the independent review is a fresh DSH reviewer; that ruling is in the
+  SDD ledger.
+- **Known residuals.** Panel mutations keep a TOCTOU window between the
+  fingerprint read and the service's own revalidation (the service still refuses a
+  stale precondition), and a lost confirmation can only be replayed inside 60 s;
+  sparse retrieval caps at 24 hits and is lexical; automatic hot continuation is
+  bounded at two per unchanged generation, so a very large unchanged hot layer may
+  need an explicit `mem_brief` page rather than arriving in one session.
+
 - **Measured (E1, 2026-10-26, synthetic `mkdtemp` vaults).** At 100/500/2,000
   conventions the old brief showed 45/44/44 lines (45.0%/8.8%/2.2% coverage) and
   0/5 recent decisions; the conventions preview plus the paging note frees about
@@ -188,10 +300,9 @@ release artifact. The versioning policy is in the README, under Development.
   `gpt-6.1-sol` xhigh spec run exceeded its 30-minute cap and was stopped; the
   Lead froze the spec from the completed research, and the read-only
   architecture audit did finish (339 lines,
-  `research/codex-architecture-audit-2026-10.md`). The v0.4 contract is
-  designed and approved but only the digest read slice is implemented in this
-  tree; delivery receipts, rotation, the digest writer, panel mutations and the
-  sparse/semantic retrieval baseline remain unlanded.
+  `research/codex-architecture-audit-2026-10.md`). The v0.4 contract was
+  approved at that time and has since landed; its own evidence is in the newer
+  Validation bullets above.
 
 ## 0.2.0 — 2026-10-12
 
@@ -3279,7 +3390,7 @@ what is still open.
   the only one consistent with the evidence. Regression tests:
   `test/hooks.test.js` — the injected message's `source` asserted field by field,
   plus a host-free pin of the v4 rule (`assert.notEqual(RECALL_SOURCE.kind,
-  'plugin')` and `assert.equal(RECALL_SOURCE.kind, \`plugin:${PLUGIN_ID}\`)`, both
+  'plugin')` and `assert.equal(RECALL_SOURCE.kind, `plugin:${PLUGIN_ID}`)`, both
   hardcoded, so the value cannot move with the module). The two recall filters in
   `test/lint.test.js` are not themselves regression tests — they find the
   plugin's messages by importing `RECALL_SOURCE`, so they would follow the module

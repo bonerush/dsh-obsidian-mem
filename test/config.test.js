@@ -57,6 +57,11 @@ const DEFAULTS = {
     learnHabits: true,
   },
   indexBackend: 'auto',
+  // The retrieval engine `mem_search` runs. `lexical` is the existing index
+  // ranking and the measured baseline; `sparse` reranks its bounded candidate set
+  // locally and fuses the two orders. Lexical stays the default until the sparse
+  // quality gate passes (v0.4 spec §5).
+  retrievalEngine: 'lexical',
   ignoreGlobs: [],
 }
 
@@ -216,6 +221,36 @@ test('indexBackend accepts only auto, sqlite and scan', () => {
     assert.equal(validateConfig({ indexBackend: backend }).indexBackend, backend)
   }
   assertRejected(/indexBackend/, { indexBackend: 'fts5' })
+})
+
+test('retrievalEngine is lexical by default and accepts only the two local engines', () => {
+  // The default is the existing engine, so an unconfigured row reads exactly what
+  // it read before v0.4. `sparse` is the deterministic local reranker; `semantic`
+  // is deliberately NOT a schema value because no provider has been selected and
+  // the provider contract ships disabled by default (v0.4 spec §5).
+  assert.equal(validateConfig({}).retrievalEngine, 'lexical')
+  assert.equal(validateConfig({ retrievalEngine: 'lexical' }).retrievalEngine, 'lexical')
+  assert.equal(validateConfig({ retrievalEngine: 'sparse' }).retrievalEngine, 'sparse')
+  // Idempotent on the host's own pre-validated object, like every other field.
+  assert.equal(
+    validateConfig(validateConfig({ retrievalEngine: 'sparse' })).retrievalEngine,
+    'sparse',
+  )
+  // An explicit null reads as "absent" to schemastery and resolves to the default,
+  // which is the same convention `indexBackend` follows; every other non-enum
+  // value is a config error.
+  assert.equal(validateConfig({ retrievalEngine: null }).retrievalEngine, 'lexical')
+  for (const bad of ['semantic', 'hybrid', 'Sparse', 'LEXICAL', '', true, false, 0, ['sparse']]) {
+    assertRejected(/retrievalEngine/, { retrievalEngine: bad })
+  }
+})
+
+test('a mistyped retrievalEngine key is refused instead of silently staying lexical', () => {
+  // The same defect the top-level refusal exists for: `retrievalengine` would keep
+  // the default in silence, so a user who configured sparse would never learn the
+  // engine did not change.
+  assertRejected(/retrievalengine/, { retrievalengine: 'sparse' })
+  assertRejected(/retrieval/, { retrieval: { engine: 'sparse' } })
 })
 
 test('ignoreGlobs defaults to empty and only appends exclusions', () => {

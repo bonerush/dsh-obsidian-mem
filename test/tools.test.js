@@ -499,7 +499,12 @@ test('the documented enums and defaults are exactly spec §9', async (t) => {
   ])
   assert.deepEqual(params('mem_write').assertion.enum, ['stated', 'inferred', 'observed'])
 
-  assert.deepEqual(Object.keys(params('mem_brief')).sort(), ['limit', 'offset', 'section'])
+  assert.deepEqual(Object.keys(params('mem_brief')).sort(), [
+    'cursor',
+    'limit',
+    'offset',
+    'section',
+  ])
   assert.deepEqual(params('mem_brief').section.enum, [
     'hot',
     'hot-constraints',

@@ -34,9 +34,12 @@
 // 0. Reasons go to stderr, where they cannot be mistaken for protocol, and only
 // when something actually went wrong or `OBSIDIAN_MEM_HOOK_DEBUG=1` asks for them.
 import { open } from 'node:fs/promises'
+import { homedir } from 'node:os'
 
 import { DEFAULT_MAX_MS, DEFAULT_MAX_NOTES } from '../lib/curation-scan.js'
+import { deliveryStateEpoch, reconcileTranscript } from '../lib/delivery-state.js'
 import { bindHintWithin } from '../lib/init-hint.js'
+import { resolveBinding } from '../lib/vault.js'
 import { openMemory } from './server.mjs'
 
 /**
@@ -54,6 +57,16 @@ import { openMemory } from './server.mjs'
  * session by {@link resumeVerdict}.
  */
 export const INJECT_SOURCES = Object.freeze(['startup', 'clear', 'compact'])
+
+/**
+ * The Codex sources that begin a context with no delivery history in it.
+ *
+ * Measured in `codex-hook-validation.md`: `compaction really drops the brief`, and
+ * `clear` starts a new conversation. A delivery epoch bump is the spec's answer —
+ * the previous acked identities cannot describe what the model holds — while a
+ * `resume` that still carries the brief keeps its epoch.
+ */
+const RESET_SOURCES = new Set(['startup', 'clear', 'compact'])
 
 /**
  * How much of a rollout is read before the answer is "cannot tell".
@@ -106,11 +119,15 @@ function lastIndexOfAny(text, needles) {
 /**
  * The head of a rollout, and whether that was all of it.
  *
+ * The same read is the delivery reconciler's evidence (spec §1): a rollout past
+ * the ceiling is not proof either way, which is why `truncated` is carried out of
+ * here rather than assumed away.
+ *
  * @param {string} path - the file to read.
  * @param {number} maxBytes - the ceiling.
  * @returns {Promise<{text: string, truncated: boolean}|null>} the head, or `null` when unreadable.
  */
-async function readRolloutHead(path, maxBytes) {
+export async function readRolloutHead(path, maxBytes) {
   let handle
   try {
     handle = await open(path, 'r')
@@ -251,6 +268,69 @@ export async function decide(payload, io = {}) {
 }
 
 /**
+ * The Codex delivery context for one SessionStart: epoch, and the reconciliation
+ * of what a previous hook wrote.
+ *
+ * Codex hooks are separate processes, so the epoch cannot live in memory: it is
+ * read from the private state, kept on `resume` (the conversation still carries
+ * the injection) and bumped on `startup`/`clear`/`compact` (the measured
+ * compaction really drops it). Reconciliation runs against the *previous* epoch
+ * before that bump, because that is where the pending receipt lives, and it only
+ * ever runs on structured developer messages: missing, unreadable or over-cap
+ * evidence leaves the receipt pending, which allows the repetition the spec
+ * requires.
+ *
+ * @param {object} memory - the opened memory layer.
+ * @param {string} cwd - the session's working directory.
+ * @param {object} options - the hook evidence and identity.
+ * @param {string} [options.sessionKey] - the Codex session id; absent means no receipt.
+ * @param {string} [options.source] - the SessionStart source.
+ * @param {string} [options.transcript] - the rollout head, when it was readable.
+ * @param {boolean} [options.truncated] - whether the read ceiling cut the rollout.
+ * @returns {Promise<{sessionKey: string, epoch: number}|null>} the context, or `null` for a non-bound directory.
+ */
+async function deliveryContextFor(memory, cwd, options) {
+  if (typeof options.sessionKey !== 'string' || options.sessionKey.trim() === '') return null
+  const binding = await resolveBinding({
+    cwd,
+    vaultRoot: memory.config.vaultPath,
+    mode: 'show',
+    home: homedir(),
+  })
+  if (binding === null || binding.kind !== 'bound') return null
+  let priorEpoch
+  try {
+    priorEpoch = await deliveryStateEpoch({
+      binding,
+      dataRoot: memory.dataRoot,
+      sessionKey: options.sessionKey,
+    })
+  } catch {
+    return null
+  }
+  const reconcileEpoch = priorEpoch === 0 ? 1 : priorEpoch
+  if (typeof options.transcript === 'string' && options.transcript !== '') {
+    try {
+      await reconcileTranscript({
+        binding,
+        dataRoot: memory.dataRoot,
+        sessionKey: options.sessionKey,
+        epoch: reconcileEpoch,
+        transcript: options.transcript,
+        truncated: options.truncated === true,
+        proofKind: 'transcript',
+        home: homedir(),
+      })
+    } catch {
+      // Reconciliation is an observation; a failure leaves the receipt pending.
+    }
+  }
+  const reset = RESET_SOURCES.has(typeof options.source === 'string' ? options.source : '')
+  const epoch = priorEpoch === 0 ? 1 : reset ? priorEpoch + 1 : priorEpoch
+  return { sessionKey: options.sessionKey, epoch }
+}
+
+/**
  * The brief for one directory, or `null` when there is nothing to inject.
  *
  * `null` covers "the brief came back blank", which is the rule that an empty brief
@@ -276,12 +356,28 @@ export async function decide(payload, io = {}) {
  * @param {string} cwd - the session's working directory, from the hook payload.
  * @param {Function} open - {@link openMemory}; injected so a test can count opens.
  * @param {Function} [onCurated] - called once per pass that was actually started.
+ * @param {object} [options] - the delivery evidence.
+ * @param {string} [options.sessionKey] - the Codex session id, which enables receipts.
+ * @param {string} [options.source] - the SessionStart source (startup/resume/clear/compact).
+ * @param {string} [options.transcript] - the rollout head that may reconcile a previous pending receipt.
+ * @param {boolean} [options.truncated] - whether the rollout read hit its ceiling.
  * @returns {Promise<string|null>} the brief text, or `null` for "inject nothing".
  */
-export async function briefFor(cwd, open, onCurated) {
+export async function briefFor(cwd, open, onCurated, options = {}) {
   const memory = open({ cwd })
   try {
-    const brief = await memory.services.brief({})
+    let delivery = null
+    try {
+      delivery = await deliveryContextFor(memory, cwd, options)
+    } catch {
+      // A delivery receipt is an observation layer: it must never block the brief.
+      delivery = null
+    }
+    const brief = await memory.services.brief(
+      delivery === null
+        ? {}
+        : { delivery: { sessionKey: delivery.sessionKey, epoch: delivery.epoch } },
+    )
     if (brief === null || typeof brief !== 'object') return null
     if (brief.status === 'unbound') {
       // The notice, not a brief: no vault text, no index, and no automatic pass —
@@ -353,22 +449,51 @@ export async function runHook(raw, io = {}) {
   } catch {
     note('stdin was not JSON; injecting nothing')
   }
+  // One bounded read of the session's own rollout serves both consumers: the
+  // `resume` verdict (does the conversation still carry the brief?) and the
+  // delivery reconciler (was a prepared brief really committed as a developer
+  // message?). Missing or unreadable evidence is `null`, which acknowledges
+  // nothing — the spec's conservative direction.
+  const transcriptPath =
+    payload !== null && typeof payload.transcript_path === 'string' ? payload.transcript_path : null
+  let evidence = null
+  if (transcriptPath !== null && transcriptPath.trim() !== '') {
+    const read = io.read ?? readRolloutHead
+    try {
+      evidence = await read(transcriptPath, io.maxBytes ?? MAX_ROLLOUT_BYTES)
+    } catch {
+      evidence = null
+    }
+  }
   // The decision reads the rollout for a `resume`, so it is awaited — and every branch
   // of it is still a plain value: the reader answers `unknown` rather than throwing.
-  const { inject, reason } = await decide(payload, { read: io.read, maxBytes: io.maxBytes })
+  const { inject, reason } = await decide(payload, {
+    read: async () => evidence,
+    maxBytes: io.maxBytes,
+  })
   let answer = CONTINUE
-  if (inject) {
-    try {
-      const text = await briefFor(payload.cwd, open)
+  try {
+    if (inject) {
+      const text = await briefFor(payload.cwd, open, undefined, {
+        sessionKey: payload.session_id,
+        source: payload.source,
+        ...(evidence === null ? {} : { transcript: evidence.text, truncated: evidence.truncated }),
+      })
       if (text === null) note(`no brief for ${payload.cwd}; injecting nothing`)
       else answer = hookOutput(text)
-    } catch (error) {
-      // A vault that refuses must not become a session that refuses. Codex shows
-      // hook stderr in its own log, which is where this belongs.
-      err.write(`obsidian-mem(hook): brief failed: ${error?.message ?? error}\n`)
+    } else {
+      note(`not injecting (${reason})`)
+      // A quiet source pays nothing — not even a delivery reconciliation. That is
+      // the measured contract this hook keeps for a resume that still carries the
+      // brief: no memory layer is opened, no data root is created. A pending receipt
+      // therefore waits for the next session start that actually injects, which is
+      // exactly the conservative direction the spec gives: missing evidence means
+      // unacknowledged, allowing repetition.
     }
-  } else {
-    note(`not injecting (${reason})`)
+  } catch (error) {
+    // A vault that refuses must not become a session that refuses. Codex shows
+    // hook stderr in its own log, which is where this belongs.
+    err.write(`obsidian-mem(hook): brief failed: ${error?.message ?? error}\n`)
   }
   out.write(`${JSON.stringify(answer)}\n`)
   return answer

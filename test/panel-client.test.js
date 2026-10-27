@@ -126,3 +126,66 @@ test('the graph keeps its canvas and gains the truncation notice', async () => {
   assert.ok(script.includes('仅显示前 '), 'the notice names the shown count')
   assert.ok(script.includes("' 个节点；共有 '"), 'the notice names the total')
 })
+
+test('the shell adds a ledger masthead and ordinal tab index above the body', async () => {
+  const { script } = await bundle()
+  for (const marker of [
+    "'mem-masthead'",
+    'mem-masthead-name',
+    "'mem-clock'",
+    "'mem-refresh'",
+    "'已绑定'",
+    "'未绑定'",
+    'onMeta',
+  ])
+    assert.ok(script.includes(marker), 'the shell contains ' + marker)
+  for (const [id, label, ordinal] of [
+    ['overview', '概览', '01'],
+    ['graph', '图谱', '02'],
+    ['search', '检索', '03'],
+    ['health', '健康', '04'],
+  ])
+    assert.ok(
+      script.includes("{ id: '" + id + "', label: '" + label + "', ordinal: '" + ordinal + "' }"),
+      'the strip lists ' + ordinal + ' ' + label,
+    )
+})
+
+test('the panel sheet is a token-only editorial ledger with no floating furniture', async () => {
+  const { script } = await bundle()
+  const start = script.indexOf('/* panel-css:start */')
+  const end = script.indexOf('/* panel-css:end */')
+  const css = script.slice(start, end)
+  for (const face of ['Iowan Old Style', 'Palatino', 'Songti SC'])
+    assert.ok(css.includes(face), 'the display face names ' + face)
+  assert.ok(css.includes('font-variant-numeric:tabular-nums'), 'numbers are tabular')
+  for (const marker of ['mem-masthead-name', 'mem-kpi-value', 'mem-stamp', 'mem-sheet'])
+    assert.ok(css.includes(marker), 'the sheet styles ' + marker)
+  assert.ok(
+    css.includes('min-height:40px') && css.includes('min-height:44px'),
+    'hit areas are 40-44px',
+  )
+  const radii = [...css.matchAll(/border-radius:\s*([^;}]+)/gu)].map((match) => match[1].trim())
+  assert.ok(radii.length > 0, 'the sheet declares radii')
+  for (const radius of radii)
+    for (const value of radius.match(/[0-9.]+/gu) ?? [])
+      assert.ok(Number(value) <= 4, 'radius stays 0-4px, found ' + radius)
+  assert.equal(/box-shadow/iu.test(css), false, 'no floating card shadow')
+  assert.equal(/linear-gradient|radial-gradient/iu.test(css), false, 'no gradient furniture')
+})
+
+test('the view entrance is one 160ms stagger that reduced motion removes', async () => {
+  const { script } = await bundle()
+  const css = script.slice(
+    script.indexOf('/* panel-css:start */'),
+    script.indexOf('/* panel-css:end */'),
+  )
+  assert.ok(css.includes('@keyframes mem-enter'), 'the entrance is named')
+  assert.ok(css.includes('animation:mem-enter 160ms'), 'the entrance runs 160ms')
+  assert.deepEqual(
+    [...css.matchAll(/animation-delay:([0-9]+)ms/gu)].map((match) => Number(match[1])),
+    [20, 40, 60, 80],
+    'children stagger by 20ms',
+  )
+  assert.match(css.slice(css.indexOf('prefers-reduced-motion')), /animation:none/u)
+})

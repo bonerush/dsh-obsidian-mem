@@ -84,3 +84,36 @@ test('every asset URL the shell names resolves to a shipped lib module', async (
   assert.ok(names.includes('memory-panel.js'), 'the shell names the panel module')
   for (const name of names) await readFile(new URL('../lib/' + name, import.meta.url))
 })
+
+test('confirmed mutations are feature-detected, preview-first and never automatic', async () => {
+  const text = await source()
+  for (const marker of [
+    "action: 'preview'",
+    "action: 'confirm'",
+    'capabilities',
+    'mutations',
+    'failedJobs',
+    "'preview-stale'",
+    'replayed',
+  ])
+    assert.ok(text.includes(marker), 'the module names ' + marker)
+  // The three mutation names only ever travel as the preview's `mutation` value.
+  for (const mutation of ['retry-job', 'compact-hot', 'refresh-digest'])
+    assert.ok(text.includes("'" + mutation + "'"), 'the module knows ' + mutation)
+  for (const forbidden of ['retry: true', "operation: 'compact'", "action: 'digest'"])
+    assert.equal(
+      text.includes(forbidden),
+      false,
+      'the module never drives the admin surface: ' + forbidden,
+    )
+})
+
+test('the confirm sheet keeps the read-only panel usable when the API is absent', async () => {
+  const text = await source()
+  assert.ok(text.includes('Array.isArray(capabilities'), 'capabilities are validated, not assumed')
+  assert.ok(text.includes('apiDown'), 'an unavailable preview API becomes a read-only fallback')
+  // Closing the sheet is local: cancel and Escape must not route through the fetch seam.
+  assert.ok(text.includes("event.key === 'Escape'"))
+  assert.ok(text.includes("'aria-modal': true"))
+  assert.ok(text.includes('focus'))
+})

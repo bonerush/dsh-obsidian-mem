@@ -14,6 +14,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { createPreviewTokens } from '../lib/panel-actions.js'
 import { PANEL_ACTIONS, registerPanelRoute } from '../lib/panel-route.js'
 import { resolveScope } from '../lib/search.js'
 
@@ -26,8 +27,13 @@ const BOUND = {
   projectId: '11111111-1111-4111-8111-111111111111',
   slug: 'alpha',
   displayName: 'alpha',
+  schema: 1,
   vaultRoot: VAULT,
+  relativeDir: 'Projects/alpha--11111111',
 }
+const OTHER_PROJECT_ID = '22222222-2222-4222-8222-222222222222'
+const JOB_ID = 'job-0123456789abcdef0123456789abcdef'
+const SESSION_TWO = 'panel-session-2'
 
 /** A stub service set: every admin and index-search call is recorded. */
 function stubServices(overrides = {}) {
@@ -126,7 +132,10 @@ function stubServices(overrides = {}) {
 }
 
 /** One harness: a fake webServer, a real HTTP server, and a loopback fetch. */
-async function harness(t, { services = stubServices().services, resolveBinding, assets } = {}) {
+async function harness(
+  t,
+  { services = stubServices().services, resolveBinding, assets, previewTokens } = {},
+) {
   const routes = new Map()
   const dispose = registerPanelRoute(
     {
@@ -137,7 +146,10 @@ async function harness(t, { services = stubServices().services, resolveBinding, 
         },
       },
       sessions: {
-        get: (id) => (id === SESSION ? { header: { id, cwd: '/home/user/repo' } } : undefined),
+        get: (id) =>
+          id === SESSION || id === SESSION_TWO
+            ? { header: { id, cwd: '/home/user/repo' } }
+            : undefined,
       },
     },
     {
@@ -145,6 +157,7 @@ async function harness(t, { services = stubServices().services, resolveBinding, 
       resolveBinding: resolveBinding ?? (async () => BOUND),
       scopeOf: resolveScope,
       ...(assets === undefined ? {} : { assets }),
+      ...(previewTokens === undefined ? {} : { previewTokens }),
     },
   )
   t.after(dispose)
@@ -200,7 +213,7 @@ test('overview composes the cards and never asks for a write action', async (t) 
   assert.equal(value.project.vault.display, '~/Documents/knowledge')
   assert.equal(value.counts.notes, 5)
   assert.equal(value.health.state, 'ready')
-  assert.deepEqual(value.queue, { queued: 0, failed: 0, deferred: 0 })
+  assert.deepEqual(value.queue, { queued: 0, failed: 0, deferred: 0, failedJobs: [] })
   assert.equal(value.recent.length, 1)
   // The digest does not exist yet; admin's fall-through must not be mistaken for one.
   assert.equal(value.digest, null)
@@ -486,4 +499,536 @@ test('a fixed-field overflow returns a bounded error after optional lists are ex
   assert.ok(result.bytes <= 16384, 'final response is ' + result.bytes + ' bytes')
   assert.equal(result.body.ok, false)
   assert.equal(result.body.error.code, 'response-too-large')
+})
+
+// ---------------------------------------------------------------------------
+// Task 2: confirmed mutations over the wire (preview then confirm)
+// ---------------------------------------------------------------------------
+
+/** The job view the real `jobs` action reports (no model text, no safeInput). */
+function failedJob(overrides = {}) {
+  return {
+    jobId: JOB_ID,
+    state: 'failed',
+    sessionId: 'session-x',
+    projectId: BOUND.projectId,
+    fromSeq: 1,
+    toSeq: 7,
+    attempts: 2,
+    createdAt: '2026-10-26T00:00:00.000Z',
+    failedAt: '2026-10-26T01:00:00.000Z',
+    lastError: 'boom',
+    outputState: null,
+    ...overrides,
+  }
+}
+
+/** The hot status the real action reports, with the counters compact moves. */
+function hotView(overrides = {}) {
+  return {
+    missing: false,
+    used: 7200,
+    capacity: 9000,
+    trigger: 6030,
+    ratio: 0.8,
+    archivable: 3,
+    compactable: 5,
+    sections: [{ name: '已完成', chars: 1200, entries: 1, pointers: 2, moveable: 3 }],
+    ...overrides,
+  }
+}
+
+/** The digest result the collector renders; only the stable facts matter here. */
+function digestView(overrides = {}) {
+  return {
+    window: { days: 1, from: '2026-10-26T10:00:00.000Z', to: '2026-10-27T10:00:00.000Z' },
+    notes: {
+      created: 1,
+      updated: 0,
+      superseded: 0,
+      byType: [{ type: 'decision', created: 1, updated: 0 }],
+    },
+    hot: hotView({ sections: [] }),
+    queue: { queued: 1, failed: 0, deferred: 0 },
+    appraisal: { findings: [], total: 0, truncated: false, scanned: 1 },
+    recent: [],
+    snapshot: {
+      at: '2026-10-27T10:00:00.000Z',
+      basis: 'current-status-among-inspected-sources',
+      fields: ['notes.superseded', 'hot', 'queue'],
+    },
+    collection: {
+      basis: 'inspected-source-notes',
+      inspected: 1,
+      limit: 200,
+      truncated: false,
+      incomplete: false,
+      reasons: [],
+    },
+    ...overrides,
+  }
+}
+
+/**
+ * A stub service set that can answer the three mutations: every read is recorded,
+ * and only the one compact/retry/refresh call per confirmation changes its world.
+ */
+function mutationStubServices() {
+  const calls = { admin: [], retries: 0, compacts: 0, refreshes: 0 }
+  const state = {
+    job: failedJob(),
+    hot: hotView(),
+    digest: digestView(),
+    compacted: false,
+    refreshed: false,
+  }
+  const services = {
+    async admin(args) {
+      calls.admin.push({ ...args })
+      if (args.action === 'jobs') {
+        if (args.retry === true) {
+          calls.retries += 1
+          state.job = { ...state.job, state: 'pending', attempts: 0 }
+          return {
+            action: 'jobs',
+            result: { status: 'retried', jobs: [state.job], failed: 0, message: null },
+          }
+        }
+        const jobs = state.job === null ? [] : [state.job]
+        const selected =
+          args.jobId === undefined ? jobs : jobs.filter((entry) => entry.jobId === args.jobId)
+        return {
+          action: 'jobs',
+          result: {
+            status: 'listed',
+            jobs: selected,
+            failed: jobs.filter((job) => job.state === 'failed').length,
+            message: selected.length === 0 ? 'no such job' : null,
+          },
+        }
+      }
+      if (args.action === 'hot') {
+        if (args.operation === 'compact') {
+          calls.compacts += 1
+          state.compacted = true
+          return {
+            action: 'hot',
+            result: {
+              operation: 'compact',
+              projectId: BOUND.projectId,
+              ...state.hot,
+              moved: 3,
+              folded: 2,
+              reclaimed: 900,
+            },
+          }
+        }
+        return {
+          action: 'hot',
+          result: {
+            operation: 'status',
+            projectId: BOUND.projectId,
+            ...state.hot,
+            moved: 0,
+            folded: 0,
+            reclaimed: 0,
+          },
+        }
+      }
+      if (args.action === 'digest') {
+        if (args.operation === 'refresh') {
+          calls.refreshes += 1
+          state.refreshed = true
+          return {
+            action: 'digest',
+            result: {
+              ...state.digest,
+              publication: {
+                status: 'created',
+                path: BOUND.relativeDir + '/_meta/digest.md',
+                id: 'doc-abcdefgh',
+                charCount: 900,
+                txId: 'tx-digest-1',
+              },
+            },
+          }
+        }
+        return { action: 'digest', result: state.digest }
+      }
+      throw new Error('unexpected admin call ' + JSON.stringify(args))
+    },
+  }
+  return { services, calls, state }
+}
+
+const ORIGIN_HEADER = (h) => ({ origin: h.origin })
+
+test('overview and health carry capabilities and the bounded failed-job list', async (t) => {
+  const entry = (jobId, state, minutes) =>
+    failedJob({
+      jobId,
+      state,
+      failedAt: new Date(Date.parse('2026-10-26T01:00:00.000Z') + minutes * 60_000).toISOString(),
+    })
+  const jobs = [
+    entry('job-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'failed', 6),
+    entry('job-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'failed', 5),
+    entry('job-cccccccccccccccccccccccccccccccc', 'failed', 4),
+    entry('job-dddddddddddddddddddddddddddddddd', 'failed', 3),
+    entry('job-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 'failed', 2),
+    entry('job-ffffffffffffffffffffffffffffffff', 'failed', 1),
+    failedJob({ jobId: 'job-99999999999999999999999999999999', projectId: OTHER_PROJECT_ID }),
+    failedJob({ jobId: 'job-88888888888888888888888888888888', state: 'pending' }),
+  ]
+  const base = stubServices()
+  const services = {
+    ...base.services,
+    async admin(args) {
+      if (args.action === 'jobs')
+        return {
+          action: 'jobs',
+          result: {
+            status: 'listed',
+            jobs,
+            failed: jobs.filter((job) => job.state === 'failed').length,
+            message: null,
+          },
+        }
+      if (args.action === 'hot')
+        return {
+          action: 'hot',
+          result: { operation: 'status', missing: false, ...hotView(), sections: [] },
+        }
+      if (args.action === 'diagnostics')
+        return {
+          action: 'diagnostics',
+          result: { window: { capacity: 200, size: 0, dropped: 0 }, events: [] },
+        }
+      return { action: 'jobs', result: { status: 'listed', jobs: [], failed: 0, message: null } }
+    },
+  }
+  const h = await harness(t, { services })
+  const expected = {
+    mutations: ['retry-job', 'compact-hot', 'refresh-digest'],
+    confirm: true,
+  }
+  const overview = await h.post({ sessionId: SESSION, action: 'overview' })
+  assert.equal(overview.status, 200)
+  assert.deepEqual(overview.body.value.capabilities, expected)
+  assert.equal(overview.body.value.queue.failed, 7)
+  const listed = overview.body.value.queue.failedJobs
+  assert.deepEqual(
+    listed.map((job) => job.jobId),
+    [
+      'job-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      'job-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      'job-cccccccccccccccccccccccccccccccc',
+      'job-dddddddddddddddddddddddddddddddd',
+      'job-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+    ],
+    'at most five failed jobs of the displayed project, newest first',
+  )
+  for (const job of listed)
+    assert.deepEqual(Object.keys(job).sort(), ['attempts', 'jobId', 'state'], 'bounded view')
+  const health = await h.post({ sessionId: SESSION, action: 'health' })
+  assert.equal(health.status, 200)
+  assert.deepEqual(health.body.value.capabilities, expected)
+  assert.deepEqual(health.body.value.queue.failedJobs, listed)
+  const unbound = await harness(t, {
+    services,
+    resolveBinding: async () => ({ kind: 'unbound', reason: 'no-pointer' }),
+  })
+  const readOnly = await unbound.post({ sessionId: SESSION, action: 'overview' })
+  assert.deepEqual(readOnly.body.value.capabilities, { mutations: [], confirm: true })
+})
+
+test('a retry preview issues a token and the confirm revives exactly once', async (t) => {
+  const stub = mutationStubServices()
+  const h = await harness(t, { services: stub.services })
+  const preview = await h.post(
+    {
+      sessionId: SESSION,
+      action: 'preview',
+      mutation: 'retry-job',
+      args: { jobId: JOB_ID },
+    },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(preview.status, 200)
+  assert.equal(preview.body.ok, true)
+  const value = preview.body.value
+  assert.deepEqual(Object.keys(value).sort(), ['expiresAt', 'mutation', 'preview', 'token'])
+  assert.equal(value.mutation, 'retry-job')
+  assert.match(value.token, /^[A-Za-z0-9_-]{40,}$/u)
+  assert.equal(typeof value.expiresAt, 'number')
+  assert.equal(value.preview.title.length > 0, true)
+  assert.equal(value.preview.confirmLabel.length > 0, true)
+  assert.equal(Array.isArray(value.preview.facts), true)
+  assert.equal(Array.isArray(value.preview.effects), true)
+  assert.equal(value.preview.facts.find((fact) => fact.label === '任务').value, JOB_ID)
+  assert.match(value.preview.warning, /DSH/u)
+  assert.match(value.preview.warning, /Codex/u)
+  assert.equal(stub.calls.retries, 0, 'the preview wrote nothing')
+  assert.equal(stub.state.job.state, 'failed', 'the preview did not revive the job')
+
+  const confirm = await h.post(
+    { sessionId: SESSION, action: 'confirm', token: value.token },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(confirm.status, 200)
+  assert.deepEqual(Object.keys(confirm.body.value).sort(), ['mutation', 'replayed', 'result'])
+  assert.equal(confirm.body.value.mutation, 'retry-job')
+  assert.equal(confirm.body.value.replayed, false)
+  assert.deepEqual(confirm.body.value.result, {
+    status: 'retried',
+    jobId: JOB_ID,
+    state: 'pending',
+  })
+  assert.equal(stub.calls.retries, 1)
+
+  const replay = await h.post(
+    { sessionId: SESSION, action: 'confirm', token: value.token },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(replay.status, 200)
+  assert.equal(replay.body.value.replayed, true)
+  assert.deepEqual(replay.body.value.result, confirm.body.value.result)
+  assert.equal(stub.calls.retries, 1, 'a replay must not run the mutation twice')
+})
+
+test('an expired token over the wire is 409 preview-expired and writes nothing', async (t) => {
+  let clock = 1_000_000
+  const stub = mutationStubServices()
+  const h = await harness(t, {
+    services: stub.services,
+    previewTokens: createPreviewTokens({ now: () => clock }),
+  })
+  const preview = await h.post(
+    {
+      sessionId: SESSION,
+      action: 'preview',
+      mutation: 'retry-job',
+      args: { jobId: JOB_ID },
+    },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(preview.status, 200)
+  clock += 60_001
+  const expired = await h.post(
+    { sessionId: SESSION, action: 'confirm', token: preview.body.value.token },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(expired.status, 409)
+  assert.equal(expired.body.error.code, 'preview-expired')
+  assert.equal(stub.calls.retries, 0)
+})
+
+test('mutations refuse a missing Origin, a foreign Origin, a non-JSON body and bad requests', async (t) => {
+  const stub = mutationStubServices()
+  const h = await harness(t, { services: stub.services })
+  const body = {
+    sessionId: SESSION,
+    action: 'preview',
+    mutation: 'retry-job',
+    args: { jobId: JOB_ID },
+  }
+  const missing = await h.post(body)
+  assert.equal(missing.status, 403)
+  assert.equal(missing.body.error.code, 'forbidden')
+  const foreign = await h.post(body, { origin: 'https://evil.example' })
+  assert.equal(foreign.status, 403)
+  const notJson = await h.post(body, { ...ORIGIN_HEADER(h), 'content-type': 'text/plain' })
+  assert.equal(notJson.status, 400)
+  assert.equal(notJson.body.error.code, 'bad-request')
+  const unknownMutation = await h.post({ ...body, mutation: 'lint' }, ORIGIN_HEADER(h))
+  assert.equal(unknownMutation.status, 400)
+  assert.equal(unknownMutation.body.error.code, 'bad-request')
+  const noArgs = await h.post(
+    { sessionId: SESSION, action: 'preview', mutation: 'retry-job' },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(noArgs.status, 400)
+  const missingSession = await h.post({ ...body, sessionId: 'gone' }, ORIGIN_HEADER(h))
+  assert.equal(missingSession.status, 404)
+  assert.equal(missingSession.body.error.code, 'session-missing')
+  const unknownToken = await h.post(
+    { sessionId: SESSION, action: 'confirm', token: 'never-issued' },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(unknownToken.status, 409)
+  assert.equal(unknownToken.body.error.code, 'preview-unknown')
+  const noToken = await h.post({ sessionId: SESSION, action: 'confirm' }, ORIGIN_HEADER(h))
+  assert.equal(noToken.status, 400)
+  assert.equal(noToken.body.error.code, 'bad-request')
+  const oversizedMutation = await h.post(
+    JSON.stringify({ ...body, pad: 'x'.repeat(5000) }),
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(oversizedMutation.status, 400)
+  assert.equal(oversizedMutation.body.error.code, 'bad-request')
+  assert.equal(stub.calls.admin.length, 0, 'no rejected request reached the service')
+})
+
+test('a stale, cross-session or expired preview never mutates', async (t) => {
+  const stub = mutationStubServices()
+  const h = await harness(t, { services: stub.services })
+  const preview = async () =>
+    (
+      await h.post(
+        {
+          sessionId: SESSION,
+          action: 'preview',
+          mutation: 'retry-job',
+          args: { jobId: JOB_ID },
+        },
+        ORIGIN_HEADER(h),
+      )
+    ).body.value
+
+  const crossSession = await preview()
+  const mismatch = await h.post(
+    { sessionId: SESSION_TWO, action: 'confirm', token: crossSession.token },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(mismatch.status, 409)
+  assert.equal(mismatch.body.error.code, 'preview-mismatch')
+  const stillValid = await h.post(
+    { sessionId: SESSION, action: 'confirm', token: crossSession.token },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(stillValid.status, 200)
+  assert.equal(stillValid.body.value.replayed, false)
+
+  // A fresh failed job so the next preview is about the stale case, not the retry
+  // the cross-session case just performed.
+  stub.state.job = { ...stub.state.job, state: 'failed' }
+  const stale = await preview()
+  stub.state.job = { ...stub.state.job, state: 'distilling' }
+  const before = stub.calls.retries
+  const refused = await h.post(
+    { sessionId: SESSION, action: 'confirm', token: stale.token },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(refused.status, 409)
+  assert.equal(refused.body.error.code, 'preview-stale')
+  assert.notEqual(refused.body.error.message, 'memory panel unavailable')
+  assert.equal(stub.calls.retries, before, 'a stale preview never reaches the mutation')
+})
+
+test('compact-hot and refresh-digest preview, confirm and replay over the wire', async (t) => {
+  const stub = mutationStubServices()
+  const h = await harness(t, { services: stub.services })
+
+  const hotPreview = await h.post(
+    { sessionId: SESSION, action: 'preview', mutation: 'compact-hot' },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(hotPreview.status, 200)
+  assert.equal(stub.state.compacted, false)
+  assert.equal(
+    hotPreview.body.value.preview.facts.some((fact) => fact.label === '使用'),
+    true,
+  )
+  const hotConfirm = await h.post(
+    { sessionId: SESSION, action: 'confirm', token: hotPreview.body.value.token },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(hotConfirm.status, 200)
+  assert.equal(hotConfirm.body.value.result.status, 'compacted')
+  assert.equal(hotConfirm.body.value.result.moved, 3)
+  assert.equal(stub.state.compacted, true)
+
+  const digestPreview = await h.post(
+    { sessionId: SESSION, action: 'preview', mutation: 'refresh-digest', args: { days: 1 } },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(digestPreview.status, 200)
+  assert.equal(stub.state.refreshed, false, 'a digest preview must not publish')
+  assert.equal(
+    digestPreview.body.value.preview.facts.some((fact) => fact.value === '_meta/digest.md'),
+    true,
+  )
+  const digestConfirm = await h.post(
+    { sessionId: SESSION, action: 'confirm', token: digestPreview.body.value.token },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(digestConfirm.status, 200)
+  assert.equal(digestConfirm.body.value.result.status, 'created')
+  assert.equal(digestConfirm.body.value.result.txId, 'tx-digest-1')
+  assert.equal(digestConfirm.body.value.result.window.days, 1)
+  assert.equal(stub.state.refreshed, true)
+  const replay = await h.post(
+    { sessionId: SESSION, action: 'confirm', token: digestPreview.body.value.token },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(replay.body.value.replayed, true)
+  assert.deepEqual(replay.body.value.result, digestConfirm.body.value.result)
+  assert.equal(stub.calls.refreshes, 1)
+})
+
+test('mutation preconditions keep their coded status over the wire', async (t) => {
+  const stub = mutationStubServices()
+  const h = await harness(t, { services: stub.services })
+  stub.state.job = null
+  const missing = await h.post(
+    {
+      sessionId: SESSION,
+      action: 'preview',
+      mutation: 'retry-job',
+      args: { jobId: JOB_ID },
+    },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(missing.status, 409)
+  assert.equal(missing.body.error.code, 'job-missing')
+
+  const foreign = mutationStubServices()
+  foreign.state.job = failedJob({ projectId: OTHER_PROJECT_ID })
+  const foreignHarness = await harness(t, { services: foreign.services })
+  const refused = await foreignHarness.post(
+    {
+      sessionId: SESSION,
+      action: 'preview',
+      mutation: 'retry-job',
+      args: { jobId: JOB_ID },
+    },
+    ORIGIN_HEADER(foreignHarness),
+  )
+  assert.equal(refused.status, 409)
+  assert.equal(refused.body.error.code, 'job-foreign')
+
+  const hotMissing = mutationStubServices()
+  hotMissing.state.hot = hotView({ missing: true })
+  const hotHarness = await harness(t, { services: hotMissing.services })
+  const noHot = await hotHarness.post(
+    { sessionId: SESSION, action: 'preview', mutation: 'compact-hot' },
+    ORIGIN_HEADER(hotHarness),
+  )
+  assert.equal(noHot.status, 409)
+  assert.equal(noHot.body.error.code, 'hot-missing')
+
+  const fallthrough = {
+    async admin(args) {
+      assert.equal(args.action, 'digest')
+      return { action: 'jobs', result: { jobs: [], failed: 0 } }
+    },
+  }
+  const digestHarness = await harness(t, { services: fallthrough })
+  const noDigest = await digestHarness.post(
+    { sessionId: SESSION, action: 'preview', mutation: 'refresh-digest' },
+    ORIGIN_HEADER(digestHarness),
+  )
+  assert.equal(noDigest.status, 503)
+  assert.equal(noDigest.body.error.code, 'digest-unavailable')
+
+  const unbound = await harness(t, {
+    services: stub.services,
+    resolveBinding: async () => ({ kind: 'unbound', reason: 'no-pointer' }),
+  })
+  const notBound = await unbound.post(
+    { sessionId: SESSION, action: 'preview', mutation: 'compact-hot' },
+    ORIGIN_HEADER(unbound),
+  )
+  assert.equal(notBound.status, 409)
+  assert.equal(notBound.body.error.code, 'unbound')
 })

@@ -113,10 +113,20 @@ const LAYERS = {
   registry: 1,
   routing: 1,
   distill: 2,
+  // The shared tokenizer both the index and the v0.4 sparse ranker call. A leaf
+  // with no repository import, so `retrieval-rank` (L1) can use it without the
+  // lateral edge into `index-db` (L2) that a same-file tokenizer would create.
+  'index-text': 0,
   'index-db': 2,
   receipts: 2,
   pending: 3,
   search: 3,
+  // The v0.4 sparse retrieval baseline. The ranker imports the shared tokenizer
+  // from the `index-text` leaf (L0) so the lexical and sparse sides cannot drift
+  // without giving `search` (L3) a lateral edge; the provider contract imports
+  // only Node builtins and stays a leaf.
+  'retrieval-rank': 1,
+  'retrieval-provider': 0,
   'prompt-recall': 3,
   transaction: 3,
   vault: 4,
@@ -177,11 +187,23 @@ const LAYERS = {
   'hot-text': 0,
   'hot-archive': 1,
   'brief-coverage': 0,
+  // The v0.4 delivery pair. `hot-delivery` is the pure decision over values and
+  // imports only node:crypto, so the brief (L7) and hooks (L8) both point down at
+  // it. `delivery-state` is the private persistence: it adds the shared receipts
+  // I/O (L2) and routing hash (L1) on top of that leaf, which fixes L3; the
+  // convention cursor (L4) reuses its state primitives instead of a second writer.
+  'hot-delivery': 0,
+  'delivery-state': 3,
+  'convention-rotation': 4,
   // The browser route fence is import-free; the panel route imports only the
   // fence and receives the services through its arguments. `appraisal` is the
   // pure deterministic rule set the digest uses and imports note-health (L0).
   'route-guard': 0,
   'panel-route': 1,
+  // The v0.4 confirmed-mutation state machine imports only `node:crypto`; the
+  // route passes the services and the preview clock in, so it sits at the bottom
+  // beside the route fence rather than inventing a service-layer dependency.
+  'panel-actions': 0,
   appraisal: 1,
   // The deterministic digest collector is injection-only: no repository import,
   // no filesystem of its own, and the service owns both readers.
@@ -285,7 +307,13 @@ const BUDGETS = {
   // Raised from 1400 by the coverage-first brief: the coverage return value, the
   // paging dispatcher and the conventions preview. Measured 1413 formatted lines;
   // measured-plus-30 is 1443, rounded to 1500.
-  'lib/brief.js': 1500,
+  // Raised from 1500 by the v0.4 delivery half: the receipt-bearing composition
+  // (`delivery.emitted/removed/continuation`), the oversized-unit skip that keeps
+  // later units fitting, continuation windows that never clip a unit, the bounded
+  // cursor paging for section "hot", and one shared `renderHotUnit` so the delivered
+  // line, its version hash and the page cannot disagree. Measured 2068 formatted
+  // lines; measured-plus-30 is 2143, rounded to 2150.
+  'lib/brief.js': 2150,
   // The composition half extracted from `brief.js` (207 formatted lines measured;
   // measured-plus-30 is 237, which rounds up to 250). The budget fixpoint, the
   // section renderer and the footer are what a plain string can exercise, so they
@@ -538,7 +566,12 @@ const BUDGETS = {
   // which would let the two answers disagree.
   // Raised from 1500 by the coverage summary the brief diagnostic carries.
   // Measured 1514 formatted lines; measured-plus-30 is 1544, rounded to 1550.
-  'lib/hooks.js': 1550,
+  // Raised from 1550 by the v0.4 delivery seam: preparation before the host output
+  // exists, the committed `session/event` acknowledgement that only advances what
+  // the final message carried, the continuation planner with its two-per-generation
+  // cap, discard-on-rejected-plan, and the epoch bump on clear/compact. Measured
+  // 1841 formatted lines; measured-plus-30 is 1871, rounded to 1900.
+  'lib/hooks.js': 1900,
   // Raised from 600 by the hot-zone deadlock fix (1069 formatted lines measured;
   // measured-plus-30 is 1099, which rounds up to 1100). What the 469 lines buy:
   // archival that can tell a pointer line from an entry — the reported bug, since
@@ -560,12 +593,27 @@ const BUDGETS = {
   // this module. Measured 329 formatted lines; measured-plus-30 is 359, rounded
   // up to 400.
   'lib/hot-archive.js': 400,
-  // Measured 83, 374 and 263 formatted lines; measured-plus-30 is 113, 404 and
-  // 293, rounded to 150, 450 and 300. `panel-route` is larger than the plan's
-  // estimate because it owns the action allowlist, the asset list and the
-  // unbound state in one place rather than splitting a 60-line helper out.
+  // The v0.4 delivery receipts, measured on the formatted tree: 301 and 1136 lines
+  // after the acknowledgement-gating fix round; measured-plus-30 is 331 and 1166,
+  // rounded to 350 and 1200. The pure half keeps
+  // the version/selection rules and the cursor; the persistence half holds the
+  // bounded state, private primitives (bounded JSON, atomic write, short lock,
+  // symlink refusal), the 8 MiB structural transcript reconciler and discarded-plan
+  // cleanup, which is why it is the larger file. The convention cursor is 261 lines;
+  // 291 by the rule, rounded to 300.
+  'lib/hot-delivery.js': 350,
+  'lib/delivery-state.js': 1200,
+  'lib/convention-rotation.js': 300,
+  // Measured 83 and 263 formatted lines; measured-plus-30 is 113 and 293, rounded
+  // to 150 and 300. `panel-route` is larger than the plan's estimate because it
+  // owns the action allowlist, the asset list and the unbound state in one place
+  // rather than splitting a 60-line helper out. The v0.4 preview/confirm fence,
+  // capabilities and bounded failedJobs grew it to 623 measured (653 by the rule,
+  // rounded to 700); the mutation state machine is its own 850-line module (880 by
+  // the rule, rounded to 900) so the route keeps its read-only dispatch small.
   'lib/route-guard.js': 150,
-  'lib/panel-route.js': 450,
+  'lib/panel-route.js': 700,
+  'lib/panel-actions.js': 900,
   'lib/appraisal.js': 300,
   // Measured 280 formatted lines; measured-plus-30 is 310, rounded to 350.
   // The collector owns the window, the 200-source/500 ms bound, the honest
@@ -578,7 +626,13 @@ const BUDGETS = {
   // Measured 806 formatted lines; measured-plus-30 is 836, rounded up to 850.
   // The one module holds the three view components and their shared card kit;
   // the alternative was four assets and a second host-remount constraint.
-  'lib/memory-panel.js': 850,
+  // Raised from 850 by the v0.4 vault-ledger redesign: the masthead, ordinal
+  // tab index, ledger rows with tabular numerals, composition index, numbered
+  // recent list, health stamps/meters, the newspaper digest column and the
+  // preview→confirm sheet (focus trap, aria-live status, stale/replay handling)
+  // all live in the one served asset. Measured 1329 formatted lines;
+  // measured-plus-30 is 1359, rounded to 1400.
+  'lib/memory-panel.js': 1400,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})
@@ -588,6 +642,9 @@ const BUDGETS = {
   // Raised from 2550 by the source-status recheck and the digest source list:
   // measured 2660 formatted lines; measured-plus-30 is 2690, rounded to 2700.
   'lib/index-db.js': 2700,
+  // Measured 119 formatted lines when the v0.4 sparse baseline moved the shared
+  // tokenizer out of `index-db`; measured-plus-30 is 149, rounded to 150.
+  'lib/index-text.js': 150,
   // The loader owns React controls; the renderer owns cached labels, culling
   // and frame scheduling. Neither the renderer nor Worker imports React.
   // Raised from 600 when the panel's controls started outliving the page: the host
@@ -595,7 +652,12 @@ const BUDGETS = {
   // and its gated save live here. The record shape and its validation are the part
   // that earned a module of its own (`lib/graph-settings.js`), not the wiring.
   // Measured 835 formatted lines; measured-plus-30 is 865, rounded up to 900.
-  'lib/client.js': 900,
+  // Raised from 900 by the v0.4 shell redesign: the masthead (project name in the
+  // serif display face, binding stamp, last-read clock, refresh), the ordinal
+  // tablist (01–04) with roving focus, and the ledger chrome that replaces the
+  // generic card shell. Measured 998 formatted lines; measured-plus-30 is 1028,
+  // rounded to 1050.
+  'lib/client.js': 1050,
   'lib/graph-renderer.js': 700,
   // The eleven-slot table, its two CSS forms and the probe read, split out of the
   // renderer when the label-size work pushed that file past its budget.
@@ -657,7 +719,18 @@ const BUDGETS = {
   // Raised from 200 for the title-twin lookup: the duplicate rule needs the same
   // tokenizer and the same project-scoped search as `mem_search`, and putting it
   // anywhere else would either duplicate the tokenizer or point a layer upward.
-  'lib/search.js': 250,
+  // Raised from 250 by the v0.4 sparse engine: measured 595 formatted lines;
+  // measured-plus-30 is 625, rounded to 650. The engine lives here because Task 3
+  // has no new module for it: chunking, source verification, the bounded candidate
+  // set, the RRF fusion and the lexical fallback are one policy that the caller
+  // must not be able to half-apply.
+  'lib/search.js': 650,
+  // The v0.4 sparse baseline: 302 and 607 formatted lines measured; measured-plus-30
+  // is 332 and 637, rounded to 350 and 650. The ranker reuses `index-db`'s
+  // tokenizer rather than copying it; the provider contract validates an explicitly
+  // configured, disabled-by-default loopback service and imports only Node builtins.
+  'lib/retrieval-rank.js': 350,
+  'lib/retrieval-provider.js': 650,
   // Raised from 150 for the decision object and the measured floor. The policy
   // now answers *why* it was silent (`RECALL_OUTCOMES`), which is what makes the
   // firing rate readable from `mem_admin(action="diagnostics")` instead of from
