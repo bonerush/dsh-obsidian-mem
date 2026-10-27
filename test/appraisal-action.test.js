@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -38,6 +38,46 @@ test('mem_admin(action="appraise") reads a bounded recent window and returns rea
     },
     { dataRoot, home },
   )
+  const valid = binding.relativeDir + '/Decisions/Target.md'
+  await writeFile(join(vault, valid), '# Target\n')
+  await symlink(
+    join(root, 'outside.md'),
+    join(vault, binding.relativeDir, 'Decisions', 'escape.md'),
+  )
+  await writeFile(join(root, 'outside.md'), '# Private\n')
+  const linked = await writeMemory(
+    binding,
+    {
+      type: 'decision',
+      title: 'Link audit',
+      assertion: 'observed',
+      body:
+        '[[Target]] [[target]] [[Target.md#Heading|alias]] [[#Local heading]] [[' +
+        valid +
+        '|alias]] `[[code-only-missing]]`',
+    },
+    { dataRoot, home },
+  )
+  const broken = await writeMemory(
+    binding,
+    {
+      type: 'decision',
+      title: 'Broken link',
+      assertion: 'observed',
+      body: '[[DOES-NOT-EXIST]]',
+    },
+    { dataRoot, home },
+  )
+  const escaped = await writeMemory(
+    binding,
+    {
+      type: 'decision',
+      title: 'Jailed link',
+      assertion: 'observed',
+      body: '[[escape]]',
+    },
+    { dataRoot, home },
+  )
   const services = createMemoryServices({
     config: validateConfig({ vaultPath: vault }),
     dataRoot,
@@ -57,6 +97,20 @@ test('mem_admin(action="appraise") reads a bounded recent window and returns rea
   assert.ok(codes.includes('unverified'), 'the missing assertion is a warning')
   assert.equal(value.result.scanned >= 2, true)
   assert.equal(value.result.truncated, false)
+  const dead = value.result.findings.filter((finding) => finding.code === 'dead-link')
+  assert.ok(
+    dead.some((finding) => finding.path === broken.path),
+    'service checks a missing target',
+  )
+  assert.ok(
+    dead.some((finding) => finding.path === escaped.path),
+    'a symlink is not a resolvable vault file',
+  )
+  assert.equal(
+    dead.some((finding) => finding.path === linked.path),
+    false,
+    'aliases, relative links, anchors, case and extension variants resolve',
+  )
   for (const finding of value.result.findings) {
     assert.equal(typeof finding.path, 'string')
     assert.ok(['error', 'warn', 'info'].includes(finding.severity))

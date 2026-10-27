@@ -467,8 +467,12 @@ test('the documented enums and defaults are exactly spec §9', async (t) => {
     // The deterministic appraisal: a bounded recent window, closed finding
     // vocabulary, no write and no model call.
     'appraise',
+    // The v3 digest read: a bounded trailing window and the same closed
+    // appraisal vocabulary, with hot/queue snapshots. The owned refresh writer
+    // is a separate v0.4 slice.
+    'digest',
   ])
-  assert.deepEqual(params('mem_admin').operation.enum, ['status', 'scan', 'compact'])
+  assert.deepEqual(params('mem_admin').operation.enum, ['status', 'scan', 'compact', 'read'])
   assert.equal(params('mem_admin').operation.default, 'status')
   assert.deepEqual(params('mem_admin').mode.enum, ['show', 'local', 'fork', 'retain'])
   assert.equal(params('mem_admin').mode.default, 'show')
@@ -477,6 +481,7 @@ test('the documented enums and defaults are exactly spec §9', async (t) => {
   assert.equal(params('mem_admin').prune.default, false)
   assert.deepEqual(Object.keys(params('mem_admin')).sort(), [
     'action',
+    'days',
     'jobId',
     'mode',
     'operation',
@@ -515,7 +520,7 @@ test('mem_admin exposes no approval operation, in the DSL or in the compiled sch
   // contract, so the equality is asserted rather than the absence of four names.
   // Each action narrows it again in its own service (curation to status/scan,
   // hot to status/compact), so the union is not a permission.
-  assert.deepEqual(operation, ['status', 'scan', 'compact'])
+  assert.deepEqual(operation, ['status', 'scan', 'compact', 'read'])
 })
 
 test('mem_admin branches its result with a per-action const instead of an unconstrained object', async (t) => {
@@ -529,6 +534,7 @@ test('mem_admin branches its result with a per-action const instead of an uncons
     'bind',
     'curation',
     'diagnostics',
+    'digest',
     'hot',
     'index',
     'jobs',
@@ -815,6 +821,25 @@ test('mem_admin(action="diagnostics") answers through the real seam without a va
   const refused = await call(ctx, 'mem_admin', { action: 'diagnostics', path: 'x.md' })
   assert.equal(refused.isError, true)
   assert.match(refused.error.message, /does not accept/)
+})
+
+test('mem_admin(action="digest") validates through the real tool runtime', async (t) => {
+  const world = await makeCurationWorld(t)
+  const agent = { session: { header: { id: 'sess-digest', cwd: world.repo } } }
+  await world.services.write(
+    { type: 'decision', title: 'Runtime digest', body: 'A bounded claim.', assertion: 'observed' },
+    undefined,
+    agent,
+  )
+  const ctx = await toolbed(t)
+  registerTools(ctx, world.services)
+  const result = await call(ctx, 'mem_admin', { action: 'digest' }, { agent })
+  assert.equal(result.isError, false, result.error?.message)
+  assert.equal(result.value.action, 'digest')
+  assert.equal(result.value.result.window.days, 1)
+  assert.equal(result.value.result.notes.created >= 1, true)
+  assert.equal(result.value.result.collection.inspected >= 1, true)
+  assert.equal(Array.isArray(result.value.result.appraisal.findings), true)
 })
 
 // ---------------------------------------------------------------------------

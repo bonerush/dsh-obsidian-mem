@@ -364,7 +364,8 @@ test('a status filter is applied before hasMore is decided', async (t) => {
     limit: 5,
   })
   assert.equal(result.status, 200)
-  assert.equal(searchArgs.limit, 50, 'the route asks for the largest page before filtering')
+  assert.equal(searchArgs.limit, 5, 'the exact predicate is applied before the requested page cap')
+  assert.equal(searchArgs.filters.status, 'provisional')
   assert.equal(result.body.value.hits.length, 0)
   assert.equal(result.body.value.hasMore, true, 'rows beyond the page still exist')
 })
@@ -444,4 +445,45 @@ test('overview trims its lists to stay inside the 16 KB ceiling', async (t) => {
   const result = await h.post({ sessionId: SESSION, action: 'overview' })
   assert.equal(result.status, 200)
   assert.ok(result.bytes <= 16 * 1024, 'overview is ' + result.bytes + ' bytes')
+})
+
+test('search measures the final UTF-8 envelope at ceiling minus one, ceiling and ceiling plus one', async (t) => {
+  t.mock.method(Date, 'now', () => 1000)
+  const hits = [
+    {
+      path: 'p',
+      title: '中文"\\',
+      type: 'decision',
+      status: 'active',
+      source: 'body',
+      snippet: '',
+      scoreSignals: [],
+    },
+  ]
+  const services = {
+    indexForBinding: async () => ({ boundProjectId: BOUND.projectId, search: async () => hits }),
+  }
+  const h = await harness(t, { services })
+  const payload = { sessionId: SESSION, action: 'search', query: 'binding', limit: 1 }
+  const measured = await h.post(payload)
+  const prefix = hits[0].title
+  for (const delta of [-1, 0, 1]) {
+    hits[0].title = prefix + 'x'.repeat(32768 - measured.bytes + delta)
+    const result = await h.post(payload)
+    assert.equal(result.status, 200)
+    assert.ok(result.bytes <= 32768, 'final response is ' + result.bytes + ' bytes')
+    assert.equal(result.body.value.hits.length, delta > 0 ? 0 : 1)
+    if (delta <= 0) assert.equal(result.bytes, 32768 + delta)
+    else assert.equal(result.body.value.hasMore, true)
+  }
+})
+
+test('a fixed-field overflow returns a bounded error after optional lists are exhausted', async (t) => {
+  const h = await harness(t, {
+    resolveBinding: async () => ({ ...BOUND, displayName: 'x'.repeat(100000) }),
+  })
+  const result = await h.post({ sessionId: SESSION, action: 'overview' })
+  assert.ok(result.bytes <= 16384, 'final response is ' + result.bytes + ' bytes')
+  assert.equal(result.body.ok, false)
+  assert.equal(result.body.error.code, 'response-too-large')
 })

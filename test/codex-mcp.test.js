@@ -160,10 +160,10 @@ test('the two hosts expose the same six tools and the same curation schema', () 
   for (const name of ['apply', 'approve', 'reject']) {
     assert.equal(admin.properties.action.enum.includes(name), false)
   }
-  // `operation` is curation's and hot's closed set, in the same declaration order
-  // DSH's compiled schema uses: curation accepts status/scan, hot accepts
-  // status/compact, and the shared enum is the union both services then narrow.
-  assert.deepEqual(admin.properties.operation.enum, ['status', 'scan', 'compact'])
+  // `operation` is the shared closed set, in the same declaration order DSH's
+  // compiled schema uses: curation narrows to status/scan, hot to status/compact,
+  // and digest to read.
+  assert.deepEqual(admin.properties.operation.enum, ['status', 'scan', 'compact', 'read'])
   assert.equal(admin.properties.operation.default, 'status')
   // The description has to name what the model can ask for, or the action is
   // unreachable in practice however valid its schema is.

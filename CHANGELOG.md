@@ -44,6 +44,17 @@ release artifact. The versioning policy is in the README, under Development.
   `duplicate-title`, `contested`, with `error`/`warn`/`info` severities. It
   is read-only, makes no model call and returns `scanned`/`truncated` rather
   than pretending it saw the whole vault.
+- **A deterministic digest read.** `mem_admin(action="digest", days=1..30)` now
+  returns the frozen v3 digest: the UTC window, created/updated/superseded counts,
+  a type breakdown, hot and queue snapshots, at most eight recent references and
+  at most twenty findings from the same closed appraisal vocabulary. It inspects at
+  most 200 source notes under a 500 ms deadline, excludes its own generated
+  `_meta/digest.md`, and reports `truncated`/`incomplete` instead of inventing a
+  missing record. The health view now shows the card through the real service.
+- **A shared source-link resolver for appraisal.** `index.linkResolver()` exposes
+  the same Obsidian case/relative-path/basename rules the graph uses, and both
+  `appraise` and `digest` pass it into the rules. Appraisal now parses links with
+  the graph extractor, so inline-code samples are not treated as broken links.
 - **One automatic-injection eligibility predicate.** `lib/note-health.js` now
   owns `AUTOMATIC_EXCLUDED_STATUSES` and `isAutomaticallyEligible`; the brief's
   convention index, the stored-view navigation, prompt recall and the recent
@@ -67,6 +78,43 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Fixed
 
+- **Cached statuses could quarantine-bypass after an external edit.** The batch
+  status path trusted an eligible cached row without checking the source. A
+  convention edited from `active` to `provisional` stayed injectable until the
+  next refresh. The batch now re-reads source status under a bounded parallel
+  read (and treats an unreadable/missing source as navigation), preserving the
+  sub-second 2,000-line MOC test.
+- **A hot unit larger than one page could not advance.** An 8,100-cp constraint
+  fits the 9,000-cp hot cap but cannot fit the 8,000-cp page ceiling; the old page
+  returned `[]`, `hasMore:true` and the same `nextOffset` forever. `pageBrief` now
+  refuses with `brief-unit-too-large`, names the source `mem_read` path and tells
+  the caller to continue at `offset + 1`; the following page reaches later items.
+- **A view page applied the brief preview cut before the offset.** The view page
+  reconstructed only the prefix that fit `briefBudgetChars`, so entries in the
+  tail disappeared from `total`. Paging now enumerates the complete eligible view
+  and verifies only the requested page; the brief still renders a verified prefix.
+- **The panel filter’s “全部” kept the previous type/status.** `options.type ?? type`
+  treated an explicit `null` as absent, so the request and the pressed state
+  disagreed. The handlers now distinguish a missing option from an explicit null.
+- **Panel data outlived a session switch.** Overview/health and search could show
+  project A while project B loaded or failed. Poll state is now keyed by
+  session/action/params, stale responses are generation-checked, and last-good
+  data survives only a refresh of the same identity.
+- **A status-filtered search could miss matches below the first 50 hits.** The
+  route fetched 50 unfiltered rows and filtered afterwards. The exact status
+  predicate now runs in the index before ranking/page limiting on both backends,
+  and the returned rows are rechecked against source bytes so an externally
+  edited status cannot leak into the result.
+- **The appraise action advertised `dead-link` but never enabled it.** The service
+  now injects the shared vault link resolver, so a real missing target is found;
+  aliases, relative paths, headings, case variants and inline-code samples resolve
+  or stay silent as appropriate.
+- **Two response-envelope defects.** Byte ceilings measured the value before the
+  `{ok,value}` envelope (a 32,788-byte response could pass a 32,768-byte check),
+  and the request guard decoded each HTTP chunk separately, corrupting a Chinese
+  character split across chunks. The ceiling now measures the final envelope and
+  the guard counts raw bytes then decodes once; exact-boundary and every-split
+  cases are covered.
 - **Provisional memory could reach an automatic prompt.** The brief excluded
   provisional conventions, but prompt recall could still fire on one, a stored
   curation view could inject one, and the recent-decisions section could show one.
@@ -87,11 +135,12 @@ release artifact. The versioning policy is in the README, under Development.
   this release.
 - **The panel's status filter and overview ceiling had two measured bugs.** A
   status filter was applied after the index page was cut, so a page with no
-  matching row could report `hasMore:false` while matches sat beyond it; the
-  route now asks for the largest page (50) and filters before deciding `hasMore`.
-  The overview could exceed its 16 KB ceiling when its type/status lists were
-  large; it now halves those lists and, as a last resort, returns the required
-  shape with the list payloads empty.
+  matching row could report `hasMore:false` while matches sat beyond it. The exact
+  predicate now runs in the index before ranking/page limiting on both backends,
+  and the returned rows are rechecked against source bytes. The overview could
+  exceed its 16 KB ceiling when its type/status lists were large; it now halves
+  those lists and, if the fixed fields alone still overflow, answers a bounded
+  `response-too-large` error instead of an unvalidated payload.
 
 ### Validation and remaining risks
 
@@ -108,24 +157,37 @@ release artifact. The versioning policy is in the README, under Development.
 - **Tests run.** `test/brief.test.js`, `test/brief-page.test.js`,
   `test/tools.test.js`, `test/config.test.js`, `test/hooks.test.js`,
   `test/appraisal.test.js`, `test/appraisal-action.test.js`,
-  `test/hot-planner.test.js`, `test/memory.test.js`,
-  `test/panel-route.test.js`, `test/panel-client.test.js`,
-  `test/panel-assets.test.js`, `test/recall-eligibility.test.js`,
-  `test/architecture.test.js`, plus `npm run lint`, `npm run types` and
-  `npm run format:check`. `npm test` on 2026-10-26: **1,125 tests, 1,124 pass,
-  1 skipped, 0 fail**. (The first full run was 1,119 pass / 3 fail: four size
-  budgets, the diagnostics schema missing `coverage`, and the graph asset walk
-  not registering the panel route. All three were fixed and the suite re-ran
-  green.) `npm run check` (lint, format, types, prepack, pack:check) also passed on the
-  final tree: `verify-pack: OK`, and the real archive reported `76 entries, 66 lib
-  modules`.
-- **Not run.** A mounted browser check of the panel (no browser was available):
-  first paint, tab switching, live-region announcements and the canvas truncation
-  notice are asserted at source level only. The E1 build-time and coverage figures
-  were not re-measured on the real vault. The Codex `gpt-6.1-sol` xhigh spec run
-  exceeded its 30-minute cap and was stopped; the Lead froze the spec from the
-  completed research, and the read-only architecture audit did finish (339 lines,
-  `research/codex-architecture-audit-2026-10.md`).
+  `test/digest.test.js`, `test/digest-action.test.js`,
+  `test/panel-digest.test.js`, `test/status-search.test.js`,
+  `test/route-guard.test.js`, `test/memory-panel-behavior.test.js`,
+  `test/export-surface.test.js`, `test/hot-planner.test.js`,
+  `test/memory.test.js`, `test/panel-route.test.js`,
+  `test/panel-client.test.js`, `test/panel-assets.test.js`,
+  `test/recall-eligibility.test.js`, `test/architecture.test.js`, plus
+  `npm run lint`, `npm run types` and `npm run format:check`. `npm test` on
+  2026-10-27: **1,160 tests, 1,159 pass, 1 skipped, 0 fail** after the README
+  hash fix. `npm run check` (lint, format, types, prepack, pack:check) also
+  passed on the final tree: `verify-pack: OK`, and the real archive reported
+  `77 entries, 67 lib modules`.
+- **Mounted browser and real-data evidence.** Codex ran a mounted browser
+  check on an isolated native DSH host before the repair wave: all four views
+  mounted, the 500-node truncation notice rendered, keyboard Home and the live
+  region resolved, and the 375/768 viewports did not overflow. That run also
+  reproduced the 全部 filter failure and found the digest card absent; both are
+  fixed in this tree, but the mounted browser check was not re-run afterward.
+  A read-only project snapshot measured the base 0b3cbae brief at 2,135/6,000
+  cp, recent 5/5, conventions 176/176 exact through 26 pages, and a 156.7 ms
+  warm median; the source fingerprint was unchanged. The snapshot was not
+  re-measured after these repairs.
+- **Not run.** No post-fix mounted-browser or native DSH/Codex receipt check;
+  no real-vault performance re-measurement after the repairs. The Codex
+  `gpt-6.1-sol` xhigh spec run exceeded its 30-minute cap and was stopped; the
+  Lead froze the spec from the completed research, and the read-only
+  architecture audit did finish (339 lines,
+  `research/codex-architecture-audit-2026-10.md`). The v0.4 contract is
+  designed and approved but only the digest read slice is implemented in this
+  tree; delivery receipts, rotation, the digest writer, panel mutations and the
+  sparse/semantic retrieval baseline remain unlanded.
 
 ## 0.2.0 — 2026-10-12
 

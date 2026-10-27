@@ -44,13 +44,13 @@ test('polling is one AbortController per run, visible-gated and stale-safe', asy
   assert.match(text, /if \(!visible \|\| !sessionId\) return undefined/u)
   assert.match(text, /if \(disposed \|\| cause\?\.name === 'AbortError'\) return/u)
   assert.match(text, /controller\?\.abort\(\)/u, 'cleanup aborts the in-flight run')
-  assert.ok(text.includes('setError(cause)'), 'a failure is recorded')
+  assert.ok(text.includes('setFailure({ identity, error: cause })'), 'a failure is recorded')
   const posted = text.indexOf('const next = await post(')
   const guarded = text.indexOf('if (disposed) return', posted)
-  const stored = text.indexOf('setValue(next)', posted)
+  const stored = text.indexOf('setSnapshot({ identity, value: next })', posted)
   assert.ok(posted > 0 && guarded > posted && stored > guarded, 'stale responses are rejected')
   assert.equal(
-    text.includes('setValue(null)'),
+    text.includes('setSnapshot(null)'),
     false,
     'a failed run never clears the last good data',
   )

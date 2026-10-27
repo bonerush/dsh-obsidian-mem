@@ -183,6 +183,9 @@ const LAYERS = {
   'route-guard': 0,
   'panel-route': 1,
   appraisal: 1,
+  // The deterministic digest collector is injection-only: no repository import,
+  // no filesystem of its own, and the service owns both readers.
+  digest: 0,
   // The one served browser module the panel shell imports at runtime. It has no
   // repository import (React arrives through createMemoryViews), so its layer is
   // the browser-entry layer rather than a host layer.
@@ -560,6 +563,10 @@ const BUDGETS = {
   'lib/route-guard.js': 150,
   'lib/panel-route.js': 450,
   'lib/appraisal.js': 300,
+  // Measured 280 formatted lines; measured-plus-30 is 310, rounded to 350.
+  // The collector owns the window, the 200-source/500 ms bound, the honest
+  // incomplete reasons and the renderer; the service supplies every reader.
+  'lib/digest.js': 350,
   // Measured 806 formatted lines; measured-plus-30 is 836, rounded up to 850.
   // The one module holds the three view components and their shared card kit;
   // the alternative was four assets and a second host-remount constraint.
@@ -570,7 +577,9 @@ const BUDGETS = {
   // are read projections over the existing notes/links tables and belong beside
   // the graph projection rather than in a second index implementation. Measured
   // 2490 formatted lines; measured-plus-30 is 2520, rounded to 2550.
-  'lib/index-db.js': 2550,
+  // Raised from 2550 by the source-status recheck and the digest source list:
+  // measured 2660 formatted lines; measured-plus-30 is 2690, rounded to 2700.
+  'lib/index-db.js': 2700,
   // The loader owns React controls; the renderer owns cached labels, culling
   // and frame scheduling. Neither the renderer nor Worker imports React.
   // Raised from 600 when the panel's controls started outliving the page: the host
@@ -678,7 +687,9 @@ const BUDGETS = {
   // Raised from 1100 by the mem_brief paging parameters/page arm, the brief
   // coverage object and the appraise action result. Measured 1142 formatted lines;
   // measured-plus-30 is 1172, rounded to 1200.
-  'lib/tool-schema.js': 1200,
+  // Raised from 1200 by the digest action/operation/days and its closed result
+  // arm: measured 1275 formatted lines; measured-plus-30 is 1305, rounded to 1350.
+  'lib/tool-schema.js': 1350,
   'lib/tool-registry.js': 250,
   // Raised from 1100 when the explicit-retry wake-up landed here: `kickQueueWorker`
   // is threaded through the option record and the one action that owns retrying, so
@@ -749,7 +760,9 @@ const BUDGETS = {
   // Raised from 1800 by the appraisal action and the coverage page dispatch;
   // measured 1802 formatted lines after the dead autoApply guard was removed.
   // measured-plus-30 is 1832, rounded to 1850.
-  'lib/services.js': 1850,
+  // Raised from 1850 by the digest action and the shared link resolver: measured
+  // 1857 formatted lines; measured-plus-30 is 1887, rounded to 1900.
+  'lib/services.js': 1900,
   // Raised from 2200 by Task 7 (2229 formatted lines measured; measured-plus-30
   // rounds up to 2300, which is this number — the entry above the old one had no
   // note of its own, so this number states the rule it follows). What the 29 lines
