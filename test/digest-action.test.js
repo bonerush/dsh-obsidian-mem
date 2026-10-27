@@ -74,8 +74,9 @@ test('mem_admin(action="digest") reads one bounded window through the real servi
   )
 
   await assert.rejects(() => services.admin({ action: 'digest', days: 31 }), RangeError)
-  await assert.rejects(
-    () => services.admin({ action: 'digest', operation: 'refresh' }),
-    /separate v0.4 slice/u,
-  )
+  const refreshed = await services.admin({ action: 'digest', operation: 'refresh' }, undefined, {})
+  assert.equal(refreshed.result.publication.status, 'created')
+  assert.equal(refreshed.result.publication.path, binding.relativeDir + '/_meta/digest.md')
+  const unchanged = await services.admin({ action: 'digest', operation: 'refresh' }, undefined, {})
+  assert.equal(unchanged.result.publication.status, 'unchanged')
 })

@@ -162,8 +162,14 @@ test('the two hosts expose the same six tools and the same curation schema', () 
   }
   // `operation` is the shared closed set, in the same declaration order DSH's
   // compiled schema uses: curation narrows to status/scan, hot to status/compact,
-  // and digest to read.
-  assert.deepEqual(admin.properties.operation.enum, ['status', 'scan', 'compact', 'read'])
+  // and digest to read/refresh.
+  assert.deepEqual(admin.properties.operation.enum, [
+    'status',
+    'scan',
+    'compact',
+    'read',
+    'refresh',
+  ])
   assert.equal(admin.properties.operation.default, 'status')
   // The description has to name what the model can ask for, or the action is
   // unreachable in practice however valid its schema is.

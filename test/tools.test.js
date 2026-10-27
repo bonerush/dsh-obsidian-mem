@@ -472,7 +472,13 @@ test('the documented enums and defaults are exactly spec §9', async (t) => {
     // is a separate v0.4 slice.
     'digest',
   ])
-  assert.deepEqual(params('mem_admin').operation.enum, ['status', 'scan', 'compact', 'read'])
+  assert.deepEqual(params('mem_admin').operation.enum, [
+    'status',
+    'scan',
+    'compact',
+    'read',
+    'refresh',
+  ])
   assert.equal(params('mem_admin').operation.default, 'status')
   assert.deepEqual(params('mem_admin').mode.enum, ['show', 'local', 'fork', 'retain'])
   assert.equal(params('mem_admin').mode.default, 'show')
@@ -520,7 +526,7 @@ test('mem_admin exposes no approval operation, in the DSL or in the compiled sch
   // contract, so the equality is asserted rather than the absence of four names.
   // Each action narrows it again in its own service (curation to status/scan,
   // hot to status/compact), so the union is not a permission.
-  assert.deepEqual(operation, ['status', 'scan', 'compact', 'read'])
+  assert.deepEqual(operation, ['status', 'scan', 'compact', 'read', 'refresh'])
 })
 
 test('mem_admin branches its result with a per-action const instead of an unconstrained object', async (t) => {
@@ -840,6 +846,23 @@ test('mem_admin(action="digest") validates through the real tool runtime', async
   assert.equal(result.value.result.notes.created >= 1, true)
   assert.equal(result.value.result.collection.inspected >= 1, true)
   assert.equal(Array.isArray(result.value.result.appraisal.findings), true)
+
+  const refreshed = await call(
+    ctx,
+    'mem_admin',
+    { action: 'digest', operation: 'refresh' },
+    { agent },
+  )
+  assert.equal(refreshed.isError, false, refreshed.error?.message)
+  assert.equal(refreshed.value.result.publication.status, 'created')
+  const unchanged = await call(
+    ctx,
+    'mem_admin',
+    { action: 'digest', operation: 'refresh' },
+    { agent },
+  )
+  assert.equal(unchanged.isError, false, unchanged.error?.message)
+  assert.equal(unchanged.value.result.publication.status, 'unchanged')
 })
 
 // ---------------------------------------------------------------------------

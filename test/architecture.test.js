@@ -186,6 +186,10 @@ const LAYERS = {
   // The deterministic digest collector is injection-only: no repository import,
   // no filesystem of its own, and the service owns both readers.
   digest: 0,
+  // The owned writer sits above `memory` (L5) because it proves the target's
+  // ownership and publishes through the L3 transaction engine, never by a direct
+  // file write.
+  'digest-write': 6,
   // The one served browser module the panel shell imports at runtime. It has no
   // repository import (React arrives through createMemoryViews), so its layer is
   // the browser-entry layer rather than a host layer.
@@ -567,6 +571,10 @@ const BUDGETS = {
   // The collector owns the window, the 200-source/500 ms bound, the honest
   // incomplete reasons and the renderer; the service supplies every reader.
   'lib/digest.js': 350,
+  // Measured 255 formatted lines; measured-plus-30 is 285, rounded to 300.
+  // The writer owns the day-granular note projection, ownership proof, the
+  // unchanged-byte no-op and the transaction request; the collector stays pure.
+  'lib/digest-write.js': 300,
   // Measured 806 formatted lines; measured-plus-30 is 836, rounded up to 850.
   // The one module holds the three view components and their shared card kit;
   // the alternative was four assets and a second host-remount constraint.

@@ -44,13 +44,17 @@ release artifact. The versioning policy is in the README, under Development.
   `duplicate-title`, `contested`, with `error`/`warn`/`info` severities. It
   is read-only, makes no model call and returns `scanned`/`truncated` rather
   than pretending it saw the whole vault.
-- **A deterministic digest read.** `mem_admin(action="digest", days=1..30)` now
-  returns the frozen v3 digest: the UTC window, created/updated/superseded counts,
+- **A deterministic digest read and owned writer.** `mem_admin(action="digest",
+  days=1..30)` now returns the frozen v3 digest: the UTC window, created/updated/superseded counts,
   a type breakdown, hot and queue snapshots, at most eight recent references and
   at most twenty findings from the same closed appraisal vocabulary. It inspects at
   most 200 source notes under a 500 ms deadline, excludes its own generated
   `_meta/digest.md`, and reports `truncated`/`incomplete` instead of inventing a
-  missing record. The health view now shows the card through the real service.
+  missing record. `operation="refresh"` renders the same disclosure into the
+  project's owned `_meta/digest.md` through the transaction engine: at most 8,000
+  code points, day-granular so an unchanged refresh is a byte-for-byte no-op, and
+  a human-owned or unmarked target is refused rather than replaced. The health view
+  now shows the card through the real service.
 - **A shared source-link resolver for appraisal.** `index.linkResolver()` exposes
   the same Obsidian case/relative-path/basename rules the graph uses, and both
   `appraise` and `digest` pass it into the rules. Appraisal now parses links with
@@ -158,17 +162,17 @@ release artifact. The versioning policy is in the README, under Development.
   `test/tools.test.js`, `test/config.test.js`, `test/hooks.test.js`,
   `test/appraisal.test.js`, `test/appraisal-action.test.js`,
   `test/digest.test.js`, `test/digest-action.test.js`,
-  `test/panel-digest.test.js`, `test/status-search.test.js`,
+  `test/digest-write.test.js`, `test/panel-digest.test.js`,
+  `test/status-search.test.js`,
   `test/route-guard.test.js`, `test/memory-panel-behavior.test.js`,
   `test/export-surface.test.js`, `test/hot-planner.test.js`,
   `test/memory.test.js`, `test/panel-route.test.js`,
   `test/panel-client.test.js`, `test/panel-assets.test.js`,
   `test/recall-eligibility.test.js`, `test/architecture.test.js`, plus
   `npm run lint`, `npm run types` and `npm run format:check`. `npm test` on
-  2026-10-27: **1,160 tests, 1,159 pass, 1 skipped, 0 fail** after the README
-  hash fix. `npm run check` (lint, format, types, prepack, pack:check) also
-  passed on the final tree: `verify-pack: OK`, and the real archive reported
-  `77 entries, 67 lib modules`.
+  2026-10-27: **1,163 tests, 1,162 pass, 1 skipped, 0 fail**. `npm run check`
+  (lint, format, types, prepack, pack:check) also passed on the final tree:
+  `verify-pack: OK`, and the real archive reported `78 entries, 68 lib modules`.
 - **Mounted browser and real-data evidence.** Codex ran a mounted browser
   check on an isolated native DSH host before the repair wave: all four views
   mounted, the 500-node truncation notice rendered, keyboard Home and the live
