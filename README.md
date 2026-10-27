@@ -161,18 +161,35 @@ Start a session in any Git repository and ask, or just check the tools are there
 | Row mounted | `dsh --profile web --dump-config \| grep obsidian-mem` |
 | Project bound | `mem_admin(action="projects")` reports the resolution. A Git repository with **no** `.obsidian-mem` is bound by its **first write**: `mem_write` or `mem_log` generates the slug, creates the pointer exclusively, bootstraps the skeleton and registers the project, then proceeds — and the binding is visible to the next call in the same session. An existing pointer is never overwritten or repaired, and a refusal (a corrupt or unknown-schema pointer, an unreadable sibling worktree, an unreadable registry, a cloud-managed vault) is reported with its reason instead of minting. Reads never bind: `mem_search` and `mem_read` stay read-only on a pointerless repository, and a directory that is **not** in Git stays read-only until `mem_admin(action="bind", mode="local")`. |
 | Recall injected once | the first request of a session carries one `obsidian-mem` recall message (≤ `briefBudgetChars`) |
+| A cut hot layer stays addressable | hot units are versioned and recorded in a private delivery receipt; when the brief cannot fit them all it prints a bounded `mem_brief(section="hot", cursor=…)` continuation (at most two automatic continuations per unchanged hot generation, at most one per user turn), and the unified page reads the rest. |
+| Convention preview rotates | in `summary` mode the five convention lines start after a persisted anchor and advance only after the previous preview was acknowledged, so a 176-convention vault eventually shows all of them across starts instead of repeating five. |
 | Relevant notes offered | a bound project's new user turn may receive up to three matching notes, each with its title and the excerpt the index matched, inside a per-turn ceiling of its own (≤ `recallBudgetChars`); read the full note with `mem_read` |
 | CJK search works | write a note, then `mem_search` a two-character Chinese word |
 | Vault files are real | `ls "$vault/Projects/"` — plain Markdown, readable with the plugin uninstalled |
 
 ### Memory panel in the DSH sidebar
 
-On DSH `0.1.7-rc.2` with `dsh-better-sidebar` `0.21.1`, open the native right
-sidebar and choose **+ → 记忆 (Memory)**. The tab has four read-only views:
-**概览** (project identity, note/link/orphan/pending counts, type composition and
-recent changes), **图谱** (the graph below), **检索** (the local index with
-excerpts), and **健康** (index, queue, hot layer, diagnostics and the deterministic
-digest). Nothing in the panel writes; the six tools remain the only write path. The **图谱** view's
+On DSH `0.1.7-rc.2` with `dsh-better-sidebar` `0.21.1`, open the native
+sidebar and choose **+ → 记忆 (Memory)**. The tab is one project's ledger: a
+masthead (project name, binding stamp, last-read clock, refresh), four ordinal
+views — **01 概览** (large KPI numerals, note/link/orphan/pending counts, type
+composition and recent changes), **02 图谱** (the graph below), **03 检索** (the
+local index with excerpts), **04 健康** (index, queue, hot layer, diagnostics and
+the deterministic digest) — and hairline ledger rows rather than a card grid.
+
+The panel is read-only by default and adds exactly three confirmed maintenance
+operations when the service advertises them: **重新排队失败任务** (retry one
+terminally failed job of the displayed project), **整理热层** (`mem_admin(action="hot",
+operation="compact")`) and **发布项目摘要** (write the owned `_meta/digest.md`).
+Each is preview → confirm: the preview shows a title, facts, effects and any
+warning, and the confirmation needs a second click backed by a single-use
+60-second token bound to the session, project, operation, arguments and a
+fingerprint of the previewed state. A stale preview answers `preview-stale` and
+refreshes the view; a replayed confirmation returns the original result instead
+of writing twice. When a read payload carries no `capabilities.mutations` — an
+older service, or a route that is not registered — those controls are hidden and
+every view stays fully usable read-only. The six tools remain the other write
+path. The **图谱** view's
 settings button opens the same four sections as Obsidian's graph: filters,
 colour groups, display and forces. Under filters, **Scope** switches all memory/current project; all memory
 is the initial view.
@@ -251,6 +268,7 @@ every field, `distill` included. Put it in the home-level patch layer,
     bindHint: true
     briefBudgetChars: 6000
     recallBudgetChars: 900
+    retrievalEngine: lexical
     hotCapacityChars: 9000
     hotArchiveRatio: 0.67
     autoCapture: true
@@ -292,7 +310,8 @@ explanation instead of doing nothing.
 | `injectBrief` | `true` | boolean | Whether the session brief and per-turn relevant-note map are injected. |
 | `bindHint` | `true` | boolean | Whether a session whose directory resolves to no usable project is told so, once. That notice is how the user is asked whether to bind the project, and how a session whose recorded directory has moved or been deleted says so instead of losing memory in silence. `false` removes that injection and nothing else. The Codex adapter has the same switch as `OBSIDIAN_MEM_BIND_HINT`. |
 | `briefBudgetChars` | `6000` | integer 256–20000 | Hard ceiling for the session brief and the weekly hint, in Unicode code points. |
-| `briefConventionMode` | `summary` | `summary` or `flat` | How a long conventions index is rendered. `summary` shows five MOC lines and leaves the rest addressable through `mem_brief(section="conventions", offset=5)`; `flat` is the pre-0.3 list where the budget alone decides. Rendering only: paging always sees every entry. |
+| `briefConventionMode` | `summary` | `summary` or `flat` | How a long conventions index is rendered. `summary` shows five MOC lines and leaves the rest addressable through `mem_brief(section="conventions", offset=5)`; `flat` is the pre-0.3 list where the budget alone decides. Rendering only: paging always sees every entry. In summary mode the five lines rotate across acknowledged sessions, so a long MOC is not the same five forever. |
+| `retrievalEngine` | `lexical` | `lexical` or `sparse` | Retrieval reranking. `lexical` is the FTS path unchanged. `sparse` re-ranks at most 24 source-verified lexical candidates with local TF-IDF/cosine and fuses them by RRF k=60; no model, network or dependency. `sparse` is still lexical in capability — it cannot find a synonym the index never matched — and returns at most 24 hits. |
 | `recallBudgetChars` | `900` | integer 256–20000 | Per-turn ceiling for the relevant-note map, in Unicode code points. Deliberately separate from `briefBudgetChars`: charged against the brief's leftovers, the map fired on 0.6% of first turns against 22.1% of later ones. |
 | `failureRecall` | `true` | boolean | Recall related memory on repeated native DSH tool failures. Shares the per-step `recallBudgetChars` ceiling with prompt recall; does not control recording. |
 | `hotCapacityChars` | `9000` | integer 1024–50000 | Capacity of `_meta/hot.md`. Storage capacity, *not* injection budget. |
@@ -875,6 +894,27 @@ sandbox.
 
 ### Other boundaries worth knowing
 
+- **Sparse retrieval is lexical, not semantic.** `retrievalEngine: "sparse"` re-ranks
+  at most 24 source-verified lexical candidates with TF-IDF/cosine and fuses them by
+  RRF k=60; it cannot find a synonym the index never matched, and it returns at most
+  24 hits. On a 23-note fixed fixture, development queries measured Recall@3 1.000
+  for both engines and MRR@3 0.867 → 0.900; paraphrases scored 0.000 for both because
+  they share no index token with the target. The loopback embedding/rerank provider
+  contract is disabled by default, no provider was selected, and **semantic retrieval
+  is unverified**. See `docs/validation/retrieval-sparse-2026-10-27.md`.
+- **Delivery receipts are observations, not proof of attention.** DSH acknowledges
+  the committed producer-owned event that carried the final message; Codex stdout is
+  only a pending receipt until a later trusted hook reconciles it against its own
+  transcript (8 MiB cap), and unreadable or over-cap evidence leaves the unit
+  unacknowledged so it may be repeated. The plugin claims the host emitted a unit, never
+  that the model read or retained it. No resident-context equality is claimed between
+  the hot file's capacity and the model's window.
+- **Panel mutations are preview-confirmed, not two-phase committed.** The 60-second
+  single-use token binds session/project/operation/arguments/fingerprint, preview writes
+  nothing, and each service re-derives its own precondition inside its transaction. A
+  residual TOCTOU window remains between the fingerprint read and the mutation, a lost
+  confirmation can only be replayed inside the 60 seconds, and concurrent confirmations
+  are not stress-tested beyond serial and stub races.
 - **The write lock only restrains this plugin.** It is a whole-vault lock keyed
   by `realpath(vaultPath)`, so two projects cannot interleave a registry or
   receipt write. Obsidian and any other editor ignore it, which is why every
