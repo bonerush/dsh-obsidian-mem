@@ -54,8 +54,9 @@ Two layers, on purpose:
 | | Version | Why |
 |---|---|---|
 | Node | `>= 22.22.2` | The floor is a *measurement*. `node:sqlite` imports on Node 22.13.0, but that build has no FTS5; 22.22.2 and 25.9.0 do. Versions 22.14–22.21 were not tested, so the floor is the lowest version actually proven to work. |
-| DSH | `0.1.5-rc.2`, `0.1.7-rc.2` | The two versions this plugin has been verified against; `docs/p0-compatibility.md` and `docs/smoke-results.md` record which measurement came from which. The plugin uses only row `config:` and documented Cordis seams, so other versions are likely fine — but "likely" is not "tested", so only measured versions are listed. |
+| DSH | `0.1.5-rc.2`, `0.1.7-rc.2` | The two versions this plugin has been verified against. The plugin uses only row `config:` and documented Cordis seams, so other versions are likely fine — but "likely" is not "tested", so only measured versions are listed. |
 | Obsidian | any recent version | Optional. Only needed to *read* the vault comfortably. |
+| OS | Windows, macOS, Linux | All three are supported. The plugin is portable Node code, the sidebar panel is a web view, and there is no native module to compile. CI runs the same `npm run check` gate on Linux and Windows; macOS has no separate CI leg, but it takes the same portable path. One named constraint is part of the support level: curation review relies on `O_NOFOLLOW`, so it remains a macOS/Linux workflow on Windows — the exact refusal is under **Failure recovery** below, and reads, writes and scans are unaffected. |
 
 Runtime dependencies are deliberately tiny: `@deepseek-ai/schemastery` for config
 validation and `yaml` for frontmatter. `node:sqlite` is built into Node, so there
@@ -170,12 +171,26 @@ Start a session in any Git repository and ask, or just check the tools are there
 ### Memory panel in the DSH sidebar
 
 On DSH `0.1.7-rc.2` with `dsh-better-sidebar` `0.21.1`, open the native
-sidebar and choose **+ → 记忆 (Memory)**. The tab is one project's ledger: a
-masthead (project name, binding stamp, last-read clock, refresh), four ordinal
-views — **01 概览** (large KPI numerals, note/link/orphan/pending counts, type
-composition and recent changes), **02 图谱** (the graph below), **03 检索** (the
-local index with excerpts), **04 健康** (index, queue, hot layer, diagnostics and
-the deterministic digest) — and hairline ledger rows rather than a card grid.
+sidebar and choose **+ → 记忆 (Memory)**. The tab is one project's memory. A
+compact header carries the project name, a binding pill, the last-read clock and
+an icon refresh button; below it a Chrome-style tab strip — **概览 / 图谱 /
+检索 / 健康**, one icon per tab (the icon yields to the label at a very narrow
+width) and no ordinal labels — keeps the standard tab roles and arrow-key
+navigation. The panel uses the host's own modern sans type throughout (no serif
+display face, no negative tracking), and the three data views lay their data out
+in bands rather than stacked bordered cards. **图谱** keeps the graph below,
+unchanged, including its remembered controls.
+
+**概览** is one KPI band with the note/link/orphan/pending counts, one
+type-composition bar and its legend, recent rows without ordinals, and a compact
+health summary grid; the 待处理 and health-strip cells open **健康**, the rest of
+the KPI band opens **检索**. **检索** is a rounded search field with filter
+pills grouped by 类型 / 状态 / 范围, and result rows that show the path and a
+highlighted snippet. It keeps exactly one status line — idle shows
+`输入关键词开始检索，结果来自本地记忆索引。` — and its total says `共 N 条` only
+for a complete page and `已显示 N 条` while more results exist. **健康** is a
+summary band over the index, queue, hot layer and the deterministic digest,
+followed by a **诊断记录** timeline (time, event, outcome).
 
 The panel is read-only by default and adds exactly three confirmed maintenance
 operations when the service advertises them: **重新排队失败任务** (retry one
@@ -1066,11 +1081,11 @@ version can take, or nothing would ever bump again (`0.1.3`); and the bootstrap
 branch needs the identity the bump branch was setting (`0.2.0`).
 
 Contribution rules, house style and the non-negotiable constraints live in the
-maintainer's `AGENTS.md`, and the measured host facts in
-`docs/p0-compatibility.md`. Both are kept beside the checkout rather than in it —
-this repository ignores them (see `.gitignore`, and `CHANGELOG.md` for why) — so the
-citations of them under `lib/` name local files, not repository ones. What ships,
-and what a reader needs before enabling writes, is this README and the changelog.
+maintainer's `AGENTS.md`, and the measured host facts in the maintainer's local
+host notes. Both are kept beside the checkout rather than in it — this repository
+ignores them (see `.gitignore`, and `CHANGELOG.md` for why) — so the citations of
+them under `lib/` name local files, not repository ones. What ships, and what a
+reader needs before enabling writes, is this README and the changelog.
 
 ---
 
