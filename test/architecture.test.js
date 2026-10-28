@@ -495,7 +495,13 @@ const BUDGETS = {
   // withdrawal opens instead of a mutual exclusion the mechanism does not provide.
   // Task 9 replaces that historical reclaim/withdrawal protocol with a short SQLite
   // guard around claim mutations. The module shrinks; the budget and layer stay unchanged.
-  'lib/curation-review.js': 800,
+  // Raised from 800 to 850 by the Windows claim-guard fix (803 formatted lines
+  // measured; measured-plus-30 is 833, rounded up to 850). What the 17 lines buy: the
+  // pre-open refusal of a named guard entry that is not a plain file. Without it,
+  // `O_CREAT` follows a dangling symlink on a platform with no `O_NOFOLLOW` (Windows)
+  // and creates the link's target outside the data root; the existing post-open
+  // inode/hardlink check cannot catch that because the creation has already happened.
+  'lib/curation-review.js': 850,
   // The interactive command is mostly argument handling and the refusal text a
   // person reads; 223 lines is the measured size and 250 is the rule's number.
   'lib/curation-cli.js': 250,
