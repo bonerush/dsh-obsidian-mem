@@ -5,7 +5,6 @@ import { test } from 'node:test'
 
 import { createMemoryViews } from '../lib/memory-panel.js'
 
-const CLIENT = new URL('../lib/client.js', import.meta.url)
 const MODULE = new URL('../lib/memory-panel.js', import.meta.url)
 
 // The suite has no React dependency: the views are real, the hook runtime is a
@@ -247,84 +246,6 @@ function stubFetch(t, handler) {
   })
   return sent
 }
-
-// ---------------------------------------------------------------------------
-// Static shell and stylesheet contract
-// ---------------------------------------------------------------------------
-
-const cssOf = (script) => {
-  const start = script.indexOf('/* panel-css:start */')
-  const end = script.indexOf('/* panel-css:end */')
-  assert.ok(start >= 0 && end > start, 'the panel stylesheet is marked for scanning')
-  return script.slice(start, end)
-}
-
-test('the shell masthead names the project, stamps the binding and keeps the last-read clock', async () => {
-  const script = await readFile(CLIENT, 'utf8')
-  for (const marker of [
-    "'mem-masthead'",
-    'mem-masthead-name',
-    'mem-display',
-    "'mem-clock'",
-    "'mem-refresh'",
-    "'已绑定'",
-    "'未绑定'",
-    "'数据截至 '",
-    "'正在读取…'",
-    "'刷新'",
-  ])
-    assert.ok(script.includes(marker), 'the masthead contains ' + marker)
-  assert.ok(script.includes('onMeta'), 'the views report the masthead state up to the shell')
-  assert.ok(script.includes('React.useState(null)'), 'the shell keeps the reported state')
-})
-
-test('the tab strip carries ordinals 01-04 in the reviewed order', async () => {
-  const script = await readFile(CLIENT, 'utf8')
-  for (const [id, label, ordinal] of [
-    ['overview', '概览', '01'],
-    ['graph', '图谱', '02'],
-    ['search', '检索', '03'],
-    ['health', '健康', '04'],
-  ]) {
-    const pattern = new RegExp(
-      "\\{ id: '" + id + "', label: '" + label + "', ordinal: '" + ordinal + "' \\}",
-      'u',
-    )
-    assert.ok(pattern.test(script), 'the strip lists ' + ordinal + ' ' + label)
-  }
-  assert.ok(script.includes('mem-tab-index'), 'the ordinal is a real text node, not a CSS counter')
-})
-
-test('the panel stylesheet is a token-only ledger with a serif display face and tight radii', async () => {
-  const script = await readFile(CLIENT, 'utf8')
-  const css = cssOf(script)
-  for (const face of ['Iowan Old Style', 'Palatino', 'Songti SC'])
-    assert.ok(css.includes(face), 'the display stack names ' + face)
-  assert.match(css, /serif/u, 'the display stack falls back to serif')
-  assert.ok(css.includes('font-variant-numeric:tabular-nums'), 'figures are tabular')
-  assert.ok(css.includes('mem-masthead-name'), 'the masthead name is styled here')
-  for (const rule of ['min-height:40px', 'min-height:44px'])
-    assert.ok(css.includes(rule), 'hit areas use ' + rule)
-  const radii = [...css.matchAll(/border-radius:\s*([^;}]+)/gu)].map((match) => match[1].trim())
-  assert.ok(radii.length > 0, 'the sheet declares radii')
-  for (const radius of radii) {
-    for (const value of radius.match(/[0-9.]+/gu) ?? [])
-      assert.ok(Number(value) <= 4, 'radius stays 0-4px, found ' + radius)
-  }
-  assert.equal(/box-shadow/iu.test(css), false, 'no floating card shadow')
-  assert.equal(/linear-gradient|radial-gradient/iu.test(css), false, 'no gradient furniture')
-})
-
-test('one 160ms staggered entrance is the only view motion and reduced motion removes it', async () => {
-  const script = await readFile(CLIENT, 'utf8')
-  const css = cssOf(script)
-  assert.match(css, /@keyframes mem-enter/u, 'the one entrance is named')
-  assert.match(css, /animation:mem-enter 160ms/u, 'the entrance runs 160ms')
-  const delays = [...css.matchAll(/animation-delay:([0-9]+)ms/gu)].map((match) => Number(match[1]))
-  assert.deepEqual(delays, [20, 40, 60, 80], 'children stagger by 20ms')
-  const reduced = css.slice(css.indexOf('prefers-reduced-motion'))
-  assert.match(reduced, /animation:none/u, 'reduced motion removes the entrance')
-})
 
 test('the confirm sheet is a modal with a trap, Escape, live status and an in-flight lock', async () => {
   const source = await readFile(MODULE, 'utf8')

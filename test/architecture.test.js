@@ -669,7 +669,16 @@ const BUDGETS = {
   // tablist (01–04) with roving focus, and the ledger chrome that replaces the
   // generic card shell. Measured 998 formatted lines; measured-plus-30 is 1028,
   // rounded to 1050.
-  'lib/client.js': 1050,
+  // Raised from 1050 by the modern panel redesign: the one token-only design
+  // system for the shell and all three redesigned views (KPI/summary bands,
+  // composition bar and legend, search field/filter pills/result rows, health
+  // facts/meter/timeline, the preview→confirm sheet), the Chrome-form icon tab
+  // strip, and the compact masthead with its icon refresh. Measured 1034 formatted
+  // lines; measured-plus-30 is 1064, rounded up to 1100. The raised headroom buys
+  // the stylesheet the views will consume without a second edit to this file, and
+  // leaves the graph token block and `GraphCanvas`/`GraphView` untouched by the
+  // redesign.
+  'lib/client.js': 1100,
   'lib/graph-renderer.js': 700,
   // The eleven-slot table, its two CSS forms and the probe read, split out of the
   // renderer when the label-size work pushed that file past its budget.

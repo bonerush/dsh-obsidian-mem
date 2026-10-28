@@ -11,6 +11,16 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Changed
+
+- **The memory panel shell now has a modern host-native design system.** The sidebar opens with a
+  compact masthead whose refresh is an icon button and a Chrome-style tab strip — one icon per tab,
+  no `01`–`04` ordinals — above a single mounted tabpanel, so every tab's `aria-controls` points at
+  a panel that exists and the 图谱/检索 tabs no longer show a permanently inert freshness clock.
+  The one injected `<style>` sheet is token-only (no hex/rgb/hsl, no `font-family`, no gradients,
+  radii ≤16px, shadows only `--dsw-shadow-lv1`/`--dsw-shadow-lv3`) and carries the whole class
+  contract the redesigned 概览/检索/健康 views build on; the graph body is untouched.
+
 ## 0.2.2 — 2026-10-28
 
 ### Fixed
