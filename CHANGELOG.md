@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.3.1 — 2026-10-28
+
 ### Fixed
 
 - **The two private-file writers now refuse symlinks on Windows too, so the Windows CI legs go
