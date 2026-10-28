@@ -17,7 +17,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -563,8 +563,11 @@ test('the plugin ships its hook at the path Codex discovers, and not in the mani
   assert.equal(typeof handler.statusMessage, 'string')
   // An absolute path, because Codex copies the plugin into
   // ~/.codex/plugins/cache/… and a relative one would resolve inside that copy.
+  // Use isAbsolute rather than the POSIX spelling startsWith('/'): the property
+  // being checked is "absolute", and on Windows an absolute path begins with a
+  // drive letter (C:\…), so the slash test is a host-specific literal.
   const script = handler.command.replace(/^node /, '')
-  assert.equal(script.startsWith('/'), true)
+  assert.equal(isAbsolute(script), true)
   assert.equal(existsSync(script), true)
   assert.equal(script, HOOK)
 

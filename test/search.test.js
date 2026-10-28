@@ -23,7 +23,6 @@ import {
   realpath,
   rm,
   stat,
-  symlink,
   utimes,
   writeFile,
 } from 'node:fs/promises'
@@ -52,6 +51,7 @@ import {
   titleOverlap,
 } from '../lib/search.js'
 import { newTransactionId, runTransaction } from '../lib/vault.js'
+import { createDirectoryLink, registerTreeCleanup } from './platform-capabilities.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const FIXTURES = join(HERE, 'fixtures', 'search')
@@ -106,9 +106,11 @@ async function harness(t) {
   await cp(CORPUS_ROOT, vault, { recursive: true })
   await mkdir(dataRoot, { recursive: true })
   const indexes = []
-  t.after(async () => {
+  // The tree is removed only after every index was closed: on Windows deleting a
+  // directory that still holds an open SQLite handle fails with EBUSY.
+  const onCleanup = registerTreeCleanup(t, root)
+  onCleanup(async () => {
     for (const index of indexes) await index.close().catch(() => {})
-    await rm(root, { recursive: true, force: true })
   })
   const open = async (options = {}) => {
     const index = await openIndex({
@@ -121,7 +123,13 @@ async function harness(t) {
     indexes.push(index)
     return index
   }
-  return { root, vault, dataRoot, open }
+  // An index a case opens itself is closed by the same disposer, so it can never
+  // outlive the tree it holds a handle in.
+  const track = (index) => {
+    indexes.push(index)
+    return index
+  }
+  return { root, vault, dataRoot, open, track }
 }
 
 /** Wait for the ready barrier and fail loudly with the returned status. */
@@ -180,10 +188,10 @@ ${body}
     projectId: PAGED_ID,
     ...indexOptions,
   })
-  t.after(async () => {
-    await index.close().catch(() => {})
-    await rm(root, { recursive: true, force: true })
-  })
+  // Index closed first, tree removed last (Windows: an open handle on the tree
+  // makes the removal fail with EBUSY).
+  const onCleanup = registerTreeCleanup(t, root)
+  onCleanup(async () => index.close().catch(() => {}))
   return {
     root,
     vault,
@@ -219,10 +227,8 @@ async function windowHarness(t) {
   const open = (options = {}) =>
     openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: WINDOW_ID, ...options })
   const index = await open()
-  t.after(async () => {
-    await index.close().catch(() => {})
-    await rm(root, { recursive: true, force: true })
-  })
+  const onCleanup = registerTreeCleanup(t, root)
+  onCleanup(async () => index.close().catch(() => {}))
   return { root, vault, dataRoot, index, open }
 }
 
@@ -262,10 +268,8 @@ async function widecharHarness(t, indexOptions = {}) {
       ...options,
     })
   const index = await open()
-  t.after(async () => {
-    await index.close().catch(() => {})
-    await rm(root, { recursive: true, force: true })
-  })
+  const onCleanup = registerTreeCleanup(t, root)
+  onCleanup(async () => index.close().catch(() => {}))
   return { root, vault, dataRoot, index, open }
 }
 
@@ -348,11 +352,11 @@ test('production derives the index root from DSH_HOME and never from the vault',
   const vault = join(home, 'vault')
   await cp(CORPUS_ROOT, vault, { recursive: true })
   const index = await openIndex({ vaultRoot: vault, backend: 'sqlite', projectId: ALPHA })
-  t.after(async () => {
+  const onCleanup = registerTreeCleanup(t, home)
+  onCleanup(async () => {
     await index.close().catch(() => {})
     if (previous === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previous
-    await rm(home, { recursive: true, force: true })
   })
   await ready(index)
   const expected = join(
@@ -818,10 +822,12 @@ test('readNote re-reads the source, refuses internal and oversized paths, and ca
     (error) => error.name === 'PathSafetyError',
   )
 
-  const link = at(h.vault, `${ALPHA_DIR}/Docs/链接.md`)
-  await symlink(at(h.vault, N.user), link)
+  // A directory link is the one link this host can create unprivileged; the jail
+  // refuses a link anywhere on the path, so the refusal stays covered.
+  const link = at(h.vault, `${ALPHA_DIR}/Docs/链接`)
+  await createDirectoryLink(at(h.vault, N.user), link)
   await assert.rejects(
-    () => readNote(h.vault, `${ALPHA_DIR}/Docs/链接.md`),
+    () => readNote(h.vault, `${ALPHA_DIR}/Docs/链接/note.md`),
     (error) => error.name === 'PathSafetyError',
   )
 
@@ -1033,13 +1039,16 @@ test('an index failure is reported as stale and never fails the vault transactio
 
   // A later, healthy refresh clears the stale flag and indexes the new note.
   await index.close()
-  const healthy = await openIndex({
-    vaultRoot: h.vault,
-    dataRoot: h.dataRoot,
-    backend: 'sqlite',
-    projectId: ALPHA,
-  })
-  t.after(() => healthy.close())
+  // Tracked by the harness: closing it in a later `t.after` than the fixture's own
+  // removal leaves an open SQLite handle inside a tree Windows cannot then delete.
+  const healthy = h.track(
+    await openIndex({
+      vaultRoot: h.vault,
+      dataRoot: h.dataRoot,
+      backend: 'sqlite',
+      projectId: ALPHA,
+    }),
+  )
   await ready(healthy)
   assert.equal(healthy.status().stale, false)
   assert.ok(
@@ -1176,10 +1185,8 @@ test('a vault that does not exist yet is empty and ready, not broken', async (t)
     backend: 'sqlite',
     projectId: ALPHA,
   })
-  t.after(async () => {
-    await index.close().catch(() => {})
-    await rm(root, { recursive: true, force: true })
-  })
+  const onCleanup = registerTreeCleanup(t, root)
+  onCleanup(async () => index.close().catch(() => {}))
   const readiness = await index.waitReady(undefined, 10_000)
   assert.equal(readiness.ready, true)
   assert.equal(index.status().notes, 0)

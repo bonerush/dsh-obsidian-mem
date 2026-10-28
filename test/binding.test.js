@@ -27,6 +27,20 @@ import { basename, isAbsolute, join, resolve, sep } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 
+// Three Windows facts are measured here rather than assumed (see
+// test/platform-capabilities.js): a directory link is created as a junction,
+// a file symlink cannot be created without elevation, and `chmod(0o000)` does
+// not make anything unreadable because NTFS permissions are ACLs, not mode
+// bits. The directory-link cases keep their exact assertions through a
+// junction; only the cases that genuinely need the other two capabilities are
+// split out and skipped with the platform reason.
+import {
+  createDirectoryLink,
+  HAS_POSIX_MODES,
+  skipWithoutDirectorySymlink,
+  skipWithoutFileSymlink,
+} from './platform-capabilities.js'
+
 import * as gitModule from '../lib/git.js'
 import {
   isCloudManagedVaultRoot,
@@ -228,27 +242,46 @@ test('resolveVaultFile rejects .. traversal at every depth', async (t) => {
   await assert.rejects(resolveVaultFile(vault, '../outside.md', { mustExist: true }), /path/i)
 })
 
-test('resolveVaultFile refuses a symlink at any segment, even one pointing back inside', async (t) => {
-  const { root, vault } = await fixture(t)
-  const outside = join(root, 'outside')
-  await mkdir(outside, { recursive: true })
-  await writeFile(join(outside, 'secret.md'), 'secret\n')
+// The directory-link half of the jail test: a directory link is built with a
+// junction where this host refuses a real one, and `lstat` reports a junction
+// as a symbolic link, so the refusal under test is still exercised for real.
+test(
+  'resolveVaultFile refuses a directory link at any segment, even one pointing back inside',
+  { skip: skipWithoutDirectorySymlink() },
+  async (t) => {
+    const { root, vault } = await fixture(t)
+    const outside = join(root, 'outside')
+    await mkdir(outside, { recursive: true })
+    await writeFile(join(outside, 'secret.md'), 'secret\n')
 
-  await symlink(outside, join(vault, 'escape'))
-  await assert.rejects(resolveVaultFile(vault, 'escape/secret.md'), /path/i)
-  await assert.rejects(resolveVaultFile(vault, 'escape/secret.md', { mustExist: true }), /path/i)
-  await assert.rejects(resolveVaultFile(vault, 'escape/new.md'), /path/i)
+    await createDirectoryLink(outside, join(vault, 'escape'))
+    await assert.rejects(resolveVaultFile(vault, 'escape/secret.md'), /path/i)
+    await assert.rejects(resolveVaultFile(vault, 'escape/secret.md', { mustExist: true }), /path/i)
+    await assert.rejects(resolveVaultFile(vault, 'escape/new.md'), /path/i)
 
-  // a symlinked leaf is refused whether or not it currently resolves
-  await symlink('escape/secret.md', join(vault, 'leaf.md'))
-  await assert.rejects(resolveVaultFile(vault, 'leaf.md'), /path/i)
-  await assert.rejects(resolveVaultFile(vault, 'leaf.md', { mustExist: true }), /path/i)
+    // pointing back inside the vault does not make a link acceptable
+    await mkdir(join(vault, 'real'), { recursive: true })
+    await createDirectoryLink(join(vault, 'real'), join(vault, 'inside-link'))
+    await assert.rejects(resolveVaultFile(vault, 'inside-link/x.md'), /path/i)
+  },
+)
 
-  // pointing back inside the vault does not make a symlink acceptable
-  await mkdir(join(vault, 'real'), { recursive: true })
-  await symlink(join(vault, 'real'), join(vault, 'inside-link'))
-  await assert.rejects(resolveVaultFile(vault, 'inside-link/x.md'), /path/i)
-})
+// A symlinked *file* leaf is a separate capability: it cannot be created on a
+// non-elevated Windows host at all, and a junction only links directories.
+test(
+  'resolveVaultFile refuses a symlinked file leaf whether or not it resolves',
+  { skip: skipWithoutFileSymlink() },
+  async (t) => {
+    const { root, vault } = await fixture(t)
+    const outside = join(root, 'outside')
+    await mkdir(outside, { recursive: true })
+    await writeFile(join(outside, 'secret.md'), 'secret\n')
+
+    await symlink('escape/secret.md', join(vault, 'leaf.md'))
+    await assert.rejects(resolveVaultFile(vault, 'leaf.md'), /path/i)
+    await assert.rejects(resolveVaultFile(vault, 'leaf.md', { mustExist: true }), /path/i)
+  },
+)
 
 test('resolveVaultFile honours mustExist and never reports a read failure as a missing file', async (t) => {
   const { vault, vaultReal } = await fixture(t)
@@ -262,20 +295,38 @@ test('resolveVaultFile honours mustExist and never reports a read failure as a m
     await resolveVaultFile(vault, 'present.md', { mustExist: true }),
     join(vaultReal, 'present.md'),
   )
-
-  // An unreadable directory is a read failure, not an absence: the caller must
-  // be able to pause instead of creating a file over a hidden one.
-  await mkdir(join(vault, 'locked'), { recursive: true })
-  await chmod(join(vault, 'locked'), 0o000)
-  try {
-    await assert.rejects(resolveVaultFile(vault, 'locked/x.md'), (error) => {
-      assert.equal(error.code, 'EACCES')
-      return true
-    })
-  } finally {
-    await chmod(join(vault, 'locked'), 0o755)
-  }
 })
+
+// `chmod(0o000)` cannot make a path unreadable on this host: NTFS permissions
+// are ACLs, not POSIX mode bits, and `stat().mode` answers 0o666 regardless. The
+// property under test -- a read failure is rethrown instead of reported as
+// absence -- is still real, so the case is kept for the platform that can build
+// the condition and skipped here with the reason, never rewritten to accept a
+// resolved path.
+test(
+  'resolveVaultFile rethrows a read failure instead of reporting a missing file',
+  {
+    skip: HAS_POSIX_MODES
+      ? false
+      : 'NTFS cannot express an unreadable directory: chmod(0o000) does not deny the owner, so the EACCES branch cannot be constructed',
+  },
+  async (t) => {
+    const { vault } = await fixture(t)
+
+    // An unreadable directory is a read failure, not an absence: the caller must
+    // be able to pause instead of creating a file over a hidden one.
+    await mkdir(join(vault, 'locked'), { recursive: true })
+    await chmod(join(vault, 'locked'), 0o000)
+    try {
+      await assert.rejects(resolveVaultFile(vault, 'locked/x.md'), (error) => {
+        assert.equal(error.code, 'EACCES')
+        return true
+      })
+    } finally {
+      await chmod(join(vault, 'locked'), 0o755)
+    }
+  },
+)
 
 // ---------------------------------------------------------------------------
 // resolveVaultRoot / resolveDataRoot / cloud location
@@ -599,37 +650,53 @@ test('an oversized pointer stops resolution', async (t) => {
   assert.equal(conflict.reason, 'pointer-oversize')
 })
 
-test('a pointer that is not a regular file stops resolution', async (t) => {
-  const { root, vault, repo } = await fixture(t)
+test('a pointer that is a directory stops resolution', async (t) => {
+  const { vault, repo } = await fixture(t)
   await initRepo(repo)
-  await symlink(join(root, 'elsewhere.json'), join(repo, POINTER_FILENAME))
-  const symlinked = await resolveBinding({ cwd: repo, vaultRoot: vault })
-  assert.equal(symlinked.kind, 'conflict')
-  assert.equal(symlinked.reason, 'pointer-not-a-file')
 
-  await rm(join(repo, POINTER_FILENAME))
   await mkdir(join(repo, POINTER_FILENAME))
   const directory = await resolveBinding({ cwd: repo, vaultRoot: vault })
   assert.equal(directory.kind, 'conflict')
   assert.equal(directory.reason, 'pointer-not-a-file')
 })
 
-test('an unreadable pointer stops resolution and is left untouched', async (t) => {
-  const { vault, repo } = await fixture(t)
-  await initRepo(repo)
-  const path = await writePointer(repo, pointerFor(ID1))
-  const before = await readFile(path)
+test(
+  'a symlinked pointer is not a regular file and stops resolution',
+  { skip: skipWithoutFileSymlink() },
+  async (t) => {
+    const { root, vault, repo } = await fixture(t)
+    await initRepo(repo)
+    await symlink(join(root, 'elsewhere.json'), join(repo, POINTER_FILENAME))
+    const symlinked = await resolveBinding({ cwd: repo, vaultRoot: vault })
+    assert.equal(symlinked.kind, 'conflict')
+    assert.equal(symlinked.reason, 'pointer-not-a-file')
+  },
+)
 
-  await chmod(path, 0o000)
-  try {
-    const conflict = await resolveBinding({ cwd: repo, vaultRoot: vault })
-    assert.equal(conflict.kind, 'conflict')
-    assert.equal(conflict.reason, 'pointer-unreadable')
-  } finally {
-    await chmod(path, 0o644)
-  }
-  assert.deepEqual(await readFile(path), before)
-})
+test(
+  'an unreadable pointer stops resolution and is left untouched',
+  {
+    skip: HAS_POSIX_MODES
+      ? false
+      : 'NTFS cannot express an unreadable file: chmod(0o000) leaves the owner able to read, so a pointer-unreadable conflict cannot be constructed',
+  },
+  async (t) => {
+    const { vault, repo } = await fixture(t)
+    await initRepo(repo)
+    const path = await writePointer(repo, pointerFor(ID1))
+    const before = await readFile(path)
+
+    await chmod(path, 0o000)
+    try {
+      const conflict = await resolveBinding({ cwd: repo, vaultRoot: vault })
+      assert.equal(conflict.kind, 'conflict')
+      assert.equal(conflict.reason, 'pointer-unreadable')
+    } finally {
+      await chmod(path, 0o644)
+    }
+    assert.deepEqual(await readFile(path), before)
+  },
+)
 
 test('a working directory that no longer exists is a refusal, not an exception', async (t) => {
   // A session keeps the directory it was created in, and an imported conversation
@@ -664,12 +731,25 @@ test('a working directory that is a file, not a directory, is refused the same w
 
   // A path *below* a file fails in `realpath`, and the file itself resolves and
   // would otherwise survive to `findGitRoot`, where the walk hits ENOTDIR one frame
-  // further from the refusal. Both are the same answer.
-  for (const cwd of [join(file, 'nested'), file]) {
+  // further from the refusal. Both are the same answer -- the refusal vocabulary is
+  // `cwd-missing` -- and the message names the OS error that produced it.
+  //
+  // The error code quoted is the one this platform's `realpath` actually raises for
+  // a path below a regular file: POSIX reports ENOTDIR, Windows reports ENOENT
+  // (measured: `realpath('C:\\...\\file\\nested')` on Windows is ENOENT, and
+  // `realpath(file)` itself succeeds, so the type check is what answers ENOTDIR).
+  // Asserting ENOTDIR on both would be asserting a POSIX kernel detail, not this
+  // plugin's behaviour; the code is therefore pinned per platform, and the
+  // refusal it must produce is not relaxed.
+  const belowFileCode = HAS_POSIX_MODES ? 'ENOTDIR' : 'ENOENT'
+  for (const [cwd, code] of [
+    [join(file, 'nested'), belowFileCode],
+    [file, 'ENOTDIR'],
+  ]) {
     const refused = await resolveBinding({ cwd, vaultRoot: vault })
     assert.equal(refused.kind, 'unbound', cwd)
     assert.equal(refused.reason, 'cwd-missing')
-    assert.match(refused.message, /ENOTDIR/)
+    assert.match(refused.message, new RegExp(code))
   }
 })
 
@@ -849,47 +929,76 @@ test('one project id registered against two directories fails', async (t) => {
   assert.equal(conflict.reason, 'registry-duplicate-id')
 })
 
-test('an unreadable registry pauses binding instead of being treated as empty', async (t) => {
-  const { vault, repo } = await fixture(t)
-  await initRepo(repo)
-  await writePointer(repo, pointerFor(ID1, { slug: 'alpha', displayName: 'Alpha' }))
-  await writeRegistry(vault, [{ projectId: ID1, hub: `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}` }])
-  const registryPath = join(vault, '_meta', 'registry.md')
+test(
+  'an unreadable registry pauses binding instead of being treated as empty',
+  {
+    skip: HAS_POSIX_MODES
+      ? false
+      : 'NTFS cannot express an unreadable file: chmod(0o000) leaves the owner able to read, so registry-unreadable cannot be constructed (the read succeeds and the file parses)',
+  },
+  async (t) => {
+    const { vault, repo } = await fixture(t)
+    await initRepo(repo)
+    await writePointer(repo, pointerFor(ID1, { slug: 'alpha', displayName: 'Alpha' }))
+    await writeRegistry(vault, [
+      { projectId: ID1, hub: `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}` },
+    ])
+    const registryPath = join(vault, '_meta', 'registry.md')
 
-  await chmod(registryPath, 0o000)
-  try {
-    const conflict = await resolveBinding({ cwd: repo, vaultRoot: vault })
-    assert.equal(conflict.kind, 'conflict')
-    assert.equal(conflict.reason, 'registry-unreadable')
-  } finally {
-    await chmod(registryPath, 0o644)
-  }
-})
+    await chmod(registryPath, 0o000)
+    try {
+      const conflict = await resolveBinding({ cwd: repo, vaultRoot: vault })
+      assert.equal(conflict.kind, 'conflict')
+      assert.equal(conflict.reason, 'registry-unreadable')
+    } finally {
+      await chmod(registryPath, 0o644)
+    }
+  },
+)
 
-test('a symlinked registry path is refused instead of read from outside the vault', async (t) => {
-  const { root, vault, repo } = await fixture(t)
-  await initRepo(repo)
-  await writePointer(repo, pointerFor(ID1, { slug: 'alpha', displayName: 'Alpha' }))
-  const hub = `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}`
-  // A perfectly valid registry living outside the vault: it must never be read.
-  const outside = join(root, 'outside-meta')
-  await mkdir(outside, { recursive: true })
-  await writeFile(join(outside, 'registry.md'), registryMarkdown([{ projectId: ID1, hub }]))
+// A directory link in the registry path. A junction is what this host permits,
+// and `lstat` reports it as a symbolic link, so `resolveVaultFile` reaches the
+// same refusal and the assertion is not weakened.
+test(
+  'a directory link on the registry path is refused instead of read from outside the vault',
+  { skip: skipWithoutDirectorySymlink() },
+  async (t) => {
+    const { root, vault, repo } = await fixture(t)
+    await initRepo(repo)
+    await writePointer(repo, pointerFor(ID1, { slug: 'alpha', displayName: 'Alpha' }))
+    const hub = `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}`
+    // A perfectly valid registry living outside the vault: it must never be read.
+    const outside = join(root, 'outside-meta')
+    await mkdir(outside, { recursive: true })
+    await writeFile(join(outside, 'registry.md'), registryMarkdown([{ projectId: ID1, hub }]))
 
-  // 1. a symlinked `_meta` directory
-  await symlink(outside, join(vault, '_meta'))
-  const symlinkedDirectory = await resolveBinding({ cwd: repo, vaultRoot: vault })
-  assert.equal(symlinkedDirectory.kind, 'conflict')
-  assert.equal(symlinkedDirectory.reason, 'registry-symlink')
+    await createDirectoryLink(outside, join(vault, '_meta'))
+    const symlinkedDirectory = await resolveBinding({ cwd: repo, vaultRoot: vault })
+    assert.equal(symlinkedDirectory.kind, 'conflict')
+    assert.equal(symlinkedDirectory.reason, 'registry-symlink')
+  },
+)
 
-  // 2. a symlinked registry file inside a real `_meta` directory
-  await rm(join(vault, '_meta'))
-  await mkdir(join(vault, '_meta'), { recursive: true })
-  await symlink(join(outside, 'registry.md'), join(vault, '_meta', 'registry.md'))
-  const symlinkedFile = await resolveBinding({ cwd: repo, vaultRoot: vault })
-  assert.equal(symlinkedFile.kind, 'conflict')
-  assert.equal(symlinkedFile.reason, 'registry-symlink')
-})
+// A symlinked registry *file* is a link kind a junction cannot stand in for.
+test(
+  'a symlinked registry file is refused instead of read from outside the vault',
+  { skip: skipWithoutFileSymlink() },
+  async (t) => {
+    const { root, vault, repo } = await fixture(t)
+    await initRepo(repo)
+    await writePointer(repo, pointerFor(ID1, { slug: 'alpha', displayName: 'Alpha' }))
+    const hub = `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}`
+    const outside = join(root, 'outside-meta')
+    await mkdir(outside, { recursive: true })
+    await writeFile(join(outside, 'registry.md'), registryMarkdown([{ projectId: ID1, hub }]))
+
+    await mkdir(join(vault, '_meta'), { recursive: true })
+    await symlink(join(outside, 'registry.md'), join(vault, '_meta', 'registry.md'))
+    const symlinkedFile = await resolveBinding({ cwd: repo, vaultRoot: vault })
+    assert.equal(symlinkedFile.kind, 'conflict')
+    assert.equal(symlinkedFile.reason, 'registry-symlink')
+  },
+)
 
 const MALFORMED_REGISTRY_ROWS = [
   [
@@ -973,21 +1082,25 @@ test('a registry mapping the pointer id to a missing directory stops resolution'
   assert.deepEqual(await readdir(vault), ['_meta'])
 })
 
-test('a symlinked 项目 directory is refused instead of binding outside the vault', async (t) => {
-  const { root, vault, repo } = await fixture(t)
-  await initRepo(repo)
-  await writePointer(repo, pointerFor(ID1, { slug: 'alpha', displayName: 'Alpha' }))
-  const hub = `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}`
-  const outside = join(root, 'outside-projects')
-  await mkdir(join(outside, basename(hub)), { recursive: true })
-  await writeFile(join(outside, basename(hub), 'index.md'), 'outside\n')
-  await writeRegistry(vault, [{ projectId: ID1, hub }])
-  await symlink(outside, join(vault, PROJECTS_DIR))
+test(
+  'a linked 项目 directory is refused instead of binding outside the vault',
+  { skip: skipWithoutDirectorySymlink() },
+  async (t) => {
+    const { root, vault, repo } = await fixture(t)
+    await initRepo(repo)
+    await writePointer(repo, pointerFor(ID1, { slug: 'alpha', displayName: 'Alpha' }))
+    const hub = `${PROJECTS_DIR}/alpha--${ID1.slice(0, 8)}`
+    const outside = join(root, 'outside-projects')
+    await mkdir(join(outside, basename(hub)), { recursive: true })
+    await writeFile(join(outside, basename(hub), 'index.md'), 'outside\n')
+    await writeRegistry(vault, [{ projectId: ID1, hub }])
+    await createDirectoryLink(outside, join(vault, PROJECTS_DIR))
 
-  const conflict = await resolveBinding({ cwd: repo, vaultRoot: vault })
-  assert.equal(conflict.kind, 'conflict')
-  assert.equal(conflict.reason, 'project-directory-symlink')
-})
+    const conflict = await resolveBinding({ cwd: repo, vaultRoot: vault })
+    assert.equal(conflict.kind, 'conflict')
+    assert.equal(conflict.reason, 'project-directory-symlink')
+  },
+)
 
 test('a vault without a registry file binds through the derived fixed directory', async (t) => {
   const { vault, vaultReal, repo } = await fixture(t)

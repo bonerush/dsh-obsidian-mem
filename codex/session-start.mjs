@@ -35,6 +35,7 @@
 // when something actually went wrong or `OBSIDIAN_MEM_HOOK_DEBUG=1` asks for them.
 import { open } from 'node:fs/promises'
 import { homedir } from 'node:os'
+import { pathToFileURL } from 'node:url'
 
 import { DEFAULT_MAX_MS, DEFAULT_MAX_NOTES } from '../lib/curation-scan.js'
 import { deliveryStateEpoch, reconcileTranscript } from '../lib/delivery-state.js'
@@ -507,7 +508,8 @@ async function readPayload() {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-const isEntry = process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`
+const isEntry =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href
 if (isEntry) {
   try {
     await runHook(await readPayload())

@@ -30,6 +30,22 @@ import { localDate as healthDate } from '../lib/note-health.js'
 import { makeCurationWorld } from './curation-world.js'
 
 const digest = (value) => createHash('sha256').update(value).digest('hex')
+
+/**
+ * One path in the form the assertions below spell.
+ *
+ * The shipped writers build their paths with `node:path`, so on Windows every
+ * internal separator is a backslash while the state-layout names an assertion
+ * quotes are vault-relative and forward-slashed. Comparing the raw string there
+ * matches nothing on Windows: the seam spies below never intercept, so the test
+ * waits on a promise that can only be resolved by the call it meant to hold, and
+ * times out; the defect probes never throw, so the expected rejection is missing.
+ * Folding the separator is the assertion the test always meant to make.
+ *
+ * @param {string|Buffer|URL} path - a path as the fs seam received it.
+ * @returns {string} the path with `/` separators.
+ */
+const posixPath = (path) => String(path).replaceAll('\\', '/')
 const NOW = new Date('2026-10-04T00:00:00Z')
 async function world(t) {
   const made = await makeCurationWorld(t)
@@ -87,7 +103,7 @@ test('exclusive publication exposes whole bytes and replays during the publicati
   let intercepted = false
   fs.open = async (path, ...args) => {
     const handle = await open(path, ...args)
-    if (!intercepted && String(path).includes('/proposals/') && args[0] === 'wx') {
+    if (!intercepted && posixPath(path).includes('/proposals/') && args[0] === 'wx') {
       intercepted = true
       const write = handle.writeFile.bind(handle)
       handle.writeFile = async (...input) => {
@@ -298,7 +314,7 @@ test('a stale pass cannot replace a cursor from a newer manifest', async (t) => 
   let intercepted = false
   fs.open = async (path, ...args) => {
     const handle = await open(path, ...args)
-    if (!intercepted && String(path).includes('/curation/records/') && args[0] === 'wx') {
+    if (!intercepted && posixPath(path).includes('/curation/records/') && args[0] === 'wx') {
       intercepted = true
       entered()
       await gate
@@ -341,7 +357,7 @@ test('a pass that has not yet read a cursor cannot adopt a newer one as its snap
   })
   let intercepted = false
   fs.lstat = async (path, ...args) => {
-    if (!intercepted && String(path).includes('/curation/cursor/')) {
+    if (!intercepted && posixPath(path).includes('/curation/cursor/')) {
       intercepted = true
       entered()
       await gate
@@ -370,7 +386,7 @@ test('record persistence programming defects remain exceptions', async (t) => {
   const open = fs.open
   const defect = new TypeError('programming defect in record write')
   fs.open = async (path, ...args) => {
-    if (String(path).includes('/curation/records/') && args[0] === 'wx') throw defect
+    if (posixPath(path).includes('/curation/records/') && args[0] === 'wx') throw defect
     return open(path, ...args)
   }
   try {
@@ -490,7 +506,7 @@ test('equal-prefix concurrent passes keep the newer due timestamp', async (t) =>
   let intercepted = false
   fs.open = async (path, ...args) => {
     const handle = await open(path, ...args)
-    if (!intercepted && String(path).includes('/curation/records/') && args[0] === 'wx') {
+    if (!intercepted && posixPath(path).includes('/curation/records/') && args[0] === 'wx') {
       intercepted = true
       entered()
       await gate
@@ -516,7 +532,7 @@ test('the degraded record retry also propagates programming defects', async (t) 
   const defect = new TypeError('defect in degraded retry')
   let attempts = 0
   fs.open = async (path, ...args) => {
-    if (String(path).includes('/curation/records/') && args[0] === 'wx') {
+    if (posixPath(path).includes('/curation/records/') && args[0] === 'wx') {
       attempts += 1
       if (attempts === 1) throw Object.assign(new Error('permission refused'), { code: 'EACCES' })
       throw defect

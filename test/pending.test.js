@@ -17,7 +17,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -42,6 +42,7 @@ import {
   recordProcessedRange,
   writeJobAtomic,
 } from '../lib/pending.js'
+import { assertPrivateDirectory, assertPrivateFile } from './platform-capabilities.js'
 
 /** A fresh, private root; nothing in this file uses the process cwd or home. */
 async function temporaryRoot(t, name = 'obsidian-mem-t14-pending-') {
@@ -86,14 +87,17 @@ test('the queue directory is created 0700 and never widened', async (t) => {
   const queueRoot = join(root, 'pending')
 
   assert.equal(await ensureQueueDir(queueRoot), queueRoot)
-  assert.equal((await stat(queueRoot)).mode & 0o777, QUEUE_DIR_MODE)
+  // 0700 on POSIX. On Windows NTFS has no POSIX bits (every entry answers 0666),
+  // so the same helper asserts what is observable there: a real, non-link,
+  // owner-enumerable directory. The constant itself is still pinned below.
+  await assertPrivateDirectory(queueRoot, QUEUE_DIR_MODE)
   assert.equal(QUEUE_DIR_MODE, 0o700)
 
   // A directory that already exists with a wider mode is tightened, not trusted.
   const loose = join(root, 'loose')
   await mkdir(loose, { recursive: true, mode: 0o755 })
   await ensureQueueDir(loose)
-  assert.equal((await stat(loose)).mode & 0o777, 0o700)
+  await assertPrivateDirectory(loose, 0o700)
 })
 
 test('a written job is 0600 and the queue holds no temporary file afterwards', async (t) => {
@@ -103,13 +107,13 @@ test('a written job is 0600 and the queue holds no temporary file afterwards', a
 
   const path = await writeJobAtomic(queueRoot, job)
   assert.equal(path, join(queueRoot, jobFileName(job.jobId)))
-  assert.equal((await stat(path)).mode & 0o777, JOB_FILE_MODE)
+  await assertPrivateFile(path, JOB_FILE_MODE)
   assert.equal(JOB_FILE_MODE, 0o600)
-  assert.equal((await stat(queueRoot)).mode & 0o777, QUEUE_DIR_MODE)
+  await assertPrivateDirectory(queueRoot, QUEUE_DIR_MODE)
 
   // A rewrite through markJob leaves the same 0600 guarantee.
   await markJob(job.jobId, { state: 'distilling' }, { queueRoot })
-  assert.equal((await stat(path)).mode & 0o777, JOB_FILE_MODE)
+  await assertPrivateFile(path, JOB_FILE_MODE)
 
   const entries = await readdir(queueRoot)
   assert.deepEqual(entries, [jobFileName(job.jobId)], 'no .tmp file may survive a completed write')
@@ -211,7 +215,7 @@ test('markJob patches one job atomically, preserves its identity, and refuses a 
 
   const [reread] = await loadPending(queueRoot)
   assert.deepEqual(reread, marked)
-  assert.equal((await stat(join(queueRoot, jobFileName(job.jobId)))).mode & 0o777, JOB_FILE_MODE)
+  await assertPrivateFile(join(queueRoot, jobFileName(job.jobId)), JOB_FILE_MODE)
 
   const failed = await markJob(job.jobId, { state: 'failed', attempts: 2 }, { queueRoot })
   assert.equal(failed.state, 'failed')
@@ -228,7 +232,12 @@ test('markJob patches one job atomically, preserves its identity, and refuses a 
 })
 
 test('queueRootFor places the queue under the one plugin data root', () => {
-  assert.equal(queueRootFor('/data/obsidian-mem'), join('/data/obsidian-mem', 'pending'))
+  // A real absolute path for this host, built with the path API: the previous
+  // POSIX literal was resolved by `queueRootFor` onto the current drive here
+  // (`/data/...` -> `C:\\data\\...`), so the expected value is derived the same
+  // way instead of hard-coding one platform's separator.
+  const dataRoot = join(tmpdir(), 'obsidian-mem-data-root')
+  assert.equal(queueRootFor(dataRoot), join(dataRoot, 'pending'))
 })
 
 // The two shapes this has to survive are both real: `capture.js` writes an object
@@ -278,9 +287,9 @@ test('a processed record is 0600 inside a 0700 sub-directory and is never read a
   assert.deepEqual(record.ranges, [[job.fromSeq, job.toSeq]])
 
   const directory = join(queueRoot, PROCESSED_DIRNAME)
-  assert.equal((await stat(directory)).mode & 0o777, QUEUE_DIR_MODE)
+  await assertPrivateDirectory(directory, QUEUE_DIR_MODE)
   const [name] = await readdir(directory)
-  assert.equal((await stat(join(directory, name))).mode & 0o777, JOB_FILE_MODE)
+  await assertPrivateFile(join(directory, name), JOB_FILE_MODE)
 
   // The processed record is state, not work: `loadPending` must not see it.
   const jobs = await loadPending(queueRoot)
@@ -381,9 +390,16 @@ test('a processed record refuses a range that is not a non-negative half-open pa
 // ---------------------------------------------------------------------------
 
 const CRASH_CHILD = `
+import { writeFileSync } from 'node:fs'
 const { enqueueTurn } = await import(process.env.T14_CAPTURE_URL)
 const mode = process.argv[2]
 const queueRoot = process.argv[3]
+const killMarker = process.argv[4]
+const survivedMarker = process.argv[5]
+const die = () => {
+  writeFileSync(killMarker, 'AT-KILL-POINT')
+  process.kill(process.pid, 'SIGKILL')
+}
 const EVENTS = [
   { seq: 0, type: 'turn/start', data: { turn: 1 } },
   { seq: 1, type: 'user/message', data: { role: 'user', content: [{ type: 'text', text: 'crash-window probe' }], source: { kind: 'user' } } },
@@ -403,25 +419,61 @@ const config = { captureIdleMs: 90000, distill: { maxInputChars: 24000 } }
 const options = { session, event: EVENTS[3], binding, queueRoot, config }
 if (mode === 'after-fsync') {
   await enqueueTurn(options)
-  process.kill(process.pid, 'SIGKILL')
+  die()
 } else {
   // Killed at the exact boundary: bytes fsynced, rename not yet issued.
-  await enqueueTurn({ ...options, beforeRename: () => { process.kill(process.pid, 'SIGKILL') } })
+  await enqueueTurn({ ...options, beforeRename: die })
 }
+// Only a child that outlived the kill can reach this line; the parent asserts it
+// never appears, which is the host-independent form of "no cleanup ran".
+writeFileSync(survivedMarker, 'SURVIVED')
 `
+
+/**
+ * Assert the child really died at the kill point, on the terms this host reports.
+ *
+ * POSIX delivers a signal: `spawnSync` answers `signal: 'SIGKILL'`, `status: null`.
+ * Win32 has no signals at all — `process.kill(pid, 'SIGKILL')` becomes
+ * `TerminateProcess`, and libuv reports that as `status: 1`, `signal: null`. So the
+ * signal field cannot be the assertion there; instead the child writes a file at
+ * the exact kill point and another after it. `AT-KILL-POINT` present and
+ * `SURVIVED` absent proves the process was terminated between them — stronger
+ * than the signal check, because it also rules out an early throw (which would
+ * leave both markers missing) and a normal exit (which would leave both).
+ */
+function assertCrashChildDied(result, killMarker, survivedMarker) {
+  assert.equal(
+    existsSync(killMarker),
+    true,
+    `the child never reached the kill point, stderr: ${result.stderr}`,
+  )
+  assert.equal(existsSync(survivedMarker), false, 'nothing after the kill point may run')
+  if (process.platform === 'win32') {
+    assert.equal(result.signal, null, `win32 reports no signal, stderr: ${result.stderr}`)
+    assert.equal(result.status, 1, `the child must be terminated, stderr: ${result.stderr}`)
+  } else {
+    assert.equal(result.signal, 'SIGKILL', `the child must be killed, stderr: ${result.stderr}`)
+  }
+}
 
 async function runCrashChild(t, root, mode) {
   const script = join(root, 'crash-child.mjs')
+  const killMarker = join(root, 'at-kill-point.txt')
+  const survivedMarker = join(root, 'survived.txt')
   await writeFile(script, CRASH_CHILD, 'utf8')
   const queueRoot = join(root, 'pending')
-  const result = spawnSync(process.execPath, [script, mode, queueRoot], {
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      T14_CAPTURE_URL: new URL('../lib/capture.js', import.meta.url).href,
+  const result = spawnSync(
+    process.execPath,
+    [script, mode, queueRoot, killMarker, survivedMarker],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        T14_CAPTURE_URL: new URL('../lib/capture.js', import.meta.url).href,
+      },
     },
-  })
-  assert.equal(result.signal, 'SIGKILL', `the child must be killed, stderr: ${result.stderr}`)
+  )
+  assertCrashChildDied(result, killMarker, survivedMarker)
   return queueRoot
 }
 
@@ -436,11 +488,8 @@ test('a job killed after the fsync is visible to the next process', async (t) =>
   assert.equal(jobs[0].toSeq, 3)
   assert.equal(jobs[0].allowedEvents.map((entry) => entry.kind).join(','), 'user,assistant-final')
   assert.match(jobs[0].safeInput, /committed answer/)
-  assert.equal((await stat(queueRoot)).mode & 0o777, QUEUE_DIR_MODE)
-  assert.equal(
-    (await stat(join(queueRoot, jobFileName(jobs[0].jobId)))).mode & 0o777,
-    JOB_FILE_MODE,
-  )
+  await assertPrivateDirectory(queueRoot, QUEUE_DIR_MODE)
+  await assertPrivateFile(join(queueRoot, jobFileName(jobs[0].jobId)), JOB_FILE_MODE)
 })
 
 test('a kill between the temporary write and the rename leaves no visible job (R12 boundary)', async (t) => {

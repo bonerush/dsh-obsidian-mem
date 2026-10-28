@@ -34,7 +34,7 @@
 // `~/.dsh` or a real vault.
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -58,6 +58,7 @@ import {
   persistJobOutput,
   writeJobAtomic,
 } from '../lib/pending.js'
+import { assertPrivateFile } from './platform-capabilities.js'
 
 /** Fixed, valid UUIDv4 identity (version nibble `4`, variant nibble `8`). */
 const PROJECT_ID = '1c392abb-7b08-42f7-871d-2a379caf9448'
@@ -1218,7 +1219,9 @@ test('the raw output is durable before validation, and the validated items after
   assert.equal(stored.output.state, 'validated')
   assert.equal(stored.output.raw, payload)
   assert.equal(stored.output.items.length, 1)
-  assert.equal((await stat(join(queueRoot, `${JOB_ID}.json`))).mode & 0o777, JOB_FILE_MODE)
+  // 0600 on POSIX; on Windows the same call pins that the job is a real,
+  // non-link, owner-readable file instead of an NTFS bit pattern that is 0666.
+  await assertPrivateFile(join(queueRoot, `${JOB_ID}.json`), JOB_FILE_MODE)
 })
 
 test('a user-stated habit is recorded as a convention and tagged, so it is findable without its title', () => {

@@ -28,6 +28,24 @@ const ESLINT_CONFIG = join(SELF_ROOT, 'eslint.config.mjs')
 const PRETTIER_CONFIG = join(SELF_ROOT, '.prettierrc.json')
 
 /**
+ * The message to report for a failed tool run.
+ *
+ * `spawnSync` answers `status: null` and leaves `stdout`/`stderr` undefined when the
+ * process could not be started at all, so `(stdout || stderr).trim()` throws a
+ * TypeError exactly when the failure is most confusing. The error text, or an
+ * explicit "no output" line, keeps the report a report.
+ *
+ * @param {{stdout: string|null|undefined, stderr: string|null|undefined, error?: Error, status?: number|null}} result - the `spawnSync` result.
+ * @returns {string} the message to print.
+ */
+function toolOutput(result) {
+  const text = (result.stdout || result.stderr || '').trim()
+  if (text !== '') return text
+  if (result.error) return 'tool could not start: ' + result.error.message
+  return 'exited with status ' + String(result.status) + ' and no output'
+}
+
+/**
  * Paths the fitness tests read. A staged *and* unstaged change to any of these
  * makes their verdict ambiguous, so the run refuses rather than guess.
  */
@@ -81,27 +99,25 @@ export function checkStagedSources(root, { eslintBin, prettierBin }) {
     // script's job is to apply *this repository's* rules, and a fixture checkout
     // with no config of its own has to be checked the same way the real one is.
     const lint = spawnSync(
-      eslintBin,
-      ['--config', ESLINT_CONFIG, '--stdin', '--stdin-filename', path],
+      process.execPath,
+      [eslintBin, '--config', ESLINT_CONFIG, '--stdin', '--stdin-filename', path],
       {
         cwd: root,
         input: source,
         encoding: 'utf8',
       },
     )
-    if (lint.status !== 0)
-      problems.push('eslint (staged ' + path + '):\n' + (lint.stdout || lint.stderr).trim())
+    if (lint.status !== 0) problems.push('eslint (staged ' + path + '):\n' + toolOutput(lint))
     const format = spawnSync(
-      prettierBin,
-      ['--config', PRETTIER_CONFIG, '--check', '--stdin-filepath', path],
+      process.execPath,
+      [prettierBin, '--config', PRETTIER_CONFIG, '--check', '--stdin-filepath', path],
       {
         cwd: root,
         input: source,
         encoding: 'utf8',
       },
     )
-    if (format.status !== 0)
-      problems.push('prettier (staged ' + path + '): ' + (format.stdout || format.stderr).trim())
+    if (format.status !== 0) problems.push('prettier (staged ' + path + '): ' + toolOutput(format))
   }
   return { problems, checked: staged.length }
 }
@@ -134,8 +150,15 @@ export function main(argv = process.argv.slice(2), root = SELF_ROOT) {
     process.stderr.write('check-staged: takes no arguments, got ' + JSON.stringify(argv) + '\n')
     return 2
   }
-  const eslintBin = join(SELF_ROOT, 'node_modules', '.bin', 'eslint')
-  const prettierBin = join(SELF_ROOT, 'node_modules', '.bin', 'prettier')
+  // The tools are launched through process.execPath and their JS entry files, never
+  // through node_modules/.bin/*. On Windows those .bin entries are POSIX sh shims
+  // (pnpm writes both, and npm/pnpm add a separate .cmd): spawning the extensionless
+  // shim fails with ENOENT and spawning the .cmd without shell:true fails with
+  // EINVAL. Neither is a lint problem, yet both surfaced as status:null, i.e.
+  // "eslint failed" with an empty message. Node plus the package's own entry file is
+  // the one invocation that means the same thing on every platform.
+  const eslintBin = join(SELF_ROOT, 'node_modules', 'eslint', 'bin', 'eslint.js')
+  const prettierBin = join(SELF_ROOT, 'node_modules', 'prettier', 'bin', 'prettier.cjs')
   for (const binary of [eslintBin, prettierBin]) {
     if (!existsSync(binary)) {
       process.stderr.write('check-staged: ' + binary + ' is missing; run npm ci\n')

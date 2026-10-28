@@ -38,6 +38,8 @@ import { validateConfig } from '../lib/config.js'
 import { createMemoryServices, registerTools } from '../lib/tools.js'
 import { POINTER_FILENAME, REGISTRY_RELATIVE_PATH, resolveBinding } from '../lib/vault.js'
 
+import { registerTreeCleanup } from './platform-capabilities.js'
+
 const execFileAsync = promisify(execFile)
 
 /** The four pointer fields, sorted (spec §5.2 / ruling D3). */
@@ -102,18 +104,19 @@ async function addWorktree(repoDir, target) {
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t20b-'))
   const dataRoot = await mkdtemp(join(tmpdir(), 'obsidian-mem-t20b-data-'))
-  t.after(() =>
-    Promise.all([
-      rm(root, { recursive: true, force: true, maxRetries: 4 }),
-      rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }),
-    ]),
-  )
+  // node:test runs its hooks in registration order, so removing these trees from
+  // a plain t.after here would delete them BEFORE the services opened later in a
+  // case are closed, and Windows answers EBUSY on the still-open sqlite files.
+  // The data root gets its registrar first: that is where the service/index
+  // disposals land, so they run before either removal.
+  const onCleanup = registerTreeCleanup(t, dataRoot)
+  registerTreeCleanup(t, root)
   const home = join(root, 'home')
   const repo = join(root, 'repo')
   const vault = join(root, 'vault')
   await mkdir(home, { recursive: true })
   await initRepo(repo)
-  return { root, dataRoot, home, repo, vault }
+  return { root, dataRoot, home, repo, vault, onCleanup }
 }
 
 /** A real Cordis context with the shipped ToolRuntime mounted, and no tools. */
@@ -142,7 +145,8 @@ async function memoryBed(t, fixture, overrides = {}) {
     home: fixture.home,
   })
   const disposers = registerTools(ctx, services)
-  t.after(async () => {
+  // Closed through the fixture's registrar: it must run before the tree removal.
+  fixture.onCleanup(async () => {
     for (const dispose of disposers) dispose()
     await services.close()
   })

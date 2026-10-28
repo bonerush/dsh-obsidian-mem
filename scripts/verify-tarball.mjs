@@ -148,17 +148,38 @@ function parseArgs(argv) {
   return resolve(root)
 }
 
+/**
+ * The npm CLI to run: `npm-cli.js` through this Node, or `npm` on PATH.
+ *
+ * Spawning `npm` directly is a POSIX assumption. On Windows the executable is
+ * `npm.cmd`, which `spawnSync` refuses without `shell: true` (EINVAL), and a
+ * `shell: true` spawn re-parses the arguments — the quoting hazard this project
+ * refuses elsewhere. Running npm's own JS entry through the current Node avoids
+ * both: it needs no shell, no `.cmd` shim, and the same argv reaches npm.
+ *
+ * @returns {{command: string, args: string[]}} the command to spawn with.
+ */
+function npmCommand() {
+  const cli = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+  if (existsSync(cli)) return { command: process.execPath, args: [cli] }
+  return { command: 'npm', args: [] }
+}
+
 /** Pack once into `destination` and return npm's own account of the archive. */
 function pack(root, destination) {
+  const npm = npmCommand()
   const run = spawnSync(
-    'npm',
-    ['pack', '--json', '--ignore-scripts', '--pack-destination', destination],
+    npm.command,
+    [...npm.args, 'pack', '--json', '--ignore-scripts', '--pack-destination', destination],
     {
       cwd: root,
       encoding: 'utf8',
     },
   )
-  if (run.status !== 0) throw new Error('npm pack failed: ' + (run.stderr || run.stdout))
+  if (run.status !== 0) {
+    const detail = (run.stderr || run.stdout || '').trim() || run.error?.message || 'no output'
+    throw new Error('npm pack failed: ' + detail)
+  }
   const [packed] = JSON.parse(run.stdout)
   if (packed === undefined) throw new Error('npm pack reported no archive')
   return packed

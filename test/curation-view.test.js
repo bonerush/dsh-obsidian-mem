@@ -20,8 +20,8 @@
 //     changed byte is `fallback`/`source-changed`, never a stale ready view.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import {
@@ -43,6 +43,7 @@ import {
 import { HISTORY_STATUSES } from '../lib/note-health.js'
 import { resolveBinding } from '../lib/vault.js'
 import { makeCurationWorld } from './curation-world.js'
+import { assertPrivateDirectory, assertPrivateFile } from './platform-capabilities.js'
 
 /** The clock every case injects, so `generatedAt` and the review date are fixed. */
 const NOW = new Date('2026-10-03T04:00:00Z')
@@ -230,10 +231,11 @@ test('the view file is private, version-bounded and atomically replaced', async 
   })
   assert.equal(built.status, 'written')
   const path = curationViewPath(world.dataRoot, world.binding.projectId)
-  const dir = await stat(join(path, '..'))
-  const file = await stat(path)
-  assert.equal(dir.mode & 0o777, CURATION_DIR_MODE)
-  assert.equal(file.mode & 0o777, CURATION_FILE_MODE)
+  // 0700/0600 on POSIX; on Windows the same calls pin that the cache is a real
+  // non-link file inside a real enumerable directory — NTFS answers 0666 for
+  // every entry it creates, so the bit pattern is not an observable property.
+  await assertPrivateDirectory(dirname(path), CURATION_DIR_MODE)
+  await assertPrivateFile(path, CURATION_FILE_MODE)
   const raw = JSON.parse(await readFile(path, 'utf8'))
   assert.equal(raw.version, VIEW_SCHEMA)
   assert.equal(raw.projectId, world.binding.projectId)
@@ -313,7 +315,17 @@ test('a raw filesystem failure at the view path is a fallback, never a throw', a
   })
   assert.equal(built.status, 'fallback')
   assert.match(built.reason, /^view-unwritable:/u)
-  assert.equal(built.reason.includes('EISDIR'), true, built.reason)
+  // The refusal is the platform's own — a file cannot be renamed onto a directory
+  // path — so the code differs by host: POSIX answers EISDIR, and this Windows
+  // host answers EPERM because NTFS refuses the rename before inspecting the
+  // destination's shape. Pinning each platform's code keeps the real assertion
+  // (the raw code is carried through, never flattened to `unknown`) rather than
+  // deleting the check.
+  assert.equal(
+    built.reason,
+    `view-unwritable:${process.platform === 'win32' ? 'EPERM' : 'EISDIR'}`,
+    built.reason,
+  )
   // Nothing was published, so the reader still answers "no view" and the source stays
   // the authority.
   assert.equal(

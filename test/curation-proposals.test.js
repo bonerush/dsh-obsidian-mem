@@ -20,7 +20,7 @@
 // user's home, a real vault or a real `$DSH_HOME`.
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -45,6 +45,7 @@ import { scanCuration } from '../lib/curation-scan.js'
 import { writeMemory } from '../lib/memory.js'
 import { resolveBinding } from '../lib/vault.js'
 import { makeCurationWorld } from './curation-world.js'
+import { assertPrivateDirectory, assertPrivateFile } from './platform-capabilities.js'
 
 /** One fixed clock, so every timestamp in a case is the same timestamp. */
 const NOW = new Date('2026-10-03T04:00:00Z')
@@ -270,8 +271,11 @@ test('a proposal document is private, atomic and size-bounded', async (t) => {
   })
   const directory = join(made.dataRoot, 'curation', 'proposals', made.binding.projectId)
   const path = join(directory, `${stored.proposalId}.json`)
-  assert.equal((await stat(path)).mode & 0o777, CURATION_FILE_MODE)
-  assert.equal((await stat(directory)).mode & 0o777, CURATION_DIR_MODE)
+  // 0600/0700 on POSIX; on Windows the same calls pin that the document is a
+  // real non-link file and its directory a real enumerable one — an NTFS answer
+  // of 0666 is not a widened permission and cannot fail the privacy guarantee.
+  await assertPrivateFile(path, CURATION_FILE_MODE)
+  await assertPrivateDirectory(directory, CURATION_DIR_MODE)
   assert.equal(
     (await readdir(directory)).some((name) => name.endsWith('.tmp')),
     false,

@@ -20,7 +20,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -53,6 +53,12 @@ import { writeMemory } from '../lib/memory.js'
 import { noteLinkFindings, noteReviewFinding, createVaultLinkResolver } from '../lib/note-health.js'
 import { resolveBinding } from '../lib/vault.js'
 import { listMarkdown, makeCurationWorld } from './curation-world.js'
+import {
+  HAS_POSIX_MODES,
+  assertPrivateDirectory,
+  assertPrivateFile,
+  createDirectoryLink,
+} from './platform-capabilities.js'
 
 /** The clock every case injects, so `scannedAt` and the review date are fixed. */
 const NOW = new Date('2026-10-03T04:00:00Z')
@@ -529,124 +535,139 @@ test('the scan-vs-linter link matrix is exactly what the resolver comment states
   )
 })
 
-test('a directory the resolver cannot enumerate makes it silent, never a false dead link', async (t) => {
-  const world = await makeCurationWorld(t)
-  const written = await world.services.write({ type: 'doc', title: '锚点', body: '正文。\n' })
-  const binding = await bindingOf(world)
-  // A directory beside the linking note that the enumerator cannot read, holding
-  // both a `.txt` and a **real Markdown note**. The note is what makes this case
-  // about coverage and not only about links: it is indexable, so a pass that cannot
-  // read the directory holds a manifest one note short of the project — and the
-  // fixture has to be able to see that, which is exactly what the earlier
-  // `.txt`-only version could not do.
-  const locked = join(world.vault, ...binding.relativeDir.split('/'), 'Docs', '锁定')
-  await mkdir(locked, { recursive: true })
-  await writeFile(join(locked, '隐藏.txt'), 'hidden\n', 'utf8')
-  const hidden = `${binding.relativeDir}/Docs/锁定/隐藏.md`
-  await writeFile(
-    join(locked, '隐藏.md'),
-    handNote({ id: 'doc-55555555-5555-4555-8555-555555555555', title: '隐藏' }),
-    'utf8',
-  )
-  // A target that names nothing anywhere: no bare name carries it and no
-  // directory-qualified candidate matches, so a resolver that believes it
-  // enumerated the tree reports it dead. That belief is the thing under test.
-  const target = `${binding.relativeDir}/Docs/并不存在`
-  const linker = await world.services.write({
-    type: 'doc',
-    title: '引用者',
-    body: `见 [[${target}]]。\n`,
-  })
-  // Each pass gets its own data root on purpose. A second pass over the same root
-  // would resume from the cursor and replay the linker's stored record instead of
-  // asking the resolver again — which would mask exactly the decision this test is
-  // about behind a cached finding. Each of the three passes below ends in a coverage
-  // claim (`complete`, `truncatedReason: null`), so the deadline cannot be the thing
-  // that decides them: they run under `NO_TRUNCATION_MS`.
-  const options = (name) => ({
-    dataRoot: join(world.root, name),
-    home: world.home,
-    now: NOW,
-    maxMs: NO_TRUNCATION_MS,
-  })
+test(
+  'a directory the resolver cannot enumerate makes it silent, never a false dead link',
+  {
+    // The fixture's whole mechanism is `chmod 000` on a directory. NTFS expresses
+    // permissions as ACLs, not as mode bits: measured here, a directory left at mode
+    // 0o000 is still enumerable, so the "cannot enumerate" state this case is about
+    // cannot be produced by any chmod. Reproducing it would need to rewrite the
+    // directory's DACL with icacls and then repair it afterwards — a fixture that
+    // changes the developer's ACLs to assert a POSIX permission failure, which is not
+    // the same mechanism and not worth the risk of a half-repaired tree.
+    skip: HAS_POSIX_MODES
+      ? false
+      : 'NTFS ACLs are not expressed by mode bits: chmod 000 leaves the directory enumerable, so "a directory the walk cannot read" cannot be constructed on this host; the injected-readdir seam and the truncation cases cover the same silence-without-coverage path',
+  },
+  async (t) => {
+    const world = await makeCurationWorld(t)
+    const written = await world.services.write({ type: 'doc', title: '锚点', body: '正文。\n' })
+    const binding = await bindingOf(world)
+    // A directory beside the linking note that the enumerator cannot read, holding
+    // both a `.txt` and a **real Markdown note**. The note is what makes this case
+    // about coverage and not only about links: it is indexable, so a pass that cannot
+    // read the directory holds a manifest one note short of the project — and the
+    // fixture has to be able to see that, which is exactly what the earlier
+    // `.txt`-only version could not do.
+    const locked = join(world.vault, ...binding.relativeDir.split('/'), 'Docs', '锁定')
+    await mkdir(locked, { recursive: true })
+    await writeFile(join(locked, '隐藏.txt'), 'hidden\n', 'utf8')
+    const hidden = `${binding.relativeDir}/Docs/锁定/隐藏.md`
+    await writeFile(
+      join(locked, '隐藏.md'),
+      handNote({ id: 'doc-55555555-5555-4555-8555-555555555555', title: '隐藏' }),
+      'utf8',
+    )
+    // A target that names nothing anywhere: no bare name carries it and no
+    // directory-qualified candidate matches, so a resolver that believes it
+    // enumerated the tree reports it dead. That belief is the thing under test.
+    const target = `${binding.relativeDir}/Docs/并不存在`
+    const linker = await world.services.write({
+      type: 'doc',
+      title: '引用者',
+      body: `见 [[${target}]]。\n`,
+    })
+    // Each pass gets its own data root on purpose. A second pass over the same root
+    // would resume from the cursor and replay the linker's stored record instead of
+    // asking the resolver again — which would mask exactly the decision this test is
+    // about behind a cached finding. Each of the three passes below ends in a coverage
+    // claim (`complete`, `truncatedReason: null`), so the deadline cannot be the thing
+    // that decides them: they run under `NO_TRUNCATION_MS`.
+    const options = (name) => ({
+      dataRoot: join(world.root, name),
+      home: world.home,
+      now: NOW,
+      maxMs: NO_TRUNCATION_MS,
+    })
 
-  // Readable first, so the same fixture is proven to produce the finding when the
-  // enumeration can see the whole tree.
-  const readable = await scanCuration(binding, options('readable'))
-  assert.deepEqual(
-    readable.findings
-      .filter((finding) => finding.kind === 'dead-wikilink')
-      .map((finding) => [finding.path, finding.target]),
-    [[linker.path, target]],
-  )
-  // The control: a readable walk sees every note, certified as covered, with no
-  // enumeration finding at all. Every assertion in the locked half below is read
-  // against this same fixture.
-  const wholeManifest = await manifestOf(world, binding)
-  assert.equal(readable.complete, true)
-  assert.equal(readable.manifest.count, wholeManifest.length)
-  assert.equal(readable.manifest.denied, false)
-  assert.equal(
-    readable.findings.some((finding) => finding.kind === 'enumeration-failed'),
-    false,
-  )
+    // Readable first, so the same fixture is proven to produce the finding when the
+    // enumeration can see the whole tree.
+    const readable = await scanCuration(binding, options('readable'))
+    assert.deepEqual(
+      readable.findings
+        .filter((finding) => finding.kind === 'dead-wikilink')
+        .map((finding) => [finding.path, finding.target]),
+      [[linker.path, target]],
+    )
+    // The control: a readable walk sees every note, certified as covered, with no
+    // enumeration finding at all. Every assertion in the locked half below is read
+    // against this same fixture.
+    const wholeManifest = await manifestOf(world, binding)
+    assert.equal(readable.complete, true)
+    assert.equal(readable.manifest.count, wholeManifest.length)
+    assert.equal(readable.manifest.denied, false)
+    assert.equal(
+      readable.findings.some((finding) => finding.kind === 'enumeration-failed'),
+      false,
+    )
 
-  await chmod(locked, 0o000)
-  t.after(() => chmod(locked, 0o700).catch(() => {}))
-  let result
-  try {
-    result = await scanCuration(binding, options('locked'))
-  } finally {
-    // Restored inside the test as well as in `t.after`, so a failure above cannot
-    // leave an unreadable directory for the temp-tree cleanup.
-    await chmod(locked, 0o700).catch(() => {})
-  }
-  // Nothing is judged dead: "I could not look" is never "it is not there". The pass
-  // still inspects the notes it can see, so the silence is the resolver's decision
-  // about a half-enumerated universe and not an empty pass.
-  assert.deepEqual(
-    result.findings.filter((finding) => finding.kind === 'dead-wikilink'),
-    [],
-  )
-  assert.equal(result.examinedPaths.includes(linker.path), true)
-  assert.equal(result.examinedPaths.includes(written.path), true)
+    await chmod(locked, 0o000)
+    t.after(() => chmod(locked, 0o700).catch(() => {}))
+    let result
+    try {
+      result = await scanCuration(binding, options('locked'))
+    } finally {
+      // Restored inside the test as well as in `t.after`, so a failure above cannot
+      // leave an unreadable directory for the temp-tree cleanup.
+      await chmod(locked, 0o700).catch(() => {})
+    }
+    // Nothing is judged dead: "I could not look" is never "it is not there". The pass
+    // still inspects the notes it can see, so the silence is the resolver's decision
+    // about a half-enumerated universe and not an empty pass.
+    assert.deepEqual(
+      result.findings.filter((finding) => finding.kind === 'dead-wikilink'),
+      [],
+    )
+    assert.equal(result.examinedPaths.includes(linker.path), true)
+    assert.equal(result.examinedPaths.includes(written.path), true)
 
-  // Silence about the unreadable directory is not the same as coverage of it. The
-  // note inside it is a real `README`-shaped file a scan would have inspected, so a
-  // pass that never enumerated it holds a manifest one note short of the project —
-  // and must say so in every way a caller can read: the pass is not complete, the
-  // state finding names it, the manifest count is a floor, and the cursor is not
-  // moved onto the shorter list. This is the half the previous fixture could not
-  // see, because it put only a `.txt` in the locked directory.
-  assert.equal(result.complete, false)
-  assert.equal(result.manifest.denied, true)
-  assert.equal(result.manifest.count, wholeManifest.length - 1)
-  assert.equal(result.examinedPaths.includes(hidden), false)
-  assert.deepEqual(
-    result.findings
-      .filter((finding) => finding.kind === 'enumeration-failed')
-      .map((finding) => finding.severity),
-    ['warn'],
-  )
-  assert.equal(result.cursor, null)
-  // No budget truncated anything: the hole is the enumeration's, and naming a bound
-  // would be a second wrong claim in place of the first.
-  assert.equal(result.truncatedReason, null)
+    // Silence about the unreadable directory is not the same as coverage of it. The
+    // note inside it is a real `README`-shaped file a scan would have inspected, so a
+    // pass that never enumerated it holds a manifest one note short of the project —
+    // and must say so in every way a caller can read: the pass is not complete, the
+    // state finding names it, the manifest count is a floor, and the cursor is not
+    // moved onto the shorter list. This is the half the previous fixture could not
+    // see, because it put only a `.txt` in the locked directory.
+    assert.equal(result.complete, false)
+    assert.equal(result.manifest.denied, true)
+    assert.equal(result.manifest.count, wholeManifest.length - 1)
+    assert.equal(result.examinedPaths.includes(hidden), false)
+    assert.deepEqual(
+      result.findings
+        .filter((finding) => finding.kind === 'enumeration-failed')
+        .map((finding) => finding.severity),
+      ['warn'],
+    )
+    assert.equal(result.cursor, null)
+    // No budget truncated anything: the hole is the enumeration's, and naming a bound
+    // would be a second wrong claim in place of the first.
+    assert.equal(result.truncatedReason, null)
 
-  // Enumeration restored, the finding comes back and the note inside the directory
-  // is part of the pass again — which is what makes the silence above a decision
-  // about the failed enumeration rather than a resolver that never reports anything.
-  const restored = await scanCuration(binding, options('restored'))
-  assert.deepEqual(
-    restored.findings
-      .filter((finding) => finding.kind === 'dead-wikilink')
-      .map((finding) => [finding.path, finding.target]),
-    [[linker.path, target]],
-  )
-  assert.equal(restored.complete, true)
-  assert.equal(restored.manifest.count, wholeManifest.length)
-  assert.equal(restored.examinedPaths.includes(hidden), true)
-})
+    // Enumeration restored, the finding comes back and the note inside the directory
+    // is part of the pass again — which is what makes the silence above a decision
+    // about the failed enumeration rather than a resolver that never reports anything.
+    const restored = await scanCuration(binding, options('restored'))
+    assert.deepEqual(
+      restored.findings
+        .filter((finding) => finding.kind === 'dead-wikilink')
+        .map((finding) => [finding.path, finding.target]),
+      [[linker.path, target]],
+    )
+    assert.equal(restored.complete, true)
+    assert.equal(restored.manifest.count, wholeManifest.length)
+    assert.equal(restored.examinedPaths.includes(hidden), true)
+  },
+)
 
 test('a truncated link universe makes the resolver silent rather than confident', async (t) => {
   const world = await makeCurationWorld(t)
@@ -1051,7 +1072,7 @@ test('verifying the covered prefix obeys the deadline', async (t) => {
 // ---------------------------------------------------------------------------
 
 test('a path outside the project, through the jail, or through a symlink is refused', async (t) => {
-  const { world, binding, written } = await worldWithNotes(t, 2)
+  const { world, binding } = await worldWithNotes(t, 2)
   const other = `Projects/other--6a1f0b52/Docs/别家.md`
   await writeRaw(
     world,
@@ -1072,8 +1093,14 @@ test('a path outside the project, through the jail, or through a symlink is refu
     }),
     { code: 'unsafe-path' },
   )
-  const link = `${binding.relativeDir}/Docs/软链.md`
-  await symlink(vaultFile(world, written[0].path), vaultFile(world, link))
+  // A directory link out of the vault: the jail refuses a link anywhere on a path,
+  // and a directory link is the link kind this host can actually create (a
+  // junction). The linked-to path still ends in `.md` inside the project, so the
+  // shape check cannot be what refuses it — only the jail can.
+  const outside = join(world.root, 'outside-docs')
+  await mkdir(outside, { recursive: true })
+  await createDirectoryLink(outside, vaultFile(world, `${binding.relativeDir}/Docs/软链`))
+  const link = `${binding.relativeDir}/Docs/软链/note.md`
   await assert.rejects(
     enqueueChangedSource({ binding, dataRoot: world.dataRoot, path: link, home: world.home }),
     { code: 'unsafe-path' },
@@ -1336,9 +1363,11 @@ test('private state is versioned, size-bounded and permission-tight', async (t) 
   const recordPath = curationRecordPath(world.dataRoot, binding.projectId, path)
   const changedPath = curationChangedPath(world.dataRoot, binding.projectId)
   for (const file of [cursorPath, recordPath, changedPath]) {
-    assert.equal((await stat(file)).mode & 0o777, CURATION_FILE_MODE, file)
+    // POSIX asserts the exact bits; NTFS does not implement them, so the helper
+    // asserts there that each file is a regular, non-link, owner-readable file.
+    await assertPrivateFile(file, CURATION_FILE_MODE)
   }
-  assert.equal((await stat(join(world.dataRoot, 'curation'))).mode & 0o777, CURATION_DIR_MODE)
+  await assertPrivateDirectory(join(world.dataRoot, 'curation'), CURATION_DIR_MODE)
 
   const cursor = JSON.parse(await readFile(cursorPath, 'utf8'))
   assert.deepEqual(Object.keys(cursor).sort(), [

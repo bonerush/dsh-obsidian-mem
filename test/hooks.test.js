@@ -51,6 +51,7 @@ import { validateConfig } from '../lib/config.js'
 import { writeMemory } from '../lib/memory.js'
 import { withVaultLock } from '../lib/transaction.js'
 import { bootstrapVault } from '../lib/vault.js'
+import { registerTreeCleanup } from './platform-capabilities.js'
 
 /** Fixed, valid UUIDv4 identity (version nibble `4`, variant nibble `8`). */
 const PROJECT_ID = '1c392abb-7b08-42f7-871d-2a379caf9448'
@@ -1595,11 +1596,20 @@ function gitEnv() {
  * call site — derives every private path the trigger reads and writes: the
  * changed-path queue, the cursor and the view all live under it.
  *
+ * @param {object} t - the `node:test` context whose registered cleanup removes the tree last.
  * @param {object} [options] - config overrides for the plugin row.
  * @returns {{root: string, cwd: string, vault: string, dataRoot: string, stop: Function, write: Function}} the harness.
  */
-async function curationBed(options = {}) {
+async function curationBed(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t6-curation-'))
+  // `node:test` runs `t.after` hooks in registration order, so a bare `rm` here
+  // would run before the plugin's own teardown — and Windows refuses to remove a
+  // directory whose sqlite handle is still open (`EBUSY`), turning the retry loop
+  // into a hang inside the cleanup hook. The coordinator runs every disposer
+  // handed to it first (newest first) and removes the tree last; the bed's own
+  // `close()` also runs it, so a case that finishes early does not depend on the
+  // plan's hook order at all.
+  const onCleanup = registerTreeCleanup(t, root)
   const cwd = join(root, 'repo')
   const vault = join(root, 'vault')
   await mkdir(cwd, { recursive: true })
@@ -1621,12 +1631,29 @@ async function curationBed(options = {}) {
   })
   const previousHome = process.env.DSH_HOME
   process.env.DSH_HOME = root
-  const stop = apply(ctx, {
-    ...(options.config ?? {}),
-    enabled: true,
-    vaultPath: vault,
-    distill: { maxRetries: 1 },
+  // Mounted in its own fiber, the way the host mounts a plugin. `apply` on the
+  // root context returns only the hook disposer, while `registerTools` opens the
+  // project index and closes it through a fiber effect — so a root-context mount
+  // leaves that sqlite handle open past the case, and the cleanup that removes the
+  // tree then meets EBUSY on Windows (the retry loop never finishes: the case timed
+  // out in its `after` hook). A fiber disposal runs the effect.
+  const memory = ctx.plugin({
+    name: 'obsidian-mem-probe',
+    apply: (inner) =>
+      apply(inner, {
+        ...(options.config ?? {}),
+        enabled: true,
+        vaultPath: vault,
+        distill: { maxRetries: 1 },
+      }),
   })
+  await memory
+  // Both fibers close before the coordinator removes the tree, newest first: the
+  // plugin's effects (index handles, queue worker) are the ones Windows complains
+  // about, and the tools fiber holds the registrations they came from.
+  onCleanup(() => memory.dispose())
+  onCleanup(() => fork.dispose())
+  const stop = () => {}
   return {
     root,
     cwd,
@@ -1694,12 +1721,13 @@ async function curationBed(options = {}) {
       assert.equal(result.isError, false, result.error?.message ?? JSON.stringify(result))
       return result.value
     },
+    // Idempotent and safe to call early: the fibers' own disposal is registered
+    // with the coordinator, so the tree is only ever removed after it.
     close: async () => {
-      stop()
+      await memory.dispose()
+      await fork.dispose()
       if (previousHome === undefined) delete process.env.DSH_HOME
       else process.env.DSH_HOME = previousHome
-      await fork.dispose().catch(() => {})
-      await rm(root, { recursive: true, force: true, maxRetries: 4 })
     },
   }
 }
@@ -1746,6 +1774,41 @@ async function untilJson(path, { timeoutMs = 8000 } = {}) {
       if (Date.now() > deadline) assert.fail(`no JSON document appeared at ${path}`)
       await new Promise((resolve) => setTimeout(resolve, 10))
     }
+  }
+}
+
+/**
+ * Wait for a *complete* view, replaying the documented recovery when one truncated.
+ *
+ * The automatic pass runs on the shipped 500 ms deadline (`DEFAULT_MAX_MS`), which is
+ * a session-hook budget: on a loaded machine one bootstrap-sized walk can exceed it.
+ * The design then does exactly what it promises — an incomplete view is stored, the
+ * cursor keeps its place, and the next due check replays the full pass. So a case
+ * whose claim is about what a *complete* view contains waits for completion instead
+ * of reading whichever pass landed first, and it drives that replay through the same
+ * seams a host uses (`staleCursor` + the session-activity pre-step). The assertion is
+ * unchanged: a complete view must arrive, and if it never does the case fails.
+ *
+ * Note a changed-path pass cannot repair this — `buildCurationView` refuses
+ * `backfill-incomplete` without a complete predecessor — so the replay is a full due
+ * pass, which is why the marker is made stale first.
+ *
+ * @param {object} bed - the assembly harness.
+ * @param {string} projectId - the project whose view is awaited.
+ * @param {number} [timeoutMs] - how long the loop may keep replaying.
+ * @returns {Promise<object>} the complete view document.
+ */
+async function untilCompleteView(bed, projectId, { timeoutMs = 30000 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  for (let attempt = 0; ; attempt += 1) {
+    const view = await untilJson(curationViewPath(bed.dataRoot, projectId), { timeoutMs: 8000 })
+    if (view.complete === true) return view
+    if (Date.now() > deadline) {
+      assert.fail('a complete view never arrived: every pass reported a truncation')
+    }
+    await staleCursor(bed.dataRoot, projectId)
+    // A fresh session id each round: the activity seam asks at most once per session.
+    await bed.preStep(`session-replay-${attempt}`)
   }
 }
 
@@ -1828,7 +1891,7 @@ async function staleCursor(dataRoot, projectId) {
 }
 
 test('a committed mem_write queues one durable hint and one pass services it', async (t) => {
-  const bed = await curationBed()
+  const bed = await curationBed(t)
   t.after(() => bed.close())
   const written = await bed.write({
     type: 'decision',
@@ -1844,8 +1907,9 @@ test('a committed mem_write queues one durable hint and one pass services it', a
   const binding = bindingFor(bed, projectId, written.path)
 
   // The view is the pass's output, so its content is what proves the pass reached
-  // this note rather than merely being asked to.
-  const view = await untilJson(curationViewPath(bed.dataRoot, projectId))
+  // this note rather than merely being asked to. `untilCompleteView` replays a full
+  // pass if the shipped 500 ms hook budget cut the first one short — see its note.
+  const view = await untilCompleteView(bed, projectId)
   assert.equal(view.complete, true)
   assert.equal(
     view.entries.some((entry) => entry.path === written.path),
@@ -1871,7 +1935,7 @@ test('a committed mem_write queues one durable hint and one pass services it', a
 test('autoCurate:false stops the automatic pass and runs nothing else', async (t) => {
   // A bound project, so the pass this switch suppresses is a real one: against an
   // unbound directory every configuration looks identical.
-  const off = await curationBed({ config: { autoCurate: false } })
+  const off = await curationBed(t, { config: { autoCurate: false } })
   t.after(() => off.close())
   const written = await off.write({
     type: 'decision',
@@ -1898,7 +1962,7 @@ test('autoCurate:false leaves the session-activity half unarmed too', async (t) 
   // The second automatic trigger, driven through the same seam a turn uses. The
   // switch removes the caller rather than reaching the pass and declining it, so
   // there is no `skipped` record to find either.
-  const off = await curationBed({ config: { autoCurate: false } })
+  const off = await curationBed(t, { config: { autoCurate: false } })
   t.after(() => off.close())
   const written = await off.write({
     type: 'decision',
@@ -1918,7 +1982,7 @@ test('session activity runs the due pass once, and the marker suppresses the nex
   // without `mem_write` is inspected by the 24-hour check on DSH session activity.
   // Until this case there was no DSH path that consulted the marker at all, and no
   // case that drove the `skipped` outcome.
-  const bed = await curationBed()
+  const bed = await curationBed(t)
   t.after(() => bed.close())
   const written = await bed.write({
     type: 'decision',
@@ -1931,14 +1995,20 @@ test('session activity runs the due pass once, and the marker suppresses the nex
   // The write asked for its own pass. This case is about the activity seam, so wait
   // for that pass to land — a committed view and a drained queue — before counting:
   // a request made during an in-flight pass is the guard's business, not the
-  // marker's.
-  const view = await untilJson(curationViewPath(bed.dataRoot, projectId))
+  // marker's. A pass the shipped hook budget truncated is replayed for the same
+  // reason `untilCompleteView` records.
+  const view = await untilCompleteView(bed, projectId)
   await until(
     async () => (await readChangedSources({ binding, dataRoot: bed.dataRoot })).length === 0,
   )
   assert.equal(view.complete, true)
-  // The view and a drained queue both hold *before* the pass records its decision,
-  // so the count to compare against is the one that has stopped moving.
+  // The view and a drained queue both hold *before* the pass records its decision —
+  // the acknowledgement that drains the queue runs a step ahead of `curationResult`.
+  // So a settle window taken here can be satisfied inside that gap, and the count it
+  // returns is then one short: the *write's* own `scanned` event arrives afterwards
+  // and is read as the answer to the first session request below. Wait for that one
+  // event first (one committed write asks for exactly one pass), then settle.
+  await untilCurationEvents(bed, 1)
   const baseline = await settledCurationEvents(bed)
 
   // 1. A fresh marker with nothing queued: the request reaches the pass and the pass
@@ -1999,7 +2069,7 @@ test('two automatic triggers for one project run exactly one pass', async (t) =>
   // cursor, and waits for the record that pass rewrites before asking for it, so the
   // overlap is a fact about the pass's own durable state. The ring then answers the
   // only question that distinguishes "dropped" from "queued": one pass or two.
-  const bed = await curationBed()
+  const bed = await curationBed(t)
   t.after(() => bed.close())
   const written = await bed.write({
     type: 'decision',
@@ -2013,6 +2083,9 @@ test('two automatic triggers for one project run exactly one pass', async (t) =>
   await until(
     async () => (await readChangedSources({ binding, dataRoot: bed.dataRoot })).length === 0,
   )
+  // Same ordering hazard as the activity case above: the queue drains a step before
+  // the pass records its event, so wait for that event rather than racing it.
+  await untilCurationEvents(bed, 1)
   const baseline = await settledCurationEvents(bed)
   // A stale marker with an empty queue makes each request a full pass, which is the
   // traversal that has to take the vault lock — so while this test holds it, no pass

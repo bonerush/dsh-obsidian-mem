@@ -61,21 +61,46 @@ function markedFiles() {
 }
 
 /**
- * Git's blob hash for one file: sha1 over `blob <byte length>\0` plus the bytes.
+ * Git's blob hash for one byte sequence: sha1 over `blob <byte length>\0` plus it.
  *
  * Byte length, not `String.length`: these files are Chinese and English, so a
  * character count is a different number and would produce a hash that never
  * matches `git hash-object`. Computed with `node:crypto` rather than by shelling
  * out to git, so the check gives the same answer in CI and in a bare checkout.
  *
- * @param {string} path - absolute path of the file.
+ * @param {Buffer} bytes - the blob contents.
  * @returns {string} the lowercase hex blob hash.
  */
-function gitBlobHash(path) {
-  const bytes = readFileSync(path)
+function blobHash(bytes) {
   return createHash('sha1')
     .update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`, 'utf8'), bytes]))
     .digest('hex')
+}
+
+/**
+ * The blob hashes one worktree file can legitimately have.
+ *
+ * A file's bytes on disk are not always the bytes git stored. With
+ * `core.autocrlf=true` — measured on this Windows host — git converts CRLF to LF
+ * when it adds a file and records the LF blob, while `readFileSync` hands back the
+ * CRLF checkout. `README.i18n.yaml` records what `git hash-object` printed, which
+ * in that case is the LF hash.
+ *
+ * Both candidates are computed from the file's real bytes: verbatim (the only
+ * possible answer where no clean filter applies) and with CRLF turned into LF (the
+ * filter `core.autocrlf=true` applies). The recorded hash must match one of them,
+ * so a genuine content edit still fails — it changes both. Matching against
+ * whatever the file happens to hash to would be the relaxation this avoids.
+ *
+ * @param {string} path - absolute path of the file.
+ * @returns {{stored: string, checkedOut: string}} the raw-bytes hash and the CRLF-clean hash.
+ */
+function gitBlobHashes(path) {
+  const checkedOut = readFileSync(path)
+  // The clean filter turns CRLF into LF and leaves a lone CR alone, so this is the
+  // text conversion and not a broader whitespace-normalizing pass.
+  const stored = Buffer.from(checkedOut.toString('utf8').replaceAll('\r\n', '\n'), 'utf8')
+  return { stored: blobHash(stored), checkedOut: blobHash(checkedOut) }
 }
 
 test('the marked files and tsconfig.json files are the same set', () => {
@@ -102,10 +127,15 @@ test('every shebang is on the first line, so a marker cannot precede one', () =>
 test('README.i18n.yaml records the current blob hash of both READMEs', () => {
   const record = YAML.parse(readFileSync(join(ROOT, 'README.i18n.yaml'), 'utf8'))
   for (const name of README_PAIR) {
-    assert.equal(
-      gitBlobHash(join(ROOT, name)),
-      record[name],
-      `${name} changed without re-recording its hash; run git hash-object ${name} and update README.i18n.yaml`,
+    const hashes = gitBlobHashes(join(ROOT, name))
+    // Either hash is a correct answer for an unedited README: `checkedOut` is what
+    // the worktree bytes hash to, `stored` is what git records under autocrlf. A
+    // changed README matches neither, which is what this assertion is for.
+    assert.ok(
+      record[name] === hashes.checkedOut || record[name] === hashes.stored,
+      `${name} changed without re-recording its hash (worktree ${hashes.checkedOut}, ` +
+        `git-stored ${hashes.stored}, recorded ${JSON.stringify(record[name])}); ` +
+        `run git hash-object ${name} and update README.i18n.yaml`,
     )
   }
 })

@@ -14,7 +14,7 @@
 //   node codex/prepare.mjs --check   # verify both are present and current (exit 1 if not)
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { listTools } from './server.mjs'
 
@@ -175,6 +175,6 @@ export function main({
 }
 
 // Only a direct run acts: importing this module (a test does) must not exit anything.
-if (process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   process.exitCode = main({ check: process.argv.includes('--check') })
 }

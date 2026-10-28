@@ -26,3 +26,5 @@ AGENTS.md
 
 # 系统噪声
 .DS_Store
+
+.pnpm-store/

@@ -161,9 +161,15 @@ test('--base compares two commits, and a bad base is an error rather than a pass
 
 test('lint and format follow the index, not the working tree', (t) => {
   const { root, lib } = fixture(t)
+  // The tool paths are each package's own JS entry file, which is the contract
+  // `checkStagedSources` documents: it starts them through `process.execPath`, so
+  // it needs a script Node can run. The `node_modules/.bin/*` shims are POSIX sh
+  // scripts here (pnpm writes those, plus a separate `.cmd` for Windows), and
+  // handing one to Node produces a SyntaxError rather than a lint result — a
+  // failure of the fixture's plumbing, not of the index-follows check.
   const binaries = {
-    eslintBin: join(REPO_ROOT, 'node_modules', '.bin', 'eslint'),
-    prettierBin: join(REPO_ROOT, 'node_modules', '.bin', 'prettier'),
+    eslintBin: join(REPO_ROOT, 'node_modules', 'eslint', 'bin', 'eslint.js'),
+    prettierBin: join(REPO_ROOT, 'node_modules', 'prettier', 'bin', 'prettier.cjs'),
   }
   // Staged copy valid, working tree broken: the index is what gets committed.
   writeFileSync(lib, 'export const x = 2\n')

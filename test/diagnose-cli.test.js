@@ -6,7 +6,6 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
-  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
@@ -17,6 +16,7 @@ import { fileURLToPath } from 'node:url'
 
 import { openDiagnosticJournal } from '../lib/diagnostic-journal.js'
 import { buildDiagnosticReport, writeDiagnosticReport } from '../lib/diagnostic-report.js'
+import { assertPrivateFileSync, skipWithoutFileSymlink } from './platform-capabilities.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const CLI = join(ROOT, 'lib', 'diagnose-cli.js')
@@ -56,12 +56,15 @@ test('the standalone command writes a private, inspectable JSON report', (t) => 
     true,
   )
   assert.equal(Buffer.byteLength(readFileSync(output)) <= 256 * 1024, true)
-  assert.equal(statSync(output).mode & 0o777, 0o600)
+  // 0600 on POSIX; on Windows the same call pins the still-observable
+  // property (a real, non-link, owner-readable file) instead of an NTFS bit
+  // pattern that is 0666 for every file.
+  assertPrivateFileSync(output, 0o600)
   assert.equal(JSON.stringify(report).includes(root), false)
   assert.equal(JSON.stringify(report).includes('SENTINEL-ENV-SECRET'), false)
 })
 
-test('the npm-style symlink invokes the command', (t) => {
+test('the npm-style symlink invokes the command', { skip: skipWithoutFileSymlink() }, (t) => {
   const { root, dsh } = world(t)
   const binary = join(root, 'dsh-obsidian-mem-diagnose')
   const output = join(root, 'linked-report.json')
@@ -105,18 +108,32 @@ test('the command exports aliases and never raw conversation-like bytes', (t) =>
   assert.equal(JSON.stringify(report).includes('SENTINEL-BODY'), false)
 })
 
-test('an existing output and a symlink are not overwritten', (t) => {
+// Two distinct refusals behind one requirement. They are separate cases so the
+// "never overwrite" half keeps running on a host that cannot build a file
+// symlink; no assertion was dropped to make the split.
+test('an existing output is not overwritten', (t) => {
   const { root, dsh } = world(t)
   const output = join(root, 'report.json')
   writeFileSync(output, 'ORIGINAL')
   assert.notEqual(runCli(dsh, output).status, 0)
   assert.equal(readFileSync(output, 'utf8'), 'ORIGINAL')
-  const symlink = join(root, 'link.json')
-  symlinkSync(output, symlink)
-  assert.notEqual(runCli(dsh, symlink).status, 0)
-  assert.equal(readFileSync(output, 'utf8'), 'ORIGINAL')
   assert.equal(existsSync(join(root, 'report.json.tmp')), false)
 })
+
+test(
+  'a symlink at the output path is not followed or overwritten',
+  { skip: skipWithoutFileSymlink() },
+  (t) => {
+    const { root, dsh } = world(t)
+    const output = join(root, 'report.json')
+    writeFileSync(output, 'ORIGINAL')
+    const symlink = join(root, 'link.json')
+    symlinkSync(output, symlink)
+    assert.notEqual(runCli(dsh, symlink).status, 0)
+    assert.equal(readFileSync(output, 'utf8'), 'ORIGINAL')
+    assert.equal(existsSync(join(root, 'report.json.tmp')), false)
+  },
+)
 
 test('a failed plugin smoke does not block the basic report or expose its error', async (t) => {
   const { dataRoot } = world(t)

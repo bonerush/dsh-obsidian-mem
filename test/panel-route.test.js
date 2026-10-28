@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -215,7 +215,8 @@ test('overview composes the cards and never asks for a write action', async (t) 
   assert.equal(value.health.state, 'ready')
   assert.deepEqual(value.queue, { queued: 0, failed: 0, deferred: 0, failedJobs: [] })
   assert.equal(value.recent.length, 1)
-  // The digest does not exist yet; admin's fall-through must not be mistaken for one.
+  // The digest is feature-detected: the stub has no digest action, so the card
+  // is absent and the fall-through answer is not mistaken for one.
   assert.equal(value.digest, null)
   for (const call of stub.calls.admin)
     assert.equal(['jobs', 'hot', 'diagnostics', 'digest'].includes(call.action), true)
@@ -323,6 +324,26 @@ test('a search answer stays inside 32 KB and says so by trimming rows', async (t
   assert.equal(result.body.value.hasMore, true)
 })
 
+test('a vault root outside the home directory keeps a POSIX display and a native-root basename', async (t) => {
+  // The display string is rendered as text in the browser, so a native Windows
+  // separator must never leave the route. The masked-home path is covered by the
+  // overview case; this one is the unmasked branch, and it also proves `basename`
+  // still reads the native root (normalizing the root first would break the last
+  // segment on POSIX).
+  const nativeRoot = process.platform === 'win32' ? 'D:\\vaults\\knowledge' : '/srv/knowledge'
+  const expected = process.platform === 'win32' ? 'D:/vaults/knowledge' : '/srv/knowledge'
+  const h = await harness(t, {
+    services: stubServices().services,
+    resolveBinding: async () => ({ ...BOUND, vaultRoot: nativeRoot }),
+  })
+  const result = await h.post({ sessionId: SESSION, action: 'overview' })
+  assert.equal(result.status, 200)
+  const vault = result.body.value.project.vault
+  assert.equal(vault.display, expected, 'the display is a POSIX path')
+  assert.equal(vault.display.includes('\\'), false, 'the display carries no native separator')
+  assert.equal(vault.basename, 'knowledge', 'the basename runs on the native root')
+})
+
 test('the asset routes read per request and keep the same-origin fence', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-panel-asset-'))
   t.after(() => rm(root, { recursive: true, force: true }))
@@ -340,6 +361,26 @@ test('the asset routes read per request and keep the same-origin fence', async (
   assert.equal(foreign.status, 403)
   const missing = await h.get('/obsidian-mem/memory-overview.js')
   assert.equal(missing.status, 404)
+})
+
+test('the shipped module-relative asset and a native absolute asset path both serve', async (t) => {
+  // A Windows drive letter reads as a URL scheme in `new URL(file, import.meta.url)`, so
+  // the route has to send a native absolute path through `pathToFileURL`. Both branches
+  // are pinned: an injected temp file (absolute) and the shipped default (relative).
+  const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-panel-native-asset-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const native = join(root, 'memory-kit.js')
+  await writeFile(native, 'export const version = 7\n', 'utf8')
+  const injected = await harness(t, { services: stubServices().services, assets: [native] })
+  const served = await injected.get('/obsidian-mem/memory-kit.js')
+  assert.equal(served.status, 200, 'a native absolute asset path is served')
+  assert.match(served.headers.get('content-type'), /javascript/u)
+  assert.equal(await served.text(), 'export const version = 7\n')
+  const shipped = await harness(t, { services: stubServices().services })
+  const panel = await shipped.get('/obsidian-mem/memory-panel.js')
+  assert.equal(panel.status, 200, 'the module-relative default is served')
+  const source = await readFile(new URL('../lib/memory-panel.js', import.meta.url), 'utf8')
+  assert.equal(await panel.text(), source, 'the default asset is served byte for byte')
 })
 
 test('a status filter is applied before hasMore is decided', async (t) => {
@@ -380,7 +421,44 @@ test('a status filter is applied before hasMore is decided', async (t) => {
   assert.equal(searchArgs.limit, 5, 'the exact predicate is applied before the requested page cap')
   assert.equal(searchArgs.filters.status, 'provisional')
   assert.equal(result.body.value.hits.length, 0)
-  assert.equal(result.body.value.hasMore, true, 'rows beyond the page still exist')
+  // A full page with zero matching rows is NOT "more": the 显示更多 button would
+  // re-request the same page and yield nothing. `candidatesScored` counts rows
+  // the filter may reject, so it cannot promise more matches.
+  assert.equal(result.body.value.hasMore, false, 'no matching row means no more to show')
+
+  // But rows the filter kept beyond the visible window do prove more.
+  const mixed = Array.from({ length: 50 }, (_x, index) => ({
+    path: 'Projects/alpha--11111111/Decisions/m-' + index + '.md',
+    title: 'note ' + index,
+    type: 'decision',
+    status: index < 10 ? 'provisional' : 'active',
+    source: 'body',
+    snippet: 'x',
+    scoreSignals: [],
+  }))
+  Object.defineProperty(mixed, 'candidatesScored', { value: 100, enumerable: false })
+  const mixedServices = {
+    async indexForBinding() {
+      return {
+        boundProjectId: BOUND.projectId,
+        search: async () => mixed,
+      }
+    },
+    async admin() {
+      return { action: 'jobs', result: { jobs: [], failed: 0, deferred: 0 } }
+    },
+  }
+  const h2 = await harness(t, { services: mixedServices })
+  const more = await h2.post({
+    sessionId: SESSION,
+    action: 'search',
+    query: 'note',
+    status: 'provisional',
+    limit: 5,
+  })
+  assert.equal(more.status, 200)
+  assert.equal(more.body.value.hits.length, 5)
+  assert.equal(more.body.value.hasMore, true, 'kept rows beyond the window prove more')
 })
 
 test('overview trims its lists to stay inside the 16 KB ceiling', async (t) => {

@@ -23,7 +23,6 @@ import {
   readFile,
   readdir,
   rm,
-  symlink,
   utimes,
   writeFile,
 } from 'node:fs/promises'
@@ -58,6 +57,13 @@ import {
   vaultIdentity,
   withVaultLock,
 } from '../lib/vault.js'
+import {
+  HAS_POSIX_MODES,
+  createDirectoryLink,
+  registerTreeCleanup,
+  skipWithoutDirectorySymlink,
+  skipWithoutFileSymlink,
+} from './platform-capabilities.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -171,7 +177,10 @@ async function hashTree(root, { suffix = null } = {}) {
  */
 async function fixture(t, { pointer = true, git: withGit = true, projectId = ID1 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t17-'))
-  t.after(() => rm(root, { recursive: true, force: true, maxRetries: 4 }))
+  // The tree is removed only after everything opened inside it was closed: on
+  // Windows an open SQLite handle makes the removal fail with EBUSY. Callers that
+  // open services register their close with `onCleanup`.
+  const onCleanup = registerTreeCleanup(t, root)
   const vault = join(root, 'vault')
   const repo = join(root, 'repo')
   const home = join(root, 'home')
@@ -191,8 +200,9 @@ async function fixture(t, { pointer = true, git: withGit = true, projectId = ID1
   assert.equal(binding.kind, 'bound', JSON.stringify(binding))
   await bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot })
   const index = await openIndex({ vaultRoot: vault, dataRoot, projectId, home })
+  onCleanup(async () => index.close().catch(() => {}))
   await index.waitReady(undefined, 5000)
-  return { root, vault, repo, home, dataRoot, queueRoot, binding, index }
+  return { root, vault, repo, home, dataRoot, queueRoot, binding, index, onCleanup }
 }
 
 /** `lintVault` with the fixture's seams; override any input. */
@@ -1169,7 +1179,10 @@ test('jobs lists the queue and retries only on an explicit request', async (t) =
     binding: f.binding,
     kickQueueWorker: () => kicks.push('kick'),
   })
-  t.after(() => services.close())
+  // Registered with the fixture's disposers, so the services (and the index they
+  // hold) are closed before the temporary tree is deleted.
+  f.onCleanup(() => services.close())
+  // The services own an index of their own; the fixture's is not the one they open.
 
   const listed = await services.admin({ action: 'jobs', retry: false })
   assert.equal(listed.action, 'jobs')
@@ -1437,45 +1450,96 @@ test('an unreadable history or queue degrades to a finding instead of failing th
   await f.index.close()
 })
 
-test('an unreadable repository subdirectory degrades the audit to a finding', async (t) => {
-  const f = await fixture(t)
-  const blocked = join(f.repo, 'blocked-docs')
-  await mkdir(blocked, { recursive: true })
-  await writeFile(join(blocked, 'guide.md'), '# guide\n')
-  await chmod(blocked, 0o000)
-  try {
+test(
+  'an unreadable repository subdirectory degrades the audit to a finding',
+  {
+    // The case turns on `chmod 000` making a directory unreadable. NTFS enforces
+    // ACLs, not mode bits: measured here, a directory left at mode 0o000 is still
+    // enumerable, so the audit would walk it happily and report no finding. The
+    // sibling case above ("an unreadable history or queue") reaches the same
+    // degrade-to-a-finding path with a construct every platform can build.
+    skip: HAS_POSIX_MODES
+      ? false
+      : 'NTFS ACLs are not expressed by mode bits: chmod 000 leaves the directory enumerable, so an unreadable repository subdirectory cannot be constructed on this host',
+  },
+  async (t) => {
+    const f = await fixture(t)
+    const blocked = join(f.repo, 'blocked-docs')
+    await mkdir(blocked, { recursive: true })
+    await writeFile(join(blocked, 'guide.md'), '# guide\n')
+    await chmod(blocked, 0o000)
+    try {
+      const report = await lintOf(f)
+      assert.equal(
+        report.findings.some((finding) => finding.kind === 'repository-unreadable'),
+        true,
+        JSON.stringify(report.findings),
+      )
+      assert.equal(report.repository.known, false)
+    } finally {
+      await chmod(blocked, 0o755)
+    }
+    await f.index.close()
+  },
+)
+
+test(
+  'lint ignores a file symlink instead of following it out of the vault',
+  // A *file* symlink is the link a note would be replaced by, and this host refuses
+  // to create one unprivileged (EPERM, measured). The directory-link case below is
+  // the same refusal, on the link kind this host does accept, so the walk's
+  // "never follow a link out of the vault" rule keeps real coverage here.
+  { skip: skipWithoutFileSymlink() },
+  async (t) => {
+    const f = await fixture(t)
+    const outside = join(f.root, 'outside.md')
+    await writeFile(
+      outside,
+      pluginNote({ id: 'doc-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', title: '外面' }),
+    )
+    const { symlink } = await import('node:fs/promises')
+    await symlink(outside, join(f.vault, ...projectPath(f, 'Docs/链接.md').split('/')))
     const report = await lintOf(f)
     assert.equal(
-      report.findings.some((finding) => finding.kind === 'repository-unreadable'),
-      true,
+      report.findings.some((finding) => finding.path.endsWith('链接.md')),
+      false,
+    )
+    assert.equal(
+      await readFile(outside, 'utf8'),
+      pluginNote({ id: 'doc-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', title: '外面' }),
+    )
+    await f.index.close()
+  },
+)
+
+test(
+  'lint never walks through a linked directory out of the vault',
+  { skip: skipWithoutDirectorySymlink() },
+  async (t) => {
+    // A junction where a directory symlink is refused is still a real directory
+    // link, and the walk must skip it rather than follow it out of the vault.
+    const f = await fixture(t)
+    const outside = join(f.root, 'outside-dir')
+    await mkdir(outside, { recursive: true })
+    await writeFile(
+      join(outside, '外面.md'),
+      pluginNote({ id: 'doc-cccccccc-cccc-4ccc-8ccc-cccccccccccc', title: '外面' }),
+    )
+    await createDirectoryLink(outside, join(f.vault, ...projectPath(f, 'Docs/链接目录').split('/')))
+    const report = await lintOf(f)
+    assert.equal(
+      report.findings.some((finding) => finding.path.includes('链接目录')),
+      false,
       JSON.stringify(report.findings),
     )
-    assert.equal(report.repository.known, false)
-  } finally {
-    await chmod(blocked, 0o755)
-  }
-  await f.index.close()
-})
-
-test('lint ignores symlinked notes instead of following them out of the vault', async (t) => {
-  const f = await fixture(t)
-  const outside = join(f.root, 'outside.md')
-  await writeFile(
-    outside,
-    pluginNote({ id: 'doc-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', title: '外面' }),
-  )
-  await symlink(outside, join(f.vault, ...projectPath(f, 'Docs/链接.md').split('/')))
-  const report = await lintOf(f)
-  assert.equal(
-    report.findings.some((finding) => finding.path.endsWith('链接.md')),
-    false,
-  )
-  assert.equal(
-    await readFile(outside, 'utf8'),
-    pluginNote({ id: 'doc-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', title: '外面' }),
-  )
-  await f.index.close()
-})
+    assert.equal(
+      await readFile(join(outside, '外面.md'), 'utf8'),
+      pluginNote({ id: 'doc-cccccccc-cccc-4ccc-8ccc-cccccccccccc', title: '外面' }),
+      'the note outside the vault is never touched',
+    )
+    await f.index.close()
+  },
+)
 
 test('no case in this file writes the real plugin data root', async (t) => {
   const real = join(homedir(), '.dsh', 'data', 'obsidian-mem')

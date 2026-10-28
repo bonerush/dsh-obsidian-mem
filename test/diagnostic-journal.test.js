@@ -3,7 +3,6 @@ import { spawnSync } from 'node:child_process'
 import {
   appendFileSync,
   chmodSync,
-  lstatSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -13,10 +12,17 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { test } from 'node:test'
 
 import { openDiagnosticJournal, readDiagnosticJournal } from '../lib/diagnostic-journal.js'
+import {
+  assertPrivateDirectorySync,
+  assertPrivateFileSync,
+  createDirectoryLink,
+  skipWithoutDirectorySymlink,
+  skipWithoutFileSymlink,
+} from './platform-capabilities.js'
 
 function world(t) {
   const root = mkdtempSync(join(tmpdir(), 'diagnostic-journal-'))
@@ -49,8 +55,12 @@ test('a journal keeps 200 safe events and private permissions', (t) => {
       body: 'SENTINEL-BODY',
     })
   }
-  assert.equal(lstatSync(join(dataRoot, 'diagnostics')).mode & 0o777, 0o700)
-  assert.equal(lstatSync(journal.path).mode & 0o777, 0o600)
+  // On POSIX this pins 0700/0600 exactly; on Windows, where NTFS answers 0666
+  // for every created entry, it pins the property that still exists — a real
+  // directory, a real non-link file, readable by its owner — instead of a bit
+  // pattern this platform never sets.
+  assertPrivateDirectorySync(join(dataRoot, 'diagnostics'), 0o700)
+  assertPrivateFileSync(journal.path, 0o600)
   const bytes = readFileSync(journal.path, 'utf8')
   assert.equal(Buffer.byteLength(bytes) <= 128 * 1024, true)
   assert.equal(bytes.includes('raw-project-id'), false)
@@ -91,21 +101,25 @@ test('expired files are ignored and cleaned on next open', (t) => {
   utimesSync(old.path, new Date('2026-09-01'), new Date('2026-09-01'))
   assert.equal(readDiagnosticJournal({ dataRoot, now }).expired, 1)
   openDiagnosticJournal({ dataRoot, config, now })
-  assert.equal(
-    readdirSync(join(dataRoot, 'diagnostics')).includes(old.path.split('/').at(-1)),
-    false,
-  )
+  assert.equal(readdirSync(join(dataRoot, 'diagnostics')).includes(basename(old.path)), false)
 })
 
-test('a symlinked diagnostics directory is refused', (t) => {
-  const dataRoot = world(t)
-  const target = world(t)
-  symlinkSync(target, join(dataRoot, 'diagnostics'))
-  assert.throws(
-    () => openDiagnosticJournal({ dataRoot, config, now }),
-    /unsafe-diagnostics-directory/,
-  )
-})
+test(
+  'a symlinked diagnostics directory is refused',
+  { skip: skipWithoutDirectorySymlink() },
+  async (t) => {
+    const dataRoot = world(t)
+    const target = world(t)
+    // A junction is a real directory link, and the refusal under test is the
+    // `lstat().isSymbolicLink()` check — so the real coverage survives on a host
+    // that accepts junctions but not directory symlinks.
+    await createDirectoryLink(target, join(dataRoot, 'diagnostics'))
+    assert.throws(
+      () => openDiagnosticJournal({ dataRoot, config, now }),
+      /unsafe-diagnostics-directory/,
+    )
+  },
+)
 
 test('corrupt records are counted but never returned raw', (t) => {
   const dataRoot = world(t)
@@ -118,23 +132,27 @@ test('corrupt records are counted but never returned raw', (t) => {
   assert.equal(JSON.stringify(read).includes('SENTINEL-PRIVATE'), false)
 })
 
-test('a substituted run-file symlink cannot be written or exported', (t) => {
-  const dataRoot = world(t)
-  const external = join(dataRoot, 'outside.txt')
-  writeFileSync(external, 'SENTINEL-OUTSIDE')
-  const journal = openDiagnosticJournal({ dataRoot, config, now })
-  rmSync(journal.path)
-  symlinkSync(external, journal.path)
-  assert.throws(
-    () => journal.record({ seq: 1, at: now().toISOString(), event: 'job', outcome: 'failed' }),
-    /ELOOP|unsafe-diagnostics-file/,
-  )
-  assert.equal(readFileSync(external, 'utf8'), 'SENTINEL-OUTSIDE')
-  assert.equal(
-    JSON.stringify(readDiagnosticJournal({ dataRoot, now })).includes('SENTINEL-OUTSIDE'),
-    false,
-  )
-})
+test(
+  'a substituted run-file symlink cannot be written or exported',
+  { skip: skipWithoutFileSymlink() },
+  (t) => {
+    const dataRoot = world(t)
+    const external = join(dataRoot, 'outside.txt')
+    writeFileSync(external, 'SENTINEL-OUTSIDE')
+    const journal = openDiagnosticJournal({ dataRoot, config, now })
+    rmSync(journal.path)
+    symlinkSync(external, journal.path)
+    assert.throws(
+      () => journal.record({ seq: 1, at: now().toISOString(), event: 'job', outcome: 'failed' }),
+      /ELOOP|unsafe-diagnostics-file/,
+    )
+    assert.equal(readFileSync(external, 'utf8'), 'SENTINEL-OUTSIDE')
+    assert.equal(
+      JSON.stringify(readDiagnosticJournal({ dataRoot, now })).includes('SENTINEL-OUTSIDE'),
+      false,
+    )
+  },
+)
 
 test('the latest run supplies the config summary regardless of filename order', (t) => {
   const dataRoot = world(t)

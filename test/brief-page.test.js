@@ -150,6 +150,37 @@ test('conventions summary renders five lines, counts all 50 and paging reaches e
   assert.equal(page.hasMore, false)
 })
 
+test('a previewed conventions MOC is not a budget cut: truncated stays false', async (t) => {
+  // Regression for the R38 contract: `truncated` is true iff the BUDGET dropped
+  // a complete unit. A conventions preview (5 shown of 50 considered, the
+  // default `briefConventionMode:'summary'`) is a rendering decision, so a
+  // generous budget must still answer `truncated:false` — hooks' hot-snapshot
+  // logic reads that flag as hot-view completeness, and a preview-triggered
+  // `true` would hold the snapshot and re-inject the whole hot layer.
+  const env = await fixture(t)
+  const lines = Array.from({ length: 50 }, (_x, i) => {
+    const number = String(i).padStart(2, '0')
+    return '- [[' + RELATIVE_DIR + '/Conventions/note-' + number + '|约定-' + number + ']]'
+  })
+  await writeFile(
+    at(env.vault, RELATIVE_DIR + '/Conventions/index.md'),
+    '# Conventions\n\n' + lines.join('\n') + '\n',
+    'utf8',
+  )
+  const built = await buildBrief(env.binding, {
+    index: env.index,
+    config: { briefBudgetChars: 6000, hotCapacityChars: 9000, briefConventionMode: 'summary' },
+    mode: 'full',
+  })
+  const conventions = built.coverage.sections.find((section) => section.key === 'conventions')
+  assert.equal(conventions.considered, 50)
+  assert.equal(conventions.shown, 5)
+  assert.equal(conventions.omitted, 45, 'the preview cut is still reported as omitted')
+  assert.equal(built.truncated, false, 'a preview is not a budget cut')
+  // The paging note is still honest: the omitted 45 are addressable.
+  assert.match(built.text, /mem_brief\(section="conventions", offset=5/u)
+})
+
 test('a 2,000-line MOC pages in under one second at session start', async (t) => {
   const env = await fixture(t, { bootstrap: false })
   await mkdir(at(env.vault, RELATIVE_DIR + '/Conventions'), { recursive: true })

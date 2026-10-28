@@ -31,7 +31,15 @@ test('package roots and both CLI entrypoints remain resolvable', async () => {
   })
   for (const path of Object.values(manifest.bin)) {
     const source = await readFile(new URL(`../${path}`, import.meta.url), 'utf8')
-    assert.ok(source.startsWith('#!/usr/bin/env node\n'))
+    // The contract is "a node shebang on the first line", not "LF on the first
+    // line": a checkout with `core.autocrlf=true` writes CRLF and the file is
+    // still executable by every launcher that reads the `#!` prefix. Comparing
+    // bytes against '\n' turned a correct file into a failure on this host.
+    assert.match(
+      source,
+      /^#!\/usr\/bin\/env node\r?\n/u,
+      `${path} must open with a node shebang on its first line`,
+    )
   }
 })
 

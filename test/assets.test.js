@@ -33,6 +33,16 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { parse as parseYaml } from 'yaml'
 
+// A directory link is created the way this host permits it: a real symlink where
+// the OS allows one, a junction on a non-elevated Windows box. A junction is
+// still a directory link -- lstat reports it as a symbolic link and the refusal
+// under test is still reached -- so the coverage stays real instead of skipped.
+import {
+  createDirectoryLink,
+  skipWithoutDirectorySymlink,
+  skipWithoutFileSymlink,
+} from './platform-capabilities.js'
+
 import {
   AssetSyncError,
   MANIFEST_FILENAME,
@@ -241,22 +251,26 @@ test('a packaged asset deleted from the target is restored', async (t) => {
 // Path safety: symlinks, missing sources
 // ---------------------------------------------------------------------------
 
-test('a symlinked target directory is refused', async (t) => {
-  const source = await sourceFixture(t)
-  const root = await tempDir(t, 'obsidian-mem-t13-link-')
-  const elsewhere = join(root, 'elsewhere')
-  await mkdir(elsewhere)
-  await mkdir(join(root, 'skills'))
-  const target = join(root, 'skills', SKILL_NAME)
-  await symlink(elsewhere, target, 'dir')
+test(
+  'a symlinked target directory is refused',
+  { skip: skipWithoutDirectorySymlink() },
+  async (t) => {
+    const source = await sourceFixture(t)
+    const root = await tempDir(t, 'obsidian-mem-t13-link-')
+    const elsewhere = join(root, 'elsewhere')
+    await mkdir(elsewhere)
+    await mkdir(join(root, 'skills'))
+    const target = join(root, 'skills', SKILL_NAME)
+    await createDirectoryLink(elsewhere, target)
 
-  await assert.rejects(() => syncSkill({ sourceDir: source, targetDir: target }), /symlink/i)
+    await assert.rejects(() => syncSkill({ sourceDir: source, targetDir: target }), /symlink/i)
 
-  assert.deepEqual(await readdir(elsewhere), [], 'nothing may be written through the link')
-  assert.equal((await lstat(target)).isSymbolicLink(), true, 'the link itself is left in place')
-})
+    assert.deepEqual(await readdir(elsewhere), [], 'nothing may be written through the link')
+    assert.equal((await lstat(target)).isSymbolicLink(), true, 'the link itself is left in place')
+  },
+)
 
-test('a symlinked target file is refused', async (t) => {
+test('a symlinked target file is refused', { skip: skipWithoutFileSymlink() }, async (t) => {
   const source = await sourceFixture(t)
   const target = await targetFixture(t)
   await mkdir(target, { recursive: true })
@@ -403,15 +417,23 @@ test('a corrupt manifest is rebuilt instead of trusted', async (t) => {
 // ---------------------------------------------------------------------------
 
 test('the default target is derived from DSH_HOME and nothing else', async (t) => {
+  // The home passed here has to be an ABSOLUTE path on the machine running the
+  // test: a POSIX literal like `/tmp/dsh-home` is a relative, drive-less path on
+  // Windows (`resolve` answers `C:\tmp\dsh-home`), so the fixture would be
+  // asserting the resolver's own `isAbsolute` refusal instead of the derivation
+  // under test. `mkdtemp` gives the same thing on every platform: a real,
+  // absolute, unique directory.
+  const explicitHome = await tempDir(t, 'obsidian-mem-t13-home-')
   assert.equal(
-    resolveSkillTargetDir({ dshHome: '/tmp/dsh-home' }),
-    join('/tmp/dsh-home', 'skills', SKILL_NAME),
+    resolveSkillTargetDir({ dshHome: explicitHome }),
+    join(explicitHome, 'skills', SKILL_NAME),
   )
   assert.throws(() => resolveSkillTargetDir({ dshHome: 'relative/path' }), RangeError)
   assert.throws(() => resolveSkillTargetDir({ dshHome: '   ' }), RangeError)
 
-  await withDshHome(t, '/tmp/dsh-home-env', () => {
-    assert.equal(resolveSkillTargetDir(), join('/tmp/dsh-home-env', 'skills', SKILL_NAME))
+  const envHome = await tempDir(t, 'obsidian-mem-t13-home-env-')
+  await withDshHome(t, envHome, () => {
+    assert.equal(resolveSkillTargetDir(), join(envHome, 'skills', SKILL_NAME))
     return Promise.resolve()
   })
   const previous = process.env.DSH_HOME
@@ -427,42 +449,46 @@ test('the default target is derived from DSH_HOME and nothing else', async (t) =
 // syncBundledSkill: the never-throwing wrapper apply() uses
 // ---------------------------------------------------------------------------
 
-test('syncBundledSkill reports failures and conflicts instead of rejecting', async (t) => {
-  const source = await sourceFixture(t)
-  const warnings = []
-  const ctx = { logger: { warn: (...args) => warnings.push(args.map(String).join(' ')) } }
+test(
+  'syncBundledSkill reports failures and conflicts instead of rejecting',
+  { skip: skipWithoutDirectorySymlink() },
+  async (t) => {
+    const source = await sourceFixture(t)
+    const warnings = []
+    const ctx = { logger: { warn: (...args) => warnings.push(args.map(String).join(' ')) } }
 
-  const root = await tempDir(t, 'obsidian-mem-t13-wrap-')
-  await mkdir(join(root, 'skills'))
-  const elsewhere = join(root, 'elsewhere')
-  await mkdir(elsewhere)
-  const linkTarget = join(root, 'skills', SKILL_NAME)
-  await symlink(elsewhere, linkTarget, 'dir')
+    const root = await tempDir(t, 'obsidian-mem-t13-wrap-')
+    await mkdir(join(root, 'skills'))
+    const elsewhere = join(root, 'elsewhere')
+    await mkdir(elsewhere)
+    const linkTarget = join(root, 'skills', SKILL_NAME)
+    await createDirectoryLink(elsewhere, linkTarget)
 
-  const failed = await syncBundledSkill({ ctx, sourceDir: source, targetDir: linkTarget })
-  assert.equal(failed.ok, false)
-  assert.equal(failed.changed, false)
-  assert.match(failed.error, /symlink/i)
-  assert.equal(warnings.length, 1, 'a failed sync is reported exactly once')
-  assert.match(warnings[0], /obsidian-mem/)
-  assert.match(warnings[0], /symlink/i)
-  assert.deepEqual(await readdir(elsewhere), [])
+    const failed = await syncBundledSkill({ ctx, sourceDir: source, targetDir: linkTarget })
+    assert.equal(failed.ok, false)
+    assert.equal(failed.changed, false)
+    assert.match(failed.error, /symlink/i)
+    assert.equal(warnings.length, 1, 'a failed sync is reported exactly once')
+    assert.match(warnings[0], /obsidian-mem/)
+    assert.match(warnings[0], /symlink/i)
+    assert.deepEqual(await readdir(elsewhere), [])
 
-  const target = await targetFixture(t)
-  const synced = await syncBundledSkill({ ctx, sourceDir: source, targetDir: target })
-  assert.equal(synced.ok, true)
-  assert.equal(synced.changed, true)
-  assert.deepEqual(synced.conflicts, [])
+    const target = await targetFixture(t)
+    const synced = await syncBundledSkill({ ctx, sourceDir: source, targetDir: target })
+    assert.equal(synced.ok, true)
+    assert.equal(synced.changed, true)
+    assert.deepEqual(synced.conflicts, [])
 
-  await writeFile(join(target, 'SKILL.md'), 'EXTERNAL\n')
-  await writeFile(join(source, 'SKILL.md'), `${SKILL_MD}\nv2\n`)
-  const conflicted = await syncBundledSkill({ ctx, sourceDir: source, targetDir: target })
-  assert.equal(conflicted.ok, true)
-  assert.equal(conflicted.changed, false)
-  assert.equal(conflicted.conflicts.length, 1)
-  assert.match(warnings.at(-1), /conflict/i, 'a conflict is reported, not swallowed')
-  assert.equal(await readFile(join(target, 'SKILL.md'), 'utf8'), 'EXTERNAL\n')
-})
+    await writeFile(join(target, 'SKILL.md'), 'EXTERNAL\n')
+    await writeFile(join(source, 'SKILL.md'), `${SKILL_MD}\nv2\n`)
+    const conflicted = await syncBundledSkill({ ctx, sourceDir: source, targetDir: target })
+    assert.equal(conflicted.ok, true)
+    assert.equal(conflicted.changed, false)
+    assert.equal(conflicted.conflicts.length, 1)
+    assert.match(warnings.at(-1), /conflict/i, 'a conflict is reported, not swallowed')
+    assert.equal(await readFile(join(target, 'SKILL.md'), 'utf8'), 'EXTERNAL\n')
+  },
+)
 
 test('syncBundledSkill needs no logger at all', async (t) => {
   const source = await sourceFixture(t)
@@ -537,71 +563,75 @@ test('apply() ships the packaged skill into the DSH skill root', async (t) => {
   })
 })
 
-test('a failed skill sync is reported without stranding the plugin', async (t) => {
-  const root = await tempDir(t, 'obsidian-mem-t13-apply-fail-')
-  const ctx = await mountedContext(t)
-  await withDshHome(t, root, async () => {
-    // `$DSH_HOME/skills/obsidian-mem` already exists as a symlink, which the
-    // sync refuses — the shape of an unwritable or hijacked skill root.
-    const elsewhere = join(root, 'elsewhere')
-    await mkdir(elsewhere)
-    await mkdir(join(root, 'skills'), { recursive: true })
-    await symlink(elsewhere, join(root, 'skills', SKILL_NAME), 'dir')
+test(
+  'a failed skill sync is reported without stranding the plugin',
+  { skip: skipWithoutDirectorySymlink() },
+  async (t) => {
+    const root = await tempDir(t, 'obsidian-mem-t13-apply-fail-')
+    const ctx = await mountedContext(t)
+    await withDshHome(t, root, async () => {
+      // `$DSH_HOME/skills/obsidian-mem` already exists as a symlink, which the
+      // sync refuses — the shape of an unwritable or hijacked skill root.
+      const elsewhere = join(root, 'elsewhere')
+      await mkdir(elsewhere)
+      await mkdir(join(root, 'skills'), { recursive: true })
+      await createDirectoryLink(elsewhere, join(root, 'skills', SKILL_NAME))
 
-    const captured = []
-    const disposeExporter = ctx.logger.exporter({
-      levels: { default: 9 },
-      export: (message) => captured.push(message),
+      const captured = []
+      const disposeExporter = ctx.logger.exporter({
+        levels: { default: 9 },
+        export: (message) => captured.push(message),
+      })
+      t.after(() => disposeExporter())
+
+      const cwd = join(root, 'repo')
+      await mkdir(cwd, { recursive: true })
+      const dispose = apply(ctx, { enabled: true, vaultPath: join(root, 'vault') })
+      t.after(() => dispose())
+
+      // Registered synchronously: a failed sync must not keep the tools or the
+      // hooks from mounting (the fiber would stay PENDING).
+      assert.deepEqual(
+        ctx.tools
+          .schemas()
+          .map((schema) => schema.name)
+          .sort(),
+        SIX,
+      )
+      const decision = await ctx.waterfall(
+        'agent/pre-step',
+        {
+          agent: agentFor(cwd),
+          messages: [],
+          turn: 1,
+          step: 1,
+          signal: new AbortController().signal,
+        },
+        async () => ({ kind: 'enter', messages: [] }),
+      )
+      assert.equal(decision.kind, 'enter')
+
+      const reported = await waitFor(() =>
+        captured.some(
+          (message) =>
+            message.type === 'warn' &&
+            message.args.some((arg) => String(arg).includes('obsidian-mem')),
+        ),
+      )
+      assert.equal(reported, true, 'the failure must be reported, not swallowed')
+      assert.deepEqual(await readdir(elsewhere), [], 'nothing may be written through the symlink')
+      assert.equal(existsSync(join(elsewhere, 'SKILL.md')), false)
+      assert.deepEqual(
+        ctx.tools
+          .schemas()
+          .map((schema) => schema.name)
+          .sort(),
+        SIX,
+        'the tools survive the failed sync',
+      )
     })
-    t.after(() => disposeExporter())
-
-    const cwd = join(root, 'repo')
-    await mkdir(cwd, { recursive: true })
-    const dispose = apply(ctx, { enabled: true, vaultPath: join(root, 'vault') })
-    t.after(() => dispose())
-
-    // Registered synchronously: a failed sync must not keep the tools or the
-    // hooks from mounting (the fiber would stay PENDING).
-    assert.deepEqual(
-      ctx.tools
-        .schemas()
-        .map((schema) => schema.name)
-        .sort(),
-      SIX,
-    )
-    const decision = await ctx.waterfall(
-      'agent/pre-step',
-      {
-        agent: agentFor(cwd),
-        messages: [],
-        turn: 1,
-        step: 1,
-        signal: new AbortController().signal,
-      },
-      async () => ({ kind: 'enter', messages: [] }),
-    )
-    assert.equal(decision.kind, 'enter')
-
-    const reported = await waitFor(() =>
-      captured.some(
-        (message) =>
-          message.type === 'warn' &&
-          message.args.some((arg) => String(arg).includes('obsidian-mem')),
-      ),
-    )
-    assert.equal(reported, true, 'the failure must be reported, not swallowed')
-    assert.deepEqual(await readdir(elsewhere), [], 'nothing may be written through the symlink')
-    assert.equal(existsSync(join(elsewhere, 'SKILL.md')), false)
-    assert.deepEqual(
-      ctx.tools
-        .schemas()
-        .map((schema) => schema.name)
-        .sort(),
-      SIX,
-      'the tools survive the failed sync',
-    )
-  })
-})
+  },
+)
 
 test('unloading the plugin fiber waits for the in-flight skill sync', async (t) => {
   const root = await tempDir(t, 'obsidian-mem-t13-unload-')

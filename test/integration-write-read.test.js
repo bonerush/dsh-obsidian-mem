@@ -41,6 +41,7 @@ import { queueRootFor, readPendingJobs, writeJobAtomic } from '../lib/pending.js
 import { createMemoryServices, registerTools } from '../lib/tools.js'
 import { bootstrapVault, resolveBinding } from '../lib/vault.js'
 import { makeCurationWorld } from './curation-world.js'
+import { registerTreeCleanup } from './platform-capabilities.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -115,12 +116,15 @@ async function hashTree(root) {
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t10-'))
   const dataRoot = await mkdtemp(join(tmpdir(), 'obsidian-mem-t10-data-'))
-  t.after(() =>
-    Promise.all([
-      rm(root, { recursive: true, force: true, maxRetries: 4 }),
-      rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }),
-    ]),
-  )
+  // `node:test` runs `t.after` hooks in registration order and this fixture is
+  // always built first, so a bare `rm` here runs *before* every `services.close()`
+  // a case registers afterwards. On Windows a directory holding an open sqlite
+  // handle cannot be removed (`EBUSY`), and `rm`'s retry loop turns that into a
+  // hang in the cleanup hook; POSIX deletes open files happily, which is why only
+  // Windows stalled. `registerTreeCleanup` runs the disposers handed to it first
+  // (newest first) and removes both trees last.
+  const onCleanup = registerTreeCleanup(t, root)
+  onCleanup(() => rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }))
   const home = join(root, 'home')
   const repo = join(root, 'repo')
   const vault = join(root, 'vault')
@@ -129,24 +133,48 @@ async function fixture(t) {
   const binding = await resolveBinding({ cwd: repo, vaultRoot: vault, home })
   assert.equal(binding.kind, 'bound', `fixture must bind: ${JSON.stringify(binding)}`)
   await bootstrapVault(binding, { dataRoot, home })
-  return { root, dataRoot, home, repo, vault, binding }
+  return { root, dataRoot, home, repo, vault, binding, onCleanup }
 }
 
 /** A real Cordis context with the shipped ToolRuntime mounted, and no tools. */
-async function bareBed(t) {
+async function bareBed(t, fixture) {
   const ctx = new Context()
   ctx.provide('systemPrompt', { tools: () => () => {} })
   const fork = ctx.plugin(toolsPlugin)
   await fork
-  t.after(async () => {
+  // Same reason as `memoryBed`: a tool fiber's disposal closes the index handles its
+  // registrations opened, so it has to run before the tree is removed on Windows.
+  const register = fixture?.onCleanup ?? ((dispose) => t.after(dispose))
+  register(async () => {
     await fork.dispose().catch(() => {})
   })
   return ctx
 }
 
+/**
+ * Mount the shipped plugin in a fiber of its own, the way the host does.
+ *
+ * `apply(ctx, row)` on the root context returns only the hook disposer; the index
+ * handles `registerTools` opens are closed through fiber effects, so a host-shaped
+ * mount is what makes teardown deterministic. On Windows the difference is visible:
+ * a root-context `apply` leaves the sqlite handle open, the fixture's `rm` then meets
+ * `EBUSY`, and its retry loop never finishes — the case times out in cleanup.
+ *
+ * @param {object} ctx - the mounted Cordis context.
+ * @param {object} fixture - the fixture whose coordinator removes the tree last.
+ * @param {object} row - the plugin row config.
+ * @returns {Promise<object>} the fiber, so a caller can await its disposal.
+ */
+async function mountPlugin(ctx, fixture, row) {
+  const fiber = ctx.plugin({ name: 'obsidian-mem-probe', apply: (inner) => apply(inner, row) })
+  await fiber
+  fixture.onCleanup(() => fiber.dispose())
+  return fiber
+}
+
 /** The same context, with the six tools registered against real services. */
 async function memoryBed(t, fixture, config = {}) {
-  const ctx = await bareBed(t)
+  const ctx = await bareBed(t, fixture)
   const services = createMemoryServices({
     config: validateConfig({ vaultPath: fixture.vault, ...config }),
     dataRoot: fixture.dataRoot,
@@ -154,7 +182,10 @@ async function memoryBed(t, fixture, config = {}) {
     home: fixture.home,
   })
   const disposers = registerTools(ctx, services)
-  t.after(async () => {
+  // Through the fixture's coordinator when it has one, so the index handle this
+  // bed opens is closed before the fixture removes the tree (Windows EBUSY).
+  const register = fixture.onCleanup ?? ((dispose) => t.after(dispose))
+  register(async () => {
     for (const dispose of disposers) dispose()
     await services.close()
   })
@@ -452,12 +483,10 @@ test('mem_read keeps every path inside the vault jail', async (t) => {
 test('a cloud-managed vault root refuses every read path without touching the vault', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t10-cloud-'))
   const dataRoot = await mkdtemp(join(tmpdir(), 'obsidian-mem-t10-cloud-data-'))
-  t.after(() =>
-    Promise.all([
-      rm(root, { recursive: true, force: true, maxRetries: 4 }),
-      rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }),
-    ]),
-  )
+  // Same ordering rule as `fixture` below: this bed's index handles have to close
+  // before either tree is removed, or Windows answers EBUSY in the retry loop.
+  const onCleanup = registerTreeCleanup(t, root)
+  onCleanup(() => rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }))
   const home = join(root, 'home')
   const repo = join(root, 'repo')
   // iCloud's documented root: `~/Library/Mobile Documents/`. A dataless file
@@ -469,7 +498,7 @@ test('a cloud-managed vault root refuses every read path without touching the va
   const note =
     '---\nid: "doc-11111111-1111-4111-8111-111111111111"\ntype: "doc"\ntitle: "云端笔记"\n---\n云端正文\n'
   await writeFile(join(vault, 'note.md'), note)
-  const { ctx } = await memoryBed(t, { home, repo, vault, dataRoot })
+  const { ctx } = await memoryBed(t, { home, repo, vault, dataRoot, onCleanup }, {})
 
   const cases = [
     ['mem_read', { path: 'note.md' }],
@@ -932,7 +961,11 @@ test('apply registers exactly the six tools, and nothing at all when enabled is 
     else process.env.DSH_HOME = previous
   })
 
-  apply(ctx, { vaultPath: f.vault })
+  // Mounted in its own fiber — the way the host mounts a plugin — so that
+  // disposal runs the fiber effects `registerTools` uses to close the project
+  // index. On the root context those handles outlive the case and the fixture's
+  // removal then meets an open sqlite handle, which Windows answers with `EBUSY`.
+  const memory = await mountPlugin(ctx, f, { vaultPath: f.vault })
   assert.deepEqual(
     ctx.tools
       .schemas()
@@ -940,6 +973,7 @@ test('apply registers exactly the six tools, and nothing at all when enabled is 
       .sort(),
     ['mem_admin', 'mem_brief', 'mem_log', 'mem_read', 'mem_search', 'mem_write'],
   )
+  assert.ok(memory, 'the enabled row mounted one fiber')
 
   const installed = join(dshHome, 'skills', 'obsidian-mem', 'SKILL.md')
   const installedManifest = join(dshHome, 'skills', 'obsidian-mem', '.obsidian-mem-manifest.json')
@@ -969,8 +1003,9 @@ test('apply hands one DSH_HOME-derived data root to the transaction engine and t
     else process.env.DSH_HOME = previous
   })
 
-  const ctx = await bareBed(t)
-  apply(ctx, { vaultPath: f.vault })
+  const ctx = await bareBed(t, f)
+  // Own fiber: its disposal closes the index handle before the fixture's removal.
+  await mountPlugin(ctx, f, { vaultPath: f.vault })
 
   const written = value(
     await call(
@@ -1051,8 +1086,9 @@ test('an explicit job retry wakes the host worker, so a revived job really runs'
     safeInput: 'safe input',
   })
 
-  const dispose = apply(ctx, { vaultPath: f.vault })
-  t.after(() => dispose())
+  // Own fiber: its disposal stops the queue worker and closes the index before the
+  // fixture removes the tree (Windows EBUSY).
+  await mountPlugin(ctx, f, { vaultPath: f.vault })
 
   // A terminally failed job is never retried by a pass, and a pass with nothing
   // left to wait for arms no timer — so nothing may touch this job until something
@@ -1217,6 +1253,15 @@ async function writeToOtherProject(world, request) {
  * collected rather than thrown so one failing class cannot hide the others.
  */
 test('a stored curation view changes no retrieval answer on the baseline fixture', async (t) => {
+  // The claim this case makes is about retrieval answers, and it needs one
+  // *complete* view to make it. The shipped 500 ms bound belongs to a session-hook
+  // pass, so leaving it here would make `complete` a statement about CPU share: a
+  // full suite running beside this file can starve the walk past 500 ms and the pass
+  // reports `truncated=time-budget`. The factory's `curationBounds` seam exists for
+  // exactly this (see `test/tools.test.js` R40), and `test/tools.test.js` proves the
+  // bound is really honoured rather than assumed — so this is a documented test
+  // budget, not a relaxed assertion. The fixture and every compared answer are
+  // unchanged.
   const world = await makeCurationWorld(t)
   const { services } = world
 
@@ -1384,8 +1429,45 @@ test('a stored curation view changes no retrieval answer on the baseline fixture
     }
   }
 
-  // --- the view is built by the shipped action, not by a test seam ---------
-  const scanned = await services.admin({ action: 'curation', operation: 'scan' })
+  // --- the view is built by the shipped pass, not by a test seam -----------
+  // `curateForBinding` is the orchestration behind
+  // `mem_admin(action="curation", operation="scan")`: `curationAction` in
+  // `lib/services.js` delegates to exactly this call with `{force:true, ...bounds}`.
+  // The bound is supplied per call for the reason the sibling case below records:
+  // the shipped 500 ms default belongs to a session-hook pass, and this case's claim
+  // is that a *complete* view changes no retrieval answer. On the default, `complete`
+  // would instead be a statement about CPU share — a suite running beside this file
+  // can starve the walk past 500 ms and the pass then reports
+  // `truncated=time-budget` — so the fixture's coverage claim would be flaky without
+  // any behaviour changing. `test/tools.test.js` (R40) proves the tool path honours
+  // the bound rather than assuming it, so this is a documented test budget, not a
+  // relaxed assertion: same fixture, same assertions, one explicit deadline.
+  const binding = await resolveBinding({
+    cwd: world.repo,
+    vaultRoot: world.vault,
+    mode: 'show',
+    home: world.home,
+  })
+  assert.equal(binding.kind, 'bound', JSON.stringify(binding))
+  // The pass is bounded per call — that is the shipped contract, and a single
+  // unbounded one would be the wrong thing to test. A pass that ran out of its note
+  // or time budget keeps its cursor and its per-path records, so the documented way
+  // to reach full coverage is to ask again until the answer says `complete`. The
+  // loop therefore asserts the *same* claim (this fixture must end fully covered)
+  // without pinning it to one wall-clock slice, and each attempt is a real pass
+  // through the shipped orchestration.
+  let scanned = { action: 'curation', result: null }
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    scanned = {
+      action: 'curation',
+      result: await services.curateForBinding(binding, {
+        force: true,
+        maxNotes: 1000,
+        maxMs: 60_000,
+      }),
+    }
+    if (scanned.result.complete === true) break
+  }
   assert.equal(scanned.action, 'curation')
   assert.equal(scanned.result.status, 'scanned')
   assert.equal(

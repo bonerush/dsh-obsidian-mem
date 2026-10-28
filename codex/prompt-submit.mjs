@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { promptRecall } from '../lib/prompt-recall.js'
 import { resolveBinding } from '../lib/vault.js'
@@ -136,7 +137,8 @@ async function readPayload() {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-const isEntry = process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`
+const isEntry =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href
 if (isEntry) {
   try {
     await runHook(await readPayload())

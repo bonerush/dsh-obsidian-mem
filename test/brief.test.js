@@ -14,7 +14,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { Context } from '@deepseek-ai/cordis'
 import toolsPlugin from '@deepseek-ai/dsh-tools'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -26,6 +26,7 @@ import { openIndex } from '../lib/index-db.js'
 import { writeMemory } from '../lib/memory.js'
 import { createMemoryServices, registerTools } from '../lib/tools.js'
 import { bootstrapVault } from '../lib/vault.js'
+import { registerTreeCleanup } from './platform-capabilities.js'
 
 const BUDGET = 6000
 const HOT_CAPACITY = 9000
@@ -49,6 +50,13 @@ const codePoints = (text) => [...text].length
  */
 async function fixture(t, { bootstrap = true } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t11-'))
+  // The tree is removed only after every later `onCleanup` runs. `node:test` runs
+  // `t.after` hooks in registration order, and this fixture is always built first —
+  // so removing the tree here used to run *before* the test's own `services.close()`,
+  // and Windows refuses to delete a directory whose sqlite handle is still open
+  // (`EBUSY`). On POSIX that removal succeeds, which is why only Windows hung: the
+  // cleanup retried and the case timed out in its `after` hook, never in its body.
+  const onCleanup = registerTreeCleanup(t, root)
   const dataRoot = join(root, 'data')
   const home = join(root, 'home')
   const vault = join(root, 'vault')
@@ -69,9 +77,8 @@ async function fixture(t, { bootstrap = true } = {}) {
   }
   if (bootstrap) await bootstrapVault(binding, { dataRoot, home })
   let index = null
-  t.after(async () => {
+  onCleanup(async () => {
     if (index !== null) await index.close().catch(() => {})
-    await rm(root, { recursive: true, force: true, maxRetries: 4 })
   })
   const open = async () => {
     if (index === null)
@@ -83,7 +90,7 @@ async function fixture(t, { bootstrap = true } = {}) {
       })
     return index
   }
-  return { root, vault, dataRoot, home, repo, binding, open }
+  return { root, vault, dataRoot, home, repo, binding, open, onCleanup }
 }
 
 /** Add one hot entry through the shipped writer. */
@@ -275,7 +282,8 @@ test('mem_brief returns exactly what buildBrief returns, through the real tool r
     home: env.home,
     binding: env.binding,
   })
-  t.after(async () => {
+  // services.close() must run before the fixture removes the tree (Windows EBUSY).
+  env.onCleanup(async () => {
     await services.close()
   })
 
@@ -283,7 +291,7 @@ test('mem_brief returns exactly what buildBrief returns, through the real tool r
   ctx.provide('systemPrompt', { tools: () => () => {} })
   const fork = ctx.plugin(toolsPlugin)
   await fork
-  t.after(async () => {
+  env.onCleanup(async () => {
     await fork.dispose().catch(() => {})
   })
   registerTools(ctx, services)
@@ -323,7 +331,8 @@ test('the brief service honours exec.signal after its I/O, like every other tool
     home: env.home,
     binding: env.binding,
   })
-  t.after(async () => {
+  // services.close() must run before the fixture removes the tree (Windows EBUSY).
+  env.onCleanup(async () => {
     await services.close()
   })
 
@@ -362,7 +371,8 @@ test('an unbound working directory is answered with a status, not a fabricated e
     cwd: env.repo,
     home: env.home,
   })
-  t.after(async () => {
+  // services.close() must run before the fixture removes the tree (Windows EBUSY).
+  env.onCleanup(async () => {
     await services.close()
   })
 
@@ -389,7 +399,7 @@ test('an unbound working directory is answered with a status, not a fabricated e
   ctx.provide('systemPrompt', { tools: () => () => {} })
   const fork = ctx.plugin(toolsPlugin)
   await fork
-  t.after(async () => {
+  env.onCleanup(async () => {
     await fork.dispose().catch(() => {})
   })
   registerTools(ctx, services)

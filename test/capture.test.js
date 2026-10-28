@@ -10,15 +10,21 @@
 // `DSH_HOME` is never even looked at.
 import assert from 'node:assert/strict'
 import { Context } from '@deepseek-ai/cordis'
-import { existsSync, statSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { test } from 'node:test'
 
 import { createCapture, enqueueTurn } from '../lib/capture.js'
 import { registerHooks } from '../lib/hooks.js'
-import { jobFileName, loadPending, loadProcessedRecords } from '../lib/pending.js'
+import {
+  PROCESSED_DIRNAME,
+  jobFileName,
+  loadPending,
+  loadProcessedRecords,
+} from '../lib/pending.js'
+import { assertPrivateDirectory } from './platform-capabilities.js'
 
 /** Fixed, valid UUIDv4 identity (version nibble `4`, variant nibble `8`). */
 const PROJECT_ID = '1c392abb-7b08-42f7-871d-2a379caf9448'
@@ -193,7 +199,9 @@ test('a completed root turn with a real user message enqueues a bounded, auditab
     ['user', 'assistant-final'],
   )
   assert.ok([...job.safeInput].length <= CONFIG.distill.maxInputChars)
-  assert.equal(statSync(queueRoot).mode & 0o777, 0o700)
+  // 0700 on POSIX; on Windows the queue still has to be a real, non-link,
+  // owner-enumerable directory — only the meaningless NTFS bit check is replaced.
+  await assertPrivateDirectory(queueRoot, 0o700)
 
   // The white-listed seqs are the audit trail: the plugin-injected message at
   // seq 2 is not in it, and neither is anything without a text body.
@@ -1279,7 +1287,9 @@ test('no raw transcript is written anywhere but the 0600 pending job', async (t)
   const bodies = await Promise.all(regular.map((path) => readFile(path, 'utf8')))
   const all = bodies.join('\n')
   // The floor record carries seq ranges, never conversation text.
-  const record = regular.find((path) => path.includes('/processed/'))
+  // `join` produced these paths, so the separator is the host's: a hard-coded
+  // `/processed/` matches nothing on Windows and reported a false failure.
+  const record = regular.find((path) => path.includes(`${sep}${PROCESSED_DIRNAME}${sep}`))
   assert.notEqual(record, undefined)
   assert.ok(!/TRANSCRIPT_MARKER/.test(await readFile(record, 'utf8')))
 

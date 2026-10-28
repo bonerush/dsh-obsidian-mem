@@ -14,13 +14,18 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 import { parse as parseYaml } from 'yaml'
 
+// A directory link is created the way this host permits it: a real symlink
+// where the OS allows one, a junction on a non-elevated Windows box. A junction
+// is still a directory link -- `lstat` reports it as symbolic -- so the refusal
+// under test is exercised for real instead of being skipped.
+import { createDirectoryLink, skipWithoutDirectorySymlink } from './platform-capabilities.js'
 import { escapeRegistryCell, PROJECTS_DIR, REGISTRY_RELATIVE_PATH } from '../lib/registry.js'
 import {
   bootstrapVault,
@@ -566,20 +571,24 @@ test('a generated-region hash mismatch stops the write', async (t) => {
   assert.deepEqual(await snapshot(vault), noHash, 'a refused bootstrap must not write anything')
 })
 
-test('a symlinked _meta directory is refused instead of written through', async (t) => {
-  const { root, vault, repo, home, dataRoot } = await fixture(t)
-  const binding = await bind({ vault, repo, home })
-  await mkdir(vault, { recursive: true })
-  const outside = join(root, 'outside-meta')
-  await mkdir(outside, { recursive: true })
-  await symlink(outside, join(vault, '_meta'))
+test(
+  'a linked _meta directory is refused instead of written through',
+  { skip: skipWithoutDirectorySymlink() },
+  async (t) => {
+    const { root, vault, repo, home, dataRoot } = await fixture(t)
+    const binding = await bind({ vault, repo, home })
+    await mkdir(vault, { recursive: true })
+    const outside = join(root, 'outside-meta')
+    await mkdir(outside, { recursive: true })
+    await createDirectoryLink(outside, join(vault, '_meta'))
 
-  await assert.rejects(
-    bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot }),
-    /symlink/i,
-  )
-  assert.deepEqual(await readdir(outside), [])
-})
+    await assert.rejects(
+      bootstrapVault(binding, { initGitOnCreate: false, home, dataRoot }),
+      /symlink/i,
+    )
+    assert.deepEqual(await readdir(outside), [])
+  },
+)
 
 // ---------------------------------------------------------------------------
 // Step 3/4: registry updates, uniqueness and the id ↔ directory rule

@@ -10,7 +10,7 @@
 // symlink refusal are all enforced.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -31,6 +31,12 @@ import {
   reconcileTranscript,
   transcriptDeliveryHashes,
 } from '../lib/delivery-state.js'
+import {
+  assertPrivateDirectory,
+  assertPrivateFile,
+  createDirectoryLink,
+  skipWithoutDirectorySymlink,
+} from './platform-capabilities.js'
 
 const PROJECT_ID = '1c392abb-7b08-42f7-871d-2a379caf9448'
 const SESSION_KEY = 'session-9d4a4c1e-2f1a-4f4e-8b3a-000000000001'
@@ -109,9 +115,10 @@ test('the state lives under delivery/<vaultHash>/<projectId>/<sessionHash>.json 
     'the session id is hashed, not stored in the name',
   )
   assert.equal(path.startsWith(env.vault), false, 'the vault is never the state root')
-  const statted = await stat(path)
-  assert.equal(statted.mode & 0o777, 0o600)
-  assert.equal((await stat(join(path, '..'))).mode & 0o777, 0o700)
+  // POSIX asserts the exact bits; NTFS does not implement them, so the helper
+  // asserts there that it is a regular, non-link, owner-readable file instead.
+  await assertPrivateFile(path, 0o600)
+  await assertPrivateDirectory(join(path, '..'), 0o700)
 })
 
 test('preparation persists a pending receipt before any output exists and advances nothing', async (t) => {
@@ -395,31 +402,37 @@ test('a state file past 128 KiB is refused as corrupt rather than loaded', async
   assert.equal(read.corrupt, true)
 })
 
-test('a symlinked session directory is refused instead of followed', async (t) => {
-  const env = await fixture(t)
-  const first = await prepare(env)
-  const path = deliveryStatePath({
-    dataRoot: env.dataRoot,
-    vaultHash: first.vaultHash,
-    projectId: PROJECT_ID,
-    sessionKey: SESSION_KEY,
-  })
-  const outside = join(env.root, 'outside')
-  await mkdir(outside, { recursive: true })
-  await rm(join(path, '..'), { recursive: true, force: true })
-  await symlink(outside, join(path, '..'), 'dir')
-  const read = await readDeliveryState({
-    binding: env.binding,
-    dataRoot: env.dataRoot,
-    sessionKey: SESSION_KEY,
-    epoch: 1,
-  })
-  assert.equal(read.symlink, true)
-  assert.equal(read.degraded, true)
-  assert.deepEqual(read.state.acked, {})
-  const files = await readFile(join(outside, 'nothing'), 'utf8').catch(() => null)
-  assert.equal(files, null)
-})
+test(
+  'a symlinked session directory is refused instead of followed',
+  { skip: skipWithoutDirectorySymlink() },
+  async (t) => {
+    const env = await fixture(t)
+    const first = await prepare(env)
+    const path = deliveryStatePath({
+      dataRoot: env.dataRoot,
+      vaultHash: first.vaultHash,
+      projectId: PROJECT_ID,
+      sessionKey: SESSION_KEY,
+    })
+    const outside = join(env.root, 'outside')
+    await mkdir(outside, { recursive: true })
+    await rm(join(path, '..'), { recursive: true, force: true })
+    // A junction is a real link to a directory where a directory symlink is refused,
+    // so the reader's refusal to follow one stays covered.
+    await createDirectoryLink(outside, join(path, '..'))
+    const read = await readDeliveryState({
+      binding: env.binding,
+      dataRoot: env.dataRoot,
+      sessionKey: SESSION_KEY,
+      epoch: 1,
+    })
+    assert.equal(read.symlink, true)
+    assert.equal(read.degraded, true)
+    assert.deepEqual(read.state.acked, {})
+    const files = await readFile(join(outside, 'nothing'), 'utf8').catch(() => null)
+    assert.equal(files, null)
+  },
+)
 
 // ---------------------------------------------------------------------------
 // Bounds and retention

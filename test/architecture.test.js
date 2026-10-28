@@ -96,6 +96,13 @@ const LAYERS = {
   // `hooks` (L8), which decides when to ask, and by `capture` (L6), which owns the
   // same event stream. Also read by the L1 failure-memory policy below distill:
   // this import-free event classifier belongs at L0 with the vocabulary leaves.
+  // The filesystem primitives every durable writer shares (2026-10-28). A leaf
+  // with no repository import, which is what lets the seven writers that had each
+  // grown a private "temporary → fsync → rename → directory fsync" copy point down
+  // at one definition instead of drifting: Windows fails that rename with EPERM
+  // while another handle still holds the destination, and NTFS has no POSIX mode
+  // bits, so both facts belong in exactly one module.
+  'fs-atomic': 0,
   'failure-streak': 0,
   // The unbound-session notice: which refusal reasons get one injected hint, and
   // the wording of each. A leaf with no repository import at all — deliberately,
@@ -525,6 +532,11 @@ const BUDGETS = {
   // comments, and a reader who cannot see them will reintroduce both.
   // Shared legacy/v4 envelopes, bounded call identities and nested-dispatch
   // de-duplication add host-format handling (formatted measurement below).
+  // The one platform seam: retryable Windows rename, tolerant directory fsync and
+  // the `isPrivateMode` predicate the diagnostics readers use. The repository's
+  // measured-plus-30 rule (329 formatted lines measured, so 359 + rounding to 400)
+  // rather than a guess; a fourth primitive is a decision to argue with this line.
+  'lib/fs-atomic.js': 400,
   'lib/failure-streak.js': 550,
   // Recording is an independent pure policy below distill; no vault I/O or writer.
   'lib/failure-memory.js': 175,
@@ -843,11 +855,10 @@ const BUDGETS = {
   // measured-plus-30 is 1832, rounded to 1850.
   // Raised from 1850 by the digest action and the shared link resolver: measured
   // 1857 formatted lines; measured-plus-30 is 1887, rounded to 1900.
-  // Raised from 1900 by the digest clock seam (measured 1902 formatted lines after
-  // the day-granular clock was injected into the digest action; measured-plus-30 is
-  // 1932, rounded to 1950). The seam is one destructured option, its validation and
-  // the writer's `now`; the alternative — a test-only wall-clock guess — is the
-  // flake that failed the release run at UTC midnight.
+  // Raised from 1900 by the upstream digest clock seam and the appraise read
+  // deadline together: measured 1920 formatted lines after rebasing. The clock
+  // keeps the owned digest deterministic across UTC days; the deadline bounds
+  // slow-disk reads. Measured-plus-30 is 1950; the existing 1950 budget holds.
   'lib/services.js': 1950,
   // Raised from 2200 by Task 7 (2229 formatted lines measured; measured-plus-30
   // rounds up to 2300, which is this number — the entry above the old one had no

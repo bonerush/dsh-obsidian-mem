@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
+import { HAS_POSIX_MODES } from './platform-capabilities.js'
 import { routeNote, wikilinkLine } from '../lib/routing.js'
 import {
   assertOwnedFrontmatter,
@@ -704,8 +705,21 @@ test('the same semantic content twice leaves the bytes and the mtime untouched',
   assert.deepEqual(await readFile(path), original)
   assert.equal((await stat(path)).mtimeMs, before.mtimeMs)
 
-  // positive control: a real change does attempt the write, so the skip above matters
-  await assert.rejects(writeIfChanged(path, Buffer.from('changed\n')), { code: 'EACCES' })
+  // positive control: a real change does attempt the write, so the skip above matters.
+  // Which errno comes back is the platform's business, not the contract's: POSIX
+  // answers EACCES, Windows clears the write bit from the read-only attribute and
+  // answers EPERM (measured 2026-10-28 — `chmod(0o444)` really does make the file
+  // unwritable here, it just does not speak in permission bits). Accepting both keeps
+  // the proof that the write was attempted and refused, which is what the no-op
+  // skip above is being contrasted with; accepting neither, or any error at all,
+  // would stop it proving that.
+  await assert.rejects(writeIfChanged(path, Buffer.from('changed\n')), (error) => {
+    assert.ok(
+      error.code === 'EACCES' || error.code === 'EPERM',
+      `a write to a read-only file must be refused, got ${error.code}`,
+    )
+    return true
+  })
   await chmod(path, 0o644)
 
   // and a real semantic change lands on disk with exactly one line replaced
@@ -876,19 +890,36 @@ test('the preflight never reads past the 64 KiB frontmatter window', async (t) =
   assert.equal(FRONTMATTER_SCAN_LIMIT, 65_536)
 })
 
-test('the preflight reports a note it cannot read instead of guessing', async (t) => {
-  if (process.getuid?.() === 0) t.skip('root ignores file permissions')
-  const root = await tempRoot(t)
-  const vault = join(root, 'vault')
-  await mkdir(at(vault, 'Methods'), { recursive: true })
-  await writeFile(at(vault, 'Methods/私密.md'), '---\ntags: ["x"]\n---\nBody\n')
-  await chmod(at(vault, 'Methods/私密.md'), 0o000)
+test(
+  'the preflight reports a note it cannot read instead of guessing',
+  {
+    // The fixture below constructs an unreadable note with `chmod(0o000)`, which
+    // only works where permission bits are enforced. Measured on this Windows host
+    // (2026-10-28): `chmod(0o000)` on a file leaves it fully readable, because NTFS
+    // stores no POSIX bits and access is decided by the ACL instead; `stat().mode`
+    // answers 0o666 either way. The refusal path this case covers is real and worth
+    // keeping — `readNoteHead` answers a conflict for a read that fails — but this
+    // host cannot provoke the failure without a denied ACL, so the case is skipped
+    // with a platform reason rather than asserting against a file it never made
+    // unreadable. On POSIX it runs unchanged and must pass.
+    skip: HAS_POSIX_MODES
+      ? false
+      : 'NTFS does not express file permissions through mode bits: chmod(0o000) leaves the file readable (mode still reads 0o666), so an unreadable note cannot be constructed on this host',
+  },
+  async (t) => {
+    if (process.getuid?.() === 0) t.skip('root ignores file permissions')
+    const root = await tempRoot(t)
+    const vault = join(root, 'vault')
+    await mkdir(at(vault, 'Methods'), { recursive: true })
+    await writeFile(at(vault, 'Methods/私密.md'), '---\ntags: ["x"]\n---\nBody\n')
+    await chmod(at(vault, 'Methods/私密.md'), 0o000)
 
-  const result = await validateKnownPropertyTypes(vault, { home: root })
-  assert.equal(result.conflicts.length, 1)
-  assert.equal(result.conflicts[0].reason, 'unreadable')
-  assert.equal(result.conflicts[0].path, 'Methods/私密.md')
-})
+    const result = await validateKnownPropertyTypes(vault, { home: root })
+    assert.equal(result.conflicts.length, 1)
+    assert.equal(result.conflicts[0].reason, 'unreadable')
+    assert.equal(result.conflicts[0].path, 'Methods/私密.md')
+  },
+)
 
 test('a bootstrapped vault stays preflight-clean on every later run', async (t) => {
   const root = await tempRoot(t)

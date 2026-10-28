@@ -30,11 +30,10 @@ import {
   realpath,
   rm,
   stat,
-  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
@@ -54,6 +53,11 @@ import {
   TransactionError,
 } from '../lib/vault.js'
 import { normalizeDeps } from '../lib/memory.js'
+import {
+  HAS_POSIX_MODES,
+  createDirectoryLink,
+  skipWithoutDirectorySymlink,
+} from './platform-capabilities.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -81,6 +85,73 @@ const MOC_AFTER = `${MOC_BEFORE}\n- [[${PROJECT_A}/Decisions/ADR-1-调度器|调
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex')
 const at = (vault, relative) => join(vault, ...relative.split('/'))
+
+/**
+ * Make the receipt store's project directory refuse every write, for real.
+ *
+ * On POSIX a `0500` directory does it. NTFS does not implement those bits — a
+ * `chmod 0500` directory here still accepts writes — so on Windows the fixture
+ * plants a *dangling junction* where that directory belongs. Below it, `mkdir`
+ * and the temporary-file `open` both answer ENOENT, while a pre-flight `readFile`
+ * of the receipt path answers ENOENT as well: exactly the pair of outcomes the
+ * POSIX fixture produces ("no receipt yet", "store cannot be written").
+ *
+ * @param {string} dataRoot - throwaway plugin data root.
+ * @param {string} vaultRoot - the fixture vault.
+ * @returns {Promise<string>} the receipt directory path, for `unblockReceiptStore`.
+ */
+async function blockReceiptStore(dataRoot, vaultRoot) {
+  const receiptDirectory = join(dataRoot, 'receipts', sha256(await realpath(vaultRoot)), ID_A)
+  await mkdir(dirname(receiptDirectory), { recursive: true })
+  if (HAS_POSIX_MODES) {
+    await mkdir(receiptDirectory, { recursive: true })
+    await chmod(receiptDirectory, 0o500)
+    return receiptDirectory
+  }
+  await rm(receiptDirectory, { recursive: true, force: true })
+  await createDirectoryLink(join(dataRoot, 'receipts-unmounted'), receiptDirectory)
+  return receiptDirectory
+}
+
+/**
+ * Heal what `blockReceiptStore` broke: the directory exists again and is writable.
+ *
+ * @param {string} receiptDirectory - the path `blockReceiptStore` returned.
+ * @returns {Promise<void>} resolves once the store accepts writes again.
+ */
+async function unblockReceiptStore(receiptDirectory) {
+  if (HAS_POSIX_MODES) {
+    await chmod(receiptDirectory, 0o700)
+    return
+  }
+  await rm(receiptDirectory, { recursive: true, force: true })
+  await mkdir(receiptDirectory, { recursive: true })
+}
+
+/**
+ * Create a real `size > 0 && blocks === 0` file — the on-demand placeholder shape.
+ *
+ * Extending an empty file is enough on APFS and ext4. NTFS allocates on extend,
+ * so the same file reports allocated blocks; `fsutil sparse` punches that
+ * allocation back out, leaving a genuine sparse file of the same size with zero
+ * allocated blocks. The observable the `offloaded-file` refusal is defined on is
+ * therefore still produced by a real file, not by a mock.
+ *
+ * @param {string} path - file to create.
+ * @param {number} size - byte length to extend to.
+ * @returns {Promise<void>} resolves once the file is sparse.
+ */
+async function makeSparseFile(path, size) {
+  const handle = await open(path, 'r+')
+  try {
+    await handle.truncate(size)
+  } finally {
+    await handle.close()
+  }
+  if (HAS_POSIX_MODES) return
+  await execFileAsync('fsutil', ['sparse', 'setflag', path])
+  await execFileAsync('fsutil', ['sparse', 'setrange', path, '0', String(size)])
+}
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -505,20 +576,33 @@ test('a transform that returns null is a no-op too', async (t) => {
 // Step 1: a failed read is never an empty file
 // ---------------------------------------------------------------------------
 
-test('an unreadable target is refused instead of being treated as empty', async (t) => {
-  if (process.getuid?.() === 0) t.skip('root ignores file permissions')
-  const { vault, dataRoot, bindingA } = await fixture(t)
-  await chmod(at(vault, STATUS_NOTE), 0o000)
+test(
+  'an unreadable target is refused instead of being treated as empty',
+  {
+    // NTFS ignores the POSIX permission bits, so `chmod 000` leaves the file
+    // perfectly readable here; only a host that enforces modes can pose the
+    // question this case asks. The EDEADLK case next to it covers the same
+    // refusal with the documented read seam on every platform.
+    skip: HAS_POSIX_MODES
+      ? process.getuid?.() === 0
+        ? 'root ignores file permissions'
+        : false
+      : 'NTFS does not enforce POSIX mode bits, so no chmod can make a file unreadable',
+  },
+  async (t) => {
+    const { vault, dataRoot, bindingA } = await fixture(t)
+    await chmod(at(vault, STATUS_NOTE), 0o000)
 
-  await assert.rejects(
-    runTransaction(bindingA, request(newTransactionId()), { dataRoot }),
-    (error) => error instanceof TransactionError && error.code === 'unreadable-target',
-  )
-  // nothing was published, not even the create that came first in the plan
-  assert.equal(await exists(at(vault, NEW_NOTE)), false)
-  assert.equal(await readFile(at(vault, MOC), 'utf8'), MOC_BEFORE)
-  await chmod(at(vault, STATUS_NOTE), 0o644)
-})
+    await assert.rejects(
+      runTransaction(bindingA, request(newTransactionId()), { dataRoot }),
+      (error) => error instanceof TransactionError && error.code === 'unreadable-target',
+    )
+    // nothing was published, not even the create that came first in the plan
+    assert.equal(await exists(at(vault, NEW_NOTE)), false)
+    assert.equal(await readFile(at(vault, MOC), 'utf8'), MOC_BEFORE)
+    await chmod(at(vault, STATUS_NOTE), 0o644)
+  },
+)
 
 test('EDEADLK pauses the target instead of reading it as empty', async (t) => {
   const { vault, dataRoot, bindingA } = await fixture(t)
@@ -546,11 +630,11 @@ test('EDEADLK pauses the target instead of reading it as empty', async (t) => {
 
 test('a real size>0 && blocks===0 file is refused as offloaded', async (t) => {
   const { vault, dataRoot, bindingA } = await fixture(t)
-  // An empty file extended to 4096 bytes stays a real sparse APFS file: size 4096, blocks 0.
+  // A real sparse file: size 4096, blocks 0. An empty file extended to 4096 bytes
+  // is enough on APFS and ext4; NTFS allocates on extend, so the fixture punches
+  // the allocation back out with `fsutil sparse` — the shape, not a mock.
   await writeFile(at(vault, STATUS_NOTE), '')
-  const handle = await open(at(vault, STATUS_NOTE), 'r+')
-  await handle.truncate(4096)
-  await handle.close()
+  await makeSparseFile(at(vault, STATUS_NOTE), 4096)
   const sparse = await stat(at(vault, STATUS_NOTE))
   assert.equal(sparse.size, 4096)
   assert.equal(sparse.blocks, 0, 'the fixture must really be a sparse file')
@@ -758,9 +842,21 @@ test('an unreadable target during rollback is a conflict, never "already undone"
       (error) => error instanceof TransactionError && error.code === 'recovery-required',
     )
   }
+})
 
-  // (b) the same rule with a real filesystem failure
-  if (process.getuid?.() !== 0) {
+// (b) the same rule with a real filesystem failure. It is a separate case rather
+// than a second half, because the fixture cannot be built on a host that does not
+// enforce POSIX permission bits — and a silent "half skipped" would hide that.
+test(
+  'an unreadable target during rollback is a conflict, never "already undone" (real filesystem failure)',
+  {
+    skip: HAS_POSIX_MODES
+      ? process.getuid?.() === 0
+        ? 'root ignores file permissions'
+        : false
+      : 'NTFS cannot make a regular file unreadable without editing ACLs (chmod only changes attributes, the file stays readable), so a real unreadable target cannot be constructed here; the injected-read case above covers the same refusal on every platform',
+  },
+  async (t) => {
     const { vault, dataRoot, bindingA } = await fixture(t)
     const txId = newTransactionId()
     await assert.rejects(runTransaction(bindingA, request(txId), { dataRoot, failAfter: 'moc' }), {
@@ -778,8 +874,8 @@ test('an unreadable target during rollback is a conflict, never "already undone"
     assert.equal(await readFile(at(vault, MOC), 'utf8'), MOC_BEFORE)
     assert.equal(await readFile(at(vault, STATUS_NOTE), 'utf8'), STATUS_BEFORE)
     await chmod(at(vault, NEW_NOTE), 0o644)
-  }
-})
+  },
+)
 
 // ---------------------------------------------------------------------------
 // Step 4: a committed transaction rolls forward, even when its receipt store fails
@@ -791,9 +887,7 @@ test('a receipt-store failure after the commit point rolls forward, never back',
   // A real, deterministic failure: the receipt store's directory exists but may
   // not be written. The pre-flight lookup still reports "no receipt yet" (ENOENT
   // inside a searchable directory), so only the post-commit store fails.
-  const receiptDirectory = join(dataRoot, 'receipts', sha256(await realpath(vault)), ID_A)
-  await mkdir(receiptDirectory, { recursive: true })
-  await chmod(receiptDirectory, 0o500)
+  const receiptDirectory = await blockReceiptStore(dataRoot, vault)
 
   const txId = newTransactionId()
   const key = 'store-failure'
@@ -823,7 +917,7 @@ test('a receipt-store failure after the commit point rolls forward, never back',
   )
 
   // recovery completes the receipt store, and the key then replays without re-applying
-  await chmod(receiptDirectory, 0o700)
+  await unblockReceiptStore(receiptDirectory)
   const report = await recoverTransactions(bindingA, { dataRoot })
   assert.deepEqual(report.unresolved, [])
   assert.deepEqual(report.committed, [txId])
@@ -848,9 +942,7 @@ test('a receipt-store failure after the commit point rolls forward, never back',
 test('a delivered notification still keeps the manifest until the receipt is stored', async (t) => {
   if (process.getuid?.() === 0) t.skip('root ignores the read-only receipt directory')
   const { vault, dataRoot, bindingA } = await fixture(t)
-  const receiptDirectory = join(dataRoot, 'receipts', sha256(await realpath(vault)), ID_A)
-  await mkdir(receiptDirectory, { recursive: true })
-  await chmod(receiptDirectory, 0o500)
+  const receiptDirectory = await blockReceiptStore(dataRoot, vault)
 
   const txId = newTransactionId()
   const key = 'delivered-but-unstored'
@@ -875,7 +967,7 @@ test('a delivered notification still keeps the manifest until the receipt is sto
   )
   assert.equal(await exists(manifestPath), true)
 
-  await chmod(receiptDirectory, 0o700)
+  await unblockReceiptStore(receiptDirectory)
   const report = await recoverTransactions(bindingA, { dataRoot })
   assert.deepEqual(report.unresolved, [])
   assert.deepEqual(report.committed, [txId])
@@ -1263,101 +1355,117 @@ test('an update must prove plugin ownership of the file it rewrites', async (t) 
   assert.equal(await readFile(at(vault, STATUS_NOTE), 'utf8'), 'rewritten')
 })
 
-test('unsafe, duplicate or already-taken targets are refused before the first write', async (t) => {
-  const { root, vault, dataRoot, bindingA } = await fixture(t)
-  const txId = () => newTransactionId()
+test(
+  'unsafe, duplicate or already-taken targets are refused before the first write',
+  { skip: skipWithoutDirectorySymlink() },
+  async (t) => {
+    const { root, vault, dataRoot, bindingA } = await fixture(t)
+    const txId = () => newTransactionId()
 
-  const cases = [
-    [
-      'traversal',
-      { txId: txId(), creates: [{ path: '../outside.md', contents: 'x' }] },
-      'unsafe-path',
-    ],
-    [
-      'absolute',
-      { txId: txId(), creates: [{ path: '/tmp/evil.md', contents: 'x' }] },
-      'unsafe-path',
-    ],
-    [
-      'existing create',
-      { txId: txId(), creates: [{ path: STATUS_NOTE, contents: 'x' }] },
-      'target-exists',
-    ],
-    [
-      'duplicate target',
-      {
-        txId: txId(),
-        creates: [{ path: NEW_NOTE, contents: 'x' }],
-        updates: [{ path: NEW_NOTE, hash: sha256(STATUS_BEFORE), contents: 'y' }],
-      },
-      'duplicate-target',
-    ],
-    [
-      'missing hash',
-      { txId: txId(), updates: [{ path: STATUS_NOTE, contents: 'x' }] },
-      'missing-expected-hash',
-    ],
-    [
-      'stale hash',
-      { txId: txId(), updates: [{ path: STATUS_NOTE, hash: '0'.repeat(64), contents: 'x' }] },
-      'hash-mismatch',
-    ],
-    [
-      'missing parent',
-      { txId: txId(), creates: [{ path: `${PROJECT_A}/新目录/笔记.md`, contents: 'x' }] },
-      'missing-parent-directory',
-    ],
-    ['bad txId', { txId: '../escape', creates: [] }, 'invalid-tx-id'],
-  ]
+    const cases = [
+      [
+        'traversal',
+        { txId: txId(), creates: [{ path: '../outside.md', contents: 'x' }] },
+        'unsafe-path',
+      ],
+      [
+        'absolute',
+        { txId: txId(), creates: [{ path: '/tmp/evil.md', contents: 'x' }] },
+        'unsafe-path',
+      ],
+      [
+        'existing create',
+        { txId: txId(), creates: [{ path: STATUS_NOTE, contents: 'x' }] },
+        'target-exists',
+      ],
+      [
+        'duplicate target',
+        {
+          txId: txId(),
+          creates: [{ path: NEW_NOTE, contents: 'x' }],
+          updates: [{ path: NEW_NOTE, hash: sha256(STATUS_BEFORE), contents: 'y' }],
+        },
+        'duplicate-target',
+      ],
+      [
+        'missing hash',
+        { txId: txId(), updates: [{ path: STATUS_NOTE, contents: 'x' }] },
+        'missing-expected-hash',
+      ],
+      [
+        'stale hash',
+        { txId: txId(), updates: [{ path: STATUS_NOTE, hash: '0'.repeat(64), contents: 'x' }] },
+        'hash-mismatch',
+      ],
+      [
+        'missing parent',
+        { txId: txId(), creates: [{ path: `${PROJECT_A}/新目录/笔记.md`, contents: 'x' }] },
+        'missing-parent-directory',
+      ],
+      ['bad txId', { txId: '../escape', creates: [] }, 'invalid-tx-id'],
+    ]
 
-  for (const [label, tx, code] of cases) {
+    for (const [label, tx, code] of cases) {
+      await assert.rejects(
+        runTransaction(bindingA, tx, { dataRoot }),
+        (error) => error.code === code,
+        `${label} must be refused with ${code}`,
+      )
+    }
+
+    // a linked project directory is refused, not written through. A junction is a
+    // real directory link on a host that refuses directory symlinks, so the refusal
+    // is still exercised rather than skipped.
+    const outside = join(root, 'outside-decision')
+    await mkdir(outside, { recursive: true })
+    await createDirectoryLink(outside, join(vault, PROJECT_A, '链接目录'))
     await assert.rejects(
-      runTransaction(bindingA, tx, { dataRoot }),
-      (error) => error.code === code,
-      `${label} must be refused with ${code}`,
+      runTransaction(
+        bindingA,
+        { txId: txId(), creates: [{ path: `${PROJECT_A}/链接目录/x.md`, contents: 'x' }] },
+        { dataRoot },
+      ),
+      (error) => error.code === 'unsafe-path',
     )
-  }
+    assert.deepEqual(await readdir(outside), [])
+    assert.equal(await exists(at(vault, NEW_NOTE)), false)
+    assert.equal(await exists(at(vault, LOG_RELATIVE_PATH)), false)
+  },
+)
 
-  // a symlinked project directory is refused, not written through
-  const outside = join(root, 'outside-decision')
-  await mkdir(outside, { recursive: true })
-  await symlink(outside, join(vault, PROJECT_A, '链接目录'))
-  await assert.rejects(
-    runTransaction(
-      bindingA,
-      { txId: txId(), creates: [{ path: `${PROJECT_A}/链接目录/x.md`, contents: 'x' }] },
-      { dataRoot },
-    ),
-    (error) => error.code === 'unsafe-path',
-  )
-  assert.deepEqual(await readdir(outside), [])
-  assert.equal(await exists(at(vault, NEW_NOTE)), false)
-  assert.equal(await exists(at(vault, LOG_RELATIVE_PATH)), false)
-})
-
-test('a transaction leaks no file descriptor and leaves no lock behind', async (t) => {
-  if (process.platform === 'win32') t.skip('/dev/fd is a POSIX view of the descriptor table')
-  const { dataRoot, bindingA } = await fixture(t)
-  const counts = []
-  for (let index = 0; index < 5; index += 1) {
-    await runTransaction(
-      bindingA,
-      {
-        txId: newTransactionId(),
-        creates: [{ path: `${PROJECT_A}/Decisions/笔记-${index}.md`, contents: `笔记 ${index}\n` }],
-        receipt: { action: 'write' },
-      },
-      { dataRoot },
+// `{ skip }` rather than `t.skip()`: `t.skip()` only *marks* the case skipped and
+// leaves the body running, so on Windows this used to fail with
+// `ENOENT: scandir 'C:\\dev\\fd'` — a skipped test reporting a failure.
+test(
+  'a transaction leaks no file descriptor and leaves no lock behind',
+  {
+    skip: process.platform === 'win32' ? '/dev/fd is a POSIX view of the descriptor table' : false,
+  },
+  async (t) => {
+    const { dataRoot, bindingA } = await fixture(t)
+    const counts = []
+    for (let index = 0; index < 5; index += 1) {
+      await runTransaction(
+        bindingA,
+        {
+          txId: newTransactionId(),
+          creates: [
+            { path: `${PROJECT_A}/Decisions/笔记-${index}.md`, contents: `笔记 ${index}\n` },
+          ],
+          receipt: { action: 'write' },
+        },
+        { dataRoot },
+      )
+      counts.push((await readdir('/dev/fd')).length)
+    }
+    assert.equal(
+      new Set(counts).size,
+      1,
+      `a transaction must not leak a descriptor: ${counts.join(',')}`,
     )
-    counts.push((await readdir('/dev/fd')).length)
-  }
-  assert.equal(
-    new Set(counts).size,
-    1,
-    `a transaction must not leak a descriptor: ${counts.join(',')}`,
-  )
-  assert.deepEqual(await readdir(join(dataRoot, 'locks')), [], 'the vault lock must be released')
-})
+    assert.deepEqual(await readdir(join(dataRoot, 'locks')), [], 'the vault lock must be released')
+  },
+)
 
 test('a lock record that cannot be read is reported, never stolen', async (t) => {
   const { vault, dataRoot, bindingA } = await fixture(t)
@@ -1399,9 +1507,7 @@ test('staged lock records are swept only when their owner is gone', async (t) =>
 test('a committed receipt that cannot be stored blocks a same-key retry instead of applying twice', async (t) => {
   if (process.getuid?.() === 0) t.skip('root ignores the read-only receipt directory')
   const { vault, dataRoot, bindingA } = await fixture(t)
-  const receiptDirectory = join(dataRoot, 'receipts', sha256(await realpath(vault)), ID_A)
-  await mkdir(receiptDirectory, { recursive: true })
-  await chmod(receiptDirectory, 0o500)
+  const receiptDirectory = await blockReceiptStore(dataRoot, vault)
 
   const key = 'persistent-store-failure'
   // a transform, not a create: a duplicate here is silent — the registry simply
@@ -1451,7 +1557,7 @@ test('a committed receipt that cannot be stored blocks a same-key retry instead 
   )
 
   // once the store works the receipt lands, the block clears, and the key replays
-  await chmod(receiptDirectory, 0o700)
+  await unblockReceiptStore(receiptDirectory)
   const healed = await recoverTransactions(bindingA, { dataRoot })
   assert.deepEqual(healed.unresolved, [])
   assert.equal((await findReceipt(bindingA, key, { dataRoot })).txId, first.txId)

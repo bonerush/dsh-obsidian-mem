@@ -42,6 +42,8 @@ import {
 } from '../lib/search.js'
 import { createMemoryServices } from '../lib/services.js'
 
+import { registerTreeCleanup } from './platform-capabilities.js'
+
 /** The one project every fixture note belongs to. */
 const PROJECT_ID = '7d1f2c3b-4a5e-4f60-8b71-9c2d3e4f5a6b'
 const PROJECT_SLUG = 't3'
@@ -85,13 +87,14 @@ async function makeVault(t, notes, indexOptions = {}) {
     projectId: PROJECT_ID,
     ...indexOptions,
   })
-  t.after(async () => {
-    await index.close().catch(() => {})
-    await rm(root, { recursive: true, force: true })
-  })
+  // node:test runs its hooks in registration order, so a plain t.after(rm) here
+  // would delete the tree before a later services.close() and Windows answers
+  // EBUSY on the still-open sqlite files. The registrar runs disposals first.
+  const onCleanup = registerTreeCleanup(t, root)
+  onCleanup(() => index.close().catch(() => {}))
   const ready = await index.waitReady(undefined, 10_000)
   assert.equal(ready.ready, true, `index did not become ready: ${JSON.stringify(ready)}`)
-  return { root, vault, dataRoot, index }
+  return { root, vault, dataRoot, index, onCleanup }
 }
 
 /** The paths of a hit list, in returned order. */
@@ -152,7 +155,7 @@ test('the tool-level search follows the configured retrievalEngine', async (t) =
   // `services.js` is Lead-owned, so this is the tool-level half of the wiring:
   // the same vault and query through two service sets, one with the default config
   // and one with `retrievalEngine: 'sparse'`, must follow `config.retrievalEngine`.
-  const { vault, dataRoot } = await makeVault(t, [
+  const { vault, dataRoot, onCleanup } = await makeVault(t, [
     // Lexical order is [A, B, C]; the fused order is [B, A, C] — see the RRF case.
     { path: 'Docs/retry.md', title: '重试', body: '重试一次。' },
     {
@@ -173,7 +176,8 @@ test('the tool-level search follows the configured retrievalEngine', async (t) =
     })
   const lexicalServices = openServices('lexical')
   const sparseServices = openServices('sparse')
-  t.after(async () => {
+  // Both handles close before the tree removal; see `makeVault`.
+  onCleanup(async () => {
     await lexicalServices.close()
     await sparseServices.close()
   })

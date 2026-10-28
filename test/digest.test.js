@@ -104,7 +104,11 @@ test('an empty window appraises at most the 50 most recent notes and counts supe
       updated: '2026-10-20',
     })),
   )
-  const result = await collectDigest(world.options)
+  // Same separation as the 200-source case above: this is the 50-note *cap*, and a
+  // real clock lets the 500 ms deadline cut the run first on a loaded host (it did:
+  // `appraisal` came back null and dereferencing it failed). A frozen `now` puts the
+  // deadline out of reach so the cap is what is measured.
+  const result = await collectDigest({ ...world.options, now: () => 0 })
   assert.deepEqual(result.notes, { created: 0, updated: 0, superseded: 1, byType: [] })
   assert.equal(result.appraisal.scanned, 50)
   assert.equal(result.collection.inspected, 50)
@@ -205,7 +209,13 @@ test('the collector attempts no more than 200 sources and discloses incomplete s
     t,
     Array.from({ length: 205 }, (_, index) => ({ title: `Note ${index}` })),
   )
-  const result = await collectDigest(world.options)
+  // This case is about the 200-source *cap*, not about the 500 ms deadline. The
+  // real clock made it a race: 200 `readNote` calls over 205 freshly written files
+  // measured 527 ms on this host, so the deadline could cut the run at 123 and the
+  // assertion on `inspected` became a statement about disk speed. A frozen `now`
+  // puts the deadline out of reach, which is what makes the cap the thing under
+  // test — the deadline keeps its own two cases below.
+  const result = await collectDigest({ ...world.options, now: () => 0 })
   assert.equal(result.collection.inspected, 200)
   assert.equal(result.notes.updated, 200)
   assert.equal(result.collection.truncated, true)

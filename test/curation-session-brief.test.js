@@ -56,7 +56,17 @@ async function sessionBriefBed(t) {
     home: world.home,
   })
   assert.equal(binding.kind, 'bound', JSON.stringify(binding))
-  const scan = await scanCuration(binding, { dataRoot: world.dataRoot, home: world.home })
+  // The shipped 500 ms bound belongs to a session-hook pass; this bed's claim is
+  // that the view it stores is complete, so the deadline is set where a busy
+  // machine cannot reach it (the same reasoning `test/integration-write-read.test.js`
+  // records for its own view). Without it, running this file beside the rest of the
+  // suite turns `complete` into a coin toss about CPU share, not about the code.
+  const scan = await scanCuration(binding, {
+    dataRoot: world.dataRoot,
+    home: world.home,
+    maxNotes: 1000,
+    maxMs: 60_000,
+  })
   assert.equal(scan.complete, true)
   assert.equal(
     (await buildCurationView({ binding, dataRoot: world.dataRoot, scan })).status,
@@ -77,12 +87,35 @@ async function sessionBriefBed(t) {
   ctx.provide('systemPrompt', { tools: () => () => {} })
   const fork = ctx.plugin(toolsPlugin)
   await fork
-  const dispose = apply(ctx, { vaultPath: world.vault, autoCurate: false })
-  t.after(async () => {
-    dispose?.()
-    await fork.dispose().catch(() => {})
+  // Mounted in its own fiber, the way the host mounts a plugin (test/assets.test.js
+  // does the same). Two reasons, both load-bearing on Windows:
+  //
+  //   * `registerTools` opens the project index and closes it through a fiber
+  //     effect. An `apply(ctx, …)` on the root context hands back only the hook
+  //     disposer, so those handles outlive the whole case; a fiber disposal runs
+  //     that effect.
+  //   * The world registers its `rm` before this bed runs, and `node:test` runs
+  //     `t.after` hooks in registration order — so the removal would otherwise
+  //     execute first, while the sqlite handle is still open, and Windows answers
+  //     `EBUSY` (a retrying removal that never finishes). This machine measured
+  //     the stalled removal; POSIX deletes an open file happily, which is why only
+  //     Windows hung. The bed therefore has to be torn down *inside* the case,
+  //     before the fixture's own hook can run: `close()` below.
+  const memory = ctx.plugin({
+    name: 'obsidian-mem-probe',
+    apply: (inner) => apply(inner, { vaultPath: world.vault, autoCurate: false }),
   })
-  return { world, written, binding, ctx }
+  await memory
+  return {
+    world,
+    written,
+    binding,
+    ctx,
+    async close() {
+      await memory.dispose()
+      await fork.dispose().catch(() => {})
+    },
+  }
 }
 
 /**
@@ -107,27 +140,40 @@ async function injectedBrief(ctx, world) {
 }
 
 test('a DSH session start composes its brief from a complete stored view', async (t) => {
-  const { world, written, ctx } = await sessionBriefBed(t)
-  const text = await injectedBrief(ctx, world)
-  assert.ok(text.includes(VIEW_HEADING), text)
-  assert.ok(text.includes(written.path), text)
-  // The view's bounded description is what the session reads, and the source section
-  // it replaced is not there at all — so the heading above is the view's, not the
-  // source list's.
-  assert.ok(text.includes(VIEW_ONLY), text)
-  assert.equal(text.includes(SOURCE_HEADING), false, text)
+  const bed = await sessionBriefBed(t)
+  const { world, written, ctx } = bed
+  try {
+    const text = await injectedBrief(ctx, world)
+    assert.ok(text.includes(VIEW_HEADING), text)
+    assert.ok(text.includes(written.path), text)
+    // The view's bounded description is what the session reads, and the source section
+    // it replaced is not there at all — so the heading above is the view's, not the
+    // source list's.
+    assert.ok(text.includes(VIEW_ONLY), text)
+    assert.equal(text.includes(SOURCE_HEADING), false, text)
+  } finally {
+    // Closes the index before the world's own `t.after` removes the tree (Windows:
+    // an open sqlite handle makes that removal EBUSY). See `sessionBriefBed`.
+    await bed.close()
+  }
 })
 
 test('one changed byte falls the DSH session brief back to the source path', async (t) => {
-  const { world, written, ctx } = await sessionBriefBed(t)
-  const absolute = join(world.vault, ...written.path.split('/'))
-  const raw = await readFile(absolute, 'utf8')
-  await writeFile(absolute, `${raw}\n补充一行。\n`, 'utf8')
+  const bed = await sessionBriefBed(t)
+  const { world, written, ctx } = bed
+  try {
+    const absolute = join(world.vault, ...written.path.split('/'))
+    const raw = await readFile(absolute, 'utf8')
+    await writeFile(absolute, `${raw}\n补充一行。\n`, 'utf8')
 
-  const text = await injectedBrief(ctx, world)
-  assert.equal(text.includes(VIEW_HEADING), false, text)
-  assert.ok(text.includes(SOURCE_HEADING), text)
-  // The source list renders a wikilink, which drops the `.md`; the path is asserted
-  // without it so the check is about the note and not about the rendering form.
-  assert.ok(text.includes(written.path.replace(/\.md$/u, '')), text)
+    const text = await injectedBrief(ctx, world)
+    assert.equal(text.includes(VIEW_HEADING), false, text)
+    assert.ok(text.includes(SOURCE_HEADING), text)
+    // The source list renders a wikilink, which drops the `.md`; the path is asserted
+    // without it so the check is about the note and not about the rendering form.
+    assert.ok(text.includes(written.path.replace(/\.md$/u, '')), text)
+  } finally {
+    // Closes the index before the world's own `t.after` removes the tree (Windows).
+    await bed.close()
+  }
 })

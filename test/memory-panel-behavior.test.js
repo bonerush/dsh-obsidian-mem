@@ -111,6 +111,39 @@ test('clearing rendered type and status filters sends null and restores matching
   }
 })
 
+test('clearing one filter sends an explicit null for it and keeps the sibling filter applied', async (t) => {
+  const sent = []
+  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+    sent.push(JSON.parse(options.body))
+    return response({ hits: [{ path: 'kept', title: 'kept' }], limit: 25, hasMore: false })
+  })
+  const render = mount(t, 'SearchView')
+  let tree = render({ sessionId: 'a' })
+  nodes(tree)
+    .find((node) => node?.type === 'input')
+    .props.onChange({ target: { value: 'binding' } })
+  tree = render({ sessionId: 'a' })
+  button(tree, '约定').props.onClick()
+  await setImmediate()
+  tree = render({ sessionId: 'a' })
+  button(tree, '待确认').props.onClick()
+  await setImmediate()
+  assert.equal(sent.at(-1).type, 'convention', 'the type filter is applied')
+  assert.equal(sent.at(-1).status, 'provisional', 'the status filter is applied')
+  // Clear only 类型. The existing case above already pins the explicit `null` a
+  // `??` merge would lose; this one pins the sibling invariant, so a future
+  // "clear resets every filter" regression cannot pass unnoticed. 状态 travels
+  // in the same request and must survive the clear untouched.
+  tree = render({ sessionId: 'a' })
+  const group = nodes(tree).find(
+    (node) => node?.props?.className === 'mem-filter' && nodes(node).includes('类型'),
+  )
+  button(group, '全部').props.onClick()
+  await setImmediate()
+  assert.equal(sent.at(-1).type, null, 'the cleared field is an explicit null')
+  assert.equal(sent.at(-1).status, 'provisional', 'the sibling filter is still applied')
+})
+
 test('polling keeps last-good data on same-session refresh but hides it while another session loads or fails', async (t) => {
   const next = deferred()
   let calls = 0

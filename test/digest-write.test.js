@@ -95,13 +95,55 @@ test('the owned digest writer creates, no-ops and updates one project note', asy
   assert.equal(third.status, 'updated')
   assert.equal(typeof third.txId, 'string')
 
+  // A refresh goes through `mem_admin`, which renders with the real clock, so the
+  // note it writes carries today's local date — not the 2026-10-27 the writes above
+  // inject. The header is day-granularity on purpose (see `renderDigestNote`): on
+  // the first refresh of a new day the `updated:` line genuinely differs, and
+  // asserting `unchanged` here only ever passed on the calendar day the fixture
+  // hardcodes. The property that holds on any day is asserted instead — a refresh
+  // rewrites only when the day rolled, and nothing else in the note may move.
+  const beforeRefresh = await readFile(join(world.vault, NOTE), 'utf8')
   const refreshed = await world.services.admin(
     { action: 'digest', operation: 'refresh', days: 1 },
     undefined,
     {},
   )
   assert.equal(refreshed.action, 'digest')
-  assert.equal(refreshed.result.publication.status, 'unchanged')
+  const publication = refreshed.result.publication
+  const afterRefresh = await readFile(join(world.vault, NOTE), 'utf8')
+  assert.ok(
+    ['created', 'updated', 'unchanged'].includes(publication.status),
+    `a refresh reports a closed status, got ${JSON.stringify(publication.status)}`,
+  )
+  if (publication.status === 'unchanged') {
+    assert.equal(publication.txId, null)
+    assert.equal(afterRefresh, beforeRefresh, 'unchanged means the bytes already on disk')
+  } else {
+    // The date stamp is the only line a day rollover is allowed to change.
+    assert.equal(typeof publication.txId, 'string')
+    const beforeLines = beforeRefresh.split('\n')
+    const afterLines = afterRefresh.split('\n')
+    assert.equal(afterLines.length, beforeLines.length, 'a refresh adds or drops no line')
+    const changed = beforeLines
+      .map((line, index) => [line, afterLines[index]])
+      .filter(([left, right]) => left !== right)
+    assert.ok(changed.length > 0, 'an updated publication wrote different bytes')
+    for (const [left] of changed) {
+      assert.match(
+        left,
+        /^updated: \d{4}-\d{2}-\d{2}$/u,
+        `a refresh rewrote a line that is not the date stamp: ${JSON.stringify(left)}`,
+      )
+    }
+  }
+  // A second refresh with no source change in between is a no-op on any day.
+  const again = await world.services.admin(
+    { action: 'digest', operation: 'refresh', days: 1 },
+    undefined,
+    {},
+  )
+  assert.equal(again.result.publication.status, 'unchanged')
+  assert.equal(again.result.publication.txId, null)
 })
 
 test('a human-owned target is refused, never replaced', async (t) => {

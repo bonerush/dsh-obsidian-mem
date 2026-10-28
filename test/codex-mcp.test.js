@@ -29,14 +29,20 @@ import { readDiagnosticJournal } from '../lib/diagnostic-journal.js'
 import { mcpConfig, problems } from '../codex/prepare.mjs'
 import { TOOL_NAMES, TOOL_PARAMETERS } from '../lib/tools.js'
 
+import { registerTreeCleanup } from './platform-capabilities.js'
+
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SERVER = join(REPO, 'codex', 'server.mjs')
 
 test('the Codex adapter persists its content-free diagnostic decisions', async (t) => {
   const { home, dsh, vault, repo } = world()
-  t.after(() => rmSync(home, { recursive: true, force: true }))
+  // node:test runs its hooks in registration order: a plain rmSync registered
+  // here would delete the tree before the services opened on the next line are
+  // closed, and Windows answers EBUSY on a still-open sqlite file. The
+  // registrar runs the disposal first, then removes the tree.
+  const onCleanup = registerTreeCleanup(t, home)
   const memory = openMemory({ home, dshHome: dsh, vaultPath: vault, cwd: repo })
-  t.after(() => memory.services.close())
+  onCleanup(() => memory.services.close())
   memory.diagnostics.event('job', { outcome: 'failed', body: 'SENTINEL-CODEX-BODY' })
   const report = readDiagnosticJournal({ dataRoot: memory.dataRoot })
   assert.equal(
@@ -375,7 +381,10 @@ test('the marketplace plugin is complete, and its generated .mcp.json matches th
   } else {
     // Not generated yet on a fresh clone: the file is machine-specific and ignored
     // by git, so its absence is a step to run, not a failure.
-    assert.match(mcpConfig().mcpServers['obsidian-mem'].args[0], /codex\/server\.mjs$/)
+    // `join()` uses the host separator, so this must accept both: on Windows the
+    // generated arg is `C:\...\codex\server.mjs`. The asserted fact is unchanged —
+    // the MCP server points at this checkout's codex/server.mjs.
+    assert.match(mcpConfig().mcpServers['obsidian-mem'].args[0], /[\\/]codex[\\/]server\.mjs$/)
   }
 })
 

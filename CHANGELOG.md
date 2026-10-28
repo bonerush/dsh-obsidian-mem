@@ -11,6 +11,96 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Fixed
+
+- **The plugin now runs on Windows.** Seven defects were platform-only, each
+  measured rather than inferred, and every one of them made a shipped feature
+  fail on a default Windows install:
+  - The Codex hooks and MCP server never started. All four entry points tested
+    `import.meta.url === \`file://\${process.argv[1]}\``, which on Windows compares
+    `file:///C:/…` against `file://C:\…` and is therefore never true: the process
+    exited 0 in silence. `node codex/prepare.mjs` faked success without writing a
+    file, the MCP server never answered `initialize`, and SessionStart injection
+    and prompt recall never fired. They use `pathToFileURL(...).href` now.
+  - Delivery state and the convention cursor read outside their own data root.
+    `path.slice(root.length).split('/')` degrades to **one** bogus segment on a
+    backslash path, so no intermediate directory was `lstat`-ed: a junction planted
+    mid-chain was followed and the refused read returned bytes from outside
+    `dataRoot`. Path segments now come from `node:path`'s `relative()` + `sep`.
+  - `~/` never expanded. The check compared against `~\${sep}`, so the documented
+    default `~/Documents/dsh-memory` stayed relative and every resolution threw
+    `RangeError: vaultRoot must be absolute or start with ~/`. Both separators are
+    accepted now.
+  - The packaged skill never synced. On a CRLF checkout the frontmatter slice kept
+    its trailing `\r`, which the YAML parser rejects, so `apply()` reported a
+    failure on every Windows machine and `$DSH_HOME/skills/obsidian-mem` was never
+    written.
+  - Replacing a file could fail forever. `rename` over a destination that was
+    published with `fs.link` answers `EPERM` on NTFS and does not clear: 400
+    attempts over 10 s still failed, while plain-written destinations in the same
+    directory failed 0/60. New `lib/fs-atomic.js` retries the transient codes and,
+    for a spent `EPERM` budget, unlinks and retries once; the seven modules that
+    each had a private copy of the temporary-fsync-rename sequence now share it.
+  - `O_NOFOLLOW` is `undefined` on win32, `chmod` does not set NTFS permission
+    bits, and `fsync` on a directory handle raises `EPERM`. The curation claim
+    guard validates the opened file instead of relying on the flag, the private-mode
+    checks ask the platform what it can prove, and the directory sync tolerates the
+    refusal.
+  - `scripts/check-staged.mjs` and `scripts/verify-tarball.mjs` spawned
+    `node_modules/.bin/*` shims and `npm`: on Windows those are `sh` scripts
+    (ENOENT) or `.cmd` files (`EINVAL` without a shell), so the gate reported
+    "eslint failed" with an empty message. Both go through `process.execPath` and
+    the packages' own JS entry files.
+- **An unreadable record could be read as an absent one.** Windows collapses
+  `ENOTDIR` into `ENOENT`, so a proposal directory replaced by a regular file
+  answered "no such proposal" instead of `state-unreadable`, and the same shape
+  defeated the diagnostics-journal privacy refusal. `parentIsNotDirectory()`
+  re-reads the parent before concluding "missing".
+- **The coverage-first brief silently changed what `truncated` means.** The
+  refactor measured it against the section-aware `considered` count, so a
+  conventions preview (5 shown of 50 considered, the default
+  `briefConventionMode:'summary'`) reported `truncated:true` even when the
+  budget had cut nothing — and hooks' R38 hot-snapshot logic reads that flag as
+  hot-view completeness, so any project with more than five conventions got a
+  held snapshot and a redundant full-hot-layer re-injection on the next change.
+  `truncated` now measures the units the sections carry again; the preview cut
+  stays visible in `coverage`, the 记忆覆盖 note and the footer, and a
+  regression test pins the contract.
+- **The panel's 全部 (clear-filter) chip was a silent no-op.** The search view
+  merged request options with `??`, so the chip's explicit `type: null` /
+  `status: null` fell back to the current value: once a filter was set it could
+  never be cleared. The merge now distinguishes a passed key from an absent one.
+- **`mem_admin(action="appraise")` could never report `dead-link`.** The action
+  passed no link resolver, so the code the CHANGELOG advertised was impossible
+  from the tool. It now collects the window's wikilink targets, asks the index
+  in one batched `statusesForPaths` call, and answers from that snapshot; a
+  statuses refusal leaves the resolver absent rather than failing the appraisal.
+  The read loop also stops at a wall-clock deadline and reports the cut, so a
+  slow disk cannot turn the bounded action into 50 unbounded reads.
+- **`fsyncDirectory` now tolerates an `EPERM`/`EACCES` on the `sync` itself.**
+  Some Windows runs refuse to flush a directory handle they did open; the
+  function already tolerated a refused open, and the sync refusal is the same
+  "nothing more this code can do" class.
+- **`readGuarded` no longer misreads an MFT-resident file as offloaded.** NTFS
+  stores small files resident in the master file table and reports
+  `blocks === 0` for them; the measured boundary on this filesystem is 512
+  bytes, so files at or below it are read instead of refused as cloud
+  placeholders. A genuine on-demand placeholder is far larger and is still
+  refused.
+- **The panel's `hasMore` with a status filter no longer over-reports.** A full
+  index page with zero rows matching the filter claimed "more" from
+  `candidatesScored`, but 显示更多 would re-request the same page and yield
+  nothing; with a filter active, only rows the filter kept beyond the visible
+  window prove more. The hooks' coverage diagnostic now reuses the footer's
+  `coverageFooterField`, so the event and the injected text name the same cut
+  sections in the same order.
+- **The curation review guard dead-ended on Windows.** The claim guard refused
+  every operation on a platform without `O_NOFOLLOW` (`node:constants` leaves
+  it `undefined` on win32), so an approved review could never apply there. The
+  post-open validation (regular file, one hardlink, same inode through both
+  `fstat` and `lstat`) is the symlink guard on such platforms; POSIX still
+  closes the creation window with the flag.
+
 ## 0.2.1 — 2026-10-28
 
 ### Added

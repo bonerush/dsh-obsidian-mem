@@ -30,7 +30,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
@@ -65,6 +65,8 @@ import {
 import { createMemoryServices } from '../lib/tools.js'
 import { bootstrapVault, parseNote } from '../lib/vault.js'
 
+import { HAS_POSIX_MODES, registerTreeCleanup } from './platform-capabilities.js'
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -94,18 +96,27 @@ const sha256 = (value) => createHash('sha256').update(value).digest('hex')
 const at = (vault, relative) => join(vault, ...relative.split('/'))
 const occurrences = (haystack, needle) => String(haystack).split(needle).length - 1
 
-/** A fresh private root; nothing in this file uses the process cwd or home. */
+/**
+ * A fresh private root; nothing in this file uses the process cwd or home.
+ *
+ * The removal is registered through `registerTreeCleanup`, because `node:test`
+ * runs hooks in registration order: a plain `t.after(rm)` here would delete the
+ * tree BEFORE a later `index.close()`, and Windows answers EBUSY on the
+ * still-open sqlite files. Returns the root and the disposal registrar.
+ */
 async function temporaryRoot(t, name = 'obsidian-mem-t16-auto-') {
   const root = await mkdtemp(join(tmpdir(), name))
-  t.after(() => rm(root, { recursive: true, force: true, maxRetries: 4 }))
-  return root
+  return { root, onCleanup: registerTreeCleanup(t, root) }
 }
 
 /** A real bootstrapped vault, a throwaway data root and an explicit queue root. */
 async function fixture(t) {
-  const root = await temporaryRoot(t)
+  // The root's registrar is registered first, so its hook runs first: it runs
+  // the index/service disposals and only then removes `root`. The data root gets
+  // a second registrar whose removal still follows. See `temporaryRoot`.
+  const { root, onCleanup } = await temporaryRoot(t)
   const dataRoot = await mkdtemp(join(tmpdir(), 'obsidian-mem-t16-data-'))
-  t.after(() => rm(dataRoot, { recursive: true, force: true, maxRetries: 4 }))
+  registerTreeCleanup(t, dataRoot)
   const home = join(root, 'home')
   await mkdir(home, { recursive: true })
   const vault = join(root, 'vault')
@@ -122,6 +133,7 @@ async function fixture(t) {
   return {
     root,
     dataRoot,
+    onCleanup,
     home,
     vault,
     binding,
@@ -260,7 +272,8 @@ test('v4 repeated failures reach Inbox through the real queue, restart once and 
     projectId: PROJECT_ID,
     home: f.home,
   })
-  t.after(() => index.close())
+  // Closed through the fixture registrar, before the trees are removed.
+  f.onCleanup(() => index.close())
   await index.waitReady(undefined, 10_000)
   const options = queueOptions(f, { llm: model, index: async () => index })
   await processQueue(options)
@@ -771,7 +784,7 @@ test('a candidate duplicating an existing note is parked for review instead of s
     projectId: f.binding.projectId,
     home: f.home,
   })
-  t.after(() => index.close().catch(() => {}))
+  f.onCleanup(() => index.close().catch(() => {}))
   await index.waitReady(undefined, 10_000)
 
   const job = validatedJob([itemFixture({ title: '调度器后端选型（重写）' })])
@@ -937,7 +950,8 @@ test('a deferred job is retried by the worker timer alone, with no new capture o
     warn: () => {},
     getLlm: () => llm,
   })
-  t.after(() => worker.stop())
+  // Stopped before the trees go: a running worker still polls the queue files.
+  f.onCleanup(() => worker.stop())
 
   const first = await worker.pass()
   assert.equal(first.deferred, 1)
@@ -1599,11 +1613,27 @@ test('a process killed between the validated barrier and the audit still reports
       env: { ...process.env, T16_CAPTURE_URL: new URL('../lib/capture.js', import.meta.url).href },
     },
   )
-  assert.equal(
-    killed.signal,
-    'SIGKILL',
-    `the child must die at the audit boundary, stderr: ${killed.stderr}`,
-  )
+  if (HAS_POSIX_MODES) {
+    assert.equal(
+      killed.signal,
+      'SIGKILL',
+      `the child must die at the audit boundary, stderr: ${killed.stderr}`,
+    )
+  } else {
+    // Windows has no POSIX signals. `process.kill(pid, 'SIGKILL')` still
+    // terminates the process, but `spawnSync` reports `signal: null` and a
+    // non-zero `status` (measured: status 1, signal null) instead of naming
+    // 'SIGKILL'. The property under test is unchanged — the child did NOT
+    // reach a normal exit at the audit boundary — and the durable state
+    // assertions below prove it stopped at that exact point, not merely that
+    // it failed somewhere.
+    assert.equal(killed.signal, null, `no POSIX signal exists on Windows: ${killed.stderr}`)
+    assert.notEqual(
+      killed.status,
+      0,
+      `the child must not reach its normal exit, stderr: ${killed.stderr}`,
+    )
+  }
 
   // The durable state after the kill: items are on disk, the audit is missing.
   const orphan = await jobOnDisk(f)
@@ -1821,7 +1851,7 @@ test('enqueueTurn produces nothing when autoCapture is off', async (t) => {
 
 test('an explicit queueRoot and dataRoot are the only filesystem targets; DSH_HOME is never consulted', async (t) => {
   const f = await fixture(t)
-  const fakeHome = await temporaryRoot(t, 'obsidian-mem-t16-home-')
+  const { root: fakeHome } = await temporaryRoot(t, 'obsidian-mem-t16-home-')
   const previous = process.env.DSH_HOME
   process.env.DSH_HOME = fakeHome
   t.after(() => {
@@ -1860,7 +1890,7 @@ test('registerHooks starts capture and the worker from one queue root, end to en
     home: f.home,
     resolveJobBinding: () => f.binding,
   })
-  t.after(() => {
+  f.onCleanup(() => {
     for (const dispose of disposers) dispose()
   })
 
@@ -2637,7 +2667,7 @@ test('a committed write queues its note once and a parked candidate queues nothi
     projectId: f.binding.projectId,
     home: f.home,
   })
-  t.after(() => index.close().catch(() => {}))
+  f.onCleanup(() => index.close().catch(() => {}))
   await index.waitReady(undefined, 10_000)
   applied.length = 0
   await writeJobAtomic(
@@ -2686,7 +2716,7 @@ test('two passes asked for in one tick start exactly one', async (t) => {
   const worker = createQueueWorker(
     queueOptions(f, { config: baseConfig({ autoCurate: true }), debounceMs: 0 }),
   )
-  t.after(() => worker.stop())
+  f.onCleanup(() => worker.stop())
 
   const calls = []
   worker.setOnCurationCompleted((binding, paths) => calls.push(paths.slice()))

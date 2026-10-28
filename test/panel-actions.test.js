@@ -9,7 +9,7 @@
 // `mktemp` vault and queue to prove the preview really writes nothing.
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -30,6 +30,8 @@ import {
 } from '../lib/panel-actions.js'
 import { createMemoryServices } from '../lib/services.js'
 import { bootstrapVault } from '../lib/vault.js'
+
+import { registerTreeCleanup } from './platform-capabilities.js'
 
 const PROJECT_ID = '11111111-1111-4111-8111-111111111111'
 const OTHER_PROJECT_ID = '22222222-2222-4222-8222-222222222222'
@@ -249,10 +251,17 @@ function assertCode(status, code) {
   }
 }
 
+/**
+ * A throwaway root plus the registrar that removes it last.
+ *
+ * `node:test` runs its hooks in registration order, so a plain `t.after(rm)`
+ * here would remove the tree before the services a later case opens are
+ * closed, and Windows answers EBUSY on the still-open sqlite files. The
+ * registrar runs every disposal registered on it first, then removes the tree.
+ */
 async function temporaryRoot(t, name) {
   const root = await mkdtemp(join(tmpdir(), name))
-  t.after(() => rm(root, { recursive: true, force: true, maxRetries: 4 }))
-  return root
+  return { root, onCleanup: registerTreeCleanup(t, root) }
 }
 
 // ---------------------------------------------------------------------------
@@ -681,7 +690,7 @@ test('previews refuse missing, foreign and non-terminal jobs and a missing hot f
 // ---------------------------------------------------------------------------
 
 test('the service refuses a retry for another project before reviving it', async (t) => {
-  const root = await temporaryRoot(t, 'obsidian-mem-panel-retry-precondition-')
+  const { root, onCleanup } = await temporaryRoot(t, 'obsidian-mem-panel-retry-precondition-')
   const dataRoot = join(root, 'data')
   const home = join(root, 'home')
   await mkdir(dataRoot, { recursive: true })
@@ -702,7 +711,8 @@ test('the service refuses a retry for another project before reviving it', async
     cwd: root,
     binding,
   })
-  t.after(async () => services.close?.())
+  // Closed before the tree removal: see `temporaryRoot`.
+  onCleanup(async () => services.close?.())
 
   const refused = await services.admin(
     { action: 'jobs', retry: true, jobId: foreign.jobId, projectId: PROJECT_ID },
@@ -727,7 +737,7 @@ test('the service refuses a retry for another project before reviving it', async
 })
 
 test('real services: the panel retry revives exactly the displayed failed job', async (t) => {
-  const root = await temporaryRoot(t, 'obsidian-mem-panel-retry-')
+  const { root, onCleanup } = await temporaryRoot(t, 'obsidian-mem-panel-retry-')
   const dataRoot = join(root, 'data')
   const home = join(root, 'home')
   await mkdir(dataRoot, { recursive: true })
@@ -742,7 +752,8 @@ test('real services: the panel retry revives exactly the displayed failed job', 
     cwd: root,
     binding,
   })
-  t.after(async () => services.close?.())
+  // Closed before the tree removal: see `temporaryRoot`.
+  onCleanup(async () => services.close?.())
   const env = panelEnv({ services })
   const preview = await previewPanelAction({
     operation: 'retry-job',
@@ -759,7 +770,7 @@ test('real services: the panel retry revives exactly the displayed failed job', 
 })
 
 test('real services: a digest preview writes nothing and its confirmation publishes once', async (t) => {
-  const root = await temporaryRoot(t, 'obsidian-mem-panel-digest-action-')
+  const { root, onCleanup } = await temporaryRoot(t, 'obsidian-mem-panel-digest-action-')
   const dataRoot = join(root, 'data')
   const home = join(root, 'home')
   const vault = join(root, 'vault')
@@ -784,7 +795,8 @@ test('real services: a digest preview writes nothing and its confirmation publis
     cwd: root,
     binding,
   })
-  t.after(async () => services.close?.())
+  // Closed before the tree removal: see `temporaryRoot`.
+  onCleanup(async () => services.close?.())
   const exec = { agent: { session: { header: { id: SESSION, cwd: root } } } }
   const env = {
     sessionId: SESSION,

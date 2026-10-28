@@ -6,7 +6,7 @@
 // corrupt state resets to the first eligible unit, and the file holds only
 // schema/revision/fingerprint/hashed anchor under dataRoot/cursors/.
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -22,6 +22,12 @@ import {
   readConventionCursor,
   rotateConventions,
 } from '../lib/convention-rotation.js'
+import {
+  assertPrivateDirectory,
+  assertPrivateFile,
+  createDirectoryLink,
+  skipWithoutDirectorySymlink,
+} from './platform-capabilities.js'
 
 const PROJECT_ID = '1c392abb-7b08-42f7-871d-2a379caf9448'
 const UNITS = Array.from({ length: 12 }, (_, i) => `- [[Conventions/约定-${i + 1}|约定 ${i + 1}]]`)
@@ -164,8 +170,10 @@ test('the cursor lives under cursors/<vaultHash>/<projectId> with private modes 
   })
   const statted = await stat(path)
   assert.equal(statted.isFile(), true)
-  assert.equal(statted.mode & 0o777, 0o600)
-  assert.equal((await stat(join(path, '..'))).mode & 0o777, 0o700)
+  // POSIX bits are the assertion on a POSIX host; NTFS does not express them, so
+  // there the helper asserts the regular-file/not-a-link/owner-readable shape.
+  await assertPrivateFile(path, 0o600)
+  await assertPrivateDirectory(join(path, '..'), 0o700)
   const stored = JSON.parse(await readFile(path, 'utf8'))
   assert.deepEqual(Object.keys(stored).sort(), ['anchorHash', 'fingerprint', 'revision', 'schema'])
   // The anchor is hashed: no convention text is persisted.
@@ -267,28 +275,34 @@ test('an oversized or foreign-shaped cursor file is refused instead of trusted',
   assert.equal(oversizedRead.corrupt, true)
 })
 
-test('the cursor directory refuses to follow a symlink', async (t) => {
-  const env = await fixture(t)
-  const first = await prepareConventionPreview({
-    binding: env.binding,
-    dataRoot: env.dataRoot,
-    units: UNITS,
-  })
-  const path = conventionCursorPath({
-    dataRoot: env.dataRoot,
-    vaultHash: first.rotation.vaultHash,
-    projectId: PROJECT_ID,
-  })
-  const outside = join(env.root, 'outside')
-  await mkdir(outside, { recursive: true })
-  await mkdir(join(path, '..'), { recursive: true, mode: 0o700 })
-  // Replace the private project cursor directory with a symlink to a directory
-  // outside dataRoot; a reader that follows it is a privacy hole, so this is a
-  // refusal and the state starts fresh.
-  await rm(join(path, '..'), { recursive: true, force: true })
-  await symlink(outside, join(path, '..'), 'dir')
-  const read = await readConventionCursor({ binding: env.binding, dataRoot: env.dataRoot })
-  assert.equal(read.degraded, true)
-  assert.equal(read.symlink, true)
-  assert.equal(read.state.revision, 0)
-})
+test(
+  'the cursor directory refuses to follow a symlink',
+  { skip: skipWithoutDirectorySymlink() },
+  async (t) => {
+    const env = await fixture(t)
+    const first = await prepareConventionPreview({
+      binding: env.binding,
+      dataRoot: env.dataRoot,
+      units: UNITS,
+    })
+    const path = conventionCursorPath({
+      dataRoot: env.dataRoot,
+      vaultHash: first.rotation.vaultHash,
+      projectId: PROJECT_ID,
+    })
+    const outside = join(env.root, 'outside')
+    await mkdir(outside, { recursive: true })
+    await mkdir(join(path, '..'), { recursive: true, mode: 0o700 })
+    // Replace the private project cursor directory with a symlink to a directory
+    // outside dataRoot; a reader that follows it is a privacy hole, so this is a
+    // refusal and the state starts fresh.
+    await rm(join(path, '..'), { recursive: true, force: true })
+    // A junction where a directory symlink is refused still produces a real link the
+    // reader must refuse to follow, so the refusal itself stays covered.
+    await createDirectoryLink(outside, join(path, '..'))
+    const read = await readConventionCursor({ binding: env.binding, dataRoot: env.dataRoot })
+    assert.equal(read.degraded, true)
+    assert.equal(read.symlink, true)
+    assert.equal(read.state.revision, 0)
+  },
+)

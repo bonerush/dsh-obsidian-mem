@@ -32,9 +32,32 @@ const CLI = resolve(import.meta.dirname, '..', 'lib', 'curation-cli.js')
 const EXPECT = '/usr/bin/expect'
 const NOW = new Date('2026-10-03T04:00:00Z')
 
+/** Memoised answer to "does this host have `expect(1)`", probed once per process. */
+let expectAvailable = null
+
+/**
+ * Why this host cannot drive the pty lane, or `false` when it can.
+ *
+ * Platform capability, not a policy choice: the lane is driven by `expect(1)`, a Tcl
+ * utility present on macOS and most Linux images. This host is Windows, non-elevated
+ * with Developer Mode off, and ships no `expect` and no standalone pty helper —
+ * measured below, not inferred from `process.platform`. The pipe lane (the
+ * non-terminal route this command must refuse) stays covered by
+ * `test/curation-cli.test.js`.
+ *
+ * @returns {false|string} `false` when a pty can be created, else the platform reason.
+ */
+function withoutPty() {
+  if (expectAvailable === null) {
+    expectAvailable = spawnSync(EXPECT, ['-v'], { encoding: 'utf8' }).status === 0
+  }
+  if (expectAvailable) return false
+  return 'this host has no expect(1), so no pseudo-terminal can be created (Windows: no Tcl expect and no pty helper)'
+}
+
 /** Whether a usable `expect` exists on this machine. */
 function hasExpect() {
-  return spawnSync(EXPECT, ['-v'], { encoding: 'utf8' }).status === 0
+  return withoutPty() === false
 }
 
 /**
@@ -169,8 +192,9 @@ async function publishedNotes(made) {
 }
 
 test('interactive rejection stays read-only after a crash and explicit apply finishes recovery', async (t) => {
-  if (!hasExpect()) {
-    t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
+  const ptyReason = withoutPty()
+  if (ptyReason) {
+    t.skip(ptyReason)
     return
   }
   for (const failAfter of ['new-note', 'receipt-store']) {
@@ -253,11 +277,17 @@ test('interactive rejection stays read-only after a crash and explicit apply fin
 })
 
 test('typing the exact confirmation applies the proposal', async (t) => {
+  // A pty-less host skips before the world is built: nothing below can assert.
+  const ptyReason = withoutPty()
+  if (ptyReason) {
+    t.skip(ptyReason)
+    return
+  }
   const made = await parked(t)
   const id = made.proposal.proposalId
   const answer = await runOnTty(made, ['--vault', made.vault, id], `apply ${id}`)
   if (answer === null) {
-    t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
+    t.skip('the pty lane could not be spawned on this host, so the case asserts nothing')
     return
   }
   // The command prints both accepted forms with the exact id it read, which is what
@@ -285,11 +315,17 @@ test('a line ending delivered as CR LF is still the exact confirmation', async (
   // `askLine` strips one trailing `\r`, because a pty in raw mode hands back the
   // carriage return it read. The near-miss set below cannot cover that: this is the
   // accepted direction, and without the strip the same bytes would be a mismatch.
+  // A pty-less host skips before the world is built: nothing below can assert.
+  const ptyReason = withoutPty()
+  if (ptyReason) {
+    t.skip(ptyReason)
+    return
+  }
   const made = await parked(t)
   const id = made.proposal.proposalId
   const answer = await runOnTty(made, ['--vault', made.vault, id], `apply ${id}\r`)
   if (answer === null) {
-    t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
+    t.skip('the pty lane could not be spawned on this host, so the case asserts nothing')
     return
   }
   assert.equal(answer.status, 0, answer.output)
@@ -303,11 +339,17 @@ test('a line ending delivered as CR LF is still the exact confirmation', async (
 test('a vault path holding a space survives the pty lane', async (t) => {
   // The command is spawned through `expect`, which is where a path with a space would
   // be split into two arguments if the argv were spliced into a command string.
+  // A pty-less host skips before the world is built: nothing below can assert.
+  const ptyReason = withoutPty()
+  if (ptyReason) {
+    t.skip(ptyReason)
+    return
+  }
   const made = await parked(t, { vaultName: 'vault with a space' })
   const id = made.proposal.proposalId
   const answer = await runOnTty(made, ['--vault', made.vault, id], `apply ${id}`)
   if (answer === null) {
-    t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
+    t.skip('the pty lane could not be spawned on this host, so the case asserts nothing')
     return
   }
   assert.equal(answer.status, 0, answer.output)
@@ -315,12 +357,18 @@ test('a vault path holding a space survives the pty lane', async (t) => {
 })
 
 test('a near miss publishes nothing and exits non-zero', async (t) => {
+  // A pty-less host skips before the world is built: nothing below can assert.
+  const ptyReason = withoutPty()
+  if (ptyReason) {
+    t.skip(ptyReason)
+    return
+  }
   const made = await parked(t)
   const id = made.proposal.proposalId
   for (const typed of ['', `apply`, id, `apply ${id} `, `APPLY ${id}`, `apply ${id}x`]) {
     const answer = await runOnTty(made, ['--vault', made.vault, id], typed)
     if (answer === null) {
-      t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
+      t.skip('the pty lane could not be spawned on this host, so the case asserts nothing')
       return
     }
     assert.notEqual(answer.status, 0, `expected ${JSON.stringify(typed)} to be refused`)
@@ -340,13 +388,19 @@ test('a near miss publishes nothing and exits non-zero', async (t) => {
 })
 
 test('typing the exact rejection marks the proposal rejected and changes no byte', async (t) => {
+  // A pty-less host skips before the world is built: nothing below can assert.
+  const ptyReason = withoutPty()
+  if (ptyReason) {
+    t.skip(ptyReason)
+    return
+  }
   const made = await parked(t)
   const id = made.proposal.proposalId
   const seedPath = join(made.vault, ...made.seed.path.split('/'))
   const before = await readFile(seedPath)
   const answer = await runOnTty(made, ['--vault', made.vault, id], `reject ${id}`)
   if (answer === null) {
-    t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
+    t.skip('the pty lane could not be spawned on this host, so the case asserts nothing')
     return
   }
   assert.equal(answer.status, 0, answer.output)
@@ -361,13 +415,19 @@ test('typing the exact rejection marks the proposal rejected and changes no byte
 })
 
 test('a wrong proposal id exits non-zero and writes nothing', async (t) => {
+  // A pty-less host skips before the world is built: nothing below can assert.
+  const ptyReason = withoutPty()
+  if (ptyReason) {
+    t.skip(ptyReason)
+    return
+  }
   const made = await parked(t)
   const wrong = 'b'.repeat(64)
   const seedPath = join(made.vault, ...made.seed.path.split('/'))
   const before = await readFile(seedPath)
   const answer = await runOnTty(made, ['--vault', made.vault, wrong], `apply ${wrong}`)
   if (answer === null) {
-    t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
+    t.skip('the pty lane could not be spawned on this host, so the case asserts nothing')
     return
   }
   assert.notEqual(answer.status, 0, answer.output)
@@ -377,6 +437,12 @@ test('a wrong proposal id exits non-zero and writes nothing', async (t) => {
 })
 
 test('a stored record the reader refuses is reported as unreadable, not as missing', async (t) => {
+  // A pty-less host skips before the world is built: nothing below can assert.
+  const ptyReason = withoutPty()
+  if (ptyReason) {
+    t.skip(ptyReason)
+    return
+  }
   const made = await parked(t)
   const id = made.proposal.proposalId
   const seedPath = join(made.vault, ...made.seed.path.split('/'))
@@ -387,7 +453,7 @@ test('a stored record the reader refuses is reported as unreadable, not as missi
   await writeFile(curationProposalPath(made.dataRoot, made.binding.projectId, id), '{ not json\n')
   const answer = await runOnTty(made, ['--vault', made.vault, id], `apply ${id}`)
   if (answer === null) {
-    t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
+    t.skip('the pty lane could not be spawned on this host, so the case asserts nothing')
     return
   }
   assert.notEqual(answer.status, 0, answer.output)
@@ -398,6 +464,12 @@ test('a stored record the reader refuses is reported as unreadable, not as missi
 })
 
 test('the command never approves a batch: one id, one proposal', async (t) => {
+  // A pty-less host skips before the world is built: nothing below can assert.
+  const ptyReason = withoutPty()
+  if (ptyReason) {
+    t.skip(ptyReason)
+    return
+  }
   const made = await parked(t)
   const other = await saveCurationProposal({
     dataRoot: made.dataRoot,
@@ -423,7 +495,7 @@ test('the command never approves a batch: one id, one proposal', async (t) => {
   const id = made.proposal.proposalId
   const answer = await runOnTty(made, ['--vault', made.vault, id], `apply ${id}`)
   if (answer === null) {
-    t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
+    t.skip('the pty lane could not be spawned on this host, so the case asserts nothing')
     return
   }
   assert.equal(answer.status, 0, answer.output)
@@ -437,11 +509,17 @@ test('the command never approves a batch: one id, one proposal', async (t) => {
 })
 
 test('the review display names the source it will touch and carries no credentials', async (t) => {
+  // A pty-less host skips before the world is built: nothing below can assert.
+  const ptyReason = withoutPty()
+  if (ptyReason) {
+    t.skip(ptyReason)
+    return
+  }
   const made = await parked(t)
   const id = made.proposal.proposalId
   const answer = await runOnTty(made, ['--vault', made.vault, id], `reject ${id}`)
   if (answer === null) {
-    t.skip('expect(1) is unavailable, so no pseudo-terminal can be created')
+    t.skip('the pty lane could not be spawned on this host, so the case asserts nothing')
     return
   }
   assert.ok(answer.output.includes(made.seed.path), `expected ${made.seed.path} in the display`)

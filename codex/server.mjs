@@ -31,7 +31,7 @@
 // stderr, and `console.log` is never used.
 import { homedir } from 'node:os'
 import { createInterface } from 'node:readline'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { validateConfig } from '../lib/config.js'
 import { createDiagnostics } from '../lib/debug.js'
@@ -360,7 +360,8 @@ export async function serve(io = {}) {
   return { close: () => lines.close() }
 }
 
-const isEntry = process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`
+const isEntry =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href
 if (isEntry) {
   serve().catch((error) => {
     warn(`fatal: ${error?.stack ?? error}`)

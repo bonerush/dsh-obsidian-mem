@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
+import { registerTreeCleanup } from './platform-capabilities.js'
 import { openIndex } from '../lib/index-db.js'
 import { createGraphActivity, noteTouchFromToolCall } from '../lib/graph-activity.js'
 import { createGraphRecall } from '../lib/graph-recall.js'
@@ -55,12 +56,15 @@ async function fixture(t, backend, extraNotes = 0) {
       note('hub-one', 'hub', 'Z-Hub', PROJECT, 'See [[Docs/A-00]].'),
     )
   const index = await openIndex({ vaultRoot, dataRoot, backend, projectId: PROJECT })
-  t.after(async () => {
-    await index.close()
-    await rm(root, { recursive: true, force: true })
-  })
+  // The removal must run after every handle opened later in the case is closed.
+  // node:test runs its hooks in registration order, so a plain t.after(rm) here
+  // would delete the tree before a later index.close()/services.close() and
+  // Windows answers EBUSY on the still-open sqlite files. registerTreeCleanup
+  // registers its own hook now and runs the later disposals first.
+  const onCleanup = registerTreeCleanup(t, root)
+  onCleanup(() => index.close())
   assert.equal((await index.waitReady(undefined, 5000)).ready, true)
-  return { index, vaultRoot, dataRoot }
+  return { index, vaultRoot, dataRoot, onCleanup }
 }
 
 for (const backend of ['scan', 'sqlite']) {
@@ -227,7 +231,7 @@ for (const backend of ['scan', 'sqlite']) {
 }
 
 test('SQLite reopens a cache from the old link parser without waiting for note edits', async (t) => {
-  const { index, vaultRoot, dataRoot } = await fixture(t, 'sqlite')
+  const { index, vaultRoot, dataRoot, onCleanup } = await fixture(t, 'sqlite')
   await writeFile(
     join(vaultRoot, dir, 'Decisions', 'Design.md'),
     '---\nid: decision-one\n---\n[Related](../Conventions/Naming.md)\n',
@@ -242,7 +246,8 @@ test('SQLite reopens a cache from the old link parser without waiting for note e
   )
   database.close()
   const reopened = await openIndex({ vaultRoot, dataRoot, backend: 'sqlite', projectId: PROJECT })
-  t.after(() => reopened.close())
+  // Same reason as the fixture: the reopened handle must close before the rm.
+  onCleanup(() => reopened.close())
   const graph = await reopened.graph({ scope: 'all', limit: 20 })
   assert.ok(
     graph.edges.some((edge) => edge.source === 'decision-one' && edge.target === 'convention-one'),
@@ -261,14 +266,15 @@ test('graph activity is scoped to a session and advances only for recorded acces
 })
 
 test('a successful mem_read reports its note path to the graph activity seam', async (t) => {
-  const { vaultRoot, dataRoot } = await fixture(t, 'scan')
+  const { vaultRoot, dataRoot, onCleanup } = await fixture(t, 'scan')
   const accessed = []
   const services = createMemoryServices({
     config: validateConfig({ vaultPath: vaultRoot }),
     dataRoot,
     onAccess: (sessionId, paths, kind) => accessed.push({ sessionId, paths, kind }),
   })
-  t.after(() => services.close())
+  // Closed through the fixture's registrar so it runs before the tree removal.
+  onCleanup(() => services.close())
   const path = `${dir}/Decisions/Design.md`
   await services.read({ path }, undefined, {
     agent: { session: { header: { id: 'session-one' } } },
@@ -339,7 +345,7 @@ test('a host tool call is a cue only when it names one note inside the vault', (
 })
 
 test('mem_search and mem_write report their paths to the same activity seam', async (t) => {
-  const { vaultRoot, dataRoot } = await fixture(t, 'scan')
+  const { vaultRoot, dataRoot, onCleanup } = await fixture(t, 'scan')
   const seen = []
   const binding = {
     kind: 'bound',
@@ -363,7 +369,7 @@ test('mem_search and mem_write report their paths to the same activity seam', as
     binding,
     onAccess: (sessionId, paths, kind) => seen.push({ sessionId, paths, kind }),
   })
-  t.after(() => services.close())
+  onCleanup(() => services.close())
   const exec = { agent: { session: { header: { id: 'session-one' } } } }
 
   const hits = await services.search({ query: 'Names matter' }, undefined, exec)

@@ -26,7 +26,7 @@ import assert from 'node:assert/strict'
 import { fork } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { promises as fsp, readFileSync } from 'node:fs'
-import { mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import ts from 'typescript'
@@ -45,6 +45,11 @@ import { applyReviewedMemory, reviewCurationProposal } from '../lib/curation-rev
 import { recoverTransactions, withVaultLock } from '../lib/transaction.js'
 import { resolveBinding } from '../lib/vault.js'
 import { makeCurationWorld } from './curation-world.js'
+import {
+  assertPrivateFile,
+  createDirectoryLink,
+  skipWithoutFileSymlink,
+} from './platform-capabilities.js'
 
 /** One fixed clock, so every timestamp in a case is the same timestamp. */
 const NOW = new Date('2026-10-03T04:00:00Z')
@@ -521,16 +526,57 @@ test('the evidence is re-verified by the engine, under its own lock', async (t) 
   assert.deepEqual(await vaultBytes(made), before, 'the refusal published nothing')
 })
 
-test('a source replaced by a symlink is refused before any write', async (t) => {
+test(
+  'a source replaced by a file symlink is refused before any write',
+  // A file symlink is the link kind this host refuses to create unprivileged
+  // (EPERM, measured), so the escape it models cannot be built here at all.
+  { skip: skipWithoutFileSymlink() },
+  async (t) => {
+    const made = await world(t)
+    const { proposal } = await parkCreateSeparate(made)
+    const source = at(made, made.seed.path)
+    const outside = join(made.root, 'outside.md')
+    await writeFile(outside, '外部文件。\n')
+    await symlink(outside, `${source}.link`)
+    // Rewrite the proposal's own source list at the store's path, so the review is
+    // asked about a path that is now a symlink out of the vault. The record is
+    // written through the store's reader/writer pair rather than by hand.
+    const storePath = join(
+      made.dataRoot,
+      'curation',
+      'proposals',
+      made.binding.projectId,
+      `${proposal.proposalId}.json`,
+    )
+    const stored = JSON.parse(await readFile(storePath, 'utf8'))
+    stored.sources = [{ id: null, path: `${made.seed.path}.link`, hash: sha256('外部文件。\n') }]
+    await writeFile(storePath, `${JSON.stringify(stored, null, 2)}\n`)
+    const before = await vaultBytes(made)
+
+    const answer = await reviewCurationProposal({
+      dataRoot: made.dataRoot,
+      proposalId: proposal.proposalId,
+      decision: 'apply',
+      binding: made.binding,
+      now: NOW,
+    })
+    assert.equal(answer.status, 'refused')
+    assert.equal(answer.code, 'source-unsafe')
+    assert.deepEqual(await vaultBytes(made), before)
+  },
+)
+
+test('a source that is a directory link is refused before any write', async (t) => {
+  // The half of the refusal this host *can* exercise: an escape built from a
+  // directory link (a junction where a directory symlink is refused) is still a
+  // link on the source path, and the review must refuse it as source-unsafe.
+  // Dropping the case instead would leave the refusal with no coverage at all here.
   const made = await world(t)
   const { proposal } = await parkCreateSeparate(made)
-  const source = at(made, made.seed.path)
-  const outside = join(made.root, 'outside.md')
-  await writeFile(outside, '外部文件。\n')
-  await symlink(outside, `${source}.link`)
-  // Rewrite the proposal's own source list at the store's path, so the review is
-  // asked about a path that is now a symlink out of the vault. The record is
-  // written through the store's reader/writer pair rather than by hand.
+  const outside = join(made.root, 'outside-dir')
+  await mkdir(outside, { recursive: true })
+  await writeFile(join(outside, 'x.md'), '外部文件。\n')
+  await createDirectoryLink(outside, at(made, `${made.seed.path}.link`))
   const storePath = join(
     made.dataRoot,
     'curation',
@@ -538,9 +584,9 @@ test('a source replaced by a symlink is refused before any write', async (t) => 
     made.binding.projectId,
     `${proposal.proposalId}.json`,
   )
-  const stored = JSON.parse(await readFile(storePath, 'utf8'))
-  stored.sources = [{ id: null, path: `${made.seed.path}.link`, hash: sha256('外部文件。\n') }]
-  await writeFile(storePath, `${JSON.stringify(stored, null, 2)}\n`)
+  const storedNote = JSON.parse(await readFile(storePath, 'utf8'))
+  storedNote.sources = [{ id: null, path: `${made.seed.path}.link`, hash: sha256('外部文件。\n') }]
+  await writeFile(storePath, `${JSON.stringify(storedNote, null, 2)}\n`)
   const before = await vaultBytes(made)
 
   const answer = await reviewCurationProposal({
@@ -896,8 +942,10 @@ test(
     assert.equal(JSON.parse(await readFile(claim, 'utf8')).pid, crashed.child.pid)
     const liveAnswer = await reviewCurationProposal({ ...input, decision: 'reject' })
     assert.equal(liveAnswer.code, 'proposal-not-current', 'an old foreign live pid is not stale')
-    assert.equal((await fsp.stat(claim)).mode & 0o777, 0o600)
-    assert.equal((await fsp.stat(join(dirname(claim), '.review-lock.sqlite'))).mode & 0o777, 0o600)
+    // POSIX asserts the exact private bits; NTFS does not implement them, so the
+    // helper asserts the regular-file / non-link / owner-readable shape instead.
+    await assertPrivateFile(claim, 0o600)
+    await assertPrivateFile(join(dirname(claim), '.review-lock.sqlite'), 0o600)
     crashed.child.kill('SIGKILL')
     await crashed.exited
 
@@ -928,39 +976,64 @@ test(
   },
 )
 
-test('a symlinked claim guard never creates or modifies outside or vault targets', async (t) => {
+test('a linked claim guard never creates or modifies outside or vault targets', async (t) => {
+  // The guard refuses a guard path that is not *one* regular private file with one
+  // hardlink: `lib/curation-review.js` checks `nlink !== 1` on both the opened
+  // descriptor and the name. Two link kinds trip that check, and each half uses the
+  // one its row needs:
+  //
+  //   * `existing=true` — a **hardlink** to a real empty file. Target and guard share
+  //     bytes, so opening the guard would initialize the caller's file through the
+  //     shared inode; the guard sees `nlink === 2` and refuses. A hardlink needs no
+  //     privilege, so this half runs everywhere and "the outside bytes did not
+  //     change" is a real assertion, not a formality.
+  //   * `existing=false` — a **dangling file symlink**, the only construct that names
+  //     a path which does not exist yet. This host refuses to create a file symlink
+  //     unprivileged (EPERM, measured), so those rows skip with that reason while the
+  //     hardlink rows keep the same refusal branch covered.
   for (const location of ['outside', 'vault']) {
     for (const exists of [false, true]) {
       for (const decision of ['apply', 'reject']) {
-        await t.test(`${location}, existing=${exists}, ${decision}`, async (t) => {
-          const made = await world(t)
-          const { proposal } = await parkCreateSeparate(made)
-          const input = reviewInput(made, proposal)
-          const target = join(location === 'vault' ? made.vault : made.root, 'guard-target.db')
-          // An existing empty regular file is also protected from SQLite initialization.
-          if (exists) await writeFile(target, '')
-          const guard = join(
-            curationProposalDir(made.dataRoot, made.binding.projectId),
-            '.review-lock.sqlite',
-          )
-          await symlink(target, guard)
-          const before = await vaultBytes(made)
-          const answer = await reviewCurationProposal({ ...input, decision })
-          if (exists)
-            assert.equal((await readFile(target)).length, 0, 'outside bytes must not change')
-          else
-            assert.equal(
-              await fileExists(target),
-              false,
-              'a missing outside target must stay missing',
+        // A row whose target must already exist is built from a hardlink and runs
+        // everywhere; only the rows that need a *dangling* link skip.
+        await t.test(
+          `${location}, existing=${exists}, ${decision}`,
+          exists ? {} : { skip: skipWithoutFileSymlink() },
+          async (t) => {
+            const made = await world(t)
+            const { proposal } = await parkCreateSeparate(made)
+            const input = reviewInput(made, proposal)
+            const target = join(location === 'vault' ? made.vault : made.root, 'guard-target.db')
+            const guard = join(
+              curationProposalDir(made.dataRoot, made.binding.projectId),
+              '.review-lock.sqlite',
             )
-          assert.equal(answer.code, 'review-lock-unavailable', JSON.stringify(answer))
-          assert.deepEqual(await vaultBytes(made), before)
-          assert.equal(
-            (await readCurationProposal({ ...input, projectId: made.binding.projectId })).state,
-            'pending',
-          )
-        })
+            // An existing empty regular file is also protected from SQLite
+            // initialization; a hardlink shares its bytes with the guard name.
+            if (exists) {
+              await writeFile(target, '')
+              await link(target, guard)
+            } else {
+              await symlink(target, guard)
+            }
+            const before = await vaultBytes(made)
+            const answer = await reviewCurationProposal({ ...input, decision })
+            if (exists)
+              assert.equal((await readFile(target)).length, 0, 'outside bytes must not change')
+            else
+              assert.equal(
+                await fileExists(target),
+                false,
+                'a missing outside target must stay missing',
+              )
+            assert.equal(answer.code, 'review-lock-unavailable', JSON.stringify(answer))
+            assert.deepEqual(await vaultBytes(made), before)
+            assert.equal(
+              (await readCurationProposal({ ...input, projectId: made.binding.projectId })).state,
+              'pending',
+            )
+          },
+        )
       }
     }
   }
@@ -1452,10 +1525,14 @@ test('every refusal code this module answers with is declared in one list', asyn
     }),
   )
 
+  // A source that is a *directory* link: this host can build that link (a junction
+  // where a directory symlink is refused), so the refusal is exercised for real
+  // instead of being skipped.
   const symlinked = await parkCreateSeparate(made)
-  const outside = join(made.root, 'outside-proof.md')
-  await writeFile(outside, '外部。\n')
-  await symlink(outside, `${at(made, made.seed.path)}.link`)
+  const outside = join(made.root, 'outside-proof-dir')
+  await mkdir(outside, { recursive: true })
+  await writeFile(join(outside, 'x.md'), '外部。\n')
+  await createDirectoryLink(outside, `${at(made, made.seed.path)}.link`)
   const symlinkStore = join(
     made.dataRoot,
     'curation',
