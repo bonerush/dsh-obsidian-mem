@@ -181,12 +181,12 @@ display face, no negative tracking), and the three data views lay their data out
 in bands rather than stacked bordered cards. **图谱** keeps the graph below,
 unchanged, including its remembered controls.
 
-**概览** is one KPI band with the note/link/orphan/pending counts, one
-type-composition bar and its legend, recent rows without ordinals, and a compact
-health summary grid; the 待处理 and health-strip cells open **健康**, the rest of
-the KPI band opens **检索**. **检索** is a rounded search field with filter
-pills grouped by 类型 / 状态 / 范围, and result rows that show the path and a
-highlighted snippet. It keeps exactly one status line — idle shows
+**概览** is one KPI band with the note/link/orphan/pending counts (the 待处理
+cell opens **健康**, the other three open **检索**), one type-composition bar and
+its legend, recent rows without ordinals, and a passive health summary band whose
+only action, **全部 →**, opens **健康**. **检索** is a rounded search field with
+filter pills grouped by 类型 / 状态 / 范围, and result rows that show the path and
+a highlighted snippet. It keeps exactly one status line — idle shows
 `输入关键词开始检索，结果来自本地记忆索引。` — and its total says `共 N 条` only
 for a complete page and `已显示 N 条` while more results exist. **健康** is a
 summary band over the index, queue, hot layer and the deterministic digest,
