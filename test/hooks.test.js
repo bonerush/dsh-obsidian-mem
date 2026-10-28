@@ -20,7 +20,7 @@ import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
-import { createServer } from 'node:http'
+import { createServer, request } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -1490,6 +1490,39 @@ test('apply() wires the hooks without touching the vault, and the six tools stil
   )
 })
 
+/**
+ * POST a JSON body to a loopback server through `node:http`, never `fetch`.
+ *
+ * Measured on Windows 11 (2026-10-28): the dynamic port range starts at `1024`
+ * (`netsh int ipv4 show dynamicport tcp`), so `listen(0)` can hand this case a
+ * port that is on the Fetch specification's blocked-port list (10080 among
+ * them). Node's Fetch refuses such a port before opening a socket —
+ * `TypeError: fetch failed`, cause `bad port` — even though the real server is
+ * listening there. `node:http` carries no port policy, so the request always
+ * reaches the route and the case measures the route, not the client.
+ *
+ * @param {string} url - absolute URL to POST to.
+ * @param {object} payload - JSON-serializable request body.
+ * @returns {Promise<{status: number, text: string}>} response status and raw body.
+ */
+function postJson(url, payload) {
+  return new Promise((resolve, reject) => {
+    const req = request(
+      url,
+      { method: 'POST', headers: { 'content-type': 'application/json' } },
+      (response) => {
+        const chunks = []
+        response.on('data', (chunk) => chunks.push(chunk))
+        response.on('end', () =>
+          resolve({ status: response.statusCode, text: Buffer.concat(chunks).toString('utf8') }),
+        )
+      },
+    )
+    req.on('error', reject)
+    req.end(JSON.stringify(payload))
+  })
+}
+
 test('a host tool event reaches the graph ring through the real assembly', async (t) => {
   const ctx = new Context()
   ctx.provide('systemPrompt', { tools: () => () => {} })
@@ -1551,13 +1584,13 @@ test('a host tool event reaches the graph ring through the real assembly', async
     data: { name: 'read', arguments: { file_path: join(root, 'elsewhere.md') }, isError: false },
   })
 
-  const response = await fetch(origin + '/obsidian-mem/graph', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sessionId: 'session-touch', action: 'activity', cursor: 0 }),
+  const response = await postJson(origin + '/obsidian-mem/graph', {
+    sessionId: 'session-touch',
+    action: 'activity',
+    cursor: 0,
   })
   assert.equal(response.status, 200)
-  const payload = await response.json()
+  const payload = JSON.parse(response.text)
   assert.deepEqual(
     payload.value.events.map((event) => [event.kind, event.path]),
     [['read', note]],
