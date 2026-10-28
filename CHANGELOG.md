@@ -11,6 +11,26 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.3.0 — 2026-10-28
+
+The memory panel gets its first host-native redesign and Windows becomes a gated platform. The
+vault format, the six `mem_*` tools, the panel routes, the preview/confirm mutation contract and
+the graph's data/rendering behaviour are unchanged; nothing migrates.
+
+Verified on Windows 11 with Node 24.20.0: `npm run check` is green — 1,335 tests, 1,300 pass, 35
+platform skips, **0 failures**, plus eslint, prettier, `tsc`, the pack contract and a real archive
+listing. The new `windows-latest` CI legs run for the first time with this push; the POSIX-only
+cases this host cannot construct (mode bits, file symlinks) stay skipped on Windows as before. The
+panel was not visually re-checked in this environment (the DSH web UI requires its own auth); the
+static and rendered-tree contracts are what the gate proves.
+
+### Added
+
+- **Windows is now part of the gate.** The check workflow runs the same `npm run check` on
+  `windows-latest` for Node 22.22.2 and 24.x, and a new `.gitattributes` pins every checkout to LF
+  so `format:check` measures code instead of `core.autocrlf`. `test/repo-gates.test.js` asserts both
+  and refuses a leg that tolerates failure or forks on `runner.os`.
+
 ### Changed
 
 - **The memory panel shell now has a modern host-native design system.** The sidebar opens with a
@@ -33,6 +53,11 @@ release artifact. The versioning policy is in the README, under Development.
   confirm sheet now restores focus to the control that opened it and keeps its Tab trap on the
   dialog while both actions are busy. No payload, action or backend change; the graph body and the
   three mutation capabilities are unchanged.
+- **The README pair states the support level and the modern panel.** Both languages now describe
+  the Chrome-style tabs, host-native typography and banded views, add an OS row (Windows, macOS and
+  Linux; portable Node; no native module; the same gate on the Linux and Windows CI legs), and
+  name the curation `O_NOFOLLOW` limitation as part of that support level. `README.i18n.yaml`
+  re-records both README blob hashes.
 
 ### Fixed
 
@@ -46,6 +71,31 @@ release artifact. The versioning policy is in the README, under Development.
   own retry, and passes the real last-read time so a stale search error never says `上次更新 —`.
   The masthead refresh now also reaches the 概览 poll, which previously dropped the shell's
   `refreshKey`.
+- **The graph-activity test no longer depends on Fetch-allowed ports.** The case posted to its own
+  loopback server with `fetch()`; Node's Fetch refuses the Fetch-spec bad ports (10080 among them)
+  before opening a socket, and this host's Windows dynamic range starts at 1024, so `listen(0)`
+  could return a port the client then refused (`TypeError: fetch failed`, cause `bad port`). The
+  case now uses `node:http`, so it measures the route instead of the client's port policy.
+- **The Windows pack gate lists the tarball by relative name.** `scripts/verify-tarball.mjs` listed
+  the packed archive with `tar -tf <absolute path>`, and GNU tar 1.35 (Git Bash's `/usr/bin/tar`)
+  reads the `C:` in `C:\Users\…` as a remote host — `tar: Cannot connect to C: resolve failed`,
+  exit 128 — so `npm run pack:check` failed on Windows for a valid archive even though bsdtar
+  accepts that path. The listing now runs from the archive's own directory and names it
+  relatively, the form both tars accept; it trims the CRLF endings a Windows bsdtar emits, so the
+  `windows-latest` leg compares clean entry paths; and a failure without stderr reports tar's own
+  spawn error instead of printing `undefined`.
+- **The checks workflow exempts release commits from the Unreleased gate.** A release prepared in
+  one push cuts `## Unreleased` into the new version section, so the push base and HEAD can both
+  have an empty Unreleased while `lib/` changed; `verify-changelog --base` then failed and blocked
+  a green `main` for exactly the release it was shipping. The `checks` workflow now skips that one
+  step for `chore(release):` commits, mirroring the exemption the `release` workflow already had;
+  every other gate still runs and pull-request events are unaffected.
+- **The final review pass fixed the search field's focus ring and its duplicate clear
+  affordance.** The 検索 input no longer suppresses the global `:focus-visible` ring, Chromium's
+  own `::-webkit-search-cancel-button` is hidden so only the panel's clear control renders, the
+  passive health-summary cells stopped showing a pointer cursor and hover lift, the 11px metadata
+  lines sit on the CJK line-height floor, and the sheet's 44px action height is re-pinned in
+  `test/panel-client.test.js`.
 
 ## 0.2.2 — 2026-10-28
 
