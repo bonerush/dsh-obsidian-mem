@@ -644,7 +644,13 @@ const BUDGETS = {
   // preview→confirm sheet (focus trap, aria-live status, stale/replay handling)
   // all live in the one served asset. Measured 1329 formatted lines;
   // measured-plus-30 is 1359, rounded to 1400.
-  'lib/memory-panel.js': 1400,
+  // Raised from 1400 by the single-status phase (1416 formatted lines measured;
+  // measured-plus-30 is 1446, rounded to 1450). What the 46 lines buy: the
+  // derived status derivation and its one SearchStatus region, the run-scoped
+  // unbound notice carried across its own continuation, the removal of the
+  // second loading owner in StatusLine/refreshButton, and the real last-read
+  // timestamp so a stale search error never says 上次更新 —.
+  'lib/memory-panel.js': 1450,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})

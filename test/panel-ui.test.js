@@ -49,19 +49,39 @@ function mount(t, name) {
   }
   const View = createMemoryViews({ React })[name]
   t.after(() => effects.forEach((effect) => effect?.cleanup?.()))
-  return (props) => {
+  const focused = []
+  // React attaches a DOM node to an object ref after mounting. This stand-in
+  // attaches a focus stub to the same ref object so a test can prove the view
+  // moved focus back to the field (the host has no DOM here).
+  const attachRefs = (tree) => {
+    for (const node of nodes(tree)) {
+      const ref = node?.props?.ref
+      if (node?.type !== 'input' || ref === null || typeof ref !== 'object') continue
+      if (!('current' in ref)) continue
+      ref.current = { focus: () => focused.push(node.type) }
+    }
+  }
+  const render = (props) => {
     cursor = 0
     const tree = View(props)
     const runs = pending
     pending = []
     runs.forEach((run) => run())
+    attachRefs(tree)
     return tree
   }
+  render.focused = focused
+  return render
 }
 
 function nodes(tree) {
   if (!tree || typeof tree !== 'object') return [tree]
-  return [tree, ...flat(tree.props?.children ?? []).flatMap(nodes)]
+  // The stand-in React keeps function components as elements. Render them here
+  // so a status/notice rendered by a small component is visible to the tree
+  // assertions exactly as the host would render it. None of these components
+  // use hooks; the views themselves are called directly by mount().
+  const rendered = typeof tree.type === 'function' ? flat(tree.type(tree.props)) : []
+  return [tree, ...flat(tree.props?.children ?? []).flatMap(nodes), ...rendered.flatMap(nodes)]
 }
 const flat = (value) => (Array.isArray(value) ? value.flat(Infinity) : [value])
 function texts(tree) {
@@ -85,6 +105,20 @@ const byText = (tree, text) =>
         .flat(Infinity)
         .includes(text),
   )
+/** How many rendered strings contain `text`. The duplicate-status guard. */
+const countText = (tree, text) => texts(tree).filter((value) => String(value).includes(text)).length
+/** Every live region a screen reader would announce. */
+const liveRegions = (tree) =>
+  nodes(tree).filter((node) => node?.props?.role === 'status' || node?.props?.role === 'alert')
+const deferred = () => {
+  let resolve
+  let reject
+  const promise = new Promise((yes, no) => {
+    resolve = yes
+    reject = no
+  })
+  return { promise, resolve, reject }
+}
 
 const ok = (value) => ({ ok: true, status: 200, json: async () => ({ ok: true, value }) })
 const failure = (status, code, message) => ({
@@ -201,6 +235,16 @@ const overviewValue = (overrides = {}) => ({
   digest: null,
   capabilities: { mutations: ['retry-job', 'compact-hot', 'refresh-digest'] },
   ...overrides,
+})
+
+const hit = (path, title) => ({
+  path,
+  title,
+  type: 'decision',
+  status: 'active',
+  source: 'title',
+  snippet: '一段摘要',
+  scoreSignals: ['title'],
 })
 
 const previewValue = (mutation = 'retry-job') => ({
@@ -376,8 +420,193 @@ test('health renders status stamps, a thin hot meter and the digest column', asy
 })
 
 // ---------------------------------------------------------------------------
-// The confirm sheet over the real view
+// 検索: one derived status, one render site (the reported duplicate class)
 // ---------------------------------------------------------------------------
+
+test('search renders every status string at most once across mount, chips, loading, results, empty and error', async (t) => {
+  const first = deferred()
+  let requests = 0
+  const sent = stubFetch(t, () => {
+    requests += 1
+    if (requests === 1) return first.promise
+    if (requests === 2) return ok({ hits: [], limit: 25, hasMore: false, tookMs: 1 })
+    return failure(503, 'unavailable', 'memory panel unavailable')
+  })
+  const render = mount(t, 'SearchView')
+  const idle = '输入关键词开始检索'
+  let tree = render({ sessionId: 'session-a' })
+  assert.equal(countText(tree, idle), 1, 'the idle sentence renders once on mount')
+  assert.equal(liveRegions(tree).length, 1, 'one status region owns the idle state')
+
+  // A chip click with an empty query changes no status and sends nothing.
+  byText(tree, '决策')[0].props.onClick()
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(sent.length, 0, 'an empty-query chip sends no request')
+  assert.equal(countText(tree, idle), 1, 'the idle sentence is still single after a chip click')
+  byText(tree, '全部')[0].props.onClick()
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(sent.length, 0, 'a second empty-query chip still sends nothing')
+  assert.equal(countText(tree, idle), 1, 'and still leaves exactly one idle sentence')
+
+  // Submit with a query: the loading state replaces the idle one.
+  find(tree, (node) => node?.type === 'input').props.onChange({ target: { value: 'binding' } })
+  tree = render({ sessionId: 'session-a' })
+  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(requests, 1, 'one submit is one request')
+  assert.equal(countText(tree, '正在检索…'), 1, 'the loading status renders once')
+  assert.equal(countText(tree, idle), 0, 'the idle sentence is gone while loading')
+  assert.equal(liveRegions(tree).length, 1, 'one status region owns the loading state')
+
+  // Results: the footer carries the count, and only for a complete page.
+  first.resolve(
+    ok({
+      hits: [hit('a.md', '决策一'), hit('b.md', '约定一')],
+      limit: 25,
+      hasMore: false,
+      tookMs: 3,
+    }),
+  )
+  await setImmediate()
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(byClass(tree, 'mem-result').length, 2)
+  assert.equal(countText(tree, '共 2 条'), 1, 'the results footer renders once')
+  assert.equal(countText(tree, '正在检索…'), 0)
+  assert.equal(countText(tree, idle), 0)
+
+  // Empty results: one empty line, no idle fallback.
+  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
+  await setImmediate()
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(countText(tree, '没有匹配的记忆。'), 1, 'the empty status renders once')
+  assert.equal(countText(tree, idle), 0)
+
+  // A failure after results is a stale notice carrying the real last-read time.
+  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
+  await setImmediate()
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(countText(tree, '上次更新 '), 1, 'the stale notice renders once')
+  assert.equal(countText(tree, '上次更新 —'), 0, 'a stale error never shows a fabricated time')
+  assert.equal(
+    countText(tree, '读取记忆失败：'),
+    0,
+    'the stale branch replaces the fresh error text',
+  )
+  for (const copy of [idle, '正在检索…', '没有匹配的记忆。', '上次更新 ', '共 2 条'])
+    assert.ok(countText(tree, copy) <= 1, 'the status string renders at most once: ' + copy)
+  assert.equal(byClass(tree, 'mem-result').length, 0)
+})
+
+test('a filter chip with an empty query focuses the field and sends no request', async (t) => {
+  const sent = stubFetch(t, () => ok({ hits: [], limit: 25, hasMore: false, tookMs: 1 }))
+  const render = mount(t, 'SearchView')
+  let tree = render({ sessionId: 'session-a' })
+  byText(tree, '约定')[0].props.onClick()
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(sent.length, 0, 'the empty query is not sent to the route')
+  assert.deepEqual(render.focused, ['input'], 'focus returns to the search field')
+  assert.equal(countText(tree, '输入关键词开始检索'), 1)
+  byText(tree, '全部')[0].props.onClick()
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(sent.length, 0)
+  assert.deepEqual(render.focused, ['input', 'input'], 'every empty chip click refocuses')
+  assert.equal(countText(tree, '输入关键词开始检索'), 1)
+})
+
+test('a filter chip with a query sends exactly one request', async (t) => {
+  const sent = stubFetch(t, () =>
+    ok({ hits: [hit('a.md', '决策一')], limit: 25, hasMore: false, tookMs: 1 }),
+  )
+  const render = mount(t, 'SearchView')
+  let tree = render({ sessionId: 'session-a' })
+  find(tree, (node) => node?.type === 'input').props.onChange({ target: { value: 'binding' } })
+  tree = render({ sessionId: 'session-a' })
+  byText(tree, '决策')[0].props.onClick()
+  await setImmediate()
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(sent.length, 1, 'one chip click is one request')
+  assert.equal(sent[0].body.query, 'binding')
+  assert.equal(sent[0].body.type, 'decision')
+  assert.equal(byClass(tree, 'mem-result').length, 1)
+})
+
+test('the unbound scope switch renders its notice once, then the fallback results', async (t) => {
+  const fallback = deferred()
+  let requests = 0
+  const sent = stubFetch(t, () => {
+    requests += 1
+    return requests === 1 ? failure(422, 'unbound', 'project unbound') : fallback.promise
+  })
+  const render = mount(t, 'SearchView')
+  let tree = render({ sessionId: 'session-a' })
+  find(tree, (node) => node?.type === 'input').props.onChange({ target: { value: 'binding' } })
+  tree = render({ sessionId: 'session-a' })
+  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
+  await setImmediate()
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(requests, 2, 'the unbound fallback runs one more request')
+  assert.equal(sent[1].body.scope, 'all', 'the fallback asks the all-project scope')
+  assert.equal(
+    countText(tree, '当前项目未绑定；正在搜索全部项目。'),
+    1,
+    'the notice is no longer dead copy and renders once',
+  )
+  assert.equal(countText(tree, '输入关键词开始检索'), 0)
+  assert.ok(
+    byClass(tree, 'mem-filter-option').some(
+      (node) => node.props.children[0] === '全部' && node.props['aria-pressed'] === true,
+    ),
+    'the 范围 group shows the switched scope',
+  )
+  fallback.resolve(ok({ hits: [hit('a.md', '决策一')], limit: 25, hasMore: false, tookMs: 2 }))
+  await setImmediate()
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(byClass(tree, 'mem-result').length, 1)
+  assert.equal(
+    countText(tree, '当前项目未绑定；正在搜索全部项目。'),
+    0,
+    'the run-scoped notice is replaced by the results status',
+  )
+})
+
+test('the overview owns its loading announcement once, from the skeleton, then refreshes', async (t) => {
+  const gates = [deferred(), deferred()]
+  let calls = 0
+  stubFetch(t, () => gates[Math.min(calls++, gates.length - 1)].promise)
+  const render = mount(t, 'OverviewView')
+  const props = { sessionId: 'session-a', visible: true }
+  render(props)
+  await setImmediate()
+  let tree = render(props)
+  assert.equal(countText(tree, '正在读取记忆…'), 1, 'the skeleton is the one loading announcement')
+  assert.equal(liveRegions(tree).length, 1, 'one live region in the loading state')
+  gates[0].resolve(ok(overviewValue()))
+  await setImmediate()
+  tree = render(props)
+  assert.equal(countText(tree, '正在读取记忆…'), 0)
+  const refreshing = { ...props, refreshKey: 1 }
+  render(refreshing)
+  tree = render(refreshing)
+  assert.equal(
+    countText(tree, '正在刷新…'),
+    1,
+    'the refresh status renders once, from the status line',
+  )
+  assert.equal(countText(tree, '正在读取记忆…'), 0, 'the skeleton does not announce a refresh')
+  assert.equal(liveRegions(tree).length, 1)
+})
+
+test('the health view owns its loading announcement once, from the skeleton', async (t) => {
+  const gate = deferred()
+  stubFetch(t, () => gate.promise)
+  const render = mount(t, 'HealthView')
+  const props = { sessionId: 'session-a', visible: true }
+  render(props)
+  await setImmediate()
+  const tree = render(props)
+  assert.equal(countText(tree, '正在读取记忆…'), 1, 'the skeleton is the one loading announcement')
+  assert.equal(liveRegions(tree).length, 1, 'one live region in the loading state')
+})
 
 /** Render health until its first read lands. */
 async function health(t) {

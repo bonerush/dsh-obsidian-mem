@@ -21,6 +21,19 @@ release artifact. The versioning policy is in the README, under Development.
   radii ≤16px, shadows only `--dsw-shadow-lv1`/`--dsw-shadow-lv3`) and carries the whole class
   contract the redesigned 概览/检索/健康 views build on; the graph body is untouched.
 
+### Fixed
+
+- **检索 now has one status source.** The idle sentence was owned twice — a `notice` state and an
+  always-on trailing meta — so a filter click with an empty query printed it twice, and the class
+  of duplicate statuses could not be fixed by deleting one line. Every 检索 status (idle, loading,
+  empty, notice, error) is now derived once and rendered by one `mem-status` region; a filter chip
+  with an empty query sends no request and returns focus to the search field. The same change
+  removes the second loading owner in 概览/健康 (the skeleton announces a first read; the status
+  line only a refresh), makes the unbound→all scope notice visible instead of being wiped by its
+  own retry, and passes the real last-read time so a stale search error never says `上次更新 —`.
+  The masthead refresh now also reaches the 概览 poll, which previously dropped the shell's
+  `refreshKey`.
+
 ## 0.2.2 — 2026-10-28
 
 ### Fixed
