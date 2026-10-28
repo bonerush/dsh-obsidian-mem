@@ -407,8 +407,50 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     '.mem-filter-option[aria-pressed="true"]',
   ])
     assert.ok(css.includes(variant), 'the stylesheet styles ' + variant)
+  for (const action of ['.mem-sheet-confirm', '.mem-sheet-cancel']) {
+    const start = css.indexOf('.mem-panel ' + action + '{')
+    assert.ok(start >= 0, 'the sheet styles ' + action)
+    const rule = css.slice(start, css.indexOf('}', start))
+    assert.ok(rule.includes('min-height:44px'), action + ' keeps its 44px hit area')
+  }
   assert.ok(css.includes('grid-template-columns:repeat(2,minmax(0,1fr))'), 'overflow folds to 2x2')
   assert.ok(css.includes('-webkit-line-clamp:2'), 'snippets clamp to two lines')
+})
+
+test('the panel keeps a visible focus ring, one clear control and passive cells', async () => {
+  const { script } = await bundle()
+  const css = panelCss(script)
+  assert.equal(
+    css.includes('outline:none'),
+    false,
+    'the search input does not suppress the global focus ring',
+  )
+  assert.ok(css.includes(':focus-within'), 'the search field still tracks focus')
+  assert.ok(
+    css.includes(
+      '.mem-panel .mem-search-input::-webkit-search-cancel-button{-webkit-appearance:none;display:none}',
+    ),
+    'the Chromium search clear affordance is suppressed',
+  )
+  const passive = css.indexOf('.mem-panel .mem-summary-item{')
+  assert.ok(passive >= 0, 'the passive summary cells stay styled')
+  const summary = css.slice(passive, css.indexOf('}', passive))
+  assert.equal(
+    summary.includes('cursor:pointer'),
+    false,
+    'a passive summary cell does not claim a click',
+  )
+  assert.equal(
+    css.includes('.mem-summary-item:hover'),
+    false,
+    'a passive summary cell has no hover lift',
+  )
+  for (const hook of ['mem-masthead-sub', 'mem-clock', 'mem-viewhead-meta', 'mem-label']) {
+    const start = css.indexOf('.mem-panel .' + hook + '{')
+    assert.ok(start >= 0, 'the metadata rule exists: ' + hook)
+    const rule = css.slice(start, css.indexOf('}', start))
+    assert.ok(rule.includes('line-height:1.6'), hook + ' sits on the CJK line-height floor')
+  }
 })
 
 test('motion is one 160ms entrance plus explicit transitions that reduced motion removes', async () => {
