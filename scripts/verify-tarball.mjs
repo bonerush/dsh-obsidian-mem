@@ -15,7 +15,7 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -186,6 +186,45 @@ function pack(root, destination) {
 }
 
 /**
+ * List one archive's entries, portably, through the `tar` on `PATH`.
+ *
+ * tar runs from the archive's own directory and is handed its **relative** file
+ * name. A Windows absolute path such as `C:\Users\…\x.tgz` is read by GNU tar
+ * 1.35 (Git Bash's `/usr/bin/tar`) as a remote `C:` host — `tar: Cannot connect
+ * to C: resolve failed`, exit 128 — even though bsdtar accepts it, so the pack
+ * gate failed on Windows for a valid archive. The relative form is accepted by
+ * both tars, and running from the archive's directory keeps the listing from
+ * depending on the caller's cwd.
+ *
+ * The failure detail is returned rather than thrown so the caller and the tests
+ * see one shape: `status` is tar's exit status (`null` when tar could not be
+ * spawned at all), `entries` is empty on failure, and `error` is the most
+ * specific reason available — stderr, then the spawn error, then a last-resort
+ * message — so a silent failure never renders as `tar -tf failed: undefined`.
+ *
+ * @param {string} archive - absolute (or cwd-relative) path to the archive to list.
+ * @returns {{status: number|null, entries: string[], error: string|null}} the listing.
+ */
+export function listArchive(archive) {
+  const listing = spawnSync('tar', ['-tf', basename(archive)], {
+    cwd: dirname(archive),
+    encoding: 'utf8',
+  })
+  if (listing.status === 0) {
+    const entries = listing.stdout
+      .split('\n')
+      .map((line) => line.replace(/\r$/u, ''))
+      .filter(Boolean)
+    return { status: 0, entries, error: null }
+  }
+  const error =
+    (listing.stderr || '').trim() ||
+    listing.error?.message ||
+    'tar exited without reporting a reason'
+  return { status: listing.status, entries: [], error }
+}
+
+/**
  * Pack this checkout and check the archive it produces.
  *
  * @param {string[]} [argv] - command-line arguments after the script name.
@@ -204,9 +243,9 @@ export function main(argv = process.argv.slice(2)) {
     const archive = join(destination, packed.filename)
     if (!existsSync(archive))
       throw new Error('npm pack reported ' + packed.filename + ', which is not on disk')
-    const listing = spawnSync('tar', ['-tf', archive], { encoding: 'utf8' })
-    if (listing.status !== 0) throw new Error('tar -tf failed: ' + listing.stderr)
-    const entries = listing.stdout.split('\n').filter(Boolean)
+    const listing = listArchive(archive)
+    if (listing.status !== 0) throw new Error('tar -tf failed: ' + listing.error)
+    const entries = listing.entries
     const problems = verifyTarballEntries(entries, libFiles)
     // npm's own file list has to describe the same archive; a disagreement means
     // the tar listing and the manifest came from different builds.

@@ -17,7 +17,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { Range, parse, satisfies } from 'semver'
 
-import { REQUIRED_ENTRIES, verifyTarballEntries } from '../scripts/verify-tarball.mjs'
+import { REQUIRED_ENTRIES, listArchive, verifyTarballEntries } from '../scripts/verify-tarball.mjs'
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const VERIFIER = resolve(REPO_ROOT, 'scripts/verify-pack.mjs')
@@ -468,6 +468,59 @@ test('the archive this checkout really produces satisfies the contract', { skip:
   assert.match(run.stdout, /verify-tarball: OK/)
   // The report has to stay informative without freezing a number.
   assert.match(run.stdout, /lib modules, every required asset present/)
+})
+
+// ---------------------------------------------------------------------------
+// Task 8: the listing path has to work where `tar` is GNU tar on Windows.
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether this host has a runnable `tar`.
+ *
+ * The two cases below exercise the listing *call shape*, not packaging, so a host
+ * with no tar at all is the only skip — every CI runner, Windows included, has one.
+ *
+ * @returns {boolean} true when `tar --version` exits 0.
+ */
+function tarRuns() {
+  return spawnSync('tar', ['--version'], { encoding: 'utf8' }).status === 0
+}
+
+const TAR_SKIP = tarRuns()
+  ? false
+  : 'no runnable tar on PATH, so the archive listing cannot be exercised'
+
+test(
+  'the listing reads an archive by relative name, which GNU tar on Windows requires',
+  { skip: TAR_SKIP },
+  (t) => {
+    const directory = mkdtempSync(join(tmpdir(), 'obsidian-mem-tar-'))
+    t.after(() => rmSync(directory, { recursive: true, force: true }))
+    writeFileSync(join(directory, 'package.json'), '{ "name": "sample" }\n')
+    // Relative names plus cwd on purpose: `tar -tf C:\…` makes GNU tar 1.35 read
+    // `C:` as a remote host (`Cannot connect to C: resolve failed`, exit 128),
+    // the measured Windows pack-gate failure this helper exists to avoid. The
+    // fixture archive itself is built the same way for the same reason.
+    const packed = spawnSync('tar', ['-czf', 'sample.tgz', 'package.json'], {
+      cwd: directory,
+      encoding: 'utf8',
+    })
+    assert.equal(packed.status, 0, packed.stderr || packed.error?.message)
+    const listing = listArchive(join(directory, 'sample.tgz'))
+    assert.equal(listing.status, 0, listing.error)
+    assert.deepEqual(listing.entries, ['package.json'])
+  },
+)
+
+test("a failed listing names tar's own reason instead of `undefined`", { skip: TAR_SKIP }, (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'obsidian-mem-tar-bad-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  writeFileSync(join(directory, 'not-an-archive.tgz'), 'plain text\n')
+  const listing = listArchive(join(directory, 'not-an-archive.tgz'))
+  assert.notEqual(listing.status, 0)
+  assert.equal(typeof listing.error, 'string')
+  assert.ok(listing.error.length > 0, 'a failed listing has to carry a reason')
+  assert.doesNotMatch(listing.error, /undefined/, 'the old message rendered as "undefined"')
 })
 
 test('the harness peer range opts each measured prerelease tuple in explicitly', () => {
