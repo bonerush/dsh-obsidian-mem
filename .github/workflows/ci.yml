@@ -65,6 +65,16 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: echo "sha=$(node scripts/ci-base.mjs)" >> "$GITHUB_OUTPUT"
       - name: Unreleased gate
+        # A push that IS the release consumes the Unreleased entry instead of
+        # adding one: the body moves under the new version heading, so the base
+        # and HEAD can both have an empty Unreleased while lib/ changed, and the
+        # gate would fail the release it is shipping. release.yml already exempts
+        # `chore(release):` commits with this same prefix; the checks workflow has
+        # to agree or main cannot go green for that release. Only this one step is
+        # exempted — every other gate still runs. For pull_request events
+        # `head_commit` is null and `startsWith(null, …)` is false, so the `!`
+        # keeps the gate running there.
+        if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
         run: node scripts/verify-changelog.mjs --base "${{ steps.base.outputs.sha }}"
       # Named separately so a disordered file reports as itself rather than as part
       # of the suite. The same check runs inside `test/repo-gates.test.js`; this

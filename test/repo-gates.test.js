@@ -250,6 +250,52 @@ test('the workflow runs npm run check across the supported Node versions', () =>
     true,
     'CI must run the Unreleased gate with a base',
   )
+  // A release push CONSUMES the Unreleased entry instead of adding one: the body
+  // moves under the new version heading, so the base and HEAD can both have an
+  // empty Unreleased while lib/ changed, and verify-changelog would fail the very
+  // release it is shipping. release.yml already exempts `chore(release):`
+  // commits; the checks workflow has to agree or main cannot go green for that
+  // release. The exemption is one step, not a skipped gate: every other step stays
+  // unconditional, and pull requests (head_commit null) still run it.
+  const unreleasedGate = steps.find((step) =>
+    String(step.run ?? '').includes('verify-changelog.mjs --base'),
+  )
+  assert.ok(unreleasedGate, 'CI must carry the Unreleased gate step')
+  const exemption = String(unreleasedGate.if ?? '')
+  assert.match(
+    exemption,
+    /startsWith\(\s*github\.event\.head_commit\.message\s*,\s*'chore\(release\):'\s*\)/u,
+    'the exemption has to name the same commit prefix release.yml exempts',
+  )
+  assert.match(
+    exemption,
+    /\$\{\{\s*!\s*startsWith\(\s*github\.event\.head_commit\.message\s*,\s*'chore\(release\):'\s*\)\s*\}\}/u,
+    'the guard must negate the release-commit prefix: the gate runs when the commit is NOT a release commit',
+  )
+  assert.equal(
+    steps.filter((step) => step.if !== undefined).length,
+    1,
+    'only the Unreleased gate may be conditional; a release commit still runs every other check',
+  )
+  // Both workflows have to agree, so the exemption cannot be deleted from one
+  // side: release.yml classifies `chore(release):` commits and its gate reads
+  // that verdict.
+  const release = YAML.parse(
+    readFileSync(join(REPO_ROOT, '.github', 'workflows', 'release.yml'), 'utf8'),
+  )
+  const releaseSteps = release.jobs.release.steps
+  const releaseGuard = releaseSteps.find((step) => step.id === 'guard')
+  assert.ok(releaseGuard, 'release.yml must keep its release-commit classifier')
+  assert.match(String(releaseGuard.run ?? ''), /chore\\\(release\\\):/u)
+  const releaseGate = releaseSteps.find((step) =>
+    String(step.run ?? '').includes('verify-changelog.mjs --base'),
+  )
+  assert.ok(releaseGate, 'release.yml must keep its Unreleased gate')
+  assert.match(
+    String(releaseGate.if ?? ''),
+    /steps\.guard\.outputs\.skip == 'false'/u,
+    'release.yml must exempt the release commit from the Unreleased gate',
+  )
   assert.equal(text.includes('pull_request.base.sha'), true)
   assert.equal(text.includes('github.event.before'), true)
   // No step may ask for a token this repository does not need.
