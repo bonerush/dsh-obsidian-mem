@@ -13,7 +13,7 @@ import { bootstrapVault } from '../lib/vault.js'
 const PROJECT_ID = '1c392abb-7b08-42f7-871d-2a379caf9448'
 const NOTE = 'Projects/demo--1c392abb/_meta/digest.md'
 
-async function fixture(t) {
+async function fixture(t, servicesOptions = {}) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-digest-write-'))
   const dataRoot = join(root, 'data')
   const home = join(root, 'home')
@@ -35,6 +35,7 @@ async function fixture(t) {
     dataRoot,
     home,
     binding,
+    ...servicesOptions,
   })
   t.after(async () => {
     await services.close?.()
@@ -44,7 +45,11 @@ async function fixture(t) {
 }
 
 test('the owned digest writer creates, no-ops and updates one project note', async (t) => {
-  const world = await fixture(t)
+  // The writer's dates and the service's refresh read the same injected clock, so
+  // the no-op assertion is a claim about those bytes rather than about the UTC
+  // date the suite happens to run on (it was pinned to 2026-10-27 and failed the
+  // first time CI crossed UTC midnight).
+  const world = await fixture(t, { clock: () => new Date('2026-10-27T12:00:00Z') })
   await writeMemory(
     world.binding,
     { type: 'decision', title: 'Digest write', assertion: 'observed', body: 'Evidence.' },

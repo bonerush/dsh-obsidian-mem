@@ -843,7 +843,12 @@ const BUDGETS = {
   // measured-plus-30 is 1832, rounded to 1850.
   // Raised from 1850 by the digest action and the shared link resolver: measured
   // 1857 formatted lines; measured-plus-30 is 1887, rounded to 1900.
-  'lib/services.js': 1900,
+  // Raised from 1900 by the digest clock seam (measured 1902 formatted lines after
+  // the day-granular clock was injected into the digest action; measured-plus-30 is
+  // 1932, rounded to 1950). The seam is one destructured option, its validation and
+  // the writer's `now`; the alternative — a test-only wall-clock guess — is the
+  // flake that failed the release run at UTC midnight.
+  'lib/services.js': 1950,
   // Raised from 2200 by Task 7 (2229 formatted lines measured; measured-plus-30
   // rounds up to 2300, which is this number — the entry above the old one had no
   // note of its own, so this number states the rule it follows). What the 29 lines

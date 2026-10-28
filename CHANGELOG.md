@@ -152,6 +152,18 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Fixed
 
+- **The owned-digest tests pinned a date the real clock had to agree with.** The
+  writer test wrote a note dated `2026-10-27` and then asserted that a real-clock
+  `mem_admin(action="digest", operation="refresh")` was a byte-for-byte no-op.
+  That is true only while the process's UTC date is 2026-10-27, so the first CI
+  run after the v0.4 merge (2026-10-28T00:00Z, the release workflow's `npm run
+  check`) failed with `updated` instead of `unchanged`, and every later day
+  would have failed the same way. `createMemoryServices` now accepts an internal
+  `clock` seam (`() => Date`, default the real clock) that the digest action uses
+  for its day-granular window, snapshot date and owned-note date; the collector's
+  deadline still reads `Date.now`, so a pinned clock cannot disable the 500 ms
+  bound. Both digest tests pin the clock and the note's creation date to their
+  fixture day.
 - **Cached statuses could quarantine-bypass after an external edit.** The batch
   status path trusted an eligible cached row without checking the source. A
   convention edited from `active` to `provisional` stayed injectable until the

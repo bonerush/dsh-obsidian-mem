@@ -36,13 +36,16 @@ test('mem_admin(action="digest") reads one bounded window through the real servi
       assertion: 'observed',
       body: 'A current claim with [[missing-target]] evidence.',
     },
-    { dataRoot, home },
+    { dataRoot, home, now: new Date('2026-10-27T12:00:00Z') },
   )
   const services = createMemoryServices({
     config: validateConfig({ vaultPath: vault }),
     dataRoot,
     home,
     binding,
+    // Two refreshes must be a byte-for-byte no-op; pin the day so the assertion
+    // is about the rendered note, not about the UTC date the suite runs on.
+    clock: () => new Date('2026-10-27T12:00:00Z'),
   })
   t.after(async () => {
     await services.close?.()
