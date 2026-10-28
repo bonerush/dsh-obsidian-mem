@@ -52,22 +52,26 @@ function mount(t, name) {
   const focused = []
   // React attaches a DOM node to an object ref after mounting. This stand-in
   // attaches a focus stub to the same ref object so a test can prove the view
-  // moved focus back to the field (the host has no DOM here).
+  // moved focus (the host has no DOM here). Refs are attached before the effects
+  // run, the order the host mounts in.
   const attachRefs = (tree) => {
     for (const node of nodes(tree)) {
       const ref = node?.props?.ref
-      if (node?.type !== 'input' || ref === null || typeof ref !== 'object') continue
-      if (!('current' in ref)) continue
-      ref.current = { focus: () => focused.push(node.type) }
+      if (ref === null || typeof ref !== 'object' || !('current' in ref)) continue
+      if (typeof node.type !== 'string') continue
+      ref.current = {
+        focus: () =>
+          focused.push(node.type + (node.props.className ? ':' + node.props.className : '')),
+      }
     }
   }
   const render = (props) => {
     cursor = 0
     const tree = View(props)
+    attachRefs(tree)
     const runs = pending
     pending = []
     runs.forEach((run) => run())
-    attachRefs(tree)
     return tree
   }
   render.focused = focused
@@ -332,11 +336,17 @@ test('mutations use the preview/confirm contract and are hidden without capabili
 // Overview, search and health as rendered views
 // ---------------------------------------------------------------------------
 
-test('the overview reports project, clock and refresh to the shell and numbers its entries', async (t) => {
+test('the overview reports project, clock and refresh to the shell and bands its numbers', async (t) => {
   stubFetch(t, () => ok(overviewValue()))
   const render = mount(t, 'OverviewView')
   const reported = []
-  const props = { sessionId: 'session-a', visible: true, onMeta: (meta) => reported.push(meta) }
+  const jumps = []
+  const props = {
+    sessionId: 'session-a',
+    visible: true,
+    onMeta: (meta) => reported.push(meta),
+    onJump: (view) => jumps.push(view),
+  }
   render(props)
   await setImmediate()
   const tree = render(props)
@@ -349,16 +359,71 @@ test('the overview reports project, clock and refresh to the shell and numbers i
     byClass(tree, 'mem-kpi-value').map((node) => node.props.children[0]),
     ['515', '8', '12', '0'],
   )
-  assert.equal(byClass(tree, 'mem-recent-index').length, 2)
+  assert.equal(byClass(tree, 'mem-kpi').length, 4, 'the KPI band keeps its four cells')
+
+  // Composition: one stacked track, one fill per type row, one legend row each.
+  assert.equal(byClass(tree, 'mem-comp').length, 1)
+  assert.equal(byClass(tree, 'mem-bar-track').length, 1, 'the parts share one track')
+  assert.equal(byClass(tree, 'mem-bar-fill').length, 3, 'the three type segments are drawn')
   assert.deepEqual(
-    byClass(tree, 'mem-recent-index').map((node) => node.props.children[0]),
-    ['01', '02'],
+    byClass(tree, 'mem-comp-name').map((node) => node.props.children[0]),
+    ['约定', '决策', 'hub'],
   )
-  assert.equal(byClass(tree, 'mem-bar-fill').length, 3, 'the composition is drawn as index bars')
+  assert.deepEqual(
+    byClass(tree, 'mem-comp-value').map((node) => node.props.children[0]),
+    ['506', '7', '2'],
+  )
+  assert.deepEqual(
+    byClass(tree, 'mem-comp-pct').map((node) => node.props.children[0]),
+    ['98.3%', '1.4%', '0.4%'],
+  )
+  assert.equal(byClass(tree, 'mem-stamps').length, 1, 'status chips ride the composition surface')
+
+  // Recent: ordinals retired, the type appears once, the meta is type · time.
+  assert.equal(byClass(tree, 'mem-recent-row').length, 2)
+  assert.equal(byClass(tree, 'mem-recent-index').length, 0, 'the numbered index is retired')
+  assert.equal(byClass(tree, 'mem-dot').length, 2, 'each recent row carries a type dot')
+  const recentMeta = byClass(tree, 'mem-recent-meta').map((node) => node.props.children[0])
+  assert.ok(
+    recentMeta.every((text) => /^(决策|约定) · /u.test(text)),
+    'meta is type · time',
+  )
+  assert.equal(
+    byClass(tree, 'mem-recent-row').reduce((sum, row) => sum + byClass(row, 'mem-stamp').length, 0),
+    0,
+    'the type is no longer printed twice',
+  )
+
+  // The health strip is passive and one action opens 健康.
+  const strip = nodes(tree).find(
+    (node) => node?.type === 'section' && node.props['aria-label'] === '健康',
+  )
+  assert.ok(strip, 'the overview keeps its health section')
+  // The fixture has no failed jobs, so the strip carries 索引/扫描/热层.
+  assert.equal(byClass(strip, 'mem-summary-item').length, 3)
+  assert.ok(
+    byClass(strip, 'mem-summary-item').every((cell) => cell.type !== 'button'),
+    'the summary cells are not buttons',
+  )
+  assert.equal(byText(strip, '全部 →').length, 1, 'one action opens the health view')
 })
 
-test('search keeps a border-bottom field, underlined filter groups and numbered result rows', async (t) => {
-  stubFetch(t, (body) =>
+test('overview KPI cells jump: 待处理 opens 健康, the other three open 检索', async (t) => {
+  stubFetch(t, () => ok(overviewValue()))
+  const jumps = []
+  const render = mount(t, 'OverviewView')
+  const props = { sessionId: 'session-a', visible: true, onJump: (view) => jumps.push(view) }
+  render(props)
+  await setImmediate()
+  const tree = render(props)
+  const cells = byClass(tree, 'mem-kpi')
+  assert.equal(cells.length, 4)
+  for (const cell of cells) cell.props.onClick()
+  assert.deepEqual(jumps, ['search', 'search', 'search', 'health'])
+})
+
+test('search renders a modern field, named filter groups and marked result rows', async (t) => {
+  const sent = stubFetch(t, (body) =>
     ok({
       query: body.query,
       hits: [
@@ -368,7 +433,7 @@ test('search keeps a border-bottom field, underlined filter groups and numbered 
           type: 'decision',
           status: 'active',
           source: 'title',
-          snippet: '一段摘要',
+          snippet: 'Binding memory notes',
           scoreSignals: ['title'],
         },
         {
@@ -388,35 +453,225 @@ test('search keeps a border-bottom field, underlined filter groups and numbered 
   )
   const render = mount(t, 'SearchView')
   let tree = render({ sessionId: 'session-a' })
+  assert.equal(
+    texts(tree).some((text) => text === '输入关键词开始检索，结果来自本地记忆索引。'),
+    true,
+    'the idle sentence is the modern one',
+  )
+  assert.ok(
+    texts(tree).some((text) => text === '本地记忆索引'),
+    'the head names the local index',
+  )
+  assert.equal(
+    texts(tree).some((text) => String(text).includes('FTS5')),
+    false,
+  )
+
+  const form = find(tree, (node) => node?.type === 'form')
+  assert.equal(form.props.className, 'mem-searchbar')
+  assert.equal(form.props.role, 'search')
+  assert.equal(byClass(tree, 'mem-search-field').length, 1)
+  assert.equal(byClass(tree, 'mem-search-icon').length, 1)
+  assert.equal(
+    byClass(tree, 'mem-search-clear').length,
+    0,
+    'no clear control while the field is empty',
+  )
+  find(tree, (node) => node?.type === 'input').props.onChange({ target: { value: 'binding' } })
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(byClass(tree, 'mem-search-clear').length, 1, 'a clear control appears with text')
+  assert.equal(find(tree, (node) => node?.type === 'input').props.className, 'mem-search-input')
+
+  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
+  await setImmediate()
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(sent.length, 1)
+  assert.equal(byClass(tree, 'mem-result').length, 2)
+  assert.equal(byClass(tree, 'mem-result-index').length, 0, 'result ordinals are retired')
+  const groups = byClass(tree, 'mem-filter')
+  assert.ok(groups.length >= 3, 'the three filter rows remain')
+  for (const group of groups) {
+    assert.equal(group.props.role, 'group', 'each filter row names its group')
+    assert.ok(['类型', '状态', '范围'].includes(group.props['aria-label']))
+    assert.ok(byClass(group, 'mem-filter-option').length >= 2, 'each group wraps its pills')
+  }
+  assert.ok(
+    byClass(tree, 'mem-filter-option').some((node) => node.props['aria-pressed'] === true),
+    'aria-pressed is retained',
+  )
+  assert.deepEqual(
+    byClass(tree, 'mem-filter-option')
+      .filter((node) => node.props['aria-pressed'] === true)
+      .map((node) => node.props.children[0]),
+    ['全部', '全部', '当前项目'],
+    'the default selected pills are unchanged',
+  )
+
+  assert.ok(byClass(tree, 'mem-result-path').length === 2, 'every row carries its path')
+  assert.ok(
+    String(byClass(tree, 'mem-result-path')[0].props.children[0]).includes(
+      'Projects/repo/Decisions/a.md',
+    ),
+  )
+  assert.ok(
+    byClass(tree, 'mem-chip').some((node) => node.props.children[0] === '决策'),
+    'type is a chip',
+  )
+  assert.ok(
+    byClass(tree, 'mem-chip').some((node) => node.props.children[0] === '生效'),
+    'status is a chip',
+  )
+  assert.ok(
+    byClass(tree, 'mem-chip').some((node) => String(node.props.children[0]).includes('来源 标题')),
+  )
+  const marks = nodes(tree).filter((node) => node?.type === 'mark')
+  assert.deepEqual(
+    marks.map((node) => node.props.children[0]),
+    ['Binding'],
+    'the snippet marks the query case-insensitively',
+  )
+  assert.equal(byClass(tree, 'mem-snippet').length, 2)
+  assert.ok(texts(tree).some((text) => String(text).startsWith('共 2 条 · 用时 3 ms')))
+
+  // The clear control empties the field and returns focus to it.
+  byClass(tree, 'mem-search-clear')[0].props.onClick()
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(byClass(tree, 'mem-search-clear').length, 0)
+  assert.ok(render.focused.includes('input:mem-search-input'))
+})
+
+test('the search footer reports a real total only for a complete page', async (t) => {
+  const sent = stubFetch(t, (_body, call) =>
+    ok({
+      query: 'binding',
+      hits: [
+        {
+          path: 'a.md',
+          title: 'A',
+          type: 'decision',
+          status: 'active',
+          source: 'title',
+          snippet: 'a',
+          scoreSignals: [],
+        },
+      ],
+      limit: call === 1 ? 25 : 50,
+      hasMore: call < 3,
+      tookMs: 4,
+    }),
+  )
+  const render = mount(t, 'SearchView')
+  let tree = render({ sessionId: 'session-a' })
   find(tree, (node) => node?.type === 'input').props.onChange({ target: { value: 'binding' } })
   tree = render({ sessionId: 'session-a' })
   find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
   await setImmediate()
   tree = render({ sessionId: 'session-a' })
-  assert.equal(byClass(tree, 'mem-result').length, 2)
   assert.deepEqual(
-    byClass(tree, 'mem-result-index').map((node) => node.props.children[0]),
-    ['01', '02'],
+    texts(tree).filter((text) => /条 · 用时/u.test(String(text))),
+    ['已显示 1 条 · 用时 4 ms'],
+    'a page with more rows says 已显示, never 共',
   )
-  assert.ok(byClass(tree, 'mem-stamp').some((node) => node.props.children[0] === '决策'))
-  assert.ok(byClass(tree, 'mem-filter').length >= 3, 'each filter group is an underlined row')
-  assert.ok(byClass(tree, 'mem-filter-option').length >= 8)
-  assert.ok(texts(tree).some((text) => String(text).includes('来源 标题')))
-  assert.ok(byClass(tree, 'mem-snippet').length === 2)
+  assert.equal(countText(tree, '共 1 条'), 0)
+  assert.equal(byText(tree, '显示更多').length, 1)
+  byText(tree, '显示更多')[0].props.onClick()
+  await setImmediate()
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(sent.at(-1).body.limit, 50, '显示更多 asks for the ceiling')
+  assert.equal(countText(tree, '已达上限 50'), 1, 'the ceiling is named')
+  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
+  await setImmediate()
+  tree = render({ sessionId: 'session-a' })
+  assert.deepEqual(
+    texts(tree).filter((text) => /条 · 用时/u.test(String(text))),
+    ['共 1 条 · 用时 4 ms'],
+    'a complete page may claim 共',
+  )
+  assert.equal(countText(tree, '已显示 1 条'), 0)
 })
 
-test('health renders status stamps, a thin hot meter and the digest column', async (t) => {
+test('search marks only terms of two or more characters, case-insensitively and literally', async (t) => {
+  stubFetch(t, (body) =>
+    ok({
+      query: body.query,
+      hits: [
+        {
+          path: 'a+b.md',
+          title: 'T',
+          type: 'doc',
+          status: 'active',
+          source: 'body',
+          snippet: 'x A+B binding value',
+          scoreSignals: [],
+        },
+      ],
+      limit: 25,
+      hasMore: false,
+      tookMs: 1,
+    }),
+  )
+  const render = mount(t, 'SearchView')
+  let tree = render({ sessionId: 'session-a' })
+  find(tree, (node) => node?.type === 'input').props.onChange({
+    target: { value: 'x BINDING a+b' },
+  })
+  tree = render({ sessionId: 'session-a' })
+  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
+  await setImmediate()
+  tree = render({ sessionId: 'session-a' })
+  assert.deepEqual(
+    nodes(tree)
+      .filter((node) => node?.type === 'mark')
+      .map((node) => node.props.children[0]),
+    ['A+B', 'binding'],
+    'the single-character term is ignored; the regex metacharacters stay literal',
+  )
+  find(tree, (node) => node?.type === 'input').props.onChange({ target: { value: 'x' } })
+  tree = render({ sessionId: 'session-a' })
+  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
+  await setImmediate()
+  tree = render({ sessionId: 'session-a' })
+  assert.equal(
+    nodes(tree).filter((node) => node?.type === 'mark').length,
+    0,
+    'one char marks nothing',
+  )
+})
+
+test('health bands its summary, meter, digest and 诊断记录 timeline', async (t) => {
   stubFetch(t, () => ok(healthValue()))
   const render = mount(t, 'HealthView')
   render({ sessionId: 'session-a', visible: true })
   await setImmediate()
   const next = render({ sessionId: 'session-a', visible: true })
+  const summary = find(next, (node) => node?.props?.['aria-label'] === '健康摘要')
+  assert.ok(summary, 'the summary band comes first')
+  assert.equal(byClass(next, 'mem-summary-item').length, 4, 'a 2x2 band of 索引/队列/热层/摘要')
+  assert.deepEqual(
+    byClass(next, 'mem-label')
+      .map((node) => node.props.children[0])
+      .slice(0, 4),
+    ['索引', '队列', '热层', '摘要'],
+  )
   assert.ok(byClass(next, 'mem-stamp').some((node) => node.props.children[0] === '就绪'))
   assert.ok(byClass(next, 'mem-meter-track').length === 1)
   assert.ok(byClass(next, 'mem-digest').length === 1)
-  assert.ok(byClass(next, 'mem-event').length === 2)
   assert.ok(texts(next).some((text) => String(text).includes('今日摘要')))
   assert.ok(byClass(next, 'mem-row-title').some((node) => node.props.children[0] === '已完成'))
+  assert.ok(
+    texts(next).some((text) => String(text).includes('诊断记录')),
+    'the section is retitled',
+  )
+  assert.equal(
+    texts(next).some((text) => String(text).includes('最近的决策')),
+    false,
+    'the old mislabel is gone',
+  )
+  assert.equal(byClass(next, 'mem-event').length, 2)
+  assert.equal(byClass(next, 'mem-event-dot').length, 2, 'each event is a timeline dot')
+  assert.ok(
+    byClass(next, 'mem-event').every((event) => byClass(event, 'mem-event-dot').length === 1),
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -504,12 +759,16 @@ test('a filter chip with an empty query focuses the field and sends no request',
   byText(tree, '约定')[0].props.onClick()
   tree = render({ sessionId: 'session-a' })
   assert.equal(sent.length, 0, 'the empty query is not sent to the route')
-  assert.deepEqual(render.focused, ['input'], 'focus returns to the search field')
+  assert.deepEqual(render.focused, ['input:mem-search-input'], 'focus returns to the search field')
   assert.equal(countText(tree, '输入关键词开始检索'), 1)
   byText(tree, '全部')[0].props.onClick()
   tree = render({ sessionId: 'session-a' })
   assert.equal(sent.length, 0)
-  assert.deepEqual(render.focused, ['input', 'input'], 'every empty chip click refocuses')
+  assert.deepEqual(
+    render.focused,
+    ['input:mem-search-input', 'input:mem-search-input'],
+    'every empty chip click refocuses',
+  )
   assert.equal(countText(tree, '输入关键词开始检索'), 1)
 })
 
@@ -616,6 +875,61 @@ async function health(t) {
   await setImmediate()
   return { render, props, tree: render(props) }
 }
+
+test('the sheet restores focus to its invoker and the busy trap keeps focus on the dialog', async (t) => {
+  const confirmGate = deferred()
+  stubFetch(t, (body) => {
+    if (body.action === 'preview') return ok(previewValue('retry-job'))
+    if (body.action === 'confirm') return confirmGate.promise
+    return ok(healthValue())
+  })
+  const { render, props } = await health(t)
+  let tree = render(props)
+  const restored = []
+  const invoker = { focus: () => restored.push('invoker') }
+  byText(tree, '重新排队')[0].props.onClick({ currentTarget: invoker })
+  await setImmediate()
+  tree = render(props)
+  assert.ok(
+    find(tree, (node) => node?.props?.role === 'alertdialog'),
+    'the preview opens the sheet',
+  )
+  assert.equal(render.focused.at(-1), 'button:mem-sheet-cancel', 'Cancel takes focus on open')
+
+  byText(tree, '确认执行')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  const dialog = find(tree, (node) => node?.props?.role === 'alertdialog')
+  assert.ok(dialog, 'the sheet stays open while the confirm is in flight')
+  assert.equal(
+    find(tree, (node) => node?.props?.className === 'mem-sheet-panel').props.tabIndex,
+    -1,
+    'the dialog panel is focusable as the trap floor',
+  )
+  const prevented = []
+  dialog.props.onKeyDown({
+    key: 'Tab',
+    shiftKey: false,
+    target: null,
+    preventDefault: () => prevented.push('tab'),
+  })
+  assert.deepEqual(prevented, ['tab'], 'the trap still handles Tab while busy')
+  assert.equal(
+    render.focused.at(-1),
+    'div:mem-sheet-panel',
+    'focus stays on the dialog instead of dropping to body',
+  )
+
+  confirmGate.resolve(failure(409, 'preview-stale', 'stale preview'))
+  await setImmediate()
+  tree = render(props)
+  assert.equal(
+    find(tree, (node) => node?.props?.role === 'alertdialog'),
+    undefined,
+    'the invalidating failure closes the sheet',
+  )
+  assert.deepEqual(restored, ['invoker'], 'focus returns to the control that opened the sheet')
+})
 
 test('the retry action previews facts then confirms one token and reports the outcome', async (t) => {
   const sent = stubFetch(t, (body) => {

@@ -650,7 +650,13 @@ const BUDGETS = {
   // unbound notice carried across its own continuation, the removal of the
   // second loading owner in StatusLine/refreshButton, and the real last-read
   // timestamp so a stale search error never says 上次更新 —.
-  'lib/memory-panel.js': 1450,
+  // Raised from 1450 by the modern-view markup phase (1606 formatted lines
+  // measured; measured-plus-30 is 1636, rounded to 1650). What the 156 lines buy:
+  // the KPI buttons and composition bar/legend, the ordinal-free recent rows, the
+  // 検索 search field/clear control/named filter groups, the marked snippets and
+  // chip rows, the 健康 summary band and 诊断记录 timeline, and the sheet's focus
+  // restore plus a Tab trap that holds while both actions are busy.
+  'lib/memory-panel.js': 1650,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})

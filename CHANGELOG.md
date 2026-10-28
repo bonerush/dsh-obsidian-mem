@@ -20,6 +20,19 @@ release artifact. The versioning policy is in the README, under Development.
   The one injected `<style>` sheet is token-only (no hex/rgb/hsl, no `font-family`, no gradients,
   radii ≤16px, shadows only `--dsw-shadow-lv1`/`--dsw-shadow-lv3`) and carries the whole class
   contract the redesigned 概览/检索/健康 views build on; the graph body is untouched.
+- **概览/检索/健康 now wear the modern view markup.** 概览 opens with KPI cells that jump (待处理
+  to 健康, the rest to 检索) above one stacked composition bar + legend and a quiet status-chip row;
+  the numbered recent index is retired for a type dot and a `type · relative time` line, and the
+  health summary is a passive band with one `全部 →` action. 検索 gets a raised search field with a
+  clear control, named filter groups (类型/状态/范围), ordinal-free result rows with type/status
+  chips, a path breadcrumb and the query marked inside the two-line snippet, and a footer that says
+  `共 N 条` only for a complete page (`已显示 N 条` while 显示更多 is offered); its head meta claims
+  `本地记忆索引` instead of a static FTS5. 健康 opens with a 2×2 summary band, then banded sections —
+  index facts with a state pill, the queue with the same preview/confirm retry, the 6px hot-layer
+  meter, today's digest, and a `诊断记录` timeline replacing the mislabelled `最近的决策` — and the
+  confirm sheet now restores focus to the control that opened it and keeps its Tab trap on the
+  dialog while both actions are busy. No payload, action or backend change; the graph body and the
+  three mutation capabilities are unchanged.
 
 ### Fixed
 

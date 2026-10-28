@@ -67,9 +67,10 @@ test('every state the panel can show has Chinese copy', async () => {
     '当前项目尚未绑定记忆',
     '这个项目还没有记忆',
     '没有匹配的记忆。',
+    '输入关键词开始检索，结果来自本地记忆索引。',
     '队列为空。',
     '热层',
-    '最近的决策',
+    '诊断记录',
   ])
     assert.ok(text.includes(copy), 'the copy is present: ' + copy)
   assert.ok(text.includes("role: stale ? 'status' : 'alert'"), 'errors are announced as alerts')
