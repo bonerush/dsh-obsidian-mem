@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.2.1 — 2026-10-28
+
 ### Added
 
 - **A coverage-first brief with addressable paging.** `buildBrief` now returns a
