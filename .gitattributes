@@ -1,0 +1,9 @@
+# Pin every checkout to LF.
+#
+# Measured on Windows 11 (2026-10-28): with Git's `core.autocrlf=true`, a
+# checkout rewrites tracked text to CRLF, while prettier's `format:check`
+# defaults to `endOfLine: lf` — so `npm run check` failed on a Windows checkout
+# for files nobody had edited. `text=auto` keeps Git's own binary detection and
+# `eol=lf` makes a Windows checkout byte-identical to a Linux one, so the gate is
+# about the code rather than the host's checkout policy.
+* text=auto eol=lf

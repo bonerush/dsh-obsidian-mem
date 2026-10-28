@@ -4,6 +4,12 @@
 # it — a CI-only check is one that passes locally and fails on push. The two extra
 # steps are the ones that need something the local gate deliberately does not have:
 # a comparison base for the Unreleased gate, and the Node matrix.
+#
+# The matrix carries Windows legs so "Windows supported" is a claim CI enforces
+# rather than one a contributor discovers in a session. They run the identical
+# steps: no `if: runner.os` shortcut and no `continue-on-error`. `.gitattributes`
+# pins every checkout to LF, which is what makes `npm run check` mean the same
+# thing on a Windows runner as on Linux.
 name: checks
 
 on:
@@ -15,7 +21,7 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -23,7 +29,17 @@ jobs:
         # node:sqlite with FTS5 — and it is listed first because an unmeasured
         # floor is just a claim. 'node' tracks current so a break shows up here
         # rather than in a user's session.
+        os: [ubuntu-latest]
         node: ['22.22.2', '24.x', 'node']
+        include:
+          # One Windows leg per supported LTS, on the same `npm run check` the
+          # ubuntu legs run (the steps below read `matrix.os`, so they are the
+          # same steps). 'node' stays ubuntu-only: it tracks a moving current
+          # release, and a Windows claim is made per measured LTS.
+          - os: windows-latest
+            node: '22.22.2'
+          - os: windows-latest
+            node: '24.x'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -38,6 +54,11 @@ jobs:
       - run: npm run check
       - name: Resolve the comparison base
         id: base
+        # The command writes a shell redirection into `$GITHUB_OUTPUT`; bash is
+        # present on both runners (the Windows image ships Git Bash), and asking
+        # for it explicitly keeps the command the same text on every leg instead
+        # of forking into a PowerShell-only variant.
+        shell: bash
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           BEFORE: ${{ github.event.before }}

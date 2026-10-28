@@ -211,6 +211,20 @@ test('the workflow runs npm run check across the supported Node versions', () =>
   const text = readFileSync(join(REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8')
   const workflow = YAML.parse(text)
   assert.deepEqual(workflow.jobs.check.strategy.matrix.node, ['22.22.2', '24.x', 'node'])
+  // Windows is a supported platform, so the gate has to run there. The matrix is
+  // the only shape that runs the SAME steps on every OS: `runs-on` reads the
+  // matrix and the `include` adds a Windows leg per supported Node LTS, without
+  // forking the step list or tolerating a failure on one platform.
+  assert.equal(workflow.jobs.check['runs-on'], '${{ matrix.os }}')
+  assert.deepEqual(workflow.jobs.check.strategy.matrix.os, ['ubuntu-latest'])
+  const windowsLegs = (workflow.jobs.check.strategy.matrix.include ?? []).filter(
+    (leg) => leg.os === 'windows-latest',
+  )
+  assert.deepEqual(
+    windowsLegs.map((leg) => leg.node),
+    ['22.22.2', '24.x'],
+    'the Windows leg covers both supported Node LTS releases',
+  )
   const steps = workflow.jobs.check.steps
   const commands = steps.map((step) => step.run ?? '').filter(Boolean)
   assert.equal(
@@ -240,6 +254,42 @@ test('the workflow runs npm run check across the supported Node versions', () =>
   assert.equal(text.includes('github.event.before'), true)
   // No step may ask for a token this repository does not need.
   assert.equal(workflow.permissions?.contents, 'read')
+  // A leg that is allowed to fail, or one that runs different commands, is not
+  // the same gate: both are how "Windows supported" quietly becomes "Windows
+  // attempted". Asserted absent rather than left to reviewer memory.
+  assert.equal(
+    steps.some((step) => step['continue-on-error'] !== undefined),
+    false,
+    'no step may tolerate a failure: the Windows leg is the claim itself',
+  )
+  assert.equal(
+    steps.some((step) => String(step.if ?? '').includes('runner.os')),
+    false,
+    'a runner.os condition would run a different gate on Windows, not the same one',
+  )
+})
+
+test('the checkout pins LF line endings so the format gate travels to Windows', () => {
+  // Load-bearing for the Windows leg: without the pin a default
+  // `core.autocrlf=true` checkout is CRLF, prettier's `format:check` defaults to
+  // `lf`, and the Windows gate fails for checkout policy rather than for code.
+  // The rule has to cover every path (not a whitelist) and keep Git's binary
+  // auto-detection, so no binary content is rewritten.
+  const text = readFileSync(join(REPO_ROOT, '.gitattributes'), 'utf8')
+  const rules = text
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#'))
+  const pin = rules.find((line) => line.split(/\s+/u)[0] === '*')
+  assert.ok(pin, '.gitattributes must carry one rule for every path')
+  const tokens = pin.split(/\s+/u)
+  assert.equal(tokens.includes('text=auto'), true, 'Git must still detect binary files itself')
+  assert.equal(tokens.includes('eol=lf'), true, 'a Windows checkout has to be LF, like CI')
+  assert.equal(
+    rules.some((rule) => rule.includes('eol=crlf')),
+    false,
+    'a CRLF rule would readmit the checkout policy the pin exists to remove',
+  )
 })
 
 test('ci-base prefers the event SHA and refuses to guess', (t) => {
