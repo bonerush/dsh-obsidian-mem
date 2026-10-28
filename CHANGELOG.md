@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.2.2 — 2026-10-28
+
 ### Fixed
 
 - **The plugin now runs on Windows.** Seven defects were platform-only, each
