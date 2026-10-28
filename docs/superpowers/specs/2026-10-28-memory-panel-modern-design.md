@@ -215,3 +215,24 @@ tokens are the modernisation), no invented theme tokens.
 - **Rollback:** the change is confined to `lib/client.js`, `lib/memory-panel.js`, their tests,
   CI/README/version files; `git revert` of the interface commits restores the 0.2.2 UI with no
   data migration (no payload/schema changes).
+
+## Amendments
+
+**2026-10-28 — health summary is a passive band (amends *概览* line 119).**
+The design bullet above asked for `.mem-summary/.mem-summary-item` to stay "a 2×2 jump grid" with
+every item keeping its action. The audit it cited at §A3.12 found the opposite problem in the
+0.2.2 build: all four cells called the same `onJump('health')`, so the affordance promised four
+targets and delivered one. The shipped view therefore keeps the 2×2 band and its state colours but
+makes the cells passive; one `全部 →` action in the section head opens 健康, and the KPI band keeps
+its own jumps (待处理 → 健康, the rest → 检索). The style contract drops `cursor:pointer`/`:hover`
+from `.mem-summary-item` so the band no longer looks clickable. The CHANGELOG and README describe
+this shape; the old "jump grid" sentence is superseded rather than silently contradicted.
+
+**2026-10-28 — acceptance wording errata.** Two statements above are clarified, not changed in
+intent: the graph-body proof says "lines 24–735", which cannot be literal because the panel
+stylesheet sits inside that span and is the thing being redesigned — the intent (and the recorded
+proof) is that the graph token block and `GraphCanvas`/`GraphView` are untouched. The test-suite
+size in the first acceptance bullet was 1320 at the time of writing; the delivered suite is larger
+(1332 tests) and the criterion is "zero failures", not a fixed count. A Windows-only pack defect
+found by the final full gate (GNU tar reading `C:\…` as a remote host) was fixed before release.
+
