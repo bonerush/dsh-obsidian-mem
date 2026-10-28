@@ -335,3 +335,48 @@ test('pure rendering projects values without sorting or changing supplied record
   assert.equal(result.notes.updated, 1)
   assert.deepEqual(records, before)
 })
+
+test('a date-only created value is compared in the vault calendar, not as UTC midnight', () => {
+  // The vault writes `created: YYYY-MM-DD` from the host's local calendar, while
+  // the digest window is a rolling UTC instant window. Parsing the date as UTC
+  // midnight excluded "today" for hosts east of UTC between local midnight and
+  // UTC midnight (measured 2026-10-29 00:10 +08: window ended 2026-10-28T16:10Z,
+  // the note's created "2026-10-29" parsed to a future instant). The window here
+  // spans mid-day UTC so the expected calendar comparison is timezone-independent.
+  const window = { days: 1, from: '2026-10-27T12:00:00.000Z', to: '2026-10-28T12:00:00.000Z' }
+  const records = [
+    {
+      path: 'today.md',
+      title: 'today',
+      type: 'decision',
+      status: 'active',
+      updated: '2026-10-28T11:00:00.000Z',
+      data: { created: '2026-10-28' },
+    },
+    {
+      path: 'tomorrow.md',
+      title: 'tomorrow',
+      type: 'decision',
+      status: 'active',
+      updated: '2026-10-30T00:00:00.000Z',
+      data: { created: '2026-10-29' },
+    },
+    {
+      path: 'old.md',
+      title: 'old',
+      type: 'decision',
+      status: 'active',
+      updated: '2026-10-27T12:30:00.000Z',
+      data: { created: '2026-10-26' },
+    },
+  ]
+  const result = renderDigest(records, {
+    window,
+    hot: HOT,
+    queue: QUEUE,
+    appraisal: { findings: [], total: 0, truncated: false, scanned: 3 },
+    collection: { inspected: 3, truncated: false, incomplete: false, reasons: [] },
+  })
+  assert.equal(result.notes.created, 1, 'only the calendar date inside the window is a creation')
+  assert.equal(result.notes.updated, 1, 'the older note is an update, not a creation')
+})

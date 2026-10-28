@@ -11,6 +11,31 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Fixed
+
+- **The two private-file writers now refuse symlinks on Windows too, so the Windows CI legs go
+  green.** The first `windows-latest` run (0.3.0) executed fourteen cases this non-elevated host
+  skips because it cannot create file symlinks, and six of them failed: two writers had only ever
+  proved symlink safety with `O_NOFOLLOW`, which Windows does not define. The diagnostic journal's
+  append followed a run file substituted with a symlink and wrote through to the link's target,
+  and the curation review claim guard's `O_CREAT` created a dangling symlink's target outside the
+  data root *before* its post-open inode/hardlink check could run. Both now inspect the named entry
+  before opening it — a symlink, a directory or any non-plain file is refused, so the create cannot
+  happen — and keep the post-open identity comparison; POSIX still relies on `O_NOFOLLOW`. The
+  previously skipped `a linked claim guard never creates or modifies outside or vault targets` and
+  `a substituted run-file symlink cannot be written or exported` groups now pass on the Windows
+  leg. `lib/curation-review.js`'s budget rises 800 → 850 for the 803 measured lines plus the
+  reasoned comment.
+- **The digest window compares calendar dates in the vault's own calendar.** Notes store
+  `created: YYYY-MM-DD` from the host's local calendar, but the digest parsed that value as UTC
+  midnight against a rolling UTC instant window. On a host east of UTC this excluded a note written
+  "today" between local midnight and UTC midnight, so `mem_admin(action="digest")` and the panel's
+  health view reported `created: 0` for a fresh write — measured 2026-10-29 00:10 +08 (window ended
+  2026-10-28T16:10Z). Date-only values are now compared as local calendar dates against the window's
+  local dates, while full timestamps keep the instant comparison; a regression test pins the three
+  cases (inside, after, before). This also removes the two tests that failed a local Windows
+  `npm run check` only in that eight-hour window.
+
 ## 0.3.0 — 2026-10-28
 
 The memory panel gets its first host-native redesign and Windows becomes a gated platform. The
