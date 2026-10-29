@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.4.2 — 2026-10-29
+
 ### Fixed
 
 - **The search box painted two focus rings for one focus.** Measured from the reported
