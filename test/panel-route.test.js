@@ -538,6 +538,549 @@ test('overview trims its lists to stay inside the 16 KB ceiling', async (t) => {
   assert.ok(result.bytes <= 16 * 1024, 'overview is ' + result.bytes + ' bytes')
 })
 
+// ---------------------------------------------------------------------------
+// Task 2: the 概览 chart aggregates (activity + tag frequencies)
+// ---------------------------------------------------------------------------
+
+/** The local calendar days a window of `days` covers, oldest first. */
+function localDays(days) {
+  const pad = (value) => String(value).padStart(2, '0')
+  const today = new Date()
+  const list = []
+  for (let offset = days - 1; offset >= 0; offset -= 1) {
+    const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset)
+    list.push(`${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`)
+  }
+  return list
+}
+
+/** An activity series of `days` days, every bucket zero, oldest first. */
+function activitySeries(days, fill = 0) {
+  const list = localDays(days)
+  return {
+    from: list[0],
+    to: list[list.length - 1],
+    days: list,
+    created: list.map((_day, position) => (position + fill) % 4),
+    updated: list.map((_day, position) => (position + fill) % 6),
+  }
+}
+
+test('overview carries the chart aggregates and asks for the route-driven window', async (t) => {
+  const calls = {}
+  const base = stubServices()
+  const services = {
+    ...base.services,
+    async indexForBinding() {
+      return {
+        boundProjectId: BOUND.projectId,
+        status: () => ({
+          backend: 'sqlite',
+          ready: true,
+          degraded: false,
+          stale: false,
+          scanning: false,
+          notes: 5,
+          lastScan: null,
+          quarantined: [],
+          skipped: {},
+          fts: true,
+        }),
+        stats: async () => ({
+          notes: 5,
+          links: 2,
+          orphans: 1,
+          byType: [],
+          byStatus: [],
+          updatedAt: null,
+        }),
+        activity: async (args) => {
+          calls.activity = args
+          return activitySeries(84, 1)
+        },
+        tagFrequencies: async (args) => {
+          calls.tags = args
+          return { items: [{ tag: 'dsh-mem/decision', n: 3 }], total: 4 }
+        },
+        recent: async () => [],
+      }
+    },
+  }
+  const h = await harness(t, { services })
+  const result = await h.post({ sessionId: SESSION, action: 'overview' })
+  assert.equal(result.status, 200)
+  const value = result.body.value
+  assert.deepEqual(calls.activity, { scope: 'project', days: 84 })
+  assert.deepEqual(calls.tags, { scope: 'project', limit: 12 })
+  assert.equal(value.activity.days.length, 84, 'a twelve-week calendar, per design §3.3')
+  assert.equal(value.activity.from, value.activity.days[0])
+  assert.equal(value.activity.to, value.activity.days[83])
+  assert.equal(value.activity.created.length, 84)
+  assert.equal(value.activity.updated.length, 84)
+  assert.deepEqual(value.tags, { items: [{ tag: 'dsh-mem/decision', n: 3 }], total: 4 })
+  // Both series are integers: the panel formats them, the route never ships text.
+  for (const n of [...value.activity.created, ...value.activity.updated])
+    assert.equal(Number.isInteger(n), true)
+  for (const item of value.tags.items) assert.equal(Number.isInteger(item.n), true)
+})
+
+test('an index build without the chart aggregates still answers overview', async (t) => {
+  // The panel asset and the host plugin upgrade independently, so a missing
+  // aggregate must read as "no chart" rather than fail the whole 概览 read.
+  const h = await harness(t, { services: stubServices().services })
+  const result = await h.post({ sessionId: SESSION, action: 'overview' })
+  assert.equal(result.status, 200)
+  assert.equal(result.body.value.activity, null)
+  assert.equal(result.body.value.tags, null)
+  assert.equal(result.body.value.counts.notes, 5, 'the required cards still answer')
+})
+
+test('a failing chart aggregate degrades to no chart instead of failing the read', async (t) => {
+  const base = stubServices()
+  const services = {
+    ...base.services,
+    async indexForBinding() {
+      return {
+        boundProjectId: BOUND.projectId,
+        status: () => ({
+          backend: 'sqlite',
+          ready: true,
+          degraded: false,
+          stale: false,
+          scanning: false,
+          notes: 5,
+          lastScan: null,
+          quarantined: [],
+          skipped: {},
+          fts: true,
+        }),
+        stats: async () => ({
+          notes: 5,
+          links: 2,
+          orphans: 1,
+          byType: [],
+          byStatus: [],
+          updatedAt: null,
+        }),
+        activity: async () => {
+          throw new Error('index-not-ready')
+        },
+        tagFrequencies: async () => {
+          throw new RangeError('limit out of range')
+        },
+        recent: async () => [],
+      }
+    },
+  }
+  const h = await harness(t, { services })
+  const result = await h.post({ sessionId: SESSION, action: 'overview' })
+  assert.equal(result.status, 200)
+  assert.equal(result.body.value.activity, null)
+  assert.equal(result.body.value.tags, null)
+})
+
+test('an unbound project keeps its pre-chart shape', async (t) => {
+  const h = await harness(t, {
+    services: stubServices().services,
+    resolveBinding: async () => ({ kind: 'unbound', reason: 'no-pointer' }),
+  })
+  const result = await h.post({ sessionId: SESSION, action: 'overview' })
+  assert.equal(result.status, 200)
+  assert.deepEqual(Object.keys(result.body.value).sort(), [
+    'capabilities',
+    'counts',
+    'digest',
+    'health',
+    'hot',
+    'project',
+    'queue',
+    'recent',
+  ])
+  assert.equal('activity' in result.body.value, false, 'the unbound value gains no chart field')
+  assert.equal('tags' in result.body.value, false)
+})
+
+test('overview stays inside 16 KB with fifty notes and the full 84-day window', async (t) => {
+  const recent = Array.from({ length: 8 }, (_x, index) => ({
+    path: 'Projects/alpha--11111111/Decisions/note-' + index + '.md',
+    title: 'a realistic note title number ' + index,
+    type: 'decision',
+    status: 'active',
+    updated: '2026-10-2' + (index % 9) + 'T10:00:00.000Z',
+  }))
+  const tags = Array.from({ length: 12 }, (_x, index) => ({
+    tag: 'dsh-mem/' + ['decision', 'gotcha', 'convention'][index % 3] + '-' + index,
+    n: 12 - index,
+  }))
+  const services = {
+    async indexForBinding() {
+      return {
+        boundProjectId: BOUND.projectId,
+        status: () => ({
+          backend: 'sqlite',
+          ready: true,
+          degraded: false,
+          stale: false,
+          scanning: false,
+          notes: 50,
+          lastScan: new Date().toISOString(),
+          quarantined: [],
+          skipped: {},
+          fts: true,
+        }),
+        stats: async () => ({
+          notes: 50,
+          links: 120,
+          orphans: 3,
+          byType: Array.from({ length: 6 }, (_x, index) => ({
+            type: 'type-' + index,
+            n: 50 - index,
+          })),
+          byStatus: Array.from({ length: 5 }, (_x, index) => ({
+            status: 'status-' + index,
+            n: 50 - index,
+          })),
+          updatedAt: null,
+        }),
+        activity: async () => activitySeries(84, 1),
+        tagFrequencies: async () => ({ items: tags, total: 37 }),
+        recent: async () => recent,
+      }
+    },
+    async admin(args) {
+      if (args.action === 'hot')
+        return {
+          action: 'hot',
+          result: {
+            missing: false,
+            used: 7200,
+            capacity: 9000,
+            trigger: 6030,
+            ratio: 0.8,
+            archivable: 3,
+            compactable: 5,
+            sections: [{ name: '已完成', chars: 1200, entries: 1, pointers: 2, moveable: 3 }],
+          },
+        }
+      if (args.action === 'digest') return { action: 'digest', result: digestView() }
+      return { action: 'jobs', result: { jobs: [], failed: 0, deferred: 0 } }
+    },
+  }
+  const h = await harness(t, { services })
+  const result = await h.post({ sessionId: SESSION, action: 'overview' })
+  assert.equal(result.status, 200)
+  assert.ok(result.bytes <= 16 * 1024, 'overview is ' + result.bytes + ' bytes')
+  const value = result.body.value
+  // A realistic overview fits untrimmed: the 84-day window and twelve tag rows
+  // are the designed payload, not the overflow case.
+  assert.equal(value.activity.days.length, 84)
+  assert.equal(value.tags.items.length, 12)
+  assert.equal(value.recent.length, 8)
+  assert.notEqual(value.digest, null)
+})
+
+/** A mutable index/admin pair: a case sets the fields, then reads what survived. */
+function ladderHarness(t) {
+  const state = {
+    activity: activitySeries(84, 1),
+    tagPage: { items: [], total: 0 },
+    byType: [],
+    byStatus: [],
+    sections: [],
+    recent: [],
+    digest: null,
+  }
+  const services = {
+    async indexForBinding() {
+      return {
+        boundProjectId: BOUND.projectId,
+        status: () => ({
+          backend: 'sqlite',
+          ready: true,
+          degraded: false,
+          stale: false,
+          scanning: false,
+          notes: 3,
+          lastScan: null,
+          quarantined: [],
+          skipped: {},
+          fts: true,
+        }),
+        stats: async () => ({
+          notes: 3,
+          links: 0,
+          orphans: 0,
+          byType: state.byType,
+          byStatus: state.byStatus,
+          updatedAt: null,
+        }),
+        activity: async () => state.activity,
+        tagFrequencies: async () => state.tagPage,
+        recent: async () => state.recent,
+      }
+    },
+    async admin(args) {
+      if (args.action === 'hot')
+        return {
+          action: 'hot',
+          result: {
+            missing: false,
+            used: 1,
+            capacity: 9,
+            trigger: 6,
+            ratio: 0.1,
+            archivable: 0,
+            compactable: 0,
+            sections: state.sections,
+          },
+        }
+      if (args.action === 'digest') return { action: 'digest', result: state.digest }
+      return { action: 'jobs', result: { jobs: [], failed: 0, deferred: 0 } }
+    },
+  }
+  const ready = harness(t, { services })
+  const post = async () => (await ready).post({ sessionId: SESSION, action: 'overview' })
+  return { state, post }
+}
+
+test('overview trims the charts before the text lists, in the design §3.6 order', async (t) => {
+  const CEILING = 16 * 1024
+  const SLACK = 400
+  const { state, post } = ladderHarness(t)
+  const rows = (count, make) => Array.from({ length: count }, (_x, index) => make(index))
+  const zeros = (days) => ({
+    ...activitySeries(days),
+    created: new Array(days).fill(0),
+    updated: new Array(days).fill(0),
+  })
+  const section = (name = 'done') => ({
+    name,
+    chars: 10,
+    entries: 1,
+    pointers: 0,
+    moveable: 0,
+  })
+  const recentRow = (index = 0) => ({
+    path: 'p/' + index + '.md',
+    title: 'a',
+    type: 'decision',
+    status: 'active',
+    updated: null,
+  })
+  /**
+   * Reset to a shape where only `order`'s target is large: measure the answer,
+   * then pad the target so the payload lands `SLACK` bytes past the ceiling.
+   * The answer must then have lost exactly the fields that precede the target in
+   * the design's order, and nothing after it.
+   */
+  const overCeiling = async (reset, pad) => {
+    reset()
+    const before = (await post()).bytes
+    pad(Math.max(8, CEILING + SLACK - before))
+    return post()
+  }
+
+  // 1. tags.items is the first thing to go.
+  const first = await overCeiling(
+    () => {
+      state.activity = zeros(84)
+      state.tagPage = { items: [{ tag: 'a', n: 1 }], total: 1 }
+      state.byType = [
+        { type: 'decision', n: 1 },
+        { type: 'doc', n: 1 },
+      ]
+      state.byStatus = [
+        { status: 'active', n: 1 },
+        { status: 'provisional', n: 1 },
+      ]
+      state.sections = [section()]
+      state.recent = [recentRow(0)]
+      state.digest = null
+    },
+    (width) => {
+      state.tagPage = {
+        items: rows(8, (index) => ({
+          tag: 'tag-' + index + '-' + 'x'.repeat(Math.ceil(width / 8)),
+          n: 8 - index,
+        })),
+        total: 8,
+      }
+    },
+  )
+  assert.equal(first.status, 200)
+  assert.ok(first.bytes <= CEILING, 'first stage answer is ' + first.bytes + ' bytes')
+  assert.equal(first.body.value.tags.items.length, 4, 'the tag page halves first')
+  assert.equal(first.body.value.counts.byType.length, 2, 'the distributions still fit')
+  assert.equal(first.body.value.counts.byStatus.length, 2)
+  assert.equal(
+    first.body.value.activity.days.length,
+    84,
+    'the window is untouched until the tags run out',
+  )
+  assert.equal(first.body.value.hot.sections.length, 1)
+  assert.equal(first.body.value.recent.length, 1)
+
+  // 2. With the tag page gone, counts.byType pays next, before byStatus.
+  const second = await overCeiling(
+    () => {
+      state.activity = zeros(84)
+      state.tagPage = { items: [{ tag: 'a', n: 1 }], total: 1 }
+      state.byType = [
+        { type: 'decision', n: 1 },
+        { type: 'doc', n: 1 },
+      ]
+      state.byStatus = [
+        { status: 'active', n: 1 },
+        { status: 'provisional', n: 1 },
+      ]
+      state.sections = [section()]
+      state.recent = [recentRow(0)]
+    },
+    (width) => {
+      state.byType = rows(4, (index) => ({
+        type: 'type-' + index + '-' + 'x'.repeat(Math.ceil(width / 4)),
+        n: 4 - index,
+      }))
+    },
+  )
+  assert.ok(second.bytes <= CEILING)
+  assert.deepEqual(second.body.value.tags.items, [], 'an exhausted tag page cannot pay twice')
+  assert.equal(second.body.value.counts.byType.length, 2, 'byType halves before byStatus')
+  assert.equal(second.body.value.counts.byStatus.length, 2)
+  assert.equal(second.body.value.activity.days.length, 84)
+
+  // 3. Then byStatus, and only then the activity window.
+  const third = await overCeiling(
+    () => {
+      state.activity = zeros(84)
+      state.tagPage = { items: [], total: 0 }
+      state.byType = [{ type: 'decision', n: 1 }]
+      state.byStatus = [
+        { status: 'active', n: 1 },
+        { status: 'provisional', n: 1 },
+      ]
+      state.sections = [section()]
+      state.recent = [recentRow(0)]
+    },
+    (width) => {
+      state.byStatus = rows(4, (index) => ({
+        status: 'status-' + index + '-' + 'x'.repeat(Math.ceil(width / 4)),
+        n: 4 - index,
+      }))
+    },
+  )
+  assert.ok(third.bytes <= CEILING)
+  // `byType` is stage 2 and is spent before `byStatus` (stage 3) is touched —
+  // even when spending it means emptying its last row: the order is the design's,
+  // not "whichever list looks cheapest".
+  assert.equal(third.body.value.counts.byType.length, 0, 'byType is spent before byStatus')
+  assert.equal(third.body.value.counts.byStatus.length, 2, 'byStatus halves after byType')
+  assert.equal(
+    third.body.value.activity.days.length,
+    84,
+    'the window is a later stage than byStatus',
+  )
+
+  // 4. The activity window shrinks to four weeks as one step, all three arrays
+  // together and `from` moving with them — before the hot sections pay.
+  const fourth = await overCeiling(
+    () => {
+      state.activity = zeros(84)
+      state.tagPage = { items: [], total: 0 }
+      state.byType = []
+      state.byStatus = []
+      state.sections = [section()]
+      state.recent = [recentRow(0)]
+    },
+    (width) => {
+      state.sections = rows(6, (index) => ({
+        ...section('sec-' + index + '-' + 'x'.repeat(Math.ceil(width / 6))),
+      }))
+    },
+  )
+  assert.ok(fourth.bytes <= CEILING)
+  const cut = fourth.body.value.activity
+  assert.equal(cut.days.length, 28, 'the window falls back to four weeks')
+  assert.equal(cut.created.length, 28, 'the created series is cut with the calendar')
+  assert.equal(cut.updated.length, 28)
+  assert.equal(cut.from, zeros(84).days[56], 'from moves to the new first day')
+  assert.equal(cut.to, zeros(84).days[83], 'to never moves')
+  assert.equal(fourth.body.value.hot.sections.length, 6, 'the hot sections are untouched')
+
+  // 5. The hot sections pay only once the window is already four weeks.
+  const fifth = await overCeiling(
+    () => {
+      state.activity = zeros(28)
+      state.tagPage = { items: [], total: 0 }
+      state.byType = []
+      state.byStatus = []
+      state.sections = [section()]
+      state.recent = [recentRow(0)]
+    },
+    (width) => {
+      state.sections = rows(6, (index) => ({
+        ...section('sec-' + index + '-' + 'x'.repeat(Math.ceil(width / 6))),
+      }))
+    },
+  )
+  assert.ok(fifth.bytes <= CEILING)
+  assert.equal(
+    fifth.body.value.hot.sections.length,
+    3,
+    'the hot sections halve once the window is short',
+  )
+  assert.equal(fifth.body.value.recent.length, 1, 'the recent list survives the hot step')
+
+  // 6. Then the recent list, while the digest card still fits.
+  const sixth = await overCeiling(
+    () => {
+      state.activity = zeros(28)
+      state.tagPage = { items: [], total: 0 }
+      state.byType = []
+      state.byStatus = []
+      state.sections = [section()]
+      state.recent = [recentRow(0)]
+      state.digest = digestView()
+    },
+    (width) => {
+      state.recent = rows(4, (index) => ({
+        ...recentRow(index),
+        title: 'x'.repeat(Math.ceil(width / 4)),
+      }))
+    },
+  )
+  assert.ok(sixth.bytes <= CEILING)
+  assert.equal(sixth.body.value.recent.length, 2, 'the recent list halves last of the lists')
+  assert.notEqual(sixth.body.value.digest, null, 'the digest is still worth its bytes here')
+
+  // 7. The digest card is the final payload to go.
+  const seventh = await overCeiling(
+    () => {
+      state.activity = zeros(28)
+      state.tagPage = { items: [], total: 0 }
+      state.byType = []
+      state.byStatus = []
+      state.sections = [section()]
+      state.recent = []
+      state.digest = digestView()
+    },
+    (width) => {
+      state.digest = {
+        ...digestView(),
+        appraisal: {
+          findings: [{ code: 'x'.repeat(width) }],
+          total: 1,
+          truncated: false,
+          scanned: 1,
+        },
+      }
+    },
+  )
+  assert.ok(seventh.bytes <= CEILING)
+  assert.equal(seventh.body.value.digest, null, 'the digest card is dropped last')
+  assert.deepEqual(seventh.body.value.recent, [])
+})
+
 test('search measures the final UTF-8 envelope at ceiling minus one, ceiling and ceiling plus one', async (t) => {
   t.mock.method(Date, 'now', () => 1000)
   const hits = [

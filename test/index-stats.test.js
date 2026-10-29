@@ -214,3 +214,182 @@ test('a closed index refuses the batch read instead of answering nulls', async (
     (error) => error instanceof IndexError,
   )
 })
+
+// ---------------------------------------------------------------------------
+// The 概览 charts' two aggregates (memory-panel v0.4). Expected numbers are
+// hand-written from the fixture below, never derived from the implementation.
+//
+// A dedicated fixture is used because the shared one above has fixed mtimes and
+// no `created` values: a date aggregate needs control over both.
+// ---------------------------------------------------------------------------
+
+/** A local day `offset` days away from today, as `YYYY-MM-DD`. */
+function localDay(offset = 0) {
+  const now = new Date()
+  const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset)
+  const pad = (value) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+/** One note carrying explicit `created`/`updated` dates and tags. */
+function datedNote(fields) {
+  const lines = [
+    '---',
+    'id: "' + fields.id + '"',
+    'type: "' + (fields.type ?? 'doc') + '"',
+    'title: "' + fields.id + '"',
+    'status: "' + (fields.status ?? 'active') + '"',
+  ]
+  if (fields.created !== undefined) lines.push('created: ' + fields.created)
+  if (fields.updated !== undefined) lines.push('updated: ' + fields.updated)
+  lines.push('project: "' + (fields.project ?? ALPHA) + '"')
+  if (fields.tags !== undefined) lines.push("tags: ['" + fields.tags.join("', '") + "']")
+  lines.push('---', '# ' + fields.id, '')
+  return lines.join('\n')
+}
+
+/**
+ * A vault whose activity is known day by day. All notes are in project ALPHA
+ * unless stated:
+ *   n1  created -3, updated -1          → creation at -3; update suppressed (see below)
+ *   n2  created -1, updated -1          → a creation at -1 only
+ *   n3  created -1, updated -10         → a creation at -1 only (stale update)
+ *   n4  no created, file mtime -2 noon  → a creation at -2, from the mtime fallback
+ *   n5  created -40, updated -40        → outside 7 days, inside 60
+ *   n6  created -40, updated -2         → an UPDATE at -2: created long before the window
+ *   b1  project BETA, created -1        → never counted in a project scope
+ *
+ * The `updated` suppression on n1 is the point of n6: a note already created
+ * before the window contributes only an update, while a note created inside the
+ * window contributes only a creation. That is `lib/digest.js`'s rule ("new notes
+ * and updates do not overlap"), and the two surfaces must not disagree.
+ */
+async function makeActivityVault() {
+  const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-activity-'))
+  const vault = join(root, 'vault')
+  const files = [
+    [
+      `${A}/Docs/n1.md`,
+      { id: 'n1', created: localDay(-3), updated: localDay(-1), tags: ['alpha'] },
+    ],
+    [
+      `${A}/Docs/n2.md`,
+      { id: 'n2', created: localDay(-1), updated: localDay(-1), tags: ['alpha', 'beta'] },
+    ],
+    [
+      `${A}/Docs/n3.md`,
+      { id: 'n3', created: localDay(-1), updated: localDay(-10), tags: ['beta'] },
+    ],
+    [`${A}/Docs/n4.md`, { id: 'n4', tags: ['gamma'] }],
+    [`${A}/Docs/n5.md`, { id: 'n5', created: localDay(-40), updated: localDay(-40) }],
+    [`${A}/Docs/n6.md`, { id: 'n6', created: localDay(-40), updated: localDay(-2) }],
+    [`${B}/Docs/b1.md`, { id: 'b1', project: BETA, created: localDay(-1), tags: ['beta'] }],
+  ]
+  for (const [path, fields] of files) {
+    const absolute = join(vault, ...path.split('/'))
+    await mkdir(dirname(absolute), { recursive: true })
+    await writeFile(absolute, datedNote(fields), 'utf8')
+  }
+  // n4 has no `created`, so its day comes from the file mtime: two days ago at
+  // local noon, which is unambiguously that local day on every host timezone.
+  const noon = new Date()
+  noon.setDate(noon.getDate() - 2)
+  noon.setHours(12, 0, 0, 0)
+  await utimes(join(vault, ...`${A}/Docs/n4.md`.split('/')), noon, noon)
+  return { root, vault, dataRoot: join(root, 'data') }
+}
+
+/** Open one index over a fresh activity fixture. */
+async function activityHarness(t, backend) {
+  const { root, vault, dataRoot } = await makeActivityVault()
+  const index = await openIndex({ vaultRoot: vault, dataRoot, backend, projectId: ALPHA })
+  t.after(async () => {
+    await index.close().catch(() => {})
+    await rm(root, { recursive: true, force: true })
+  })
+  const ready = await index.waitReady(undefined, 120_000)
+  assert.equal(ready.ready, true, ready.reason)
+  return index
+}
+
+for (const [backend, label] of BACKENDS) {
+  test(`activity buckets created and updated by local day (${label})`, async (t) => {
+    const index = await activityHarness(t, backend)
+    const value = await index.activity({ scope: 'project', days: 7 })
+    assert.deepEqual(Object.keys(value).sort(), ['created', 'days', 'from', 'to', 'updated'])
+    assert.equal(value.days.length, 7)
+    assert.equal(value.to, localDay(0), 'the window ends today')
+    assert.equal(value.from, localDay(-6), 'a 7-day window starts six days back')
+    const at = (series, offset) => series[value.days.indexOf(localDay(offset))]
+    // n1 at -3 and n4 at -2 (the mtime fallback). n2 and n3 both land on -1.
+    assert.equal(at(value.created, -3), 1)
+    assert.equal(at(value.created, -2), 1)
+    assert.equal(at(value.created, -1), 2)
+    // `created` and `updated` never overlap: n1 was created inside the window, so
+    // its later edit is not also counted as an update (digest.js's rule). The one
+    // update in the window belongs to n6, created 40 days ago and edited at -2.
+    assert.equal(at(value.updated, -2), 1)
+    assert.equal(at(value.updated, -1), 0)
+    assert.equal(at(value.updated, -3), 0)
+    assert.equal(
+      value.days.reduce((sum, _, i) => sum + value.created[i], 0),
+      4,
+    )
+  })
+
+  test(`activity is project-scoped and widens on demand (${label})`, async (t) => {
+    const index = await activityHarness(t, backend)
+    const total = (series) => series.reduce((sum, value) => sum + value, 0)
+    const all = await index.activity({ scope: 'all', days: 7 })
+    const project = await index.activity({ scope: 'project', days: 7 })
+    assert.equal(total(all.created), total(project.created) + 1, 'beta b1 adds one')
+    const wide = await index.activity({ scope: 'project', days: 60 })
+    assert.equal(wide.days.length, 60)
+    assert.equal(wide.from, localDay(-59))
+    assert.equal(total(wide.created), 6, 'n5 and n6 land inside a 60-day window')
+  })
+
+  test(`activity refuses a bad window instead of guessing (${label})`, async (t) => {
+    const index = await activityHarness(t, backend)
+    for (const days of [6, 366, 2.5, 0, -7, '30'])
+      await assert.rejects(index.activity({ scope: 'project', days }), RangeError, String(days))
+    await assert.rejects(index.activity({ scope: 'nope' }), RangeError)
+  })
+
+  test(`tagFrequencies counts tag occurrences in the project (${label})`, async (t) => {
+    const index = await activityHarness(t, backend)
+    const value = await index.tagFrequencies({ scope: 'project', limit: 10 })
+    assert.deepEqual(value.items, [
+      { tag: 'alpha', n: 2 },
+      { tag: 'beta', n: 2 },
+      { tag: 'gamma', n: 1 },
+    ])
+    assert.equal(value.total, 5, 'project tags: alpha×2, beta×2, gamma×1')
+    const all = await index.tagFrequencies({ scope: 'all', limit: 10 })
+    assert.equal(all.total, 6, 'beta in project BETA adds a third beta')
+    assert.deepEqual(all.items[0], { tag: 'beta', n: 3 })
+  })
+
+  test(`tagFrequencies bounds its page and rejects a bad limit (${label})`, async (t) => {
+    const index = await activityHarness(t, backend)
+    const value = await index.tagFrequencies({ scope: 'project', limit: 1 })
+    assert.equal(value.items.length, 1)
+    assert.equal(value.total, 5, 'total reports every occurrence, not the page')
+    for (const limit of [0, 51, 1.5, '12'])
+      await assert.rejects(index.tagFrequencies({ scope: 'project', limit }), RangeError)
+  })
+}
+
+test('activity and tagFrequencies agree across both backends', async (t) => {
+  if (!HAS_SQLITE) return
+  const scanIndex = await activityHarness(t, 'scan')
+  const sqliteIndex = await activityHarness(t, 'sqlite')
+  assert.deepEqual(
+    await scanIndex.activity({ scope: 'project', days: 30 }),
+    await sqliteIndex.activity({ scope: 'project', days: 30 }),
+  )
+  assert.deepEqual(
+    await scanIndex.tagFrequencies({ scope: 'all', limit: 20 }),
+    await sqliteIndex.tagFrequencies({ scope: 'all', limit: 20 }),
+  )
+})

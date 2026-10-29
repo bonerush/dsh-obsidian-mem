@@ -11,6 +11,40 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Added
+
+- **`overview` now carries the two aggregates the 概览 charts are drawn from:
+  an 84-day daily `activity` series and a twelve-row `tags` ranking.** Both are
+  implemented twice — once over SQLite and once over the in-memory scan records —
+  and compared field-by-field across the two backends, so a degraded index cannot
+  quietly answer a different vault from the primary one. `activity` returns
+  `{from, to, days, created, updated}` on the local calendar: a note counts on the
+  day its frontmatter `created` says, falling back to the day its file was
+  written, and an update counts only when the note was *not* created that day —
+  the same mutuality rule `lib/digest.js` already applies, reused rather than
+  re-derived. There is no `archived` series on purpose: `superseded` is a current
+  status snapshot and nothing records the day a note reached it, so drawing it as
+  a dated flow would invent a transition the data cannot prove.
+  `tagFrequencies` returns `{items, total}`, where `total` is every occurrence in
+  scope so the panel can say "另有 N 个" without a second read. `overview`
+  feature-detects both readers and answers `null` for a missing or failing one, so
+  a browser asset and a host plugin upgraded at different times degrade to "no
+  chart" instead of failing the whole 概览 read; the unbound value keeps its
+  pre-chart shape exactly. `shrink()` follows the design's seven-stage order — tags,
+  byType, byStatus, the activity window (cut to four weeks with `from` moving and
+  all three arrays in step), hot sections, recent, and finally the digest card — so
+  the chart data is trimmed before the text lists rather than after them. `fit()`'s
+  loop guard rises 8 → 64 because a seven-stage order with halving stages cannot
+  reach its later stages inside eight steps. `lib/index-db.js`'s budget rises
+  2700 → 2900 for the 2827 measured lines (measured plus 30 rounded up) and
+  `lib/panel-route.js`'s 700 → 800 for 749, each with its reasoned comment.
+  Verified: `node test/index-stats.test.js` (21 pass), `node
+  test/panel-route.test.js` (26 pass), `node test/architecture.test.js`, and the
+  full suite at `tests 1355 / pass 1319 / fail 0 / skipped 36` plus eslint,
+  prettier and `tsc --noEmit`. Not verified: any chart drawing these fields — the
+  views that consume them land in a later task, and this entry's own payload has
+  no consumer yet.
+
 ## 0.3.1 — 2026-10-28
 
 ### Fixed

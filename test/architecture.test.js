@@ -630,7 +630,14 @@ const BUDGETS = {
   // rounded to 700); the mutation state machine is its own 850-line module (880 by
   // the rule, rounded to 900) so the route keeps its read-only dispatch small.
   'lib/route-guard.js': 150,
-  'lib/panel-route.js': 700,
+  // Raised from 700 by the v0.4 chart data plane (Task 2): 概览 now carries the
+  // 84-day `activity` series and the twelve-row `tags` ranking, and `shrink()`
+  // follows a seven-stage order instead of halving the three lists it had. The
+  // 49 added lines are that payload's feature-detected readers, the trimmer that
+  // keeps days/created/updated/`from` in step, and the digest stage the order
+  // was missing. Measured 749 formatted lines; measured-plus-30 is 779, rounded
+  // up to 800. The mutation state machine stays in its own module.
+  'lib/panel-route.js': 800,
   'lib/panel-actions.js': 900,
   'lib/appraisal.js': 300,
   // Measured 280 formatted lines; measured-plus-30 is 310, rounded to 350.
@@ -671,7 +678,15 @@ const BUDGETS = {
   // 2490 formatted lines; measured-plus-30 is 2520, rounded to 2550.
   // Raised from 2550 by the source-status recheck and the digest source list:
   // measured 2660 formatted lines; measured-plus-30 is 2690, rounded to 2700.
-  'lib/index-db.js': 2700,
+  // Raised from 2700 by the 概览 chart aggregates (Task 1): the daily
+  // `activity` window (local-calendar day arithmetic, the created/updated
+  // mutuality rule shared with the digest, one SQL and one scan reader) and the
+  // `tagFrequencies` ranking, each implemented twice so both backends answer the
+  // same shape. Measured 2827 formatted lines; measured-plus-30 is 2857, rounded
+  // up to 2900. Nothing moved out of the file to pay for it: the two aggregates
+  // are the first readers that bucket by calendar day, which is why the day
+  // helpers had to live here beside the two backends rather than in a caller.
+  'lib/index-db.js': 2900,
   // Measured 119 formatted lines when the v0.4 sparse baseline moved the shared
   // tokenizer out of `index-db`; measured-plus-30 is 149, rounded to 150.
   'lib/index-text.js': 150,
