@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.4.1 — 2026-10-29
+
 ### Fixed
 
 - **Review round: seven behaviour bugs, each one measured before it was fixed.** An
