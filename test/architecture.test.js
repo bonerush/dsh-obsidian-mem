@@ -707,7 +707,14 @@ const BUDGETS = {
   // counts disagree with the margins. The previous bar+legend path stays in the
   // file as the fallback branch rather than being replaced line for line — an older
   // host, or a payload whose flow the trimmer dropped whole, still renders 构成.
-  'lib/memory-panel.js': 2450,
+  // Raised from 2450 to 2550 by the responsive-width round: the geometry became a
+  // width-keyed function (only the side bands stay absolute; the link span is the
+  // measured block width minus them), a measured-width hook walks the Overview
+  // block with a ResizeObserver, and the width is threaded through the layout and
+  // renderer so a wide panel draws a wider chart whose 11px type still renders
+  // 1:1. Measured 2475 formatted lines; measured-plus-30 is 2505, rounded up to
+  // 2550.
+  'lib/memory-panel.js': 2550,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})
@@ -786,6 +793,8 @@ const BUDGETS = {
   // 1350 ceiling is kept deliberately (it was set by the previous round and this one
   // did not spend it), not re-derived.
   // The panel-shell fix round measured 1309 formatted lines (1302 before the fix
+  // round's Sankey status tint); the responsive-width round measured 1313 (the
+  // stylesheet's two Sankey rules lost the cap and gained the fixed height).
   // round's Sankey status tint): the search field owns
   // the one rounded focus ring (the input no longer paints its square inset ring),
   // the tab row is the Chrome form at 36px with a 2px gap instead of the -8px

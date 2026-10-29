@@ -10,7 +10,7 @@ const MODULE = new URL('../lib/memory-panel.js', import.meta.url)
 // The suite has no React dependency: the views are real, the hook runtime is a
 // four-hook stand-in that preserves state across renders and runs effect
 // cleanup the way the host's mount does. Fetch is the browser boundary.
-function mount(t, name) {
+function mount(t, name, options = {}) {
   const values = []
   const effects = []
   let cursor = 0
@@ -47,7 +47,7 @@ function mount(t, name) {
       })
     },
   }
-  const View = createMemoryViews({ React })[name]
+  const View = createMemoryViews({ React, ...options })[name]
   t.after(() => effects.forEach((effect) => effect?.cleanup?.()))
   const focused = []
   // React attaches a DOM node to an object ref after mounting. This stand-in
@@ -1068,9 +1068,9 @@ function titleOf(element) {
 }
 
 /** Render 概览 once with these counts; the chart data stays present so only 构成 changes. */
-async function renderOverviewWith(t, counts) {
+async function renderOverviewWith(t, counts, options) {
   stubFetch(t, () => ok(overviewValue({ counts, activity: activityFixture(), tags: null })))
-  const render = mount(t, 'OverviewView')
+  const render = mount(t, 'OverviewView', options)
   render(chartProps())
   await setImmediate()
   return render(chartProps())
@@ -1357,6 +1357,57 @@ test('a total that disagrees with the payload note count falls back to the bar',
   assert.equal(byClass(tree, 'mem-bar-track').length, 1, 'the fallback bar answers')
 })
 
+test('the Sankey fills the measured block width and only its middle grows', async (t) => {
+  const narrow = await renderOverviewWith(t, FLOW_COUNTS)
+  const wide = await renderOverviewWith(t, FLOW_COUNTS, { sankeyWidth: 640 })
+  const floored = await renderOverviewWith(t, FLOW_COUNTS, { sankeyWidth: 200 })
+  const svgOf = (tree) => byClass(tree, 'mem-sankey-svg')[0]
+  assert.equal(svgOf(narrow).props.viewBox, '0 0 292 200', 'the default is the 320px floor')
+  assert.equal(svgOf(wide).props.viewBox, '0 0 640 200', 'a wide block gets a wide chart')
+  assert.equal(svgOf(floored).props.viewBox, '0 0 292 200', 'never narrower than the floor')
+  const typeNodes = (tree) =>
+    byClass(tree, 'mem-sankey-node').filter((node) =>
+      node.props.className.split(' ').includes('is-type'),
+    )
+  const statusNodes = (tree) =>
+    byClass(tree, 'mem-sankey-node').filter((node) =>
+      node.props.className.split(' ').includes('is-status'),
+    )
+  const vertical = (nodes) => nodes.map((node) => [node.props.y, node.props.height])
+  // Only the horizontal positions move: the nodes' y/height, the link thickness and
+  // the label rows are identical, so every printed number still equals its geometry.
+  assert.deepEqual(vertical(typeNodes(wide)), vertical(typeNodes(narrow)))
+  assert.deepEqual(vertical(statusNodes(wide)), vertical(statusNodes(narrow)))
+  assert.deepEqual(
+    typeNodes(wide).map((node) => node.props.x),
+    [76, 76, 76],
+    'the left column keeps its edge band',
+  )
+  assert.deepEqual(
+    statusNodes(wide).map((node) => node.props.x),
+    [552, 552],
+    'the right column moves to the measured right edge (640 - 88)',
+  )
+  const linkOf = (tree) => String(byClass(tree, 'mem-sankey-link')[0].props.d)
+  assert.ok(linkOf(narrow).startsWith('M84,'), 'links start at the left band edge')
+  assert.ok(linkOf(narrow).includes(' 204,'), 'the narrow link ends at the right column')
+  assert.ok(linkOf(wide).includes(' 552,'), 'the wide link ends at the measured right edge')
+  assert.ok(
+    byClass(wide, 'mem-sankey-label').some((node) => node.props.x === 600),
+    'status labels hug the measured right edge (640 - 40)',
+  )
+  // The leaders that tie displaced rows to their slivers follow the same edge.
+  const wideSliver = await renderOverviewWith(t, SLIVER_COUNTS, { sankeyWidth: 640 })
+  const leaders = byClass(wideSliver, 'mem-sankey-leader').map((node) => String(node.props.d))
+  assert.ok(
+    leaders.some((d) => d.startsWith('M74,')),
+    'type leaders stay on the left edge band',
+  )
+  assert.ok(
+    leaders.some((d) => d.startsWith('M562,')),
+    'status leaders follow the measured right edge (640 - 78)',
+  )
+})
 test('a flow whose margins disagree falls back to the bar, never a lying chart', async (t) => {
   // Two host bugs (wrong type margin, wrong status margin). A Sankey drawn from
   // either would put link thickness next to printed totals that do not match.

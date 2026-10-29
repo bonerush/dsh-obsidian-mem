@@ -1073,13 +1073,22 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     assert.ok(rule.includes('min-height:44px'), action + ' keeps its 44px hit area')
   }
   assert.ok(css.includes('grid-template-columns:repeat(2,minmax(0,1fr))'), 'overflow folds to 2x2')
-  // The Sankey caps at the 320px floor's content box like the heat grid, so its 11px
-  // type stays 1:1 instead of scaling with a wider panel; centred inside the section.
+  // The Sankey's coordinate width is the MEASURED block width, so the chart fills a
+  // wide panel instead of capping itself or scaling its 11px type; only the height is
+  // the fixed vertical coordinate space.
   const sankey = css.indexOf('.mem-panel .mem-sankey{')
   assert.ok(sankey >= 0, 'the Sankey wrapper rule exists')
   const sankeyRule = css.slice(sankey, css.indexOf('}', sankey))
-  assert.ok(sankeyRule.includes('max-width:292px'), 'the chart caps at its 292px viewBox width')
-  assert.ok(sankeyRule.includes('margin-inline:auto'), 'and centres inside a wider section')
+  assert.equal(
+    sankeyRule.includes('max-width'),
+    false,
+    'the chart is not capped: it fills its block',
+  )
+  const sankeySvg = css.indexOf('.mem-panel .mem-sankey-svg{')
+  assert.ok(sankeySvg >= 0, 'the Sankey svg rule exists')
+  const sankeySvgRule = css.slice(sankeySvg, css.indexOf('}', sankeySvg))
+  assert.ok(sankeySvgRule.includes('width:100%'), 'the svg fills its measured block')
+  assert.ok(sankeySvgRule.includes('height:200px'), 'the height stays the fixed coordinate space')
   assert.ok(css.includes('-webkit-line-clamp:2'), 'snippets clamp to two lines')
 })
 
