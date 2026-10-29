@@ -683,6 +683,14 @@ const BUDGETS = {
   // composition track folds its overflow into a real third segment instead of aliasing
   // a colour. Measured 1966 formatted lines; measured-plus-30 is 1996, rounded up to
   // 2050. This raise buys correctness, not new surface: no chart was added.
+  // The review's Minor fix round kept the same ceiling: measured 2010 formatted lines
+  // after it (void cells gain `aria-hidden`, the sparkline resamples to twelve weekly
+  // points, the flow-bar title names the ISO week, and the `heatmap()` JSDoc stops
+  // promising a `<title>` child the shipped markup cannot host); measured-plus-30 is
+  // 2040, rounded up to 2050. The round after that (the re-review's I-1) measured 2019:
+  // the flow bars became Sunday-first calendar weeks — the same buckets the heat map
+  // draws — with their own week-of-year helper and the derived empty-state sentence,
+  // which is the extra lines inside the idle ceiling (2049), so no raise was needed.
   'lib/memory-panel.js': 2050,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
@@ -694,12 +702,18 @@ const BUDGETS = {
   // measured 2660 formatted lines; measured-plus-30 is 2690, rounded to 2700.
   // Raised from 2700 by the 概览 chart aggregates (Task 1): the daily
   // `activity` window (local-calendar day arithmetic, the created/updated
-  // mutuality rule shared with the digest, one SQL and one scan reader) and the
-  // `tagFrequencies` ranking, each implemented twice so both backends answer the
-  // same shape. Measured 2827 formatted lines; measured-plus-30 is 2857, rounded
-  // up to 2900. Nothing moved out of the file to pay for it: the two aggregates
-  // are the first readers that bucket by calendar day, which is why the day
-  // helpers had to live here beside the two backends rather than in a caller.
+  // mutuality rule the digest also applies — re-implemented here on purpose, because
+  // this reader adds the spec's file-mtime fallback for `created` — and one SQL and
+  // one scan reader) and the `tagFrequencies` ranking, each implemented twice so both
+  // backends answer the same shape. Measured 2839 formatted lines after the review's
+  // Minor fix round (2831 before it — the aabadae commit; 2827 was the b36d02a figure,
+  // measured before the first fix wave added `tagFrequencies`' `distinct`; this round
+  // dropped an unused parameter and corrected the two comments above);
+  // measured-plus-30 is 2869, rounded up to 2900, so the round did not need a raise.
+  // Nothing moved out of the file to pay for it:
+  // the two aggregates are the first readers that bucket by calendar day, which is
+  // why the day helpers had to live here beside the two backends rather than in a
+  // caller.
   'lib/index-db.js': 2900,
   // Measured 119 formatted lines when the v0.4 sparse baseline moved the shared
   // tokenizer out of `index-db`; measured-plus-30 is 149, rounded to 150.
@@ -743,6 +757,12 @@ const BUDGETS = {
   // previous comment claimed 1182 measured against a file that had already grown to
   // 1247 when the charts landed — that stale figure is corrected here rather than
   // left to read as headroom nobody spent.
+  // The review's Minor fix round kept the same ceiling: measured 1262 formatted lines
+  // after it (the heat grid's cap rose 262px → 292px so the chart container clears the
+  // design's 280px floor at the 320px support width, and the rule's why-comment states
+  // the arithmetic); measured-plus-30 is 1292, which the rule rounds to 1300 — the
+  // 1350 ceiling is kept deliberately (it was set by the previous round and this one
+  // did not spend it), not re-derived.
   'lib/client.js': 1350,
   'lib/graph-renderer.js': 700,
   // The eleven-slot table, its two CSS forms and the probe read, split out of the
