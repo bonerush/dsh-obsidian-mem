@@ -61,18 +61,25 @@ release artifact. The versioning policy is in the README, under Development.
   one list), and a sliver cluster's labels are laid out in two passes so the rows
   stay monotonic — the single pass could draw two labels 2px apart at 320px. A row
   the clamp had to displace is tied back to its mark with a 1px leader line (no
-  leader when the row already sits on the node centre), and the chart caps at the
-  heat grid's 292px chart width instead of scaling with the panel, so its 11px type
-  stays 1:1 at every width. The flow is also refused when the two columns and the
+  leader when the row already sits on the node centre). The chart's coordinate width
+  is the MEASURED block width, so it fills a wide panel — and follows it when the
+  sidebar is resized — while its 11px type and one-unit-per-note geometry stay 1:1;
+  the side label bands hug the edges and only the middle link span grows (height
+  fixed at 200). The flow is also refused when the two columns and the
   payload's note count disagree with each other. The wire is all-or-nothing — the
   overview trimmer drops `flow` whole before halving either margin — so a partial chart
   is impossible, and an older host falls back to the unchanged stacked bar + legend.
   Verified: `test/index-stats.test.js` 26/26 on both backends, `test/panel-ui.test.js`
-  48/48 (hand-written geometry, label-leader association, truncation, margin-mismatch
-  and fallback branches), `test/panel-route.test.js` 28/28 (trim order and the 16 KB
-  ceiling), and the 概览 capture at 320/375px in light and dark: 328/328 checks, svg
-  292×200 (1:1, centred) at both widths, 10 nodes / 12 links, both columns 164 units =
-  the printed `515 条`, 8 distinct fills, no clipped labels and no overflow
+  49/49 (hand-written geometry, label-leader association, responsive width, truncation,
+  margin-mismatch and fallback branches), `test/panel-route.test.js` 28/28 (trim order
+  and the 16 KB ceiling), and the 概览 capture at 320/375/659px in light and dark:
+  514/514 checks. Seeded at each viewport's real content width (292/347/631) the svg
+  renders 1:1 in both axes — viewBox `0 0 W 200`, height 200 at every width, 11px type,
+  the right band at W−88/W−76/W−78/W−40, nothing outside the viewport — while node
+  heights, label rows and link thickness are bit-identical across the three widths
+  (10 nodes / 12 links, both columns 164 units = the printed `515 条`, 8 distinct
+  fills). A separate DOM probe mounts the real view and resizes the block
+  320→659→320→500: viewBox 292→631→292→472 with no reload, 15/15 checks
   (`docs/validation/panel-shell-sankey-2026-10-29.md`).
 
 ## 0.4.1 — 2026-10-29

@@ -191,7 +191,8 @@ square is a shape and not a reading, new-versus-updated flow bars sharing one ze
 one bar per calendar week, the same weeks the heat map draws, each carrying the reading
 `WW 周 · 新建 n · 更新 m` — the tag frequency ranking, the type→status composition
 Sankey (real joint counts: node heights and link bands share one unit-per-note scale,
-names and counts written beside both columns; when the host serves no joint flow it
+names and counts written beside both columns; the chart fills the panel and re-measures
+on resize while its type and scale stay 1:1; when the host serves no joint flow it
 falls back to the old composition bar and legend), and a KPI band whose
 note/link/orphan/pending counts jump (待处理 opens **健康**,
 the others put the caret in the search box) with a twelve-point sparkline of the running

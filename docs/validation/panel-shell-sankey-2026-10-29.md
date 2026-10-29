@@ -296,3 +296,104 @@ What changed, measured:
   production-model IME 0 submits, 36px tab leaves / 2px gaps / 44px hit area / container-query
   icon hide. Baseline 232/232 and post-fix 244/244 checks pass; targeted suite 128/128
   (architecture 8, panel-client 18, panel-ui 48, index-stats 26, panel-route 28).
+
+## RESPONSIVE-WIDTH re-verification — fix wave 3 (frozen bytes)
+
+Frozen sha256 (verified with sha256sum): lib/client.js
+`83ebff94819d66a53f87cde5d967ab4ddeb5eb1e80c50a5b6f759ec45c464f1f`,
+lib/memory-panel.js `026da2eff088632b1019127b48e927ebcf4b04fe69980e9cafe433dfbf871c28`,
+test/panel-client.test.js `b7980e36…`, test/panel-ui.test.js `2c9dce51…`,
+test/architecture.test.js `cb85bdbc…` (line counts: client 1313, memory-panel 2475 — budget
+2550, measured+30 = 2505). This supersedes the width-cap statements in the FINAL fix-wave-2
+section above: the 292px cap is gone by user request ("可以再宽一点…也不能随着宽度的变化而变化").
+
+Commands (all exit 0, on the frozen bytes):
+
+- `node scratch/panel-capture/render-overview.mjs` — writes one page per viewport with
+  `createMemoryViews({React, sankeyWidth: viewport − 28})`: 320→292, 375→347, 659→631.
+- `node scratch/panel-capture/capture.mjs` — **514/514 checks pass**, all six rows
+  (light/dark × 320/375/659), source `stable=true`.
+- `node scratch/panel-capture/shell/responsive-dom.mjs` — **15/15 checks pass** (the DOM
+  measurement path, below).
+- `DSH_HOME=$(mktemp -d) node --test test/architecture.test.js test/panel-client.test.js
+  test/panel-ui.test.js test/index-stats.test.js test/panel-route.test.js` — **129/129**
+  (architecture 8, panel-client 18, panel-ui 49, index-stats 26, panel-route 28).
+
+### Static capture: the chart fills the measured block, only the middle grows
+
+| viewport | content box | viewBox | rendered svg | scale | right node x (W−88) | right label x (W−40) | leader xs |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 320 | 292 | 0 0 292 200 | 292×200 | 1.0 | 204 | 252 | 74 / 214 |
+| 375 | 347 | 0 0 347 200 | 347×200 | 1.0 | 259 | 307 | 74 / 269 |
+| 659 | 631 | 0 0 631 200 | 631×200 | 1.0 | 543 | 591 | 74 / 553 |
+
+Identical at 292/347/631 (both themes): label font 11px and rendered scale exactly 1 (no
+letterboxing, no scaling of the type); node y/height, label rows and link band thickness are
+bit-identical across widths (type node heights 133.7476/19.1068/6.3689…, label rows
+76.87/116/132/148/164/180/196); left band absolute (label 34 / value 72 / leader 74 / node
+76+8, links start M84); right band W−88 node, W−76 value, W−78 leader, W−40 label; link span
+grows W−172 and each path's midpoint is (84+W−88)/2; 0 elements paint outside the viewport;
+document scrollWidth = viewport in every row. Numbers = geometry is therefore invariant under
+panel width — the printed counts, node heights and band thicknesses are the same at 292 and
+631 units.
+
+### DOM measurement path (browser runtime, not the static serializer)
+
+`responsive-dom.mjs` mounts the real `OverviewView` in Chrome 154 with the shell harness's
+DOM-producing React stand-in and a stubbed fetch, so refs, effects and
+`globalThis.ResizeObserver` all run for real (the static capture cannot run effects, which is
+why it seeds `createMemoryViews({sankeyWidth})` per viewport — both paths are stated here).
+Measured timeline (no reload; a window marker survives every resize):
+
+| step | host block | ledger measured | viewBox | right node x | right leader x |
+| --- | --- | --- | --- | --- | --- |
+| initial | 320 | 292 | 0 0 292 200 | 204 | 214 |
+| grow | 659 | 631 | 0 0 631 200 | 543 | 553 |
+| shrink | 320 | 292 | 0 0 292 200 | 204 | 214 |
+| arbitrary | 500 | 472 | 0 0 472 200 | 384 | 394 |
+
+Each rendered svg is width×200 at scale 1, label font stays 11px, no boot or effect errors,
+and the marker proves the viewBox followed the ResizeObserver without a reload. Artifacts:
+`scratch/panel-capture/shell/responsive-dom.json`, `responsive-dom-659.png`.
+
+### Scoped review of the responsive change
+
+- `createMemoryViews({React, sankeyWidth = 292})` (lib/memory-panel.js:191) clamps the seed
+  with `Math.max(292, Math.round(Number(sankeyWidth) || 292))` (198), so 0/NaN/200 all land on
+  the 320-floor content width.
+- `useBlockWidth(ref, initial)` (1417–1436): no-op without a node / `getBoundingClientRect` /
+  `ResizeObserver` (SSR + tests keep the seed); measures the block's
+  `getBoundingClientRect().width`, rounds, and equality-guards `setState` so the observer
+  cannot loop; disconnects on cleanup; clamps to ≥292. OverviewView owns the ref on
+  `.mem-ledger` (1457 — rendered from the first paint, so the effect has a node to observe
+  even before data lands) and passes the width into `composition(counts, sankeyWidth)` (1487).
+- `sankeyGeometry(width)` (848–871) makes ONLY horizontal positions width-keyed; height 200,
+  padY 6, nodeGap 4, nodeWidth 8, labelGap 16, labelInset 8 stay constants. `compositionSankey`
+  (1082–1084) and the viewBox `'0 0 ' + width + ' 200'` (1159) use it; CSS
+  (lib/client.js:337–338) is `.mem-sankey{width:100%}` +
+  `.mem-sankey-svg{width:100%;height:200px}`, and because viewBox width == rendered width the
+  scale is exactly 1 in both axes.
+- Tests would fail on a reverse change: panel-ui "the Sankey fills the measured block width and
+  only its middle grows" (1360–1410) asserts 292/640/292-floor viewBoxes, identical
+  y/height arrays narrow vs wide, left x [76,76,76], right x W−88, link start M84 / end W−88,
+  labels at W−40 and leaders 74 / W−78; panel-client pins the absence of `max-width` on
+  `.mem-sankey` and the svg width/height rule; the architecture budget is raised to 2550 with
+  the rationale in the file.
+
+### Limits / observations
+
+- **Below the 320 floor** (content < 292) the seeded/clamped coordinate width stays 292 while
+  CSS asks the svg to be 100% wide, so the SVG would letterbox/scale; that is outside the
+  supported floor and was not measured.
+- The ResizeObserver rounds to integer CSS px; during a live drag the width can jitter by 1px,
+  which is benign (the equality guard avoids needless commits).
+- The static renderer cannot run the ResizeObserver effect, so its numbers prove the width-keyed
+  geometry at the three seeded widths; the browser probe proves the measurement path and the
+  resize behaviour. Neither renders the host dsh-better-sidebar integration.
+- No Critical/Important findings. One minor observation, by design: the chart's height and type
+  stay fixed (200px / 11px) while the width and link span grow — that is exactly the user's
+  "wider but not changing with width" reading; at very wide panels the section therefore gains
+  horizontal breathing room rather than a taller chart.
+
+
+Shell capture re-run on the same frozen client.js: 244/244 checks (focus/tabs/IME are unaffected by the Sankey-only CSS edit; the live artifact now records client sha 83ebff94…).
