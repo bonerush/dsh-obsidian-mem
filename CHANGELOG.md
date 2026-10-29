@@ -51,10 +51,131 @@ release artifact. The versioning policy is in the README, under Development.
   Also removed: the dead `.mem-stamps` rule (its producer `statusStamps` was retired)
   and the unstyled `mem-heat-legend-label` hook; corrected `lib/client.js`'s budget
   comment, which still claimed 1182 measured lines against a 1247-line file.
-  Verified: `node test/panel-ui.test.js` 32 pass, `node test/panel-route.test.js` 26
-  pass, `node test/index-stats.test.js` 21 pass, `node test/architecture.test.js` 8
-  pass, eslint and prettier clean. Not verified: the fixes were not re-captured at
-  320px, and the review's twelve Minor findings are not all addressed.
+  Verified for that round: `node test/panel-ui.test.js` 32 pass,
+  `node test/panel-route.test.js` 26 pass, `node test/index-stats.test.js` 21 pass,
+  `node test/architecture.test.js` 8 pass, eslint and prettier clean. That round left most
+  of the Minor findings (M1–M7, M10–M12; M8, M9 and part of M10 were already closed) and the
+  320px re-capture open; the round below closes both.
+
+- **Review round 2: the twelve Minor findings, the 320px capture that was missing, and one
+  host token the panel had invented.** Same review, same method: each item was read in the
+  code before it changed, every behavioural fix has a test that fails on the old code, and
+  the comment-only items were re-read against the code they describe (M3 against
+  `lib/digest.js:200-202`). M10 and M11 are the two items whose proof is a measurement rather
+  than a failing test — the extraction count and the skip counts quoted below — and the
+  sentence that claimed otherwise was wrong; an independent re-review caught it. The review's
+  numbering is kept (M1–M12); the first round had already closed M8, M9 and part of M10.
+  1. **M1/M2/M3 — the activity block's own comments were wrong.** `activityRequest` took a
+     `state` parameter its body never read; `MAX_ACTIVITY_DAYS` was documented as "twelve
+     weeks — the heat map's column count" while holding 365; and the created/updated
+     mutuality rule was documented as *reusing* `lib/digest.js`'s predicate when it
+     re-implements it. The parameter is gone, and both comments now say what the code does:
+     the digest applies the same rule, this reader deliberately duplicates it because the
+     spec additionally requires the file-mtime fallback for `created`, and the two must be
+     kept in step by hand. The architecture budget comment that repeated the "shared with
+     the digest" claim is corrected too.
+  2. **M4 — the heat map's void cells had no `aria-hidden`.** The grid's `role="img"` already
+     hides them from assistive technology, but the acceptance criterion names the cell; each
+     void cell is now `aria-hidden` and still takes no `tabIndex`.
+  3. **M5 — the chart container was smaller than the design's own floor.** `.mem-heat-grid`
+     was capped at 262px, below §6.6's 280px. The cap is 292px = the 320px support width
+     minus the view's 2×14px padding, so the grid fills its content box at the floor and
+     stops the squares stretching on a wide panel. Measured at a true 320px viewport:
+     `.mem-heat-grid` `clientWidth` **292** (see `docs/validation/panel-charts-2026-10-29.md`).
+  4. **M6 — the sparkline was drawn per day, not per week.** It plotted 84 points into a
+     60×16 box; design §3.4 item 1 asks for twelve. It now sums `created` per seven-day
+     chunk and accumulates (folding older weeks into the first point when the window exceeds
+     twelve, so the last point stays the window's total), and the tests pin point count,
+     monotonicity and the plotted values for both the 84-day and the 365-day window.
+  5. **M7 — the flow-bar reading was a bar ordinal, not a week.** `<title>` now reads
+     `WW 周 · 新建 n · 更新 m`. The re-review below then showed that the first version of
+     this fix named a week its seven-day chunk straddled, so the bars themselves are now
+     the calendar weeks the heat map draws — 12 or 13 per 84-day window, each labelled with
+     its own Sunday-first week number.
+  6. **M10 — the chart classes were not covered by the class-coverage guard.** The list now
+     guards all 108 classes the views emit (24 were unguarded), the test derives that set
+     from `lib/memory-panel.js` on every run so a new or renamed class fails, and every one
+     has a stylesheet rule.
+  7. **M11 — the backend-parity test passed silently without `node:sqlite`.** `if
+     (!HAS_SQLITE) return` is now a reported skip in `test/index-stats.test.js`, and in the
+     same pattern in `test/search.test.js` (found while fixing it). Proved with Node's own
+     `--no-experimental-sqlite`, which reports the test as skipped with its reason instead of
+     a green that proves nothing.
+  8. **M12 — assertions that could not fail on a behaviour change.** The tablist, tabpanel
+     and search-box checks now mount the shell through a four-hook React stand-in and drive
+     state, focus and search-mode transitions; six mutation probes each failed the intended
+     test before the probe was reverted. The `mem-stamps` tombstones and duplicate substring
+     checks are gone; the three remaining source-shape seams (dynamic-import wiring,
+     served-view props, retired ids) are narrowed and commented as such.
+  9. **The search field named a host token the host does not define.** `--dsw-font-xs-regular-13`
+     appears nowhere in the installed DSH build (405 `--dsw-*:` names); the real token is
+     `--dsw-font-xs-13` (`13px/20px var(--dsw-font-family)`). The invalid `font:` shorthand
+     made the input inherit 12px. Fixed, and guarded: a new test requires every
+     `var(--dsw-*)` the bundle reads to equal a measured 24-name allowlist (fail on an
+     unverified name *and* on a stale entry).
+
+  An independent re-review of that round then returned NOT YET with three Important findings
+  and nine Minor ones; all twelve are closed here. The re-review's own records are
+  `.superpowers/sdd/2026-10-29-memory-panel-charts/review2.md` and `review3.md`.
+  1. **The new flow-bar title named a week the bar did not cover.** The bars were trailing
+     seven-day chunks counted back from the window end, labelled with the ISO week of their
+     first day: the fixture's first bar covered 2026-08-07..13 but printed "32 周" while four
+     of its seven days are ISO week 33. The bars are now Sunday-first calendar weeks — the
+     same buckets the heat map draws — so `WW 周` is the bar's own week. The numbering is
+     defined (week 1 is the Sun–Sat week containing 1 January; 52 or 53 weeks a year) and
+     deliberately not ISO 8601, because ISO weeks are Monday-first while the design fixes
+     Sunday-first weeks and the two charts must not disagree about where a week starts.
+     Partial edge weeks are drawn, not dropped, exactly like the heat map's edge columns; the
+     geometry, the meta and the empty-state sentence all derive from the grouping.
+  2. **The class-coverage guard was a frozen list.** It read only the stylesheet, so adding a
+     view class kept the suite green; the test now extracts the emitted classes from
+     `lib/memory-panel.js` and requires them to be guarded, with the extraction count pinned
+     so a blind scan cannot pass vacuously.
+  3. **The 320px record was not in the repository.** It is force-added with this change, like
+     the three validation records before it, because the CHANGELOG cites it as the evidence
+     for the measurement.
+  The nine Minors were: an 84-day sparkline test that recomputed its expectation with the
+  implementation's own grouping (now hard-coded, plus a 30-day window where the grouping
+  direction is observable); two arithmetic slips in the architecture budget comments (the
+  "before" figure was the pre-first-wave commit, and 1292 rounds to 1300 by the rule — the
+  1350 ceiling is kept deliberately, not re-derived); a stale `heatmap()` header that still
+  described fixed 6px cells; no automated coverage for the two round-1 callbacks (`onClose`'s
+  返回 and `onLimit`'s 显示更多 now have behavioural tests); a floor test that hard-coded the
+  padding its bound was derived from (it now reads the `.mem-view` rule); a claim — "every fix
+  has a test that fails on the old code" — that was false for the comment-only and
+  measurement items (corrected above); the round-1/round-2 wording about what was still open;
+  an unreachable week-of-year fallback; and a capture taken against the pre-fix stylesheet
+  (re-run against the final tree, and the record now names the revisions it captured).
+
+  The 320px claim is now a measurement, not an inference:
+  `docs/validation/panel-charts-2026-10-29.md` renders the real `OverviewView` and the real
+  stylesheet under the host's own light/dark token values at emulated 320px and 375px
+  viewports (CDP device emulation — note that Chrome's `--window-size=320` clamps the layout
+  to ~500px and crops, so the old recipe cannot prove a 320px layout; the page's own
+  `innerWidth` is recorded in every measurement). Measured:
+  heat grid / flow / ranking / composition 292px and KPI band 290px at 320px (all ≥ 280), no
+  horizontal overflow at either width, 13 calendar columns drawing 84 data cells + 7
+  aria-hidden void cells, 12-point sparkline, 13 `WW 周` bars whose week numbers are the
+  weeks they draw. 220/220 harness checks pass, and the record names the exact `lib/`
+  blobs it captured (with before/after source-stability checks) so the artifacts can be
+  matched to this commit's tree. The record also supersedes the earlier captures: the
+  `--window-size` recipe cannot produce a 320px layout (Chrome clamps to ~500px and crops),
+  so the shipped measurement uses CDP device emulation and records the page's own
+  `innerWidth`.
+  Also re-measured: the architecture budget comments for `lib/index-db.js`,
+  `lib/memory-panel.js` and `lib/client.js` carry the post-round figures (2839 / 2019 / 1262
+  formatted lines); no ceiling moved.
+  Verified: `node test/panel-ui.test.js` 41 pass, `node test/panel-client.test.js` 18 pass,
+  `node test/index-stats.test.js` 21 pass, `node test/search.test.js` 33 pass,
+  `node test/architecture.test.js` 8 pass, `node test/memory-panel-behavior.test.js` 4 pass,
+  `node test/panel-route.test.js` 26 pass, `node test/panel-assets.test.js` 7 pass, eslint
+  and prettier clean.
+  Not verified: the capture renders the real view and stylesheet on a static page with the
+  host's token values — it does not verify the running host's application CSS, a real vault
+  payload, the host sidebar's own width, the shell chrome (tab strip/search box), the other
+  views, hover/focus/tooltip rendering, or DPI scaling other than devicePixelRatio 1 (the
+  validation record lists each gap); and the `--no-experimental-sqlite` runs exercise only
+  the files named above, not the whole suite on a sqlite-less host.
 
 ## 0.4.0 — 2026-10-29
 
