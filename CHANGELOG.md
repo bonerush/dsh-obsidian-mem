@@ -45,6 +45,30 @@ release artifact. The versioning policy is in the README, under Development.
   views that consume them land in a later task, and this entry's own payload has
   no consumer yet.
 
+### Changed
+
+- **The memory panel's tab strip has three folder-form tabs and no longer has a 检索
+  page; searching moves to a persistent shell-level box.** The 检索 tab is gone, so
+  `MEMORY_VIEWS` is exactly 概览 / 图谱 / 健康, and `.mem-tabs` is a flex row instead
+  of a four-column grid: adjacent leaves overlap by 8px, the active leaf paints
+  `--dsw-alias-bg-base` with `margin-bottom:-1px` and a matching
+  `border-bottom-color` so it merges into the content surface, and the strip's top
+  padding lifts the 32px leaf to a 44px hit target. A 40px search field with a
+  leading icon and a clear button now sits between the masthead and the strip on
+  every page; submitting enters search mode and mounts `SearchView` in the body with
+  the shell's state — `sessionId, query, scope, type, status, limit, visible,
+  onClose` — while Esc, the clear button, or any tab leaves that mode. The search
+  field's own `role="search"` form lives in the shell, the field keeps its text in
+  search mode, and an empty query is not a search (no request, no mode change).
+  `polling` covers 概览 and 健康 only, since the results page owns its own runs.
+  `lib/client.js`'s budget rises 1100 → 1250 for the 1182 measured lines (measured
+  plus 30 rounded up) and the reasoned comment. Verified: `node
+  test/panel-client.test.js` (16 pass), `node test/architecture.test.js` and
+  `node test/graph-client.test.js`, `node test/panel-assets.test.js`,
+  `node test/export-surface.test.js`, `node test/pack.test.js`, plus eslint and
+  prettier on the touched files. Not verified: the 320px/375px visual pass and the
+  charts that will consume the new payload fields — both land in later tasks.
+
 ## 0.3.1 — 2026-10-28
 
 ### Fixed

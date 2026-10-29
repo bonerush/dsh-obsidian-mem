@@ -97,22 +97,31 @@ test('the view strip is a real tablist with roving focus and keyboard navigation
     "event.key === 'End'",
   ])
     assert.ok(script.includes(marker), 'the shell contains ' + marker)
-  for (const label of ['概览', '图谱', '检索', '健康'])
+  for (const label of ['概览', '图谱', '健康'])
     assert.ok(script.includes("label: '" + label + "'"), 'the strip has ' + label)
+  assert.equal(script.includes("label: '检索'"), false, '检索 stopped being a tab')
 })
 
-test('the view index is four icon tabs in the reviewed order, without ordinals', async () => {
+test('the view index is exactly three folder tabs in the reviewed order, without ordinals', async () => {
   const { script } = await bundle()
+  const start = script.indexOf('const MEMORY_VIEWS = [')
+  const end = script.indexOf(']', start)
+  assert.ok(start >= 0 && end > start, 'the view index is a literal list')
+  assert.deepEqual(
+    [...script.slice(start, end).matchAll(/id: '([a-z]+)'/gu)].map((match) => match[1]),
+    ['overview', 'graph', 'health'],
+    'three views, 检索 is no longer one of them',
+  )
   for (const [id, label, icon] of [
     ['overview', '概览', 'overview'],
     ['graph', '图谱', 'graph'],
-    ['search', '检索', 'search'],
     ['health', '健康', 'health'],
   ])
     assert.ok(
       script.includes("{ id: '" + id + "', label: '" + label + "', icon: '" + icon + "' }"),
       'the strip lists ' + label + ' with its icon key',
     )
+  assert.equal(script.includes("{ id: 'search'"), false, 'the 检索 view is gone')
   assert.equal(script.includes('ordinal'), false, 'the 01-04 ordinals retired')
   for (const name of ['overview', 'graph', 'search', 'health', 'refresh'])
     assert.ok(script.includes(name + ": '"), 'icon() defines the ' + name + ' glyph')
@@ -242,35 +251,163 @@ test('the stylesheet is a token-only host-type design system with bounded radii'
   assert.equal(/color-scheme/iu.test(css), false, 'the host owns the colour scheme')
 })
 
-test('the tab strip is the Chrome form: 34px tab in a 42px strip, top radius merged with content', async () => {
+test('the tab strip is a folder strip: flex, overlapping tabs, the active page merged into content', async () => {
   const { script } = await bundle()
   const css = panelCss(script)
+  assert.equal(
+    /grid-template-columns/iu.test(
+      css.slice(css.indexOf('.mem-tabs{'), css.indexOf('}', css.indexOf('.mem-tabs{')) + 1),
+    ),
+    false,
+    '.mem-tabs is not a grid any more',
+  )
+  const tabs = css.slice(
+    css.indexOf('.mem-panel .mem-tabs{'),
+    css.indexOf('}', css.indexOf('.mem-panel .mem-tabs{')) + 1,
+  )
   for (const marker of [
-    'height:42px',
-    'padding:6px 6px 0',
-    'grid-template-columns:repeat(4,minmax(0,1fr))',
+    'display:flex',
+    'gap:0',
     'background:var(--dsw-alias-bg-layer-1)',
     'border-bottom:1px solid var(--dsw-alias-border-l1)',
-    'height:34px',
+    'padding:',
+  ])
+    assert.ok(tabs.includes(marker), 'the folder strip declares ' + marker)
+  // Adjacent tabs overlap, and the active one sits above its neighbours so the
+  // shared rounded edge reads as one folder leaf.
+  assert.ok(css.includes('.mem-tab + .mem-tab{margin-left:-8px}'), 'adjacent tabs overlap by 8px')
+  assert.ok(css.includes('z-index:2'), 'the active tab rides above the others')
+  assert.ok(css.includes('z-index:0'), 'the resting tabs sit below it')
+  for (const marker of [
+    'height:32px',
     'margin-bottom:-1px',
-    'border:1px solid transparent',
-    'border-bottom:0',
     'border-radius:10px 10px 0 0',
-    'background:var(--dsw-alias-interactive-bg-hover)',
     'border-bottom-color:var(--dsw-alias-bg-base)',
+    'background:var(--dsw-alias-bg-base)',
     'box-shadow:var(--dsw-shadow-lv1)',
+    'text-overflow:ellipsis',
     'transition:background-color 150ms ease,color 150ms ease',
     'mem-tab-icon',
-    'flex:0 0 auto',
-    '@container (max-width:359px)',
-    '.mem-tab-icon{display:none}',
+    'border:1px solid var(--dsw-alias-border-l1)',
+    'border-bottom-color:transparent',
   ])
-    assert.ok(css.includes(marker), 'the Chrome strip contains ' + marker)
+    assert.ok(css.includes(marker), 'the folder tab contains ' + marker)
   assert.ok(
     css.includes('.mem-tab[aria-selected="true"]'),
     'the selected tab is the content surface',
   )
+  assert.ok(css.includes('max-width:132px'), 'a tab never grows past the folder leaf width')
   assert.ok(css.includes('min-width:0'), 'tabs may truncate instead of overflowing')
+  assert.ok(tabs.includes('flex-wrap:nowrap'), 'the leaves stay on one row')
+  assert.equal(/overflow-x:(auto|scroll)/u.test(css), false, 'nothing scrolls sideways')
+  for (const marker of ['flex:0 1 auto', 'align-items:flex-end'])
+    assert.ok(css.includes(marker), 'the folder strip row contains ' + marker)
+  // The 44px click target comes from the strip's padding plus the leaf's own
+  // upward hit extension — the leaf itself stays 32px so the folder look holds.
+  assert.ok(
+    tabs.includes('padding:6px 8px 0'),
+    'the strip keeps the folder strip padding from the design',
+  )
+  assert.ok(css.includes('top:-12px'), 'the leaf extends its own hit area upward')
+  assert.ok(css.includes('height:32px'), 'the leaf stays a 32px folder tab')
+  assert.ok(css.includes('bottom:0'), 'the hit extension reaches the content surface')
+  assert.ok(
+    css.includes('.mem-tab:hover{background:var(--dsw-alias-interactive-bg-hover)'),
+    'the resting leaf lifts on hover',
+  )
+  for (const marker of ['@container (max-width:359px)', '.mem-tab-icon{display:none}'])
+    assert.ok(css.includes(marker), 'the 320px fallback contains ' + marker)
+})
+
+test('the shell keeps a persistent search box between the masthead and the tabs', async () => {
+  const { script } = await bundle()
+  for (const marker of [
+    "role: 'search'",
+    "className: 'mem-searchbar'",
+    'mem-search-field',
+    'mem-search-icon',
+    'mem-search-input',
+    'mem-search-clear',
+    'mem-search-submit',
+    'onSubmit:',
+    "event.key === 'Escape'",
+    'const [search, setSearch] = React.useState(null)',
+    'SearchView',
+  ])
+    assert.ok(script.includes(marker), 'the shell search box contains ' + marker)
+  // The search box is shell-level: MemoryPanel renders it between the masthead
+  // and the tablist, so it is visible on every page and the results page only
+  // replaces the mounted view body.
+  const shell = script.slice(
+    script.indexOf('function MemoryPanel'),
+    script.indexOf('function SearchBox'),
+  )
+  const masthead = shell.indexOf('h(Masthead,')
+  const box = shell.indexOf('h(SearchBox,')
+  const tabs = shell.indexOf('h(MemoryTabs,')
+  assert.ok(masthead >= 0, 'the shell renders the masthead')
+  assert.ok(box >= 0, 'the shell renders the search box itself, not a view')
+  assert.ok(tabs >= 0, 'the shell renders the tab strip')
+  assert.ok(masthead < box && box < tabs, 'masthead → search box → tab strip')
+  assert.ok(shell.indexOf("className: 'mem-view'") > tabs, 'the one tabpanel follows the strip')
+  // In search mode SearchView gets the shell's own state, not an internally owned form.
+  for (const prop of [
+    'sessionId',
+    'query',
+    'scope',
+    'type',
+    'status',
+    'limit',
+    'visible',
+    'onClose',
+  ])
+    assert.ok(
+      new RegExp('SearchView,\\s*\\{[^}]*\\b' + prop + '\\b', 'u').test(shell),
+      'SearchView receives ' + prop + ' from the shell',
+    )
+  // 检索 is no longer a tab, so polling keeps to the two polling reads.
+  assert.ok(
+    script.includes("const polling = view === 'overview' || view === 'health'"),
+    'polling covers 概览 and 健康 only',
+  )
+  assert.equal(script.includes("view === 'search'"), false, 'no search tab branch survives')
+  // One search form: the shell owns it, and the retired page must not grow a second
+  // one next to it (Task 4 deletes the view's own bar; until then the shell is the
+  // only `role="search"` the bundle declares).
+  const panelForm = [...script.matchAll(/role: 'search'/gu)]
+  assert.equal(panelForm.length, 1, 'the bundle declares exactly one role="search" form')
+  const formStart = script.lastIndexOf('mem-searchbar', panelForm[0].index)
+  assert.ok(formStart >= 0 && panelForm[0].index - formStart < 200, 'the one form is the shell box')
+  // The shell box owns the three exits; the retired view-owned form is gone.
+  assert.equal(script.includes('mem-search-submit'), true, 'the box has a submit control')
+  for (const marker of ['leaveSearch', 'clearSearch', 'chooseView', 'submitSearch'])
+    assert.ok(script.includes('const ' + marker), 'the shell owns ' + marker)
+})
+
+test('the search box styles stay token-built and clear of hex literals', async () => {
+  const { script } = await bundle()
+  const css = panelCss(script)
+  for (const hook of [
+    'mem-searchbar',
+    'mem-search-field',
+    'mem-search-icon',
+    'mem-search-input',
+    'mem-search-clear',
+  ]) {
+    assert.match(css, new RegExp('\\.' + hook + '(?![a-z0-9-])', 'u'), 'styled: ' + hook)
+  }
+  for (const hook of ['mem-search-field', 'mem-search-icon', 'mem-search-input']) {
+    const start = css.indexOf('.mem-panel .' + hook + '{')
+    assert.ok(start >= 0, 'the shell search rule exists: ' + hook)
+    const rule = css.slice(start, css.indexOf('}', start))
+    assert.ok(rule.includes('var(--dsw-'), hook + ' is token-built')
+  }
+  const field = css.slice(
+    css.indexOf('.mem-panel .mem-search-field{'),
+    css.indexOf('}', css.indexOf('.mem-panel .mem-search-field{')),
+  )
+  assert.ok(field.includes('height:40px'), 'the shell field is 40px tall')
+  assert.match(field, /border-radius:\s*10px/u, 'the shell field is a 10px rounded box')
 })
 
 test('every class the redesigned views consume is styled in the one stylesheet', async () => {

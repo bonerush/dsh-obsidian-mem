@@ -711,7 +711,17 @@ const BUDGETS = {
   // the stylesheet the views will consume without a second edit to this file, and
   // leaves the graph token block and `GraphCanvas`/`GraphView` untouched by the
   // redesign.
-  'lib/client.js': 1100,
+  // Raised from 1100 to 1250 by the v0.4 shell (Task 3): the tab list drops to the
+  // three folder tabs, the strip becomes a flex row with overlapping leaves, and
+  // 检索 stops being a tab — the new shell-level `SearchBox`, the `search`/`draft`
+  // state and its three exits (Esc, clear, any tab) live in `MemoryPanel`, and the
+  // results page now mounts with the shell's state as props. Measured 1182
+  // formatted lines; measured-plus-30 is 1212, rounded up to 1250. The 68 lines of
+  // headroom are the whole raise: Task 4's chart rules will have to argue for their
+  // own. The 82 lines over the old budget buy one component (the box), one state
+  // machine and the folder strip's own rules, not a second copy of the retired
+  // view's form; the graph token block and `GraphCanvas`/`GraphView` stay untouched.
+  'lib/client.js': 1250,
   'lib/graph-renderer.js': 700,
   // The eleven-slot table, its two CSS forms and the probe read, split out of the
   // renderer when the label-size work pushed that file past its budget.
