@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.4.0 — 2026-10-29
+
 ### Added
 
 - **概览 now opens on five charts instead of paragraphs: a 12-week activity heat

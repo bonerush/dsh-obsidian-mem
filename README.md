@@ -171,26 +171,32 @@ Start a session in any Git repository and ask, or just check the tools are there
 ### Memory panel in the DSH sidebar
 
 On DSH `0.1.7-rc.2` with `dsh-better-sidebar` `0.21.1`, open the native
-sidebar and choose **+ → 记忆 (Memory)**. The tab is one project's memory. A
-compact header carries the project name, a binding pill, the last-read clock and
-an icon refresh button; below it a Chrome-style tab strip — **概览 / 图谱 /
-检索 / 健康**, one icon per tab (the icon yields to the label at a very narrow
-width) and no ordinal labels — keeps the standard tab roles and arrow-key
-navigation. The panel uses the host's own modern sans type throughout (no serif
-display face, no negative tracking), and the three data views lay their data out
-in bands rather than stacked bordered cards. **图谱** keeps the graph below,
-unchanged, including its remembered controls.
+sidebar and choose **+ → 记忆 (Memory)**. The tab is one project's memory. The tab
+strip is the top bar — a Chrome-style folder row of **概览 / 图谱 / 健康**, one icon
+per tab (the icon yields to the label at a very narrow width), adjacent leaves
+overlapping by 8px, the active leaf merging into the content surface — with the
+last-read clock and an icon refresh at its tail; the project name is not repeated
+because the host's own sidebar already shows it. A persistent search box sits under
+the strip on every page instead of a 检索 tab. Both keep the standard tab roles and
+arrow-key navigation. The panel uses the host's own modern sans type throughout (no
+serif display face, no negative tracking), and the data views lay their data out in
+bands rather than stacked bordered cards. **图谱** keeps the graph below, unchanged,
+including its remembered controls.
 
-**概览** is one KPI band with the note/link/orphan/pending counts (the 待处理
-cell opens **健康**, the other three open **检索**), one type-composition bar and
-its legend, recent rows without ordinals, and a passive health summary band whose
-only action, **全部 →**, opens **健康**. **检索** is a rounded search field with
-filter pills grouped by 类型 / 状态 / 范围, and result rows that show the path and
-a highlighted snippet. It keeps exactly one status line — idle shows
-`输入关键词开始检索，结果来自本地记忆索引。` — and its total says `共 N 条` only
-for a complete page and `已显示 N 条` while more results exist. **健康** is a
-summary band over the index, queue, hot layer and the deterministic digest,
-followed by a **诊断记录** timeline (time, event, outcome).
+**概览** opens on five charts: a 12-week activity heat map whose numbers live in the
+section head (`近 12 周 · 本周 N 天有更新 · 合计 M 条`) because a 6px square is a
+shape and not a reading, new-versus-updated flow bars sharing one zero line, the tag
+frequency ranking, the type composition bar with its legend, and a KPI band whose
+note/link/orphan/pending counts jump (待处理 opens **健康**, the others put the caret
+in the search box) with a sparkline of the running new-note total in the first cell.
+There is no archived series: `superseded` is a current status snapshot and the vault
+records no day a note reached it, so drawing it as a flow would invent a transition.
+Recent rows follow, then a passive health summary whose only action, **全部 →**, opens
+**健康**. Search results show the path and a highlighted snippet, keeping exactly one
+status line — idle shows `输入关键词开始检索，结果来自本地记忆索引。` — and their
+total says `共 N 条` only for a complete page and `已显示 N 条` while more results
+exist. **健康** is a summary band over the index, queue, hot layer and the
+deterministic digest, followed by a **诊断记录** timeline (time, event, outcome).
 
 The panel is read-only by default and adds exactly three confirmed maintenance
 operations when the service advertises them: **重新排队失败任务** (retry one
