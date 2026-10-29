@@ -1102,37 +1102,40 @@ test('openIndex validates its inputs and a closed index refuses work', async (t)
   assert.equal(closed.reason, 'closed')
 })
 
-test('the schema keeps the six designed tables and populates tags, frontmatter and links', async (t) => {
-  if (!HAS_SQLITE) return
-  const h = await harness(t)
-  const index = await h.open()
-  await ready(index)
-  const { DatabaseSync } = await import('node:sqlite')
-  const db = new DatabaseSync(index.status().dbPath)
-  const tables = db
-    .prepare("SELECT name FROM sqlite_master WHERE type IN ('table','view') ORDER BY name")
-    .all()
-    .map((row) => row.name)
-  for (const table of ['notes', 'notes_fts', 'fm_kv', 'tags', 'links', 'kv']) {
-    assert.ok(tables.includes(table), `missing table ${table}`)
-  }
-  const schemaVersion = db.prepare("SELECT value FROM kv WHERE key = 'schema_version'").get()
-  assert.equal(schemaVersion.value, '1')
-  assert.ok(db.prepare("SELECT value FROM kv WHERE key = 'last_scan'").get().value.length > 0)
-  const note = db.prepare('SELECT id, hash FROM notes WHERE path = ?').get(N.alphaDecision)
-  assert.equal(note.id, 'dec-5d46ff43-1bf8-496d-8b9f-c11e89d4e2aa')
-  assert.equal(note.hash, sha256(await readFile(at(h.vault, N.alphaDecision))))
-  assert.ok(db.prepare('SELECT count(*) AS c FROM tags WHERE note_id = ?').get(note.id).c >= 2)
-  assert.equal(
-    db.prepare("SELECT value FROM fm_kv WHERE note_id = ? AND key = 'status'").get(note.id).value,
-    'accepted',
-  )
-  assert.ok(
-    db.prepare('SELECT count(*) AS c FROM links').get().c >= 1,
-    'wikilinks from the corpus hubs must be recorded',
-  )
-  db.close()
-})
+test(
+  'the schema keeps the six designed tables and populates tags, frontmatter and links',
+  { skip: HAS_SQLITE ? false : 'node:sqlite is unavailable on this host' },
+  async (t) => {
+    const h = await harness(t)
+    const index = await h.open()
+    await ready(index)
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(index.status().dbPath)
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type IN ('table','view') ORDER BY name")
+      .all()
+      .map((row) => row.name)
+    for (const table of ['notes', 'notes_fts', 'fm_kv', 'tags', 'links', 'kv']) {
+      assert.ok(tables.includes(table), `missing table ${table}`)
+    }
+    const schemaVersion = db.prepare("SELECT value FROM kv WHERE key = 'schema_version'").get()
+    assert.equal(schemaVersion.value, '1')
+    assert.ok(db.prepare("SELECT value FROM kv WHERE key = 'last_scan'").get().value.length > 0)
+    const note = db.prepare('SELECT id, hash FROM notes WHERE path = ?').get(N.alphaDecision)
+    assert.equal(note.id, 'dec-5d46ff43-1bf8-496d-8b9f-c11e89d4e2aa')
+    assert.equal(note.hash, sha256(await readFile(at(h.vault, N.alphaDecision))))
+    assert.ok(db.prepare('SELECT count(*) AS c FROM tags WHERE note_id = ?').get(note.id).c >= 2)
+    assert.equal(
+      db.prepare("SELECT value FROM fm_kv WHERE note_id = ? AND key = 'status'").get(note.id).value,
+      'accepted',
+    )
+    assert.ok(
+      db.prepare('SELECT count(*) AS c FROM links').get().c >= 1,
+      'wikilinks from the corpus hubs must be recorded',
+    )
+    db.close()
+  },
+)
 
 test('the query builder quotes and caps every token, and the path rule is a pure predicate', async () => {
   assert.equal(buildMatchQuery([]), null)

@@ -386,16 +386,19 @@ for (const [backend, label] of BACKENDS) {
   })
 }
 
-test('activity and tagFrequencies agree across both backends', async (t) => {
-  if (!HAS_SQLITE) return
-  const scanIndex = await activityHarness(t, 'scan')
-  const sqliteIndex = await activityHarness(t, 'sqlite')
-  assert.deepEqual(
-    await scanIndex.activity({ scope: 'project', days: 30 }),
-    await sqliteIndex.activity({ scope: 'project', days: 30 }),
-  )
-  assert.deepEqual(
-    await scanIndex.tagFrequencies({ scope: 'all', limit: 20 }),
-    await sqliteIndex.tagFrequencies({ scope: 'all', limit: 20 }),
-  )
-})
+test(
+  'activity and tagFrequencies agree across both backends',
+  { skip: HAS_SQLITE ? false : 'node:sqlite is unavailable on this host' },
+  async (t) => {
+    const scanIndex = await activityHarness(t, 'scan')
+    const sqliteIndex = await activityHarness(t, 'sqlite')
+    assert.deepEqual(
+      await scanIndex.activity({ scope: 'project', days: 30 }),
+      await sqliteIndex.activity({ scope: 'project', days: 30 }),
+    )
+    assert.deepEqual(
+      await scanIndex.tagFrequencies({ scope: 'all', limit: 20 }),
+      await sqliteIndex.tagFrequencies({ scope: 'all', limit: 20 }),
+    )
+  },
+)
