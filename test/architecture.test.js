@@ -677,7 +677,13 @@ const BUDGETS = {
   // as a second asset, and the five shapes are less code than that dependency's
   // adapter. Nothing here duplicates the payload: every chart reads the same
   // `activity`/`tags` fields the route already sends.
-  'lib/memory-panel.js': 1900,
+  // Raised from 1900 to 2050 by the review fix round: the heat map now draws the whole
+  // calendar instead of discarding its head column, each cell carries a date-and-value
+  // reading, the tag remainder counts distinct tags rather than occurrences, and the
+  // composition track folds its overflow into a real third segment instead of aliasing
+  // a colour. Measured 1966 formatted lines; measured-plus-30 is 1996, rounded up to
+  // 2050. This raise buys correctness, not new surface: no chart was added.
+  'lib/memory-panel.js': 2050,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})
@@ -729,7 +735,15 @@ const BUDGETS = {
   // own. The 82 lines over the old budget buy one component (the box), one state
   // machine and the folder strip's own rules, not a second copy of the retired
   // view's form; the graph token block and `GraphCanvas`/`GraphView` stay untouched.
-  'lib/client.js': 1250,
+  // Raised from 1250 to 1350 by the chart stylesheet and the two search callbacks:
+  // the five 概览 charts need their own rules (heat grid, flow bars, ranking rows,
+  // sparkline, capped segment tints), and `refineSearch`/`widenSearch` keep the
+  // query, the filters and the page size in the one search object the shell owns.
+  // Measured 1260 formatted lines; measured-plus-30 is 1290, rounded up to 1350. The
+  // previous comment claimed 1182 measured against a file that had already grown to
+  // 1247 when the charts landed — that stale figure is corrected here rather than
+  // left to read as headroom nobody spent.
+  'lib/client.js': 1350,
   'lib/graph-renderer.js': 700,
   // The eleven-slot table, its two CSS forms and the probe read, split out of the
   // renderer when the label-size work pushed that file past its budget.

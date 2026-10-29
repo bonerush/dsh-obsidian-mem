@@ -11,6 +11,51 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Fixed
+
+- **Review round: seven behaviour bugs, each one measured before it was fixed.** An
+  independent review of `2f4d69f..HEAD` drove the real views through instrumented
+  `fetch` and found these; every fix has a test that fails on the old code.
+  1. **The heat map dropped real days.** An 84-day window spans 13 partial columns
+     unless it starts on a Sunday, and `slice(-12)` discarded the head column — real
+     data, not padding. Measured: 84 events rendered as 82 cells, so this chart
+     printed 合计 82 beside a flow block reading 净增 84. The grid now draws every day
+     of the window (column count follows the calendar), the meta names the window
+     (`近 N 周（84 天）· … · 合计 M 条`), and a test asserts 合计 equals the series sum.
+  2. **"另有 N 个标签" counted occurrences as tags.** Measured: "另有 4 个标签" where
+     two tags existed. `tagFrequencies` now also returns `distinct`, and the remainder
+     is `distinct − shown`; the old test computed its expectation with the same wrong
+     formula, so it encoded the bug — it now uses ten tags of five occurrences each.
+  3. **The unbound→all fallback spent a third request and erased its own notice.**
+     The view both reported the scope change and re-ran; the shell's props change then
+     started a fresh run that cleared the notice. Measured scopes: `project,all,all`,
+     notice visible: false. The view now reports only, shows the notice immediately,
+     and carries it into the single shell-driven run — asserted as two requests with
+     the notice still on screen.
+  4. **The composition bar's "3-段上限" did not exist.** It emitted one segment per
+     type and aliased the seventh back to the first colour; its guard passed only
+     because the fixture had exactly three types. The track now carries three real
+     segments (two named types plus 其他) with three distinct tints, the legend still
+     lists every type, and the test uses seven types and asserts distinct colours.
+  5. **The heat map's `<title>` was inert.** `<title>` inside a body-level `<span>`
+     produces no tooltip, and it carried no date. Each cell now exposes
+     `title`/`aria-label`/`sr` text with date and value, and still takes no `tabIndex`.
+  6. **`onClose` was passed and never used, and `limit` had two owners.** "显示更多"
+     ran with 50 while the shell kept 25, so a retry on that page silently dropped to
+     25 rows. `onLimit` now moves the page size in the shell's one search object, and
+     `onClose` is honoured by a 返回 action in the results head.
+  7. **Spec/plan corrected where they contradicted the shipped code** (heat-map column
+     count, cell reading mechanism, segment cap, `distinct`, and the real `SearchView`
+     signature) — recorded as a revision entry in §8 rather than silently rewritten.
+
+  Also removed: the dead `.mem-stamps` rule (its producer `statusStamps` was retired)
+  and the unstyled `mem-heat-legend-label` hook; corrected `lib/client.js`'s budget
+  comment, which still claimed 1182 measured lines against a 1247-line file.
+  Verified: `node test/panel-ui.test.js` 32 pass, `node test/panel-route.test.js` 26
+  pass, `node test/index-stats.test.js` 21 pass, `node test/architecture.test.js` 8
+  pass, eslint and prettier clean. Not verified: the fixes were not re-captured at
+  320px, and the review's twelve Minor findings are not all addressed.
+
 ## 0.4.0 — 2026-10-29
 
 ### Added

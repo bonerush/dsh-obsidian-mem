@@ -496,10 +496,9 @@ function activityFixture() {
 
 const chartProps = (overrides = {}) => ({ sessionId: 'session-a', visible: true, ...overrides })
 
-test('the activity heat map is one labelled image of 12 weeks without focusable cells', async (t) => {
-  stubFetch(t, () =>
-    ok(overviewValue({ activity: activityFixture(), tags: { items: [], total: 0 } })),
-  )
+test('the activity heat map draws every day of the window and prints the matching total', async (t) => {
+  const activity = activityFixture()
+  stubFetch(t, () => ok(overviewValue({ activity, tags: { items: [], total: 0 } })))
   const render = mount(t, 'OverviewView')
   render(chartProps())
   await setImmediate()
@@ -509,32 +508,59 @@ test('the activity heat map is one labelled image of 12 weeks without focusable 
   assert.equal(grid[0].props.role, 'img', 'the whole grid is a single image')
   assert.ok(String(grid[0].props['aria-label']).includes('周活动'), 'its label states the window')
   const cells = byClass(tree, 'mem-heat-cell')
-  // Twelve Sunday-first columns laid out by the grid CSS (`grid-auto-flow:column`,
-  // 7 rows) from one flat run of cells, padded to whole weeks.
+  // Sunday-first columns laid out by the grid CSS (`grid-auto-flow:column`, 7 rows)
+  // from one flat run of cells, padded to whole weeks. The column count follows the
+  // calendar, NOT a hard-coded twelve: 84 days spans 13 columns unless the window
+  // starts on a Sunday, and that head partial column is real data. Dropping it once
+  // made this chart print 合计 82 under a grid of 84 days, beside a flow block
+  // reading 净增 84 — two answers for one window.
   assert.equal(cells.length % 7, 0, 'whole weeks only')
-  assert.equal(cells.length, 12 * 7, 'twelve weeks of seven days')
+  const real = cells.filter((cell) => !(cell.props.className ?? '').split(' ').includes('is-void'))
+  assert.equal(real.length, activity.days.length, 'every day in the window gets a cell')
   assert.equal(
     byClass(tree, 'mem-heat-col').length,
     0,
     'no per-column wrappers: the grid does the column layout',
   )
   // A 6px square is far below the 24px focus floor: a tabbable grid would be a
-  // keyboard path nobody can use, so no cell may claim focus. The numbers are
-  // carried by the section meta instead.
+  // keyboard path nobody can use, so no cell may claim focus. The readings are
+  // carried by the section meta and by each cell's own `title`/`aria-label`.
   for (const cell of cells) assert.equal(cell.props.tabIndex, undefined, 'no focusable cell')
+  // Spec §3.4/§6.5: a data cell names the date and the value. A body-level <span>
+  // has no tooltip of its own, so the same sentence is on `title` and `aria-label`
+  // and in a screen-reader span — it must not be an inert <title> child.
+  for (const cell of real) {
+    assert.match(String(cell.props.title), /^\d{4}-\d{2}-\d{2} · \d+ 条$/u, 'date · value')
+    assert.equal(cell.props['aria-label'], cell.props.title, 'the cell is readable')
+    assert.equal(
+      nodes(cell).some((node) => node?.type === 'title'),
+      false,
+      'no inert <title> inside an HTML cell',
+    )
+  }
   const legend = byClass(tree, 'mem-heat-legend')
   assert.equal(legend.length, 1)
   assert.equal(legend[0].props['aria-hidden'], true, 'the legend is decorative')
   assert.deepEqual(byClass(legend[0], 'mem-heat-swatch').length, 5, 'five buckets, zero included')
-  // The reading is a digit in the meta, not an area the reader must estimate.
+  // The printed total must equal the series it annotates — that equality is the
+  // whole contract the meta text claims.
+  const expectedTotal =
+    activity.created.reduce((sum, n) => sum + n, 0) +
+    activity.updated.reduce((sum, n) => sum + n, 0)
   const sectionNode = nodes(tree).find(
     (node) => node?.type === 'section' && node.props['aria-label'] === '活动热度',
   )
   const metaText = byClass(sectionNode, 'mem-meta').map((node) => node.props.children[0])
   assert.ok(
-    metaText.some((text) => /^近 12 周 · 本周 \d+ 天有更新 · 合计 \d+ 条$/u.test(text)),
-    'the meta states the numbers: ' + metaText.join('|'),
+    metaText.some((text) => /^近 \d+ 周（\d+ 天）· 本周 \d+ 天有更新 · 合计 \d+ 条$/u.test(text)),
+    'the meta names the window and states the numbers: ' + metaText.join('|'),
   )
+  assert.ok(
+    metaText.some((text) => String(text).includes('合计 ' + expectedTotal + ' 条')),
+    '合计 equals every event in the window, not the cells that survived padding',
+  )
+  // Both charts read the same series, so one window cannot produce two totals.
+  assert.equal(byClass(tree, 'mem-flow').length, 1, 'the flow chart is drawn from it too')
 })
 
 test('the flow bars share one zero line and normalise to the larger side', async (t) => {
@@ -596,16 +622,21 @@ test('an all-zero window renders an empty sentence instead of twelve zero bars',
   assert.equal(byClass(tree, 'mem-heat-grid').length, 1)
 })
 
-test('the tag ranking shows at most eight rows plus the real remainder', async (t) => {
-  const items = Array.from({ length: 12 }, (_x, index) => ({
+test('the tag ranking counts tags, not occurrences, in its remainder line', async (t) => {
+  // Ten distinct tags, five occurrences each; only eight fit. The remainder is two
+  // TAGS, not the ten occurrences those two tags account for. Deriving it from
+  // `total` once printed "另有 10 个标签" where two tags existed — the label and the
+  // number were in different units, and it was only right when every unshown tag
+  // happened to have one occurrence.
+  const items = Array.from({ length: 10 }, (_x, index) => ({
     tag: 'dsh-mem/tag-' + index,
-    n: 12 - index,
+    n: 5,
   }))
   stubFetch(t, () =>
     ok(
       overviewValue({
         activity: activityFixture(),
-        tags: { items, total: items.reduce((sum, row) => sum + row.n, 0) + 40 },
+        tags: { items, total: 50, distinct: 10 },
       }),
     ),
   )
@@ -614,34 +645,41 @@ test('the tag ranking shows at most eight rows plus the real remainder', async (
   await setImmediate()
   const tree = render(chartProps())
   assert.equal(byClass(tree, 'mem-freq-row').length, 8, 'eight rows at most')
-  // `total` is the tag OCCURRENCE count in scope, not the sum of the shown rows: the
-  // remainder is what the ranking did not print, and it must be a real number.
-  const occurrences = (12 * 13) / 2 + 40
-  const shown = items.slice(0, 8).reduce((sum, row) => sum + row.n, 0)
-  assert.equal(countText(tree, '另有 ' + (occurrences - shown) + ' 个标签'), 1)
+  assert.equal(countText(tree, '另有 2 个标签'), 1, 'the remainder counts the two unshown TAGS')
+  assert.equal(countText(tree, '另有 10 个标签'), 0, 'never the occurrences they hold')
+  // The head count is occurrences, and it says so with its own unit.
+  assert.equal(countText(tree, '50 次'), 1, 'occurrences are labelled 次')
   // The bars are proportional to the ranking's own maximum.
   const fills = byClass(tree, 'mem-freq-fill').map((node) => node.props.style.width)
   assert.equal(fills[0], '100%', 'the biggest tag fills the track')
-  assert.ok(fills.at(-1) !== '100%', 'a smaller tag does not')
 })
 
-test('the composition bar caps at three segments and folds status into one line', async (t) => {
+test('the composition bar caps at three REAL segments and folds status into one line', async (t) => {
+  // Seven types, which is what a real vault looks like. The previous guard asserted
+  // `<= 3` against a THREE-type fixture, so it passed without testing a cap at all —
+  // while the code emitted one segment per type and aliased the seventh back to the
+  // first colour. A guard is only a guard when its input exceeds the limit.
+  const byType = [
+    { type: 'convention', n: 30 },
+    { type: 'decision', n: 20 },
+    { type: 'doc', n: 10 },
+    { type: 'gotcha', n: 6 },
+    { type: 'hub', n: 3 },
+    { type: 'glossary', n: 2 },
+    { type: 'misc', n: 1 },
+  ]
   stubFetch(t, () =>
     ok(
       overviewValue({
         activity: activityFixture(),
         counts: {
-          notes: 5,
+          notes: 7,
           links: 1,
           orphans: 0,
-          byType: [
-            { type: 'convention', n: 30 },
-            { type: 'decision', n: 20 },
-            { type: 'doc', n: 10 },
-          ],
+          byType,
           byStatus: [
-            { status: 'active', n: 55 },
-            { status: 'contested', n: 5 },
+            { status: 'active', n: 65 },
+            { status: 'contested', n: 7 },
           ],
         },
         tags: { items: [], total: 0 },
@@ -653,9 +691,32 @@ test('the composition bar caps at three segments and folds status into one line'
   await setImmediate()
   const tree = render(chartProps())
   assert.equal(byClass(tree, 'mem-bar-track').length, 1)
-  assert.ok(byClass(tree, 'mem-bar-fill').length <= 3, 'the segment cap holds')
+  const fills = byClass(tree, 'mem-bar-fill')
+  assert.equal(fills.length, 3, 'three segments for seven types')
+  // Each segment has its OWN colour class: a duplicate tint reads as a repeated band.
+  const segClasses = fills.map((node) =>
+    (node.props.className ?? '').split(' ').find((name) => name.startsWith('is-seg')),
+  )
+  assert.equal(
+    new Set(segClasses).size,
+    3,
+    'no two segments share a colour: ' + segClasses.join(','),
+  )
+  // The two largest keep their own names; the rest fold into one honest 其他.
+  const names = byClass(tree, 'mem-comp-name').map((node) => node.props.children[0])
+  assert.deepEqual(names, ['约定', '决策', '文档', '踩坑', 'hub', '术语表', 'misc'])
+  // The legend still lists every type with its exact count, and the segments add up:
+  // 30 + 20 + (10+6+3+2+1).
+  const values = byClass(tree, 'mem-comp-value').map((node) => node.props.children[0])
+  assert.deepEqual(values, ['30', '20', '10', '6', '3', '2', '1'])
+  const widths = fills.map((node) => Number.parseFloat(node.props.style.width))
+  assert.ok(
+    Math.abs(widths.reduce((sum, width) => sum + width, 0) - 100) < 0.5,
+    'the three segments account for the whole: ' + widths.join('+'),
+  )
   assert.equal(byClass(tree, 'mem-comp-status').length, 1, 'status is one line, not a chip row')
   assert.equal(byClass(tree, 'mem-stamps').length, 0)
+  void byType
 })
 
 test('a payload without the chart fields draws no charts at all', async (t) => {
@@ -1064,7 +1125,7 @@ test('a filter chip with a query reports once and the shell’s new props do the
   assert.equal(byClass(tree, 'mem-result').length, 1)
 })
 
-test('the unbound scope switch reports its notice once, then the fallback results', async (t) => {
+test('the unbound scope switch asks the shell and lets its single read carry the notice', async (t) => {
   const fallback = deferred()
   let requests = 0
   const sent = stubFetch(t, () => {
@@ -1072,12 +1133,15 @@ test('the unbound scope switch reports its notice once, then the fallback result
     return requests === 1 ? failure(422, 'unbound', 'project unbound') : fallback.promise
   })
   const asked = []
+  const onFilter = (field, value) => asked.push([field, value])
   const render = mount(t, 'SearchView')
-  render(searchProps({ onFilter: (field, value) => asked.push([field, value]) }))
+  render(searchProps({ onFilter }))
   await setImmediate()
-  let tree = render(searchProps({ onFilter: (field, value) => asked.push([field, value]) }))
-  assert.equal(requests, 2, 'the unbound fallback runs one more request')
-  assert.equal(sent[1].body.scope, 'all', 'the fallback asks the all-project scope')
+  let tree = render(searchProps({ onFilter }))
+  // The view tried `project`, failed, and REPORTS the scope move. It must not also
+  // run `all` itself: doing both spent a third request, and the props change then
+  // started a fresh run that cleared the notice this branch exists to show.
+  assert.equal(requests, 1, 'the failed project read is the only request so far')
   assert.deepEqual(asked, [['scope', 'all']], 'the view tells the shell the scope moved')
   assert.equal(
     countText(tree, '当前项目未绑定；正在搜索全部项目。'),
@@ -1085,15 +1149,27 @@ test('the unbound scope switch reports its notice once, then the fallback result
     'the notice is no longer dead copy and renders once',
   )
   assert.equal(countText(tree, '输入关键词开始检索'), 0)
+
+  // The shell answers with the new scope — exactly one more read, and the carried
+  // notice survives it rather than being replaced by a bare loading state.
+  tree = render(searchProps({ scope: 'all', onFilter }))
+  assert.equal(requests, 2, 'the shell-driven run is the second and only extra read')
+  assert.equal(sent[1].body.scope, 'all', 'the fallback asks the all-project scope')
+  assert.equal(
+    countText(tree, '当前项目未绑定；正在搜索全部项目。'),
+    1,
+    'the notice survives the run it prompted',
+  )
   fallback.resolve(ok({ hits: [hit('a.md', '决策一')], limit: 25, hasMore: false, tookMs: 2 }))
   await setImmediate()
-  tree = render(searchProps({ scope: 'all', onFilter: () => {} }))
+  tree = render(searchProps({ scope: 'all', onFilter }))
   assert.equal(byClass(tree, 'mem-result').length, 1)
   assert.equal(
     countText(tree, '当前项目未绑定；正在搜索全部项目。'),
     0,
     'the run-scoped notice is replaced by the results status',
   )
+  assert.equal(requests, 2, 'and no third request was ever spent')
   assert.ok(
     byClass(tree, 'mem-filter-option').some(
       (node) => node.props.children[0] === '全部' && node.props['aria-pressed'] === true,

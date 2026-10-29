@@ -481,7 +481,11 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     'mem-comp-name',
     'mem-comp-value',
     'mem-comp-pct',
-    'mem-stamps',
+    // `mem-stamps` is retired with its producer: the status distribution is one line
+    // at the composition legend's tail now, not a second chip row.
+    'mem-comp-status',
+    'mem-comp-status-label',
+    'mem-comp-status-value',
     'mem-recent',
     'mem-recent-row',
     'mem-recent-main',

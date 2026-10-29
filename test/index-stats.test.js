@@ -365,8 +365,13 @@ for (const [backend, label] of BACKENDS) {
       { tag: 'gamma', n: 1 },
     ])
     assert.equal(value.total, 5, 'project tags: alpha×2, beta×2, gamma×1')
+    // `distinct` is how many DIFFERENT tags exist, which is neither `items.length`
+    // (that is the page) nor `total` (that is occurrences). The panel's "另有 N 个标签"
+    // is a tag count, so deriving it from `total` would print occurrences as tags.
+    assert.equal(value.distinct, 3, 'three distinct tags, five occurrences')
     const all = await index.tagFrequencies({ scope: 'all', limit: 10 })
     assert.equal(all.total, 6, 'beta in project BETA adds a third beta')
+    assert.equal(all.distinct, 3, 'still three distinct tags across both projects')
     assert.deepEqual(all.items[0], { tag: 'beta', n: 3 })
   })
 
@@ -375,6 +380,7 @@ for (const [backend, label] of BACKENDS) {
     const value = await index.tagFrequencies({ scope: 'project', limit: 1 })
     assert.equal(value.items.length, 1)
     assert.equal(value.total, 5, 'total reports every occurrence, not the page')
+    assert.equal(value.distinct, 3, 'distinct reports the whole ranking, not the page')
     for (const limit of [0, 51, 1.5, '12'])
       await assert.rejects(index.tagFrequencies({ scope: 'project', limit }), RangeError)
   })

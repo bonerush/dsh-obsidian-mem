@@ -603,7 +603,7 @@ test('overview carries the chart aggregates and asks for the route-driven window
         },
         tagFrequencies: async (args) => {
           calls.tags = args
-          return { items: [{ tag: 'dsh-mem/decision', n: 3 }], total: 4 }
+          return { items: [{ tag: 'dsh-mem/decision', n: 3 }], total: 4, distinct: 2 }
         },
         recent: async () => [],
       }
@@ -620,7 +620,13 @@ test('overview carries the chart aggregates and asks for the route-driven window
   assert.equal(value.activity.to, value.activity.days[83])
   assert.equal(value.activity.created.length, 84)
   assert.equal(value.activity.updated.length, 84)
-  assert.deepEqual(value.tags, { items: [{ tag: 'dsh-mem/decision', n: 3 }], total: 4 })
+  // `distinct` rides through untouched: the route is a projection, not a second
+  // place that could derive the tag count differently.
+  assert.deepEqual(value.tags, {
+    items: [{ tag: 'dsh-mem/decision', n: 3 }],
+    total: 4,
+    distinct: 2,
+  })
   // Both series are integers: the panel formats them, the route never ships text.
   for (const n of [...value.activity.created, ...value.activity.updated])
     assert.equal(Number.isInteger(n), true)
