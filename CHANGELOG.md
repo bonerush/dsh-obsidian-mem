@@ -13,6 +13,45 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Added
 
+- **概览 now opens on five charts instead of paragraphs: a 12-week activity heat
+  map, new-vs-updated flow bars, the tag ranking, the composition bar and a KPI
+  sparkline.** The round's premise was that a reader wants the shape of the memory
+  before the sentences, so the charts sit directly under the KPI band and each one
+  prints its number in the section meta rather than asking the reader to estimate an
+  area — hue and area are the least precise visual channels. The heat map is a single
+  12×7 calendar (`role="img"`, no focusable cell: a 6px square is far below the 24px
+  focus-target floor, so a tabbable grid would be a keyboard path nobody can use; the
+  numbers live in 「近 12 周 · 本周 N 天有更新 · 合计 M 条」). The flow bars put
+  created above and updated below one shared zero line, normalised to the larger
+  side, and there is deliberately **no** archived/superseded series: `superseded` is
+  a current status snapshot and nothing records the day a note reached it, so drawing
+  it as a flow would invent a transition the data cannot prove. The ranking shows at
+  most eight tags with a real remainder line, the composition bar keeps its
+  three-segment cap and folds the status distribution into one line at the legend's
+  tail instead of a second chip row (`statusStamps` is retired), and the KPI band's
+  记忆条目 cell gains a sparkline over the **cumulative** `created` series — never
+  `created − updated`, because those are different events and their difference has no
+  meaning. A payload without `activity`/`tags` draws no chart at all rather than an
+  empty grid. `lib/memory-panel.js`'s budget rises 1650 → 1900 for the 1861 measured
+  lines (measured plus 30 rounded up) with the reason beside it.
+
+  Also fixed, found by rendering the real components to screenshots: the heat map's
+  `space-between` row of 6px columns scattered into dots at the measured 335px
+  content width, so it is now a real 12-column grid whose cells scale to the panel;
+  the sparkline overlapped the 128 it annotates, so it is its own row under the value;
+  `mem-block` had no layout rule, so the section margins collapsed and left a dead
+  gap between 新建与更新 and 标签频率; and `accepted` was missing from
+  `STATUS_LABELS`, so the status line read "accepted 18" in mixed script.
+
+  Verified: `node test/panel-ui.test.js` 31 pass (six new chart cases covering the
+  spec §6.5 checks), `node test/architecture.test.js` 8 pass, `node
+  test/panel-client.test.js` 16 pass, `node test/memory-panel-behavior.test.js` 4
+  pass, eslint and prettier clean, and 375px and 320px dark captures of the **real**
+  shell and views (`scratch/preview-real.mjs`, not shipped) confirming all five
+  charts draw and the KPI band falls to two columns without overflow. Not verified:
+  light theme in the running host, and the charts against a real vault — the capture
+  uses a fixed fixture.
+
 - **`overview` now carries the two aggregates the 概览 charts are drawn from:
   an 84-day daily `activity` series and a twelve-row `tags` ranking.** Both are
   implemented twice — once over SQLite and once over the in-memory scan records —

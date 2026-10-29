@@ -669,7 +669,15 @@ const BUDGETS = {
   // 検索 search field/clear control/named filter groups, the marked snippets and
   // chip rows, the 健康 summary band and 诊断记录 timeline, and the sheet's focus
   // restore plus a Tab trap that holds while both actions are busy.
-  'lib/memory-panel.js': 1650,
+  // Raised from 1650 by the five 概览 charts (Task 4b): the activity heat map, the
+  // shared-zero-line flow bars, the tag ranking, the KPI sparkline and the
+  // composition restyle. Measured 1861 formatted lines; measured-plus-30 is 1891,
+  // rounded up to 1900. The module stays the one place a chart can live — it is
+  // served to the browser as-is, so a charting dependency would have to be shipped
+  // as a second asset, and the five shapes are less code than that dependency's
+  // adapter. Nothing here duplicates the payload: every chart reads the same
+  // `activity`/`tags` fields the route already sends.
+  'lib/memory-panel.js': 1900,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})

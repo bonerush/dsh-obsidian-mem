@@ -395,7 +395,15 @@ test('the overview reports project, clock and refresh to the shell and bands its
     byClass(tree, 'mem-comp-pct').map((node) => node.props.children[0]),
     ['98.3%', '1.4%', '0.4%'],
   )
-  assert.equal(byClass(tree, 'mem-stamps').length, 1, 'status chips ride the composition surface')
+  // The status distribution rides the composition legend's tail as one line, not
+  // as a second chip row: two "share of the whole" readings on one block disagree
+  // about what the whole is (design §3.4 item 4).
+  assert.equal(byClass(tree, 'mem-stamps').length, 0, 'the second chip row is retired')
+  assert.equal(byClass(tree, 'mem-comp-status').length, 1, 'status rides the legend tail')
+  assert.deepEqual(
+    byClass(tree, 'mem-comp-status-value').map((node) => node.props.children[0]),
+    ['生效 514 · 待确认 1'],
+  )
 
   // Recent: ordinals retired, the type appears once, the meta is type · time.
   assert.equal(byClass(tree, 'mem-recent-row').length, 2)
@@ -438,6 +446,208 @@ test('overview KPI cells jump: 待处理 opens 健康, the other three open 检�
   assert.equal(cells.length, 4)
   for (const cell of cells) cell.props.onClick()
   assert.deepEqual(jumps, ['search', 'search', 'search', 'health'])
+})
+
+// ---------------------------------------------------------------------------
+// The five 概览 charts (design §3.4, acceptance §6.5)
+// ---------------------------------------------------------------------------
+
+/** An 84-day series with a few busy days, so the buckets and weeks are non-zero. */
+function activityFixture() {
+  const day = (offset) => {
+    const date = new Date(2026, 9, 29)
+    date.setDate(date.getDate() - offset)
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  }
+  const days = []
+  for (let i = 83; i >= 0; i -= 1) days.push(day(i))
+  return {
+    from: days[0],
+    to: days[83],
+    days,
+    created: days.map((_d, index) => (index % 7 === 0 ? 2 : index % 5 === 0 ? 1 : 0)),
+    updated: days.map((_d, index) => (index % 6 === 0 ? 1 : 0)),
+  }
+}
+
+const chartProps = (overrides = {}) => ({ sessionId: 'session-a', visible: true, ...overrides })
+
+test('the activity heat map is one labelled image of 12 weeks without focusable cells', async (t) => {
+  stubFetch(t, () =>
+    ok(overviewValue({ activity: activityFixture(), tags: { items: [], total: 0 } })),
+  )
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const grid = byClass(tree, 'mem-heat-grid')
+  assert.equal(grid.length, 1, 'one grid')
+  assert.equal(grid[0].props.role, 'img', 'the whole grid is a single image')
+  assert.ok(String(grid[0].props['aria-label']).includes('周活动'), 'its label states the window')
+  const cells = byClass(tree, 'mem-heat-cell')
+  // Twelve Sunday-first columns laid out by the grid CSS (`grid-auto-flow:column`,
+  // 7 rows) from one flat run of cells, padded to whole weeks.
+  assert.equal(cells.length % 7, 0, 'whole weeks only')
+  assert.equal(cells.length, 12 * 7, 'twelve weeks of seven days')
+  assert.equal(
+    byClass(tree, 'mem-heat-col').length,
+    0,
+    'no per-column wrappers: the grid does the column layout',
+  )
+  // A 6px square is far below the 24px focus floor: a tabbable grid would be a
+  // keyboard path nobody can use, so no cell may claim focus. The numbers are
+  // carried by the section meta instead.
+  for (const cell of cells) assert.equal(cell.props.tabIndex, undefined, 'no focusable cell')
+  const legend = byClass(tree, 'mem-heat-legend')
+  assert.equal(legend.length, 1)
+  assert.equal(legend[0].props['aria-hidden'], true, 'the legend is decorative')
+  assert.deepEqual(byClass(legend[0], 'mem-heat-swatch').length, 5, 'five buckets, zero included')
+  // The reading is a digit in the meta, not an area the reader must estimate.
+  const sectionNode = nodes(tree).find(
+    (node) => node?.type === 'section' && node.props['aria-label'] === '活动热度',
+  )
+  const metaText = byClass(sectionNode, 'mem-meta').map((node) => node.props.children[0])
+  assert.ok(
+    metaText.some((text) => /^近 12 周 · 本周 \d+ 天有更新 · 合计 \d+ 条$/u.test(text)),
+    'the meta states the numbers: ' + metaText.join('|'),
+  )
+})
+
+test('the flow bars share one zero line and normalise to the larger side', async (t) => {
+  stubFetch(t, () =>
+    ok(overviewValue({ activity: activityFixture(), tags: { items: [], total: 0 } })),
+  )
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const chart = byClass(tree, 'mem-flow')
+  assert.equal(chart.length, 1)
+  const svgNode = byClass(chart[0], 'mem-flow-svg')[0]
+  assert.equal(svgNode.props.role, 'img')
+  // One zero line, drawn once, shared by both streams.
+  assert.equal(byClass(svgNode, 'mem-flow-zero').length, 1, 'the zero line is drawn once')
+  const bars = nodes(svgNode).filter(
+    (node) => node?.type === 'rect' && node.props.className?.startsWith('mem-flow-'),
+  )
+  assert.ok(bars.length > 0, 'the twelve weeks draw bars')
+  assert.ok(
+    bars.some((bar) => bar.props.className.includes('created')),
+    'created is one stream',
+  )
+  assert.ok(
+    bars.some((bar) => bar.props.className.includes('updated')),
+    'updated is the other',
+  )
+  // Every bar starts or ends on the shared zero line: 40 in a 80-unit box.
+  for (const bar of bars) {
+    const { y, height } = bar.props
+    assert.ok(
+      Math.abs(y + height - 40) < 0.01 || Math.abs(y - 40) < 0.01,
+      'a bar touches the zero line: y=' + y + ' h=' + height,
+    )
+  }
+  // sup erseded is a status snapshot, never a dated flow: no third stream exists.
+  assert.equal(
+    bars.some((bar) => bar.props.className.includes('superseded')),
+    false,
+    'no archived/superseded series is invented',
+  )
+  assert.equal(byClass(chart[0], 'mem-flow-legend').length, 1)
+  assert.equal(byClass(chart[0], 'mem-flow-legend')[0].props['aria-hidden'], true)
+})
+
+test('an all-zero window renders an empty sentence instead of twelve zero bars', async (t) => {
+  const flat = activityFixture()
+  flat.created = flat.created.map(() => 0)
+  flat.updated = flat.updated.map(() => 0)
+  stubFetch(t, () => ok(overviewValue({ activity: flat, tags: { items: [], total: 0 } })))
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  assert.equal(byClass(tree, 'mem-flow-svg').length, 0, 'no twelve-zero-bar chart')
+  assert.equal(countText(tree, '近 12 周没有新建或更新记录。'), 1, 'the empty sentence, once')
+  // The heat map still draws: a zero window is a real reading, not a missing one.
+  assert.equal(byClass(tree, 'mem-heat-grid').length, 1)
+})
+
+test('the tag ranking shows at most eight rows plus the real remainder', async (t) => {
+  const items = Array.from({ length: 12 }, (_x, index) => ({
+    tag: 'dsh-mem/tag-' + index,
+    n: 12 - index,
+  }))
+  stubFetch(t, () =>
+    ok(
+      overviewValue({
+        activity: activityFixture(),
+        tags: { items, total: items.reduce((sum, row) => sum + row.n, 0) + 40 },
+      }),
+    ),
+  )
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  assert.equal(byClass(tree, 'mem-freq-row').length, 8, 'eight rows at most')
+  // `total` is the tag OCCURRENCE count in scope, not the sum of the shown rows: the
+  // remainder is what the ranking did not print, and it must be a real number.
+  const occurrences = (12 * 13) / 2 + 40
+  const shown = items.slice(0, 8).reduce((sum, row) => sum + row.n, 0)
+  assert.equal(countText(tree, '另有 ' + (occurrences - shown) + ' 个标签'), 1)
+  // The bars are proportional to the ranking's own maximum.
+  const fills = byClass(tree, 'mem-freq-fill').map((node) => node.props.style.width)
+  assert.equal(fills[0], '100%', 'the biggest tag fills the track')
+  assert.ok(fills.at(-1) !== '100%', 'a smaller tag does not')
+})
+
+test('the composition bar caps at three segments and folds status into one line', async (t) => {
+  stubFetch(t, () =>
+    ok(
+      overviewValue({
+        activity: activityFixture(),
+        counts: {
+          notes: 5,
+          links: 1,
+          orphans: 0,
+          byType: [
+            { type: 'convention', n: 30 },
+            { type: 'decision', n: 20 },
+            { type: 'doc', n: 10 },
+          ],
+          byStatus: [
+            { status: 'active', n: 55 },
+            { status: 'contested', n: 5 },
+          ],
+        },
+        tags: { items: [], total: 0 },
+      }),
+    ),
+  )
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  assert.equal(byClass(tree, 'mem-bar-track').length, 1)
+  assert.ok(byClass(tree, 'mem-bar-fill').length <= 3, 'the segment cap holds')
+  assert.equal(byClass(tree, 'mem-comp-status').length, 1, 'status is one line, not a chip row')
+  assert.equal(byClass(tree, 'mem-stamps').length, 0)
+})
+
+test('a payload without the chart fields draws no charts at all', async (t) => {
+  // The route feature-detects `activity`/`tags` and answers null for an older index
+  // build. That is "no chart", never an empty grid or an empty ranking block.
+  stubFetch(t, () => ok(overviewValue({ activity: null, tags: null })))
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  assert.equal(byClass(tree, 'mem-kpi').length, 4, 'the KPI band still answers')
+  assert.equal(byClass(tree, 'mem-heat-grid').length, 0, 'no heat map')
+  assert.equal(byClass(tree, 'mem-flow').length, 0, 'no flow bars')
+  assert.equal(byClass(tree, 'mem-freq-row').length, 0, 'no ranking')
+  assert.equal(byClass(tree, 'mem-kpi-spark').length, 0, 'no sparkline either')
 })
 
 test('search is a results page: no field of its own, named filter groups and marked rows', async (t) => {
