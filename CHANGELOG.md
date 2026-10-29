@@ -86,6 +86,34 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Changed
 
+- **The duplicated page title and the retired search jump are gone, and the heat map
+  is centred.** Composed, the tab already names the page, so a "概览" or "健康"
+  headline directly under it said the same word twice; the "去检索" action pointed at
+  a box that is now permanently one row above the body. Both are kept for the
+  standalone mount (no shell, so no tabs and no box, where the heading is the only
+  orientation there is). The activity heat map is capped at 262px and centred in its
+  row with its legend on the same centre line: left-aligned in a 335px body it read as
+  a fragment that had failed to fill its column. Verified: `node
+  test/panel-ui.test.js` 32 pass (one new case pins the composed/standalone split),
+  `node test/panel-client.test.js` 16 pass, and 375px and 320px captures of the real
+  shell and views.
+
+- **The panel's vertical rhythm is one measure per gap again, and the air is back.**
+  Three real spacing bugs, all found by looking at a rendered panel rather than at a
+  test: the strip and the search box sat 0px apart (the box's own row had no top
+  padding), `mem-block` — the stacking slot every chart is wrapped in — had no
+  `margin-top`, so the section margins collapsed and the charts came within a few
+  pixels of each other, and a later rule zeroed the first child's margin in *every*
+  block, which since each block holds exactly one section removed the gap between all
+  of them. The spacing now lives on the slot (`24px`, `:first-child` excluded) instead
+  of on a margin that may or may not collapse, each chart body has `14px` of padding
+  between its section rule and its marks, the search row has `14px/10px` above and
+  below, and the view body has `18px/32px`. Verified: `node
+  test/panel-client.test.js` 16 pass, `node test/panel-ui.test.js` 31 pass,
+  `node test/architecture.test.js` 8 pass, plus a 375px capture of the real
+  shell and views. Not verified: the same capture at 320px was not retaken after the
+  rhythm change.
+
 - **The top bar is now the tab strip itself, and 检索 is a results page rather than
   a page with its own search box.** The dedicated header — project name, vault line,
   binding stamp — repeated what the host's own sidebar already shows, and a panel

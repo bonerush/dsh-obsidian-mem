@@ -448,6 +448,29 @@ test('overview KPI cells jump: 待处理 opens 健康, the other three open 检�
   assert.deepEqual(jumps, ['search', 'search', 'search', 'health'])
 })
 
+test('composed, the tab names the page: no duplicate heading and no search jump', async (t) => {
+  // The shell mounts every view with `onMeta`, so that prop is the "composed" signal.
+  // A "概览" headline under a 概览 tab is the same word twice, and a 去检索 jump
+  // pointed at a box that is now permanently one row above the body.
+  stubFetch(t, () =>
+    ok(overviewValue({ activity: activityFixture(), tags: { items: [], total: 0 } })),
+  )
+  const render = mount(t, 'OverviewView')
+  render({ sessionId: 'session-a', visible: true, onMeta: () => {}, onJump: () => {} })
+  await setImmediate()
+  const composed = render({
+    sessionId: 'session-a',
+    visible: true,
+    onMeta: () => {},
+    onJump: () => {},
+  })
+  assert.equal(byClass(composed, 'mem-viewhead').length, 0, 'no page heading when composed')
+  assert.equal(byText(composed, '去检索').length, 0, 'no jump to a box that is always visible')
+  // Standalone (no `onMeta`) keeps the heading: there it is the only orientation.
+  const alone = render({ sessionId: 'session-a', visible: true })
+  assert.equal(byClass(alone, 'mem-viewhead').length, 1, 'standalone still says where it is')
+})
+
 // ---------------------------------------------------------------------------
 // The five 概览 charts (design §3.4, acceptance §6.5)
 // ---------------------------------------------------------------------------
