@@ -11,6 +11,70 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Fixed
+
+- **The search box painted two focus rings for one focus.** Measured from the reported
+  646×162 panel capture: the 40px rounded field's border turns blue on focus (x11..579 /
+  y83..122), and a second, square-cornered blue outline sat at x42..572 / y80..125 — the
+  panel-wide `:focus-visible` rule ringing the square `.mem-search-input` at 2px offset
+  inside the 10px-radius pill. The input now paints no outline of its own; the field owns
+  exactly one rounded ring (business-blue border plus a 2px blue outline at offset 0). A
+  click anywhere in the field puts the caret in the input — icon and padding included,
+  while a click that starts on the clear control stays with it — and the shell's CSS
+  contract test pins the three rules. A composing Enter does not submit the production
+  form: a plain-page Chrome control shows a raw-key Enter during composition is suppressed
+  while the CDP synthetic character event (`keyDown` with `text: '\r'`) is not — in this
+  Chrome the implicit submission trigger is the char path, not the raw keydown — so the
+  review harness's submit was its own artifact. No IME guard was added because no
+  production defect reproduces; the control is recorded in the validation record. Verified:
+  `test/panel-client.test.js` 18/18; shell capture at 646/659/320px in light and dark,
+  244/244 checks — exactly one painted outline (`.mem-search-field`, 2px solid, offset 0)
+  whose box is the field border-box +2px on each side (560×44 at 646px), the inner
+  square's blue pixels fall to 0 (4 blue strokes per scan line become 2), and real CDP
+  mouse clicks on the icon or either padding focus the input at every width. The
+  reported 646×162 capture is reconciled as a crop of a 659 CSS px panel: the baseline
+  capture reproduces its field box (569×40) and inner square geometry exactly.
+
+### Changed
+
+- **The panel tab row is the Chrome form, sized up.** The three leaves were 32px tall
+  with a -8px folded-folder overlap, 10px side padding and a 15px glyph; they are now
+  36px tall with a 2px gap, 14px side padding, a 16px glyph, a 180px max width, and an
+  8px strip top padding that keeps the leaf's own upward hit extension at a 44px click
+  target. The active leaf still merges into the content surface and the glyph still
+  yields at the 320px floor. Verified: the stylesheet contract test re-derives every
+  number from the emitted rules, and the shell capture measures 76×36 leaves (54×36 with
+  the glyph hidden at the 320px floor), a 2px gap, a 44px tab strip band, 14px side
+  padding, a 16px glyph and a 44px hit area; the pre-fix row measured 66×32 with the -8px
+  overlap, a 38px strip, 132px max width and a 15px glyph.
+
+- **概览 构成 is a Sankey built from real joint type×status counts.** `index.stats()` now
+  carries `flow` — one row per non-zero type×status pair (`n DESC, type ASC, status
+  ASC`, the same `untyped` normalization as the two margins) — from both backends: one
+  scoped GROUP BY on SQLite and a nested count in the scan backend's existing
+  eligible-row loop. The chart draws only when the flow is present and its margins agree
+  with `byType`/`byStatus`: nodes and links share one unit-per-note scale (a node's bands
+  sum to its own height; both columns total the section head's number), names and counts
+  are real `<text>`, every mark carries its exact number in a native `<title>`, and
+  colour is the type's rank over eight distinct tints (the status column's neutral is
+  deliberately a shade the type palette does not use, so the two ends never read as
+  one list), and a sliver cluster's labels are laid out in two passes so the rows
+  stay monotonic — the single pass could draw two labels 2px apart at 320px. A row
+  the clamp had to displace is tied back to its mark with a 1px leader line (no
+  leader when the row already sits on the node centre), and the chart caps at the
+  heat grid's 292px chart width instead of scaling with the panel, so its 11px type
+  stays 1:1 at every width. The flow is also refused when the two columns and the
+  payload's note count disagree with each other. The wire is all-or-nothing — the
+  overview trimmer drops `flow` whole before halving either margin — so a partial chart
+  is impossible, and an older host falls back to the unchanged stacked bar + legend.
+  Verified: `test/index-stats.test.js` 26/26 on both backends, `test/panel-ui.test.js`
+  48/48 (hand-written geometry, label-leader association, truncation, margin-mismatch
+  and fallback branches), `test/panel-route.test.js` 28/28 (trim order and the 16 KB
+  ceiling), and the 概览 capture at 320/375px in light and dark: 328/328 checks, svg
+  292×200 (1:1, centred) at both widths, 10 nodes / 12 links, both columns 164 units =
+  the printed `515 条`, 8 distinct fills, no clipped labels and no overflow
+  (`docs/validation/panel-shell-sankey-2026-10-29.md`).
+
 ## 0.4.1 — 2026-10-29
 
 ### Fixed

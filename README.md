@@ -172,23 +172,28 @@ Start a session in any Git repository and ask, or just check the tools are there
 
 On DSH `0.1.7-rc.2` with `dsh-better-sidebar` `0.21.1`, open the native
 sidebar and choose **+ → 记忆 (Memory)**. The tab is one project's memory. The tab
-strip is the top bar — a Chrome-style folder row of **概览 / 图谱 / 健康**, one icon
-per tab (the icon yields to the label at a very narrow width), adjacent leaves
-overlapping by 8px, the active leaf merging into the content surface — with the
-last-read clock and an icon refresh at its tail; the project name is not repeated
-because the host's own sidebar already shows it. A persistent search box sits under
-the strip on every page instead of a 检索 tab. Both keep the standard tab roles and
-arrow-key navigation. The panel uses the host's own modern sans type throughout (no
-serif display face, no negative tracking), and the data views lay their data out in
-bands rather than stacked bordered cards. **图谱** keeps the graph below, unchanged,
-including its remembered controls.
+strip is the top bar — a Chrome-style row of **概览 / 图谱 / 健康**: 36px-tall leaves
+with a 2px gap between them (the old folded-folder 8px overlap is gone), roomier
+14px side padding, one 16px icon per leaf (the icon yields to the label at a very
+narrow width), the active leaf merging into the content surface — with the last-read
+clock and an icon refresh at its tail; the project name is not repeated because the
+host's own sidebar already shows it. A persistent search box sits under the strip on
+every page instead of a 检索 tab: a 40px rounded field that shows one rounded focus
+ring and puts the caret in the input when you click anywhere in it. Both keep the
+standard tab roles and arrow-key navigation. The panel uses the host's own modern
+sans type throughout (no serif display face, no negative tracking), and the data views
+lay their data out in bands rather than stacked bordered cards. **图谱** keeps the
+graph below, unchanged, including its remembered controls.
 
 **概览** opens on five charts: a calendar heat map of the activity window whose numbers
 live in the section head (`近 N 周（84 天）· 本周 N 天有更新 · 合计 M 条`) because a
 square is a shape and not a reading, new-versus-updated flow bars sharing one zero line —
 one bar per calendar week, the same weeks the heat map draws, each carrying the reading
-`WW 周 · 新建 n · 更新 m` — the tag frequency ranking, the type composition bar with its
-legend, and a KPI band whose note/link/orphan/pending counts jump (待处理 opens **健康**,
+`WW 周 · 新建 n · 更新 m` — the tag frequency ranking, the type→status composition
+Sankey (real joint counts: node heights and link bands share one unit-per-note scale,
+names and counts written beside both columns; when the host serves no joint flow it
+falls back to the old composition bar and legend), and a KPI band whose
+note/link/orphan/pending counts jump (待处理 opens **健康**,
 the others put the caret in the search box) with a twelve-point sparkline of the running
 new-note total in the first cell.
 There is no archived series: `superseded` is a current status snapshot and the vault
