@@ -963,11 +963,13 @@ test('the tag ranking counts tags, not occurrences, in its remainder line', asyn
   assert.equal(fills[0], '100%', 'the biggest tag fills the track')
 })
 
-test('the composition bar caps at three REAL segments and folds status into one line', async (t) => {
-  // Seven types, which is what a real vault looks like. The previous guard asserted
-  // `<= 3` against a THREE-type fixture, so it passed without testing a cap at all —
-  // while the code emitted one segment per type and aliased the seventh back to the
-  // first colour. A guard is only a guard when its input exceeds the limit.
+test('without a flow, the composition falls back to the capped bar and legend', async (t) => {
+  // The fallback path: no `flow` on the wire (an older host, or the trimmer having
+  // dropped the whole flow). Seven types, which is what a real vault looks like.
+  // The previous guard asserted `<= 3` against a THREE-type fixture, so it passed
+  // without testing a cap at all — while the code emitted one segment per type and
+  // aliased the seventh back to the first colour. A guard is only a guard when its
+  // input exceeds the limit.
   const byType = [
     { type: 'convention', n: 30 },
     { type: 'decision', n: 20 },
@@ -1025,6 +1027,390 @@ test('the composition bar caps at three REAL segments and folds status into one 
   )
   assert.equal(byClass(tree, 'mem-comp-status').length, 1, 'status is one line, not a chip row')
   void byType
+})
+
+// ---------------------------------------------------------------------------
+// The 构成 Sankey (joint type×status flow). The fixture's two margins add up on
+// paper, and every layout number in the expectations is recomputable from those
+// counts and the chart's declared 292×200 coordinate space: 180 usable units
+// across 60 notes is 3 units per note, with a 4-unit gap between nodes.
+// ---------------------------------------------------------------------------
+
+/** 60 notes: 30 convention / 20 decision / 10 doc, and 45 active / 15 provisional. */
+const FLOW_COUNTS = {
+  notes: 60,
+  links: 5,
+  orphans: 2,
+  byType: [
+    { type: 'convention', n: 30 },
+    { type: 'decision', n: 20 },
+    { type: 'doc', n: 10 },
+  ],
+  byStatus: [
+    { status: 'active', n: 45 },
+    { status: 'provisional', n: 15 },
+  ],
+  // Every joint number is real: 25+5=30, 18+2=20, 2+8=10, 25+18+2=45, 5+2+8=15.
+  flow: [
+    { type: 'convention', status: 'active', n: 25 },
+    { type: 'decision', status: 'active', n: 18 },
+    { type: 'doc', status: 'provisional', n: 8 },
+    { type: 'convention', status: 'provisional', n: 5 },
+    { type: 'decision', status: 'provisional', n: 2 },
+    { type: 'doc', status: 'active', n: 2 },
+  ],
+}
+
+/** The first string child of an element's native <title> child. */
+function titleOf(element) {
+  const found = nodes(element).find((node) => node?.type === 'title')
+  return found?.props?.children?.[0]
+}
+
+/** Render 概览 once with these counts; the chart data stays present so only 构成 changes. */
+async function renderOverviewWith(t, counts) {
+  stubFetch(t, () => ok(overviewValue({ counts, activity: activityFixture(), tags: null })))
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  return render(chartProps())
+}
+
+test('the composition draws a Sankey whose geometry is the joint flow', async (t) => {
+  const tree = await renderOverviewWith(t, FLOW_COUNTS)
+  assert.equal(byClass(tree, 'mem-sankey').length, 1, 'one Sankey surface')
+  assert.equal(byClass(tree, 'mem-comp').length, 0, 'the Sankey replaces the stacked bar')
+  assert.equal(byClass(tree, 'mem-bar-track').length, 0, 'and its track')
+  const svg = byClass(tree, 'mem-sankey-svg')
+  assert.equal(svg.length, 1)
+  assert.equal(svg[0].props.role, 'img', 'the whole chart is one image')
+  assert.equal(svg[0].props.viewBox, '0 0 292 200', "the 320px floor's 292px content space")
+  assert.equal(svg[0].props['aria-label'], '构成桑基图：共 60 条', 'the label names the total')
+  // The section head prints the flow's own total, not a second aggregate.
+  const sectionNode = nodes(tree).find(
+    (node) => node?.type === 'section' && node.props['aria-label'] === '构成',
+  )
+  assert.ok(sectionNode, 'the 构成 section')
+  assert.deepEqual(
+    byClass(sectionNode, 'mem-meta').map((node) => node.props.children[0]),
+    ['60 条'],
+  )
+  // Left column = byType order, height = n × 3 units; 4-unit gaps.
+  const leftNodes = byClass(tree, 'mem-sankey-node').filter((node) =>
+    node.props.className.split(' ').includes('is-type'),
+  )
+  assert.equal(leftNodes.length, 3)
+  assert.deepEqual(
+    leftNodes.map((node) => [node.props.x, node.props.y, node.props.width, node.props.height]),
+    [
+      [76, 6, 8, 90], // convention 30 × 3
+      [76, 100, 8, 60], // decision 20 × 3 (6 + 90 + 4)
+      [76, 164, 8, 30], // doc 10 × 3 (100 + 60 + 4)
+    ],
+  )
+  // Right column = byStatus order; a two-node column is vertically centred.
+  const rightNodes = byClass(tree, 'mem-sankey-node').filter((node) =>
+    node.props.className.split(' ').includes('is-status'),
+  )
+  assert.equal(rightNodes.length, 2)
+  assert.deepEqual(
+    rightNodes.map((node) => [node.props.x, node.props.y, node.props.width, node.props.height]),
+    [
+      [204, 8, 8, 135], // active 45 × 3
+      [204, 147, 8, 45], // provisional 15 × 3 (8 + 135 + 4)
+    ],
+  )
+  // Every node carries its exact number in a native title (an SVG title is a real tooltip).
+  assert.deepEqual(leftNodes.map(titleOf), ['约定 · 30 条', '决策 · 20 条', '文档 · 10 条'])
+  assert.deepEqual(rightNodes.map(titleOf), ['生效 · 45 条', '待确认 · 15 条'])
+  // Links: one filled closed band per joint row, stacked so a source's targets
+  // follow the right column and a target's sources follow the left column.
+  const links = byClass(tree, 'mem-sankey-link')
+  assert.equal(links.length, 6)
+  assert.deepEqual(
+    links.map((node) => node.props.d),
+    [
+      'M84,6 C144,6 144,8 204,8 L204,83 C144,83 144,81 84,81 Z',
+      'M84,81 C144,81 144,147 204,147 L204,162 C144,162 144,96 84,96 Z',
+      'M84,100 C144,100 144,83 204,83 L204,137 C144,137 144,154 84,154 Z',
+      'M84,154 C144,154 144,162 204,162 L204,168 C144,168 144,160 84,160 Z',
+      'M84,164 C144,164 144,137 204,137 L204,143 C144,143 144,170 84,170 Z',
+      'M84,170 C144,170 144,168 204,168 L204,192 C144,192 144,194 84,194 Z',
+    ],
+  )
+  assert.deepEqual(links.map(titleOf), [
+    '约定 → 生效 · 25 条',
+    '约定 → 待确认 · 5 条',
+    '决策 → 生效 · 18 条',
+    '决策 → 待确认 · 2 条',
+    '文档 → 生效 · 2 条',
+    '文档 → 待确认 · 8 条',
+  ])
+  // numbers = geometry: each link's drawn thickness is its count × 3 units, a
+  // node's outgoing links add up to the node's own height, and the two columns
+  // are the same total (60 notes × 3).
+  const thickness = (d) => {
+    const numbers = String(d)
+      .match(/-?\d+(?:\.\d+)?/gu)
+      .map(Number)
+    return numbers.at(-1) - numbers[1]
+  }
+  const printed = [25, 5, 18, 2, 2, 8]
+  links.forEach((node, index) => {
+    assert.equal(
+      thickness(node.props.d),
+      printed[index] * 3,
+      'link thickness is the printed count: ' + printed[index],
+    )
+  })
+  assert.equal(thickness(links[0].props.d) + thickness(links[1].props.d), 90, 'convention 30')
+  assert.equal(thickness(links[2].props.d) + thickness(links[3].props.d), 60, 'decision 20')
+  assert.equal(thickness(links[4].props.d) + thickness(links[5].props.d), 30, 'doc 10')
+  assert.equal(
+    thickness(links[0].props.d) + thickness(links[2].props.d) + thickness(links[4].props.d),
+    135,
+  )
+  assert.equal(
+    thickness(links[1].props.d) + thickness(links[3].props.d) + thickness(links[5].props.d),
+    45,
+  )
+  // Labels and values are text, so no reading depends on colour alone.
+  assert.deepEqual(
+    byClass(tree, 'mem-sankey-label').map((node) => node.props.children[1]),
+    ['约定', '决策', '文档', '生效', '待确认'],
+  )
+  assert.deepEqual(
+    byClass(tree, 'mem-sankey-value').map((node) => node.props.children[0]),
+    ['30', '20', '10', '45', '15'],
+  )
+  assert.equal(
+    byClass(tree, 'mem-sankey-leader').length,
+    0,
+    'labels that already sit on their node centre need no leader',
+  )
+  // Colour is the type rank (left nodes + outgoing links); right nodes are neutral.
+  assert.deepEqual(
+    leftNodes.map((node) => node.props.className),
+    [
+      'mem-sankey-node is-type is-seg0',
+      'mem-sankey-node is-type is-seg1',
+      'mem-sankey-node is-type is-seg2',
+    ],
+  )
+  assert.deepEqual(
+    rightNodes.map((node) => node.props.className),
+    ['mem-sankey-node is-status', 'mem-sankey-node is-status'],
+  )
+  assert.deepEqual(
+    links.map((node) => node.props.className),
+    [
+      'mem-sankey-link is-seg0',
+      'mem-sankey-link is-seg0',
+      'mem-sankey-link is-seg1',
+      'mem-sankey-link is-seg1',
+      'mem-sankey-link is-seg2',
+      'mem-sankey-link is-seg2',
+    ],
+  )
+})
+
+test('a long Sankey label truncates but keeps its full title', async (t) => {
+  // A type name that is not one of the panel's own labels: clipped in the fixed
+  // label column, with the full string in the native title next to it.
+  const tree = await renderOverviewWith(t, {
+    notes: 5,
+    links: 0,
+    orphans: 0,
+    byType: [
+      { type: 'decision', n: 3 },
+      { type: 'a-very-long-type-name', n: 2 },
+    ],
+    byStatus: [{ status: 'active', n: 5 }],
+    flow: [
+      { type: 'decision', status: 'active', n: 3 },
+      { type: 'a-very-long-type-name', status: 'active', n: 2 },
+    ],
+  })
+  const labels = byClass(tree, 'mem-sankey-label')
+  assert.equal(labels.length, 3, 'two type labels and one status label')
+  const long = labels[1]
+  assert.equal(
+    nodes(long).find((node) => node?.type === 'title').props.children[0],
+    'a-very-long-type-name',
+  )
+  const clipped = long.props.children[1]
+  assert.notEqual(clipped, 'a-very-long-type-name', 'the column is bounded, so the text is clipped')
+  assert.ok(String(clipped).endsWith('…'), 'clipping is visible: ' + clipped)
+  assert.ok(String(clipped).length < 'a-very-long-type-name'.length)
+})
+
+// A realistic skewed vault (7 types, 3 statuses) packs six labels into the bottom
+// third of the column. The single forward pass this replaces could push an earlier
+// row past a later one there — measured at 200 units: 182 then 168, two labels 2px
+// apart at the 11px font. The two-pass layout has to stay monotonic.
+const SLIVER_COUNTS = {
+  notes: 515,
+  links: 0,
+  orphans: 0,
+  byType: [
+    { type: 'convention', n: 420 },
+    { type: 'decision', n: 60 },
+    { type: 'doc', n: 20 },
+    { type: 'gotcha', n: 8 },
+    { type: 'hub', n: 4 },
+    { type: 'glossary', n: 2 },
+    { type: 'misc', n: 1 },
+  ],
+  byStatus: [
+    { status: 'active', n: 500 },
+    { status: 'provisional', n: 10 },
+    { status: 'contested', n: 5 },
+  ],
+  flow: [
+    { type: 'convention', status: 'active', n: 410 },
+    { type: 'convention', status: 'provisional', n: 8 },
+    { type: 'convention', status: 'contested', n: 2 },
+    { type: 'decision', status: 'active', n: 56 },
+    { type: 'decision', status: 'provisional', n: 2 },
+    { type: 'decision', status: 'contested', n: 2 },
+    { type: 'doc', status: 'active', n: 19 },
+    { type: 'doc', status: 'contested', n: 1 },
+    { type: 'gotcha', status: 'active', n: 8 },
+    { type: 'hub', status: 'active', n: 4 },
+    { type: 'glossary', status: 'active', n: 2 },
+    { type: 'misc', status: 'active', n: 1 },
+  ],
+}
+
+test('a sliver cluster keeps its label rows ordered and apart', async (t) => {
+  const tree = await renderOverviewWith(t, SLIVER_COUNTS)
+  const rows = byClass(tree, 'mem-sankey-label').map((node) => Number(node.props.y))
+  assert.equal(rows.length, 10, 'seven type labels and three status labels')
+  // The first seven rows belong to the left column, the last three to the right; 11px
+  // is the token font size, so a correctly laid out column keeps at least that between
+  // neighbouring rows (and the whole column orders top to bottom).
+  for (const column of [rows.slice(0, 7), rows.slice(7)]) {
+    for (let index = 1; index < column.length; index += 1) {
+      const gap = column[index] - column[index - 1]
+      assert.ok(gap >= 11, 'label rows stay ordered and apart, gap ' + gap + ' at ' + index)
+    }
+  }
+})
+
+test('a displaced label row is tied to its mark by a leader', async (t) => {
+  const tree = await renderOverviewWith(t, SLIVER_COUNTS)
+  const labels = byClass(tree, 'mem-sankey-label')
+  const typeLabels = labels.filter((node) => node.props.x === 34)
+  const statusLabels = labels.filter((node) => node.props.x === 252)
+  const typeNodes = byClass(tree, 'mem-sankey-node').filter((node) =>
+    node.props.className.split(' ').includes('is-type'),
+  )
+  const statusNodes = byClass(tree, 'mem-sankey-node').filter((node) =>
+    node.props.className.split(' ').includes('is-status'),
+  )
+  const centreOf = (node) => Number(node.props.y) + Number(node.props.height) / 2
+  const rowOf = (label) => Number(label.props.y) - 4
+  // The expectation is the ASSOCIATION, not the layout formula: every row whose
+  // baseline no longer sits on its mark's centre must own exactly one leader, and the
+  // leader's two endpoints must be that row and that centre.
+  const expected = [
+    ...typeLabels.map((label, index) => ({
+      x: 74,
+      row: rowOf(label),
+      centre: centreOf(typeNodes[index]),
+    })),
+    ...statusLabels.map((label, index) => ({
+      x: 214,
+      row: rowOf(label),
+      centre: centreOf(statusNodes[index]),
+    })),
+  ].filter((entry) => Math.abs(entry.row - entry.centre) >= 0.5)
+  assert.equal(expected.length, 8, 'six type rows and two status rows are displaced here')
+  const leaderOf = (d) => {
+    const match = /^M([\d.]+),([\d.]+)L([\d.]+),([\d.]+)$/u.exec(String(d))
+    assert.ok(match, 'a leader is one vertical two-point path: ' + d)
+    return {
+      x: Number(match[1]),
+      row: Number(match[2]),
+      endX: Number(match[3]),
+      centre: Number(match[4]),
+    }
+  }
+  const leaders = byClass(tree, 'mem-sankey-leader').map((node) => leaderOf(node.props.d))
+  assert.equal(
+    leaders.length,
+    expected.length,
+    'one leader per displaced row, none for aligned rows',
+  )
+  leaders.forEach((leader, index) => {
+    const wanted = expected[index]
+    assert.equal(leader.x, wanted.x, 'the leader runs down its own label column')
+    assert.equal(leader.endX, wanted.x, 'a leader is vertical')
+    assert.ok(Math.abs(leader.row - wanted.row) < 0.01, 'the leader starts on the label row')
+    assert.ok(Math.abs(leader.centre - wanted.centre) < 0.01, 'the leader ends on the node centre')
+  })
+})
+
+test('a total that disagrees with the payload note count falls back to the bar', async (t) => {
+  const tree = await renderOverviewWith(t, { ...FLOW_COUNTS, notes: 61 })
+  assert.equal(byClass(tree, 'mem-sankey').length, 0, 'the claimed total is not the drawn total')
+  assert.equal(byClass(tree, 'mem-bar-track').length, 1, 'the fallback bar answers')
+})
+
+test('a flow whose margins disagree falls back to the bar, never a lying chart', async (t) => {
+  // Two host bugs (wrong type margin, wrong status margin). A Sankey drawn from
+  // either would put link thickness next to printed totals that do not match.
+  const mismatches = [
+    {
+      ...FLOW_COUNTS,
+      flow: [
+        { type: 'convention', status: 'active', n: 25 },
+        { type: 'decision', status: 'active', n: 18 },
+        { type: 'convention', status: 'provisional', n: 5 },
+        { type: 'decision', status: 'provisional', n: 2 },
+        { type: 'doc', status: 'active', n: 1 }, // doc's margin is 10, not 1
+        { type: 'doc', status: 'provisional', n: 1 },
+      ],
+    },
+    {
+      ...FLOW_COUNTS,
+      flow: [
+        { type: 'convention', status: 'active', n: 30 }, // active's margin is 45
+        { type: 'decision', status: 'active', n: 15 },
+        { type: 'doc', status: 'provisional', n: 10 },
+        { type: 'doc', status: 'active', n: 5 },
+      ],
+    },
+  ]
+  for (const counts of mismatches) {
+    const tree = await renderOverviewWith(t, counts)
+    assert.equal(byClass(tree, 'mem-sankey').length, 0, 'no Sankey from inconsistent margins')
+    assert.equal(byClass(tree, 'mem-bar-track').length, 1, 'the old stacked bar answers instead')
+    assert.equal(byClass(tree, 'mem-comp-legend').length, 1)
+    assert.equal(byClass(tree, 'mem-comp-value').length, 3, 'and its legend still lists every type')
+  }
+})
+
+test('an empty flow array is no chart either: the fallback bar answers', async (t) => {
+  // The route's trimmer drops the flow WHOLE, so [] is a legitimate wire value
+  // meaning "no joint counts". The view must read it as absent, not draw an
+  // empty figure or a bar without its status line.
+  const counts = {
+    notes: 7,
+    links: 1,
+    orphans: 0,
+    byType: [{ type: 'decision', n: 7 }],
+    byStatus: [{ status: 'active', n: 7 }],
+    flow: [],
+  }
+  stubFetch(t, () => ok(overviewValue({ counts })))
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  assert.equal(byClass(tree, 'mem-sankey').length, 0)
+  assert.equal(byClass(tree, 'mem-bar-track').length, 1, 'the existing bar is the fallback')
+  assert.equal(byClass(tree, 'mem-comp-status').length, 1, 'and its status line still rides along')
 })
 
 test('a payload without the chart fields draws no charts at all', async (t) => {

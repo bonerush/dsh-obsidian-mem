@@ -604,7 +604,7 @@ test('the heat-map grid clears the chart-container floor without outgrowing the 
   )
 })
 
-test('the tab strip is a folder strip: flex, overlapping tabs, the active page merged into content', async () => {
+test('the tab strip is a Chrome-like row: separate roomy leaves, the active page merged', async () => {
   const { script } = await bundle()
   const css = panelCss(script)
   assert.equal(
@@ -612,16 +612,20 @@ test('the tab strip is a folder strip: flex, overlapping tabs, the active page m
       css.slice(css.indexOf('.mem-tabs{'), css.indexOf('}', css.indexOf('.mem-tabs{')) + 1),
     ),
     false,
-    '.mem-tabs is not a grid any more',
+    '.mem-tabs is not a grid',
   )
+  // Chrome's tab strip separates its tabs instead of folding them into one another:
+  // a 2px gap, a roomier leaf (36px tall, up to 180px wide) and a 16px glyph. The
+  // active leaf still merges into the content surface below the strip.
   const tabs = css.slice(
     css.indexOf('.mem-panel .mem-tabs{'),
     css.indexOf('}', css.indexOf('.mem-panel .mem-tabs{')) + 1,
   )
-  for (const marker of ['display:flex', 'gap:0'])
-    assert.ok(tabs.includes(marker), 'the folder strip declares ' + marker)
-  // The strip's background and bottom rule belong to the row that now carries
-  // both the leaves and the freshness tail (`mem-tabbar`), not to the tablist.
+  for (const marker of ['display:flex', 'gap:2px'])
+    assert.ok(tabs.includes(marker), 'the tab row declares ' + marker)
+  assert.equal(css.includes('margin-left:-8px'), false, 'tabs no longer overlap')
+  // The strip's background and bottom rule belong to the row that carries both the
+  // leaves and the freshness tail (`mem-tabbar`), not to the tablist.
   const bar = css.slice(
     css.indexOf('.mem-panel .mem-tabbar{'),
     css.indexOf('}', css.indexOf('.mem-panel .mem-tabbar{')) + 1,
@@ -629,17 +633,14 @@ test('the tab strip is a folder strip: flex, overlapping tabs, the active page m
   for (const marker of [
     'background:var(--dsw-alias-bg-layer-1)',
     'border-bottom:1px solid var(--dsw-alias-border-l1)',
-    'padding:',
+    'padding:8px 14px 0',
     'display:flex',
   ])
     assert.ok(bar.includes(marker), 'the top bar declares ' + marker)
-  // Adjacent tabs overlap, and the active one sits above its neighbours so the
-  // shared rounded edge reads as one folder leaf.
-  assert.ok(css.includes('.mem-tab + .mem-tab{margin-left:-8px}'), 'adjacent tabs overlap by 8px')
-  assert.ok(css.includes('z-index:2'), 'the active tab rides above the others')
-  assert.ok(css.includes('z-index:0'), 'the resting tabs sit below it')
   for (const marker of [
-    'height:32px',
+    'height:36px',
+    'padding:0 14px',
+    'max-width:180px',
     'margin-bottom:-1px',
     'border-radius:10px 10px 0 0',
     'border-bottom-color:var(--dsw-alias-bg-base)',
@@ -647,36 +648,32 @@ test('the tab strip is a folder strip: flex, overlapping tabs, the active page m
     'box-shadow:var(--dsw-shadow-lv1)',
     'text-overflow:ellipsis',
     'transition:background-color 150ms ease,color 150ms ease',
-    'mem-tab-icon',
-    'border:1px solid var(--dsw-alias-border-l1)',
-    'border-bottom-color:transparent',
   ])
-    assert.ok(css.includes(marker), 'the folder tab contains ' + marker)
+    assert.ok(css.includes(marker), 'the tab leaf contains ' + marker)
   assert.ok(
     css.includes('.mem-tab[aria-selected="true"]'),
     'the selected tab is the content surface',
   )
-  assert.ok(css.includes('max-width:132px'), 'a tab never grows past the folder leaf width')
+  assert.ok(css.includes('z-index:2'), 'the active tab rides above the strip rule')
   assert.ok(css.includes('min-width:0'), 'tabs may truncate instead of overflowing')
   assert.ok(tabs.includes('flex-wrap:nowrap'), 'the leaves stay on one row')
   assert.equal(/overflow-x:(auto|scroll)/u.test(css), false, 'nothing scrolls sideways')
   for (const marker of ['flex:0 1 auto', 'align-items:flex-end'])
-    assert.ok(css.includes(marker), 'the folder strip row contains ' + marker)
-  // The 44px click target comes from the top bar's padding plus the leaf's own
-  // upward hit extension — the leaf itself stays 32px so the folder look holds.
-  // The padding moved from the tablist to `mem-tabbar` when the tile gained its
-  // freshness tail; the geometry it buys is unchanged.
-  assert.ok(
-    bar.includes('padding:6px 14px 0'),
-    'the top bar keeps the folder strip padding from the design',
-  )
-  assert.ok(css.includes('top:-12px'), 'the leaf extends its own hit area upward')
-  assert.ok(css.includes('height:32px'), 'the leaf stays a 32px folder tab')
+    assert.ok(css.includes(marker), 'the tab row contains ' + marker)
+  // The 44px click target is the strip's 8px top padding plus the 36px leaf: the
+  // leaf extends its own hit area upward by that padding so the whole 44px is
+  // clickable, while the drawn leaf stays 36px tall.
+  assert.ok(css.includes('top:-8px'), 'the leaf extends its own hit area upward')
   assert.ok(css.includes('bottom:0'), 'the hit extension reaches the content surface')
   assert.ok(
     css.includes('.mem-tab:hover{background:var(--dsw-alias-interactive-bg-hover)'),
     'the resting leaf lifts on hover',
   )
+  const icon = css.slice(
+    css.indexOf('.mem-tab-icon{'),
+    css.indexOf('}', css.indexOf('.mem-tab-icon{')) + 1,
+  )
+  assert.ok(icon.includes('width:16px') && icon.includes('height:16px'), 'the glyph is 16px')
   for (const marker of ['@container (max-width:359px)', '.mem-tab-icon{display:none}'])
     assert.ok(css.includes(marker), 'the 320px fallback contains ' + marker)
 })
@@ -746,6 +743,21 @@ test('the shell keeps one persistent search box between the tab strip and the vi
   byClass(boxTree(), 'mem-search-clear')[0].props.onClick()
   assert.equal(focused, 1, 'the clear control hands focus back to the field')
   assert.equal(boxElement().props.value, '', 'the clear control empties the draft too')
+
+  // Clicking anywhere in the field puts the caret in the input: the icon and the
+  // padding are part of one control, not decoration. A click that starts on a
+  // button (the clear control) is excluded — it owns its own focus handoff.
+  let fieldFocused = 0
+  input().props.ref.current = {
+    focus: () => {
+      fieldFocused += 1
+    },
+  }
+  const field = () => byClass(boxTree(), 'mem-search-field')[0]
+  field().props.onClick({ target: { closest: () => null } })
+  assert.equal(fieldFocused, 1, 'a click on the field focuses the input')
+  field().props.onClick({ target: { closest: () => ({ tagName: 'BUTTON' }) } })
+  assert.equal(fieldFocused, 1, 'a click that starts on a button does not steal its focus')
 
   const tab = (id) => {
     const element = component(panel(), 'MemoryTabs')
@@ -936,6 +948,15 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     'mem-comp-status',
     'mem-comp-status-label',
     'mem-comp-status-value',
+    // The 构成 Sankey: an SVG drawn only from the real type×status joint counts; the
+    // bar above stays as the fallback when the wire carries no flow.
+    'mem-sankey',
+    'mem-sankey-svg',
+    'mem-sankey-node',
+    'mem-sankey-link',
+    'mem-sankey-label',
+    'mem-sankey-value',
+    'mem-sankey-leader',
     'mem-recent',
     'mem-recent-row',
     'mem-recent-main',
@@ -991,8 +1012,8 @@ test('every class the redesigned views consume is styled in the one stylesheet',
   ]
   // The list is only a guard if it is bound to the producer: read the served
   // views and extract every class token they emit from quoted literals (comments
-  // stripped first, see `stripComments`). The extraction finds 108 classes on
-  // this tree — the 24 chart hooks plus the 84 the earlier views already owned —
+  // stripped first, see `stripComments`). The extraction finds 115 classes on
+  // this tree — the 31 chart hooks plus the 84 the earlier views already owned —
   // and every one must be in the list, so a new or renamed view class fails here
   // until the list and the stylesheet follow. The count is asserted as well: the
   // subset check would pass vacuously if the scan ever stopped seeing the views
@@ -1017,7 +1038,7 @@ test('every class the redesigned views consume is styled in the one stylesheet',
   )
   assert.equal(
     emitted.length,
-    108,
+    115,
     'the views scan still sees every emitted class (re-derive the count with the list)',
   )
   for (const hook of hooks)
@@ -1040,6 +1061,9 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     '.mem-meter-fill.is-warn',
     '.mem-snippet mark',
     '.mem-filter-option[aria-pressed="true"]',
+    '.mem-sankey-node.is-status',
+    '.mem-sankey-node.is-seg0',
+    '.mem-sankey-link.is-seg0',
   ])
     assert.ok(css.includes(variant), 'the stylesheet styles ' + variant)
   for (const action of ['.mem-sheet-confirm', '.mem-sheet-cancel']) {
@@ -1049,18 +1073,45 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     assert.ok(rule.includes('min-height:44px'), action + ' keeps its 44px hit area')
   }
   assert.ok(css.includes('grid-template-columns:repeat(2,minmax(0,1fr))'), 'overflow folds to 2x2')
+  // The Sankey caps at the 320px floor's content box like the heat grid, so its 11px
+  // type stays 1:1 instead of scaling with a wider panel; centred inside the section.
+  const sankey = css.indexOf('.mem-panel .mem-sankey{')
+  assert.ok(sankey >= 0, 'the Sankey wrapper rule exists')
+  const sankeyRule = css.slice(sankey, css.indexOf('}', sankey))
+  assert.ok(sankeyRule.includes('max-width:292px'), 'the chart caps at its 292px viewBox width')
+  assert.ok(sankeyRule.includes('margin-inline:auto'), 'and centres inside a wider section')
   assert.ok(css.includes('-webkit-line-clamp:2'), 'snippets clamp to two lines')
 })
 
-test('the panel keeps a visible focus ring, one clear control and passive cells', async () => {
+test('the search field owns one rounded focus ring; the input paints no second box', async () => {
   const { script } = await bundle()
   const css = panelCss(script)
-  assert.equal(
-    css.includes('outline:none'),
-    false,
-    'the search input does not suppress the global focus ring',
+  // The measured defect this replaces: the panel-wide :focus-visible rule drew a
+  // 2px ring at 2px offset on the square .mem-search-input, INSIDE the rounded field
+  // that already turns its own border on :focus-within. Two blue indicators for one
+  // focus, one of them square and inset (user screenshot: outer x11..579/y83..122,
+  // inner x42..572/y80..125 at 646px). The field now owns the single ring.
+  assert.ok(
+    css.includes(
+      '.mem-panel :focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}',
+    ),
+    'every other control keeps the global focus ring',
   )
-  assert.ok(css.includes(':focus-within'), 'the search field still tracks focus')
+  assert.ok(
+    css.includes('.mem-panel .mem-search-input:focus-visible{outline:none}'),
+    'the input paints no second, square ring inside the rounded field',
+  )
+  const start = css.indexOf('.mem-panel .mem-search-field:focus-within{')
+  assert.ok(start >= 0, 'the field still tracks focus')
+  const field = css.slice(start, css.indexOf('}', start))
+  assert.ok(
+    field.includes('border-color:var(--dsw-alias-state-business-primary)'),
+    'the field edge turns on focus',
+  )
+  assert.ok(
+    field.includes('outline:2px solid var(--dsw-alias-state-business-primary)'),
+    'the field paints the one rounded ring the input no longer paints',
+  )
   assert.ok(
     css.includes(
       '.mem-panel .mem-search-input::-webkit-search-cancel-button{-webkit-appearance:none;display:none}',
@@ -1084,9 +1135,9 @@ test('the panel keeps a visible focus ring, one clear control and passive cells'
   // line-height floor. `mem-tabbar-meta` is the flex slot around that text, not a
   // text rule of its own, so it is not in this list.
   for (const hook of ['mem-clock', 'mem-viewhead-meta', 'mem-label']) {
-    const start = css.indexOf('.mem-panel .' + hook + '{')
-    assert.ok(start >= 0, 'the metadata rule exists: ' + hook)
-    const rule = css.slice(start, css.indexOf('}', start))
+    const hookStart = css.indexOf('.mem-panel .' + hook + '{')
+    assert.ok(hookStart >= 0, 'the metadata rule exists: ' + hook)
+    const rule = css.slice(hookStart, css.indexOf('}', hookStart))
     assert.ok(rule.includes('line-height:1.6'), hook + ' sits on the CJK line-height floor')
   }
 })

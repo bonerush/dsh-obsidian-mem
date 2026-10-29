@@ -74,6 +74,7 @@ function stubServices(overrides = {}) {
       orphans: 1,
       byType: [{ type: 'decision', n: 5 }],
       byStatus: [{ status: 'active', n: 5 }],
+      flow: [{ type: 'decision', status: 'active', n: 5 }],
       updatedAt: '2026-10-26T14:02:11.000Z',
     }),
     recent: async () => [
@@ -212,6 +213,9 @@ test('overview composes the cards and never asks for a write action', async (t) 
   assert.equal(value.project.vault.basename, 'knowledge')
   assert.equal(value.project.vault.display, '~/Documents/knowledge')
   assert.equal(value.counts.notes, 5)
+  // The 构成 Sankey's joint type×status links ride the wire untouched: the route
+  // is a projection, never a second place that could re-derive the joint counts.
+  assert.deepEqual(value.counts.flow, [{ type: 'decision', status: 'active', n: 5 }])
   assert.equal(value.health.state, 'ready')
   assert.deepEqual(value.queue, { queued: 0, failed: 0, deferred: 0, failedJobs: [] })
   assert.equal(value.recent.length, 1)
@@ -473,6 +477,11 @@ test('overview trims its lists to stay inside the 16 KB ceiling', async (t) => {
     status: 'status-' + index + '-' + 'x'.repeat(20),
     n: index,
   }))
+  const flow = Array.from({ length: 500 }, (_x, index) => ({
+    type: 'type-' + index + '-' + 'x'.repeat(20),
+    status: 'status-' + index + '-' + 'x'.repeat(20),
+    n: 1,
+  }))
   const recent = Array.from({ length: 50 }, (_x, index) => ({
     path: 'Projects/alpha--11111111/Decisions/' + index + '.md',
     title: 'note ' + index + ' ' + 'x'.repeat(40),
@@ -502,6 +511,7 @@ test('overview trims its lists to stay inside the 16 KB ceiling', async (t) => {
           orphans: 20,
           byType,
           byStatus,
+          flow,
           updatedAt: null,
         }),
         recent: async () => recent,
@@ -539,6 +549,9 @@ test('overview trims its lists to stay inside the 16 KB ceiling', async (t) => {
   const result = await h.post({ sessionId: SESSION, action: 'overview' })
   assert.equal(result.status, 200)
   assert.ok(result.bytes <= 16 * 1024, 'overview is ' + result.bytes + ' bytes')
+  // The padded flow is over the ceiling on its own, so it is dropped whole; a
+  // halved flow would leave a Sankey whose links disagree with the printed totals.
+  assert.deepEqual(result.body.value.counts.flow, [], 'flow is dropped whole')
 })
 
 // ---------------------------------------------------------------------------
@@ -633,6 +646,40 @@ test('overview carries the chart aggregates and asks for the route-driven window
   for (const item of value.tags.items) assert.equal(Number.isInteger(item.n), true)
 })
 
+test('an index build without the joint flow still answers overview', async (t) => {
+  // The panel asset and the host plugin upgrade independently. An older index
+  // build returns the two margins without the joint counts; the route must pass
+  // the absence through (the view then falls back to its bar) instead of failing
+  // the whole 概览 read or inventing a flow.
+  const base = stubServices()
+  const h = await harness(t, {
+    services: {
+      ...base.services,
+      async indexForBinding(binding) {
+        const index = await base.services.indexForBinding(binding)
+        return {
+          ...index,
+          stats: async () => ({
+            notes: 5,
+            links: 2,
+            orphans: 1,
+            byType: [{ type: 'decision', n: 5 }],
+            byStatus: [{ status: 'active', n: 5 }],
+            updatedAt: null,
+          }),
+        }
+      },
+    },
+  })
+  const result = await h.post({ sessionId: SESSION, action: 'overview' })
+  assert.equal(result.status, 200)
+  assert.equal(
+    'flow' in result.body.value.counts,
+    false,
+    'an absent flow stays absent, never invented',
+  )
+  assert.deepEqual(result.body.value.counts.byType, [{ type: 'decision', n: 5 }])
+})
 test('an index build without the chart aggregates still answers overview', async (t) => {
   // The panel asset and the host plugin upgrade independently, so a missing
   // aggregate must read as "no chart" rather than fail the whole 概览 read.
@@ -795,6 +842,7 @@ function ladderHarness(t) {
     tagPage: { items: [], total: 0 },
     byType: [],
     byStatus: [],
+    flow: [],
     sections: [],
     recent: [],
     digest: null,
@@ -821,6 +869,7 @@ function ladderHarness(t) {
           orphans: 0,
           byType: state.byType,
           byStatus: state.byStatus,
+          flow: state.flow,
           updatedAt: null,
         }),
         activity: async () => state.activity,
@@ -1088,6 +1137,57 @@ test('overview trims the charts before the text lists, in the design §3.6 order
   assert.ok(seventh.bytes <= CEILING)
   assert.equal(seventh.body.value.digest, null, 'the digest card is dropped last')
   assert.deepEqual(seventh.body.value.recent, [])
+})
+
+test('overview drops the whole flow before it halves a distribution', async (t) => {
+  // The trimmer's design §3.6 order is tags -> flow -> byType -> byStatus -> ...
+  // The flow is all-or-nothing: a halved flow would draw a Sankey whose link sum
+  // disagrees with the printed totals, so a too-large flow is dropped entirely
+  // and the view falls back to the stacked bar instead.
+  const CEILING = 16 * 1024
+  const { state, post } = ladderHarness(t)
+  const flat = (days) => ({
+    ...activitySeries(days),
+    created: new Array(days).fill(0),
+    updated: new Array(days).fill(0),
+  })
+  state.activity = flat(84)
+  state.tagPage = { items: [], total: 0 }
+  state.byType = [
+    { type: 'decision', n: 2 },
+    { type: 'doc', n: 1 },
+  ]
+  state.byStatus = [
+    { status: 'active', n: 2 },
+    { status: 'provisional', n: 1 },
+  ]
+  state.flow = [{ type: 'decision', status: 'active', n: 2 }]
+  state.sections = []
+  state.recent = []
+  state.digest = null
+  const before = (await post()).bytes
+  assert.ok(before <= CEILING, 'the baseline fits: ' + before + ' bytes')
+  // Pad ONLY the flow: 120 long joint rows put the payload far past the ceiling.
+  state.flow = Array.from({ length: 120 }, (_x, index) => ({
+    type: 'type-' + index + '-' + 'x'.repeat(100),
+    status: 'status-' + index + '-' + 'y'.repeat(100),
+    n: index + 1,
+  }))
+  const result = await post()
+  assert.equal(result.status, 200)
+  assert.ok(result.bytes <= CEILING, 'the answer is ' + result.bytes + ' bytes')
+  assert.deepEqual(result.body.value.counts.flow, [], 'flow is dropped whole, never halved')
+  assert.deepEqual(
+    result.body.value.counts.byType.map((row) => row.type),
+    ['decision', 'doc'],
+    'the distributions did not pay for the flow',
+  )
+  assert.deepEqual(
+    result.body.value.counts.byStatus.map((row) => row.status),
+    ['active', 'provisional'],
+    'and neither did the status margins',
+  )
+  assert.equal(result.body.value.activity.days.length, 84, 'the window did not shrink either')
 })
 
 test('search measures the final UTF-8 envelope at ceiling minus one, ceiling and ceiling plus one', async (t) => {

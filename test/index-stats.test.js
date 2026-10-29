@@ -195,6 +195,98 @@ for (const [backend, label] of BACKENDS) {
   })
 }
 
+// ---------------------------------------------------------------------------
+// The 概览 构成 Sankey's joint type×status flow. Expected rows are hand-written
+// from the fixture above, NOT derived from the implementation: the order is part
+// of the data contract (n DESC, then type ASC, then status ASC) and so are the
+// margins the flow implies (5 project notes, 7 across all projects).
+// ---------------------------------------------------------------------------
+
+/** Project ALPHA: decision×active, decision×superseded, convention×active, gotcha×active, doc×active — every n is 1. */
+const PROJECT_FLOW = [
+  { type: 'convention', status: 'active', n: 1 },
+  { type: 'decision', status: 'active', n: 1 },
+  { type: 'decision', status: 'superseded', n: 1 },
+  { type: 'doc', status: 'active', n: 1 },
+  { type: 'gotcha', status: 'active', n: 1 },
+]
+
+/** All projects: BETA adds doc×active (making doc 2) and Methods/m.md adds method×active. */
+const ALL_FLOW = [
+  { type: 'doc', status: 'active', n: 2 },
+  { type: 'convention', status: 'active', n: 1 },
+  { type: 'decision', status: 'active', n: 1 },
+  { type: 'decision', status: 'superseded', n: 1 },
+  { type: 'gotcha', status: 'active', n: 1 },
+  { type: 'method', status: 'active', n: 1 },
+]
+
+for (const [backend, label] of BACKENDS) {
+  test(`stats carries the joint type×status flow (${label})`, async (t) => {
+    const index = await harness(t, backend)
+    assert.deepEqual((await index.stats({ scope: 'project' })).flow, PROJECT_FLOW)
+    assert.deepEqual((await index.stats({ scope: 'all' })).flow, ALL_FLOW)
+  })
+
+  test(`stats flow margins agree with byType/byStatus and the note total (${label})`, async (t) => {
+    const index = await harness(t, backend)
+    for (const scope of ['project', 'all']) {
+      const counts = await index.stats({ scope })
+      const flow = counts.flow
+      assert.ok(Array.isArray(flow), 'flow is always an array: ' + scope)
+      const sum = (rows) => rows.reduce((total, row) => total + row.n, 0)
+      // Every printed number in the Sankey's section meta is this total.
+      assert.equal(sum(flow), counts.notes, 'flow total equals the note count: ' + scope)
+      assert.deepEqual(Object.keys(counts.flow[0]).sort(), ['n', 'status', 'type'])
+      // A link may not invent a margin: both columns the view draws are real.
+      for (const row of counts.byType) {
+        assert.equal(
+          sum(flow.filter((line) => line.type === row.type)),
+          row.n,
+          'type margin ' + row.type + ': ' + scope,
+        )
+      }
+      for (const row of counts.byStatus) {
+        assert.equal(
+          sum(flow.filter((line) => line.status === row.status)),
+          row.n,
+          'status margin ' + row.status + ': ' + scope,
+        )
+      }
+      // Every key in a margin appears in the flow (all rows are active, n > 0).
+      for (const row of counts.byType)
+        assert.ok(
+          flow.some((line) => line.type === row.type),
+          'flow covers type ' + row.type,
+        )
+      for (const row of counts.byStatus)
+        assert.ok(
+          flow.some((line) => line.status === row.status),
+          'flow covers status ' + row.status,
+        )
+      // Active only: a zero-count joint pair is not a link that could be drawn.
+      for (const row of flow) assert.ok(row.n > 0, 'no zero-thickness link: ' + scope)
+    }
+  })
+}
+
+test(
+  'stats flow is identical across both backends',
+  { skip: HAS_SQLITE ? false : 'node:sqlite is unavailable on this host' },
+  async (t) => {
+    const scanIndex = await harness(t, 'scan')
+    const sqliteIndex = await harness(t, 'sqlite')
+    assert.deepEqual(
+      (await scanIndex.stats({ scope: 'project' })).flow,
+      (await sqliteIndex.stats({ scope: 'project' })).flow,
+    )
+    assert.deepEqual(
+      (await scanIndex.stats({ scope: 'all' })).flow,
+      (await sqliteIndex.stats({ scope: 'all' })).flow,
+    )
+  },
+)
+
 test('statusesForPaths reads every path it was given, once per unique path', async (t) => {
   const index = await harness(t, 'scan')
   const paths = Array.from({ length: MAX_STATUS_PATHS }, (_, i) => `${A}/Docs/f${i}.md`)

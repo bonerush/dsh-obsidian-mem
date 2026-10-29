@@ -637,6 +637,8 @@ const BUDGETS = {
   // keeps days/created/updated/`from` in step, and the digest stage the order
   // was missing. Measured 749 formatted lines; measured-plus-30 is 779, rounded
   // up to 800. The mutation state machine stays in its own module.
+  // The joint-flow trim stage measured 763 formatted lines; measured-plus-30 is
+  // 793, inside the same ceiling.
   'lib/panel-route.js': 800,
   'lib/panel-actions.js': 900,
   'lib/appraisal.js': 300,
@@ -691,7 +693,21 @@ const BUDGETS = {
   // the flow bars became Sunday-first calendar weeks — the same buckets the heat map
   // draws — with their own week-of-year helper and the derived empty-state sentence,
   // which is the extra lines inside the idle ceiling (2049), so no raise was needed.
-  'lib/memory-panel.js': 2050,
+  // Raised from 2050 to 2400 by the 构成 Sankey: the joint type×status flow model
+  // (`sankeyModel`), the unit-per-note layout with per-column centring and a
+  // no-avoidable-crossing stack, the clipped-label row layout, and the SVG render
+  // with one native <title> per node and link. Measured 2358 formatted lines at the
+  // task handoff; the review fix round that followed (a two-pass label-row layout for
+  // sliver clusters, the 1px leader per displaced label, the cross-column/notes total
+  // guard, the status column's neutral moved off the type palette's seg3 tint, and the
+  // chart-width cap) measured 2417; measured-plus-30 is 2447, inside the same ceiling.
+  // What the 367 lines buy: one more
+  // chart shape, built inline from the payload the route already sends (no charting
+  // dependency), plus the consistency guard that refuses to draw when the joint
+  // counts disagree with the margins. The previous bar+legend path stays in the
+  // file as the fallback branch rather than being replaced line for line — an older
+  // host, or a payload whose flow the trimmer dropped whole, still renders 构成.
+  'lib/memory-panel.js': 2450,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})
@@ -714,7 +730,13 @@ const BUDGETS = {
   // the two aggregates are the first readers that bucket by calendar day, which is
   // why the day helpers had to live here beside the two backends rather than in a
   // caller.
-  'lib/index-db.js': 2900,
+  // Raised from 2900 to 2950 by the 概览 Sankey's joint flow: one scoped GROUP BY
+  // on the SQLite backend and a nested type→status count in the scan backend's
+  // existing eligible-row loop, with the same normalization and order on both
+  // sides. Measured 2871 formatted lines; measured-plus-30 is 2901, rounded up to
+  // 2950 — the raise is the headroom rule, not new surface beyond the one extra
+  // reader per backend.
+  'lib/index-db.js': 2950,
   // Measured 119 formatted lines when the v0.4 sparse baseline moved the shared
   // tokenizer out of `index-db`; measured-plus-30 is 149, rounded to 150.
   'lib/index-text.js': 150,
@@ -763,6 +785,15 @@ const BUDGETS = {
   // the arithmetic); measured-plus-30 is 1292, which the rule rounds to 1300 — the
   // 1350 ceiling is kept deliberately (it was set by the previous round and this one
   // did not spend it), not re-derived.
+  // The panel-shell fix round measured 1309 formatted lines (1302 before the fix
+  // round's Sankey status tint): the search field owns
+  // the one rounded focus ring (the input no longer paints its square inset ring),
+  // the tab row is the Chrome form at 36px with a 2px gap instead of the -8px
+  // folded-folder overlap, and the 构成 Sankey's six fill classes plus their tint
+  // variants join the chart stylesheet. Measured-plus-30 is 1332, inside the 1350
+  // ceiling — no raise; it was set by the chart round and this round added 47 lines
+  // to the stylesheet, so the headroom is 11 lines rather than the 88 the previous
+  // figure suggested.
   'lib/client.js': 1350,
   'lib/graph-renderer.js': 700,
   // The eleven-slot table, its two CSS forms and the probe read, split out of the
