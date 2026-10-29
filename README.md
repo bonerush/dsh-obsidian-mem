@@ -183,12 +183,14 @@ serif display face, no negative tracking), and the data views lay their data out
 bands rather than stacked bordered cards. **图谱** keeps the graph below, unchanged,
 including its remembered controls.
 
-**概览** opens on five charts: a 12-week activity heat map whose numbers live in the
-section head (`近 12 周 · 本周 N 天有更新 · 合计 M 条`) because a 6px square is a
-shape and not a reading, new-versus-updated flow bars sharing one zero line, the tag
-frequency ranking, the type composition bar with its legend, and a KPI band whose
-note/link/orphan/pending counts jump (待处理 opens **健康**, the others put the caret
-in the search box) with a sparkline of the running new-note total in the first cell.
+**概览** opens on five charts: a calendar heat map of the activity window whose numbers
+live in the section head (`近 N 周（84 天）· 本周 N 天有更新 · 合计 M 条`) because a
+square is a shape and not a reading, new-versus-updated flow bars sharing one zero line —
+one bar per calendar week, the same weeks the heat map draws, each carrying the reading
+`WW 周 · 新建 n · 更新 m` — the tag frequency ranking, the type composition bar with its
+legend, and a KPI band whose note/link/orphan/pending counts jump (待处理 opens **健康**,
+the others put the caret in the search box) with a twelve-point sparkline of the running
+new-note total in the first cell.
 There is no archived series: `superseded` is a current status snapshot and the vault
 records no day a note reached it, so drawing it as a flow would invent a transition.
 Recent rows follow, then a passive health summary whose only action, **全部 →**, opens
