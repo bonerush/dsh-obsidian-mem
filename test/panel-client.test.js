@@ -4,9 +4,110 @@ import { runInNewContext } from 'node:vm'
 import { test } from 'node:test'
 
 const source = () => readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
+/** The served views — the producer side of the class-coverage contract below. */
+const viewsSource = () => readFile(new URL('../lib/memory-panel.js', import.meta.url), 'utf8')
+
+/**
+ * Drop `//` and block comments while respecting string quotes. The class
+ * extraction below must not be satisfied by a class named only in a comment, and
+ * — measured — matching quotes across an unstripped comment desynchronises on an
+ * apostrophe and finds 67 of the views' 108 classes instead of 108. The views
+ * compose some class names at runtime (`'mem-heat-cell is-l' + level`,
+ * `'mem-flow-swatch ' + level`, `span('mem-stamp' + …)`), so the extraction
+ * splits a quoted literal on spaces and keeps the `mem-*` token; the composed
+ * suffixes (`is-l1`, `is-created`, …) are stylesheet variants, covered by the
+ * variant assertions in the same test.
+ */
+function stripComments(text) {
+  let stripped = ''
+  let index = 0
+  let quote = null
+  while (index < text.length) {
+    const char = text[index]
+    if (quote !== null) {
+      stripped += char
+      if (char === '\\') {
+        stripped += text[index + 1] ?? ''
+        index += 2
+        continue
+      }
+      if (char === quote) quote = null
+      index += 1
+      continue
+    }
+    if (char === '/' && text[index + 1] === '/') {
+      while (index < text.length && text[index] !== '\n') index += 1
+      continue
+    }
+    if (char === '/' && text[index + 1] === '*') {
+      index += 2
+      while (index < text.length && !(text[index] === '*' && text[index + 1] === '/')) index += 1
+      index += 2
+      continue
+    }
+    if (char === "'" || char === '"' || char === '`') quote = char
+    stripped += char
+    index += 1
+  }
+  return stripped
+}
+
+/**
+ * The shell's React stand-in. The bundle only receives React through
+ * `require('react')`, so a test supplies it. Most tests below need
+ * `createElement` alone and scan the source; the behavioural shell tests mount
+ * the shell's own components, which use state and refs, so this stand-in keeps
+ * one component's state across renders the way the host's renderer does. It is
+ * the same hook shape test/panel-ui.test.js uses for the served views — the
+ * suite has no React dependency to test the shell against otherwise.
+ */
+function shellReact() {
+  const slots = new Map()
+  let current = null
+  let cursor = 0
+  const slot = () => {
+    let state = slots.get(current)
+    if (state === undefined) slots.set(current, (state = { values: [] }))
+    return state
+  }
+  return {
+    React: {
+      createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+      useState(initial) {
+        const { values } = slot()
+        const index = cursor++
+        if (!(index in values)) values[index] = initial
+        return [
+          values[index],
+          (next) => {
+            values[index] = typeof next === 'function' ? next(values[index]) : next
+          },
+        ]
+      },
+      useRef(initial) {
+        const { values } = slot()
+        const index = cursor++
+        if (!(index in values)) values[index] = { current: initial }
+        return values[index]
+      },
+      // The shell's two effects are the stylesheet injection (this context has no
+      // `document`) and the served-module import (the vm has no dynamic-import
+      // hook). Neither can run here and no assertion below reads them, so the hook
+      // is counted for the cursor and nothing else.
+      useEffect() {
+        cursor += 1
+      },
+    },
+    render(component, props) {
+      current = component
+      cursor = 0
+      return component(props)
+    },
+  }
+}
 
 /** Register the bundle the way the host does, and return its factory exports. */
-async function bundle() {
+async function bundle(react = shellReact().React) {
   const script = await source()
   let module
   const window = {
@@ -20,7 +121,7 @@ async function bundle() {
   assert.equal(module.id, 'dsh-obsidian-mem')
   const exports = module.factory((name) => {
     assert.equal(name, 'react')
-    return { createElement: (...args) => ({ args }) }
+    return react
   })
   return { script, exports }
 }
@@ -31,6 +132,64 @@ function panelCss(script) {
   const end = script.indexOf('/* panel-css:end */')
   assert.ok(start >= 0 && end > start, 'the panel stylesheet is marked for scanning')
   return script.slice(start, end)
+}
+
+/**
+ * Every element in a rendered tree, depth-first. Function components are left as
+ * elements — call one through the runtime when its output is what you assert.
+ */
+function nodes(tree) {
+  const found = []
+  const visit = (value) => {
+    for (const node of Array.isArray(value) ? value.flat(Infinity) : [value]) {
+      if (node === null || typeof node !== 'object') continue
+      found.push(node)
+      visit(node.props?.children ?? [])
+    }
+  }
+  visit(tree)
+  return found
+}
+
+const component = (tree, name) =>
+  nodes(tree).find((node) => typeof node.type === 'function' && node.type.name === name)
+const byRole = (tree, role) => nodes(tree).find((node) => node.props?.role === role)
+const byClass = (tree, className) =>
+  nodes(tree).filter(
+    (node) =>
+      typeof node.props?.className === 'string' &&
+      node.props.className.split(' ').includes(className),
+  )
+
+/**
+ * Mount the shell the way the host does: register the tab, then call the panel
+ * component the tab renders through the hook stand-in. `render` re-renders it
+ * against the same state, which is how a test sees a state change land.
+ */
+async function mountShell(sessionId = 'session-shell') {
+  const shell = shellReact()
+  const { script, exports } = await bundle(shell.React)
+  let tab
+  const ctx = {
+    betterSidebar: {
+      registerTab(value) {
+        tab = value
+        return () => {
+          tab = undefined
+        }
+      },
+    },
+    effect(callback) {
+      this.dispose = callback()
+    },
+  }
+  exports.apply(ctx)
+  const panel = tab.component({ scope: { sessionId }, visible: true })
+  return {
+    script,
+    shell,
+    render: (overrides) => shell.render(panel.type, { sessionId, visible: true, ...overrides }),
+  }
 }
 
 test('the shell keeps the graph tab id, retitles it 记忆 and renders the panel', async () => {
@@ -58,8 +217,8 @@ test('the shell keeps the graph tab id, retitles it 记忆 and renders the panel
   assert.equal(tab.single, true)
   assert.equal(typeof tab.component, 'function')
   const view = tab.component({ scope: { sessionId: 'session-case' }, visible: true })
-  assert.equal(view.args[1].sessionId, 'session-case')
-  assert.equal(view.args[1].visible, true)
+  assert.equal(view.props.sessionId, 'session-case')
+  assert.equal(view.props.visible, true)
   ctx.dispose()
   assert.equal(tab, undefined)
 })
@@ -70,7 +229,13 @@ test('the shell loads the one served module and passes React into it', async () 
     script.includes("import('/obsidian-mem/memory-panel.js')"),
     'dynamic import of the served module',
   )
-  assert.ok(script.includes('createMemoryViews({ React })'), 'React is passed into the module')
+  // The served module's factory runs behind that dynamic import, and a vm context
+  // has no dynamic-import hook to resolve it, so this is source-shape by
+  // necessity: it pins the wiring rather than a renamed substring. The argument
+  // handed to `createMemoryViews` must be the bundle's own `React` binding — the
+  // object `require('react')` returned — not a second global or a re-require.
+  assert.match(script, /const React = require\('react'\)/u, 'React comes through require')
+  assert.match(script, /createMemoryViews\(\{\s*React\s*\}\)/u, 'the served factory receives React')
   assert.ok(
     script.includes("import('/obsidian-mem/graph-renderer.js')"),
     'the graph renderer stays',
@@ -82,24 +247,73 @@ test('the shell loads the one served module and passes React into it', async () 
 })
 
 test('the view strip is a real tablist with roving focus and keyboard navigation', async () => {
-  const { script } = await bundle()
-  for (const marker of [
-    "role: 'tablist'",
-    "role: 'tab'",
-    "'aria-selected'",
-    "'aria-controls'",
-    "role: 'tabpanel'",
-    "'aria-labelledby'",
-    'tabIndex: value === view.id ? 0 : -1',
-    "event.key === 'ArrowRight'",
-    "event.key === 'ArrowLeft'",
-    "event.key === 'Home'",
-    "event.key === 'End'",
-  ])
-    assert.ok(script.includes(marker), 'the shell contains ' + marker)
-  for (const label of ['概览', '图谱', '健康'])
-    assert.ok(script.includes("label: '" + label + "'"), 'the strip has ' + label)
-  assert.equal(script.includes("label: '检索'"), false, '检索 stopped being a tab')
+  const { shell, render } = await mountShell()
+  const strip = (overrides = {}) => {
+    const element = component(render(), 'MemoryTabs')
+    assert.ok(element, 'the shell renders the strip')
+    return shell.render(element.type, { ...element.props, ...overrides })
+  }
+  const tabs = (tree) => nodes(tree).filter((node) => node.props?.role === 'tab')
+  const selected = (tree) => tabs(tree).map((node) => node.props['aria-selected'])
+  const selectedIndex = () => selected(strip()).indexOf(true)
+
+  let tree = strip()
+  assert.equal(nodes(tree).filter((node) => node.props?.role === 'tablist').length, 1)
+  assert.deepEqual(
+    tabs(tree).map((node) => node.props.id),
+    ['obsidian-mem-tab-overview', 'obsidian-mem-tab-graph', 'obsidian-mem-tab-health'],
+    'three tabs, 检索 is no longer one of them',
+  )
+  assert.deepEqual(selected(tree), [true, false, false], 'the mounted view is the selected tab')
+  assert.deepEqual(
+    tabs(tree).map((node) => node.props.tabIndex),
+    [0, -1, -1],
+    'roving tabindex: only the selected tab is in the tab order',
+  )
+
+  // Roving state is a prop: selecting another tab moves both markers with it.
+  tree = strip({ value: 'graph' })
+  assert.deepEqual(selected(tree), [false, true, false])
+  assert.deepEqual(
+    tabs(tree).map((node) => node.props.tabIndex),
+    [-1, 0, -1],
+  )
+
+  // Keyboard navigation is behaviour, not a source marker: each key must move the
+  // shell's selection and the focus, and unhandled keys must leave both alone.
+  const focused = []
+  const press = (key, index) => {
+    const buttons = tabs(strip())
+    buttons.forEach((button, position) => {
+      button.props.ref({ focus: () => focused.push(position) })
+    })
+    let prevented = false
+    buttons[index].props.onKeyDown({
+      key,
+      preventDefault: () => {
+        prevented = true
+      },
+    })
+    return prevented
+  }
+  const cases = [
+    ['End', 0, 2],
+    ['Home', 2, 0],
+    ['ArrowRight', 0, 1],
+    ['ArrowLeft', 0, 2],
+    ['ArrowRight', 2, 0],
+    ['ArrowLeft', 2, 1],
+  ]
+  for (const [key, from, to] of cases) {
+    focused.length = 0
+    assert.equal(press(key, from), true, key + ' is consumed by the tablist')
+    assert.equal(selectedIndex(), to, key + ' selects view ' + to)
+    assert.deepEqual(focused, [to], key + ' moves focus to view ' + to)
+  }
+  focused.length = 0
+  assert.equal(press('Tab', 0), false, 'an unhandled key is not consumed')
+  assert.equal(selectedIndex(), 1, 'an unhandled key leaves the selection alone')
+  assert.deepEqual(focused, [], 'an unhandled key leaves the focus alone')
 })
 
 test('the view index is exactly three folder tabs in the reviewed order, without ordinals', async () => {
@@ -135,16 +349,39 @@ test('the view index is exactly three folder tabs in the reviewed order, without
 })
 
 test('every tab controls the one mounted tabpanel', async () => {
-  const { script } = await bundle()
-  assert.ok(
-    script.includes("'aria-controls': 'obsidian-mem-panel'"),
-    'the tabs point at the one panel id',
+  const { script, shell, render } = await mountShell()
+  const panel = () => byRole(render(), 'tabpanel')
+  assert.ok(panel(), 'the shell mounts one panel')
+  assert.equal(nodes(render()).filter((node) => node.props?.role === 'tabpanel').length, 1)
+  assert.equal(
+    panel().props.id,
+    'obsidian-mem-panel',
+    'the one mounted panel carries the id the tabs name',
   )
-  assert.ok(script.includes("id: 'obsidian-mem-panel'"), 'the mounted panel carries that id')
-  assert.ok(
-    script.includes("'aria-labelledby': 'obsidian-mem-tab-' + view"),
+  assert.equal(
+    panel().props['aria-labelledby'],
+    'obsidian-mem-tab-overview',
     'the panel is labelled by the selected tab',
   )
+  const tabs = () => {
+    const element = component(render(), 'MemoryTabs')
+    return nodes(shell.render(element.type, element.props)).filter(
+      (node) => node.props?.role === 'tab',
+    )
+  }
+  for (const tab of tabs())
+    assert.equal(tab.props['aria-controls'], panel().props.id, 'every tab points at that panel')
+  // A tab click answers in the shell's state: the mounted panel relabels itself
+  // for the new view, so the `aria-controls`/`aria-labelledby` pair stays live.
+  const graph = tabs().find((node) => node.props.id === 'obsidian-mem-tab-graph')
+  graph.props.onClick()
+  assert.equal(panel().props['aria-labelledby'], 'obsidian-mem-tab-graph', 'the panel follows')
+  assert.deepEqual(
+    tabs().map((node) => node.props['aria-selected']),
+    [false, true, false],
+  )
+  // The retired per-view panel ids stay retired; the behaviour above only proves
+  // the one panel exists, so this keeps "a second panel per view" from returning.
   assert.equal(
     script.includes("'obsidian-mem-panel-' + view"),
     false,
@@ -260,6 +497,113 @@ test('the stylesheet is a token-only host-type design system with bounded radii'
   assert.equal(/color-scheme/iu.test(css), false, 'the host owns the colour scheme')
 })
 
+test('the bundle reads only host tokens on the measured allowlist', async () => {
+  const { script } = await bundle()
+  const css = panelCss(script)
+  // MEASURED 2026-10-29 against the installed DSH build at
+  //   C:/Users/bonerush/AppData/Local/Programs/DeepSeek Harness/resources/app.asar
+  //   (182,434,783 bytes), where the host defines 405 `--dsw-*:` names. Command shape:
+  //   grep -a -o -- '--dsw-[a-z0-9-]*:' '<app.asar>' | sort -u     # -> 405 names
+  //   grep -a -o -- '--dsw-font-xs-regular-13:' '<app.asar>'       # -> 0 matches
+  // The second command is why this guard exists: the search input's `font:`
+  // shorthand once named `--dsw-font-xs-regular-13`, a token this host build does
+  // not define, so the shorthand was invalid at computed-value time and the input
+  // silently inherited 12px. The host's real 13px token is
+  // `--dsw-font-xs-13:13px/20px var(--dsw-font-family)`.
+  //
+  // CI has no host build to measure against, so this allowlist is a reviewed
+  // decision in the same posture as the architecture LAYERS/BUDGETS tables: a name
+  // is added only after it is checked against a host build, and its entry is
+  // deleted when the stylesheet stops reading it. The scan covers both stylesheet
+  // strings in the bundle — the graph token block (3 of these names) and the marked
+  // panel sheet (21) — which is exactly the set the measurement cross-checked.
+  const verified = [
+    '--dsw-alias-bg-base',
+    '--dsw-alias-bg-layer-1',
+    '--dsw-alias-bg-layer-2',
+    '--dsw-alias-bg-overlay',
+    '--dsw-alias-border-l1',
+    '--dsw-alias-border-l2',
+    '--dsw-alias-interactive-bg-hover',
+    '--dsw-alias-label-dimmed',
+    '--dsw-alias-label-primary',
+    '--dsw-alias-label-secondary',
+    '--dsw-alias-label-tertiary',
+    '--dsw-alias-link',
+    '--dsw-alias-state-business-primary',
+    '--dsw-alias-state-error-primary',
+    '--dsw-alias-state-success-primary',
+    '--dsw-alias-state-warn-primary',
+    '--dsw-font-s-strong-14',
+    '--dsw-font-xs-13',
+    '--dsw-font-xxs-12',
+    '--dsw-font-xxs-strong-12',
+    '--dsw-font-xxxs-11',
+    '--dsw-font-xxxs-strong-11',
+    '--dsw-shadow-lv1',
+    '--dsw-shadow-lv3',
+  ]
+  const used = [
+    ...new Set([...script.matchAll(/var\((--dsw-[a-z0-9-]+)/gu)].map((match) => match[1])),
+  ].sort()
+  const unverified = used.filter((name) => !verified.includes(name))
+  assert.deepEqual(
+    unverified,
+    [],
+    'host tokens the stylesheet reads but has not been verified against: ' + unverified.join(', '),
+  )
+  const stale = verified.filter((name) => !used.includes(name))
+  assert.deepEqual(
+    stale,
+    [],
+    'allowlist entries the stylesheet no longer uses: ' + stale.join(', '),
+  )
+  // The one defect this guard was born from, pinned by name: the allowlist alone
+  // would accept any other verified token, so the search field's size is asserted
+  // at the declaration that broke.
+  const input = css.slice(
+    css.indexOf('.mem-panel .mem-search-input{'),
+    css.indexOf('}', css.indexOf('.mem-panel .mem-search-input{')),
+  )
+  assert.ok(
+    input.includes('font:var(--dsw-font-xs-13)'),
+    'the search input uses the host 13px shorthand',
+  )
+})
+
+test('the heat-map grid clears the chart-container floor without outgrowing the section', async () => {
+  const { script } = await bundle()
+  const css = panelCss(script)
+  const start = css.indexOf('.mem-panel .mem-heat-grid{')
+  assert.ok(start >= 0, 'the heat grid rule exists')
+  const rule = css.slice(start, css.indexOf('}', start))
+  const cap = /max-width:(\d+)px/u.exec(rule)
+  assert.ok(cap, 'the grid declares a pixel cap so the squares stop growing on a wide panel')
+  // The floor arithmetic is derived from the panel's own layout rather than
+  // repeating its constant here: read `.mem-view`'s horizontal padding (currently
+  // 14px, so the 320px panel's content box is 320 - 2×14 = 292px) and use it as
+  // the cap's upper bound. If the padding moves, this fails loudly instead of
+  // silently disagreeing with the stylesheet; the `width:100%` beside the cap
+  // already keeps the grid inside the section, so the cap only has to fill the
+  // narrowest supported content box without overshooting it.
+  const viewStart = css.indexOf('.mem-panel .mem-view{')
+  assert.ok(viewStart >= 0, 'the view body rule exists so the floor arithmetic has a source')
+  const viewRule = css.slice(viewStart, css.indexOf('}', viewStart))
+  const padding = /padding:\d+px (\d+)px \d+px/u.exec(viewRule)
+  assert.ok(padding, '.mem-view declares the three-value padding the arithmetic reads')
+  const viewPadding = Number(padding[1])
+  // Design §6.6: every chart container is at least 280px wide in the panel's
+  // supported range, so the cap must land in [280, 320 − 2×padding].
+  assert.ok(Number(cap[1]) >= 280, 'the chart container clears the 280px floor, found ' + cap[1])
+  assert.ok(
+    Number(cap[1]) <= 320 - 2 * viewPadding,
+    'the cap fits the 320px content box: cap ' +
+      cap[1] +
+      ', content box ' +
+      (320 - 2 * viewPadding),
+  )
+})
+
 test('the tab strip is a folder strip: flex, overlapping tabs, the active page merged into content', async () => {
   const { script } = await bundle()
   const css = panelCss(script)
@@ -337,36 +681,122 @@ test('the tab strip is a folder strip: flex, overlapping tabs, the active page m
     assert.ok(css.includes(marker), 'the 320px fallback contains ' + marker)
 })
 
-test('the shell keeps a persistent search box between the masthead and the tabs', async () => {
-  const { script } = await bundle()
-  for (const marker of [
-    "role: 'search'",
-    "className: 'mem-searchbar'",
+test('the shell keeps one persistent search box between the tab strip and the view body', async () => {
+  const { script, shell, render } = await mountShell('session-search')
+  const panel = () => render()
+  const boxElement = (tree = panel()) => component(tree, 'SearchBox')
+  const boxTree = (overrides = {}) => {
+    const element = boxElement()
+    assert.ok(element, 'the shell renders the search box itself, not a view')
+    return shell.render(element.type, { ...element.props, ...overrides })
+  }
+  const input = () => byClass(boxTree(), 'mem-search-input')[0]
+  const form = (tree = boxTree()) => nodes(tree).find((node) => node.type === 'form')
+
+  // The box is shell chrome: one form directly between the strip and the one view
+  // body, so it survives every tab and a tab only replaces the mounted view.
+  const tree = panel()
+  const positioned = nodes(tree)
+  const stripNode = component(tree, 'MemoryTabs')
+  const boxNode = boxElement(tree)
+  assert.ok(positioned.indexOf(stripNode) < positioned.indexOf(boxNode), 'tab strip → search box')
+  assert.ok(
+    positioned.indexOf(boxNode) < positioned.indexOf(byRole(tree, 'tabpanel')),
+    'search box → the one tabpanel',
+  )
+  assert.equal(form().props.className, 'mem-searchbar')
+  const box = boxTree()
+  assert.equal(nodes(box).filter((node) => node.props?.role === 'search').length, 1)
+  for (const hook of [
     'mem-search-field',
     'mem-search-icon',
     'mem-search-input',
-    'mem-search-clear',
     'mem-search-submit',
-    'onSubmit:',
-    "event.key === 'Escape'",
-    'const [search, setSearch] = React.useState(null)',
-    'SearchView',
   ])
-    assert.ok(script.includes(marker), 'the shell search box contains ' + marker)
-  // The search box is shell-level: MemoryPanel renders it directly under the tab
-  // strip, so it is visible on every page and the results page only replaces the
-  // mounted view body.
-  const shell = script.slice(
+    assert.equal(byClass(box, hook).length, 1, 'the box has one ' + hook)
+  assert.equal(byClass(box, 'mem-search-clear').length, 0, 'no clear control while empty')
+
+  // The shell owns the draft: typing is one shell state change and the field is
+  // controlled by it — the box never grows a state of its own.
+  input().props.onChange({ target: { value: '绑定' } })
+  assert.equal(boxElement().props.value, '绑定', 'typing updates the shell-owned draft')
+  assert.equal(input().props.value, '绑定', 'the field renders that draft back')
+  assert.equal(byClass(boxTree(), 'mem-search-clear').length, 1, 'the clear control appears')
+
+  // Escape is one of the three exits: it empties the field.
+  let prevented = 0
+  input().props.onKeyDown({
+    key: 'Escape',
+    preventDefault: () => {
+      prevented += 1
+    },
+  })
+  assert.equal(prevented, 1, 'Escape is consumed by the box')
+  assert.equal(boxElement().props.value, '', 'Escape empties the shell-owned draft')
+  assert.equal(byClass(boxTree(), 'mem-search-clear').length, 0)
+
+  // The clear control is the same exit and hands the caret back to the field.
+  input().props.onChange({ target: { value: 'x' } })
+  let focused = 0
+  input().props.ref.current = {
+    focus: () => {
+      focused += 1
+    },
+  }
+  byClass(boxTree(), 'mem-search-clear')[0].props.onClick()
+  assert.equal(focused, 1, 'the clear control hands focus back to the field')
+  assert.equal(boxElement().props.value, '', 'the clear control empties the draft too')
+
+  const tab = (id) => {
+    const element = component(panel(), 'MemoryTabs')
+    return nodes(shell.render(element.type, element.props)).find(
+      (node) => node.props?.id === 'obsidian-mem-tab-' + id,
+    )
+  }
+  tab('graph').props.onClick()
+  assert.ok(component(panel(), 'GraphView'), '图谱 mounts the graph view')
+  assert.ok(boxElement(), 'the search box survives the tab switch')
+
+  // Submitting enters search mode: the shell replaces the view body with the
+  // results page. The served module cannot load in this context, so the observable
+  // is the body swap; the props crossing that seam are pinned in the source below.
+  const submit = () => {
+    let submitted = 0
+    form().props.onSubmit({
+      preventDefault: () => {
+        submitted += 1
+      },
+    })
+    return submitted
+  }
+  input().props.onChange({ target: { value: '绑定' } })
+  assert.equal(submit(), 1, 'the form submit is consumed by the shell')
+  assert.equal(component(panel(), 'GraphView'), undefined, 'a submitted query replaces the body')
+  // A tab click is the second exit: search mode drops even when the tab is the one
+  // that is already mounted. The typed text survives a tab click by design, so the
+  // field is emptied first for the empty-query guard below.
+  tab('graph').props.onClick()
+  assert.ok(component(panel(), 'GraphView'), 'a tab click leaves search mode')
+  input().props.onKeyDown({ key: 'Escape', preventDefault: () => {} })
+  assert.equal(boxElement().props.value, '', 'Escape empties the field')
+  // An empty query is not a search (design §6.3): no request, no mode change.
+  assert.equal(submit(), 1)
+  assert.ok(component(panel(), 'GraphView'), 'an empty query does not enter search mode')
+  // Escape is the third exit, from the input itself.
+  input().props.onChange({ target: { value: '绑定' } })
+  submit()
+  assert.equal(component(panel(), 'GraphView'), undefined)
+  input().props.onKeyDown({ key: 'Escape', preventDefault: () => {} })
+  assert.ok(component(panel(), 'GraphView'), 'Escape leaves search mode')
+
+  // The served view is behind the dynamic import a vm context cannot resolve, so
+  // the props contract across that seam is the source-shape seam: what it pins is
+  // that the results page mounts with the shell's own state plus its callbacks,
+  // never an internally owned form. panel-ui.test.js mounts the view side.
+  const shellSource = script.slice(
     script.indexOf('function MemoryPanel'),
     script.indexOf('function SearchBox'),
   )
-  const box = shell.indexOf('h(SearchBox,')
-  const tabs = shell.indexOf('h(MemoryTabs,')
-  assert.ok(box >= 0, 'the shell renders the search box itself, not a view')
-  assert.ok(tabs >= 0, 'the shell renders the tab strip')
-  assert.ok(tabs < box, 'tab strip → search box')
-  assert.ok(shell.indexOf("className: 'mem-view'") > box, 'the one tabpanel follows the strip')
-  // In search mode SearchView gets the shell's own state, not an internally owned form.
   for (const prop of [
     'sessionId',
     'query',
@@ -375,10 +805,14 @@ test('the shell keeps a persistent search box between the masthead and the tabs'
     'status',
     'limit',
     'visible',
+    // The two callbacks the single-owner model depends on (I6/I7): the view
+    // reports filter changes and page-size changes upward instead of owning them.
+    'onFilter',
+    'onLimit',
     'onClose',
   ])
     assert.ok(
-      new RegExp('SearchView,\\s*\\{[^}]*\\b' + prop + '\\b', 'u').test(shell),
+      new RegExp('SearchView,\\s*\\{[^}]*\\b' + prop + '\\b', 'u').test(shellSource),
       'SearchView receives ' + prop + ' from the shell',
     )
   // 检索 is no longer a tab, so polling keeps to the two polling reads.
@@ -387,17 +821,6 @@ test('the shell keeps a persistent search box between the masthead and the tabs'
     'polling covers 概览 and 健康 only',
   )
   assert.equal(script.includes("view === 'search'"), false, 'no search tab branch survives')
-  // One search form: the shell owns it, and the retired page must not grow a second
-  // one next to it (Task 4 deletes the view's own bar; until then the shell is the
-  // only `role="search"` the bundle declares).
-  const panelForm = [...script.matchAll(/role: 'search'/gu)]
-  assert.equal(panelForm.length, 1, 'the bundle declares exactly one role="search" form')
-  const formStart = script.lastIndexOf('mem-searchbar', panelForm[0].index)
-  assert.ok(formStart >= 0 && panelForm[0].index - formStart < 200, 'the one form is the shell box')
-  // The shell box owns the three exits; the retired view-owned form is gone.
-  assert.equal(script.includes('mem-search-submit'), true, 'the box has a submit control')
-  for (const marker of ['leaveSearch', 'clearSearch', 'chooseView', 'submitSearch'])
-    assert.ok(script.includes('const ' + marker), 'the shell owns ' + marker)
 })
 
 test('the search box styles stay token-built and clear of hex literals', async () => {
@@ -456,6 +879,7 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     'mem-meta',
     'mem-warn',
     'mem-notice',
+    'mem-action-status',
     'mem-status',
     'mem-empty',
     'mem-skeleton',
@@ -466,9 +890,35 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     'mem-kpi-line',
     'mem-kpi-value',
     'mem-kpi-unit',
+    'mem-kpi-spark',
     'mem-summary',
     'mem-summary-item',
     'mem-summary-value',
+    // The 概览 charts landed with the chart redesign and are what this list is
+    // really for: each hook is emitted by `lib/memory-panel.js` and has a rule in
+    // the stylesheet, so a renamed class in either place fails here.
+    'mem-heat',
+    'mem-heat-grid',
+    'mem-heat-cell',
+    'mem-heat-legend',
+    'mem-heat-legend-label',
+    'mem-heat-swatch',
+    'mem-flow',
+    'mem-flow-svg',
+    'mem-flow-created',
+    'mem-flow-updated',
+    'mem-flow-zero',
+    'mem-flow-legend',
+    'mem-flow-swatch',
+    'mem-flow-legend-label',
+    'mem-freq',
+    'mem-freq-row',
+    'mem-freq-name',
+    'mem-freq-track',
+    'mem-freq-fill',
+    'mem-freq-value',
+    'mem-chart-empty',
+    'mem-block',
     'mem-section',
     'mem-section-head',
     'mem-section-meta',
@@ -539,6 +989,37 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     'mem-sheet-confirm',
     'mem-sheet-cancel',
   ]
+  // The list is only a guard if it is bound to the producer: read the served
+  // views and extract every class token they emit from quoted literals (comments
+  // stripped first, see `stripComments`). The extraction finds 108 classes on
+  // this tree — the 24 chart hooks plus the 84 the earlier views already owned —
+  // and every one must be in the list, so a new or renamed view class fails here
+  // until the list and the stylesheet follow. The count is asserted as well: the
+  // subset check would pass vacuously if the scan ever stopped seeing the views
+  // (a quoting change, all names moving into template literals), and deleting an
+  // emitted class should force the list and this count to be re-derived.
+  const emitted = [
+    ...new Set(
+      [
+        ...stripComments(await viewsSource()).matchAll(
+          /'([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^"\\]*)*)"/gu,
+        ),
+      ]
+        .flatMap((match) => (match[1] ?? match[2]).split(/\s+/))
+        .filter((token) => /^mem-[a-z0-9-]+$/u.test(token)),
+    ),
+  ].sort()
+  const unguarded = emitted.filter((name) => !hooks.includes(name))
+  assert.deepEqual(
+    unguarded,
+    [],
+    'classes the views emit but the list does not guard: ' + unguarded.join(', '),
+  )
+  assert.equal(
+    emitted.length,
+    108,
+    'the views scan still sees every emitted class (re-derive the count with the list)',
+  )
   for (const hook of hooks)
     assert.match(
       css,
