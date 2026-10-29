@@ -398,7 +398,6 @@ test('the overview reports project, clock and refresh to the shell and bands its
   // The status distribution rides the composition legend's tail as one line, not
   // as a second chip row: two "share of the whole" readings on one block disagree
   // about what the whole is (design §3.4 item 4).
-  assert.equal(byClass(tree, 'mem-stamps').length, 0, 'the second chip row is retired')
   assert.equal(byClass(tree, 'mem-comp-status').length, 1, 'status rides the legend tail')
   assert.deepEqual(
     byClass(tree, 'mem-comp-status-value').map((node) => node.props.children[0]),
@@ -517,6 +516,15 @@ test('the activity heat map draws every day of the window and prints the matchin
   assert.equal(cells.length % 7, 0, 'whole weeks only')
   const real = cells.filter((cell) => !(cell.props.className ?? '').split(' ').includes('is-void'))
   assert.equal(real.length, activity.days.length, 'every day in the window gets a cell')
+  // Spec §6.5: a void cell is a calendar gap, not a reading. The grid's
+  // `role="img"` already hides the run from assistive technology, but the
+  // criterion is named on the cell, and a gap must not become focusable either.
+  const voids = cells.filter((cell) => (cell.props.className ?? '').split(' ').includes('is-void'))
+  assert.ok(voids.length > 0, 'an unaligned window is padded to whole weeks')
+  for (const cell of voids) {
+    assert.equal(cell.props['aria-hidden'], true, 'a void cell is hidden from AT')
+    assert.equal(cell.props.tabIndex, undefined, 'a void cell is not focusable')
+  }
   assert.equal(
     byClass(tree, 'mem-heat-col').length,
     0,
@@ -564,9 +572,8 @@ test('the activity heat map draws every day of the window and prints the matchin
 })
 
 test('the flow bars share one zero line and normalise to the larger side', async (t) => {
-  stubFetch(t, () =>
-    ok(overviewValue({ activity: activityFixture(), tags: { items: [], total: 0 } })),
-  )
+  const activity = activityFixture()
+  stubFetch(t, () => ok(overviewValue({ activity, tags: { items: [], total: 0 } })))
   const render = mount(t, 'OverviewView')
   render(chartProps())
   await setImmediate()
@@ -580,7 +587,7 @@ test('the flow bars share one zero line and normalise to the larger side', async
   const bars = nodes(svgNode).filter(
     (node) => node?.type === 'rect' && node.props.className?.startsWith('mem-flow-'),
   )
-  assert.ok(bars.length > 0, 'the twelve weeks draw bars')
+  assert.ok(bars.length > 0, 'the calendar weeks draw bars')
   assert.ok(
     bars.some((bar) => bar.props.className.includes('created')),
     'created is one stream',
@@ -603,11 +610,288 @@ test('the flow bars share one zero line and normalise to the larger side', async
     false,
     'no archived/superseded series is invented',
   )
+  // Design §3.4 item 3 fixes the per-bar reading as `WW 周 · 新建 n · 更新 m`, and a
+  // week number is only true if the bar IS that calendar week. This window starts on
+  // Friday 2026-08-07 and ends on Thursday 2026-10-29, so it touches thirteen
+  // Sunday-first weeks (2 + 11×7 + 5 days): the first bar holds only Aug 7-8 and the
+  // last only Oct 25-29. The week numbers and (created, updated) pairs below are
+  // re-derived from the fixture's day rule by hand; a trailing seven-day chunk would
+  // produce different pairs and label days with a neighbouring week's number.
+  const readings = nodes(svgNode)
+    .filter((node) => node?.type === 'title')
+    .map((node) => {
+      const text = String(node.props.children[0])
+      const match = /^(\d{2}) 周 · 新建 (\d+) · 更新 (\d+)$/u.exec(text)
+      assert.ok(match, 'title is `WW 周 · 新建 n · 更新 m`: ' + text)
+      return { week: Number(match[1]), created: Number(match[2]), updated: Number(match[3]) }
+    })
+  assert.deepEqual(
+    readings.map((reading) => reading.week),
+    [32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44],
+    'one Sunday-first week of 2026 per bar, 32 through 44',
+  )
+  assert.deepEqual(
+    readings.map((reading) => [reading.created, reading.updated]),
+    [
+      [2, 1],
+      [3, 1],
+      [4, 1],
+      [3, 1],
+      [3, 1],
+      [3, 2],
+      [3, 1],
+      [4, 1],
+      [3, 1],
+      [3, 1],
+      [3, 1],
+      [3, 2],
+      [1, 0],
+    ],
+    'each bar is exactly one calendar week, partial edge weeks included',
+  )
+  // Nothing is dropped: the readings sum to the series the window carries.
+  const total = (values) => values.reduce((sum, value) => sum + value, 0)
+  const createdTotal = total(activity.created)
+  const updatedTotal = total(activity.updated)
+  assert.equal(total(readings.map((reading) => reading.created)), createdTotal, 'created add up')
+  assert.equal(total(readings.map((reading) => reading.updated)), updatedTotal, 'updated add up')
+  // The week count and totals are stated numbers derived from the grouping, not
+  // hard-coded twelves.
+  const flowSection = nodes(tree).find(
+    (node) => node?.type === 'section' && node.props['aria-label'] === '新建与更新',
+  )
+  assert.ok(
+    byClass(flowSection, 'mem-meta').some(
+      (node) => node.props.children[0] === '近 13 周净增 ' + (createdTotal - updatedTotal),
+    ),
+    'the meta states the calendar week count and the window net',
+  )
+  assert.equal(
+    svgNode.props['aria-label'],
+    '近 13 周新建 ' + createdTotal + ' 条，更新 ' + updatedTotal + ' 条',
+    'the image label states the same window',
+  )
   assert.equal(byClass(chart[0], 'mem-flow-legend').length, 1)
   assert.equal(byClass(chart[0], 'mem-flow-legend')[0].props['aria-hidden'], true)
 })
 
-test('an all-zero window renders an empty sentence instead of twelve zero bars', async (t) => {
+test('every flow bar covers exactly one Sunday-first calendar week', async (t) => {
+  // Day i is given the count i + 1, so a bar's total identifies precisely which days
+  // it grouped. A calendar week is a contiguous in-window run, so the thirteen bar
+  // totals are fixed; the old trailing seven-day chunks would group a 6-day head and
+  // 7-day middles instead, producing different sums for the same window.
+  const base = activityFixture()
+  const activity = {
+    from: base.days[0],
+    to: base.days.at(-1),
+    days: base.days,
+    created: base.days.map((_day, index) => index + 1),
+    updated: base.days.map(() => 0),
+  }
+  stubFetch(t, () => ok(overviewValue({ activity, tags: { items: [], total: 0 } })))
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const svgNode = byClass(tree, 'mem-flow-svg')[0]
+  const created = nodes(svgNode)
+    .filter((node) => node?.type === 'title')
+    .map((node) =>
+      Number(/(\d+) 周 · 新建 (\d+) · 更新 \d+/u.exec(String(node.props.children[0]))[2]),
+    )
+  assert.deepEqual(
+    created,
+    [3, 42, 91, 140, 189, 238, 287, 336, 385, 434, 483, 532, 410],
+    'a 2-day head, eleven whole weeks, then a 5-day tail',
+  )
+  assert.equal(
+    created.reduce((sum, value) => sum + value, 0),
+    (84 * 85) / 2,
+    'the bars between them keep every day in the window',
+  )
+})
+
+test('the week-of-year convention numbers the week containing January 1 as 01', async (t) => {
+  // Sunday-first weeks, week 1 = the Sun-Sat week containing 1 January. Jan 1 2027 is
+  // a Friday, so that week starts Sunday 2026-12-27 and numbers 01 there; Dec 20 2026
+  // (the Sunday before) is week 52, and 2027-01-03 is week 02.
+  const days = []
+  for (let offset = 0; offset < 21; offset += 1) {
+    const date = new Date(2026, 11, 20)
+    date.setDate(date.getDate() + offset)
+    const pad = (n) => String(n).padStart(2, '0')
+    days.push(date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()))
+  }
+  const activity = {
+    from: days[0],
+    to: days[20],
+    days,
+    created: days.map(() => 1),
+    updated: days.map(() => 0),
+  }
+  stubFetch(t, () => ok(overviewValue({ activity, tags: { items: [], total: 0 } })))
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const titles = nodes(byClass(tree, 'mem-flow-svg')[0])
+    .filter((node) => node?.type === 'title')
+    .map((node) => node.props.children[0])
+  assert.deepEqual(titles, [
+    '52 周 · 新建 7 · 更新 0',
+    '01 周 · 新建 7 · 更新 0',
+    '02 周 · 新建 7 · 更新 0',
+  ])
+})
+
+test('the sparkline samples twelve weekly cumulative points from created', async (t) => {
+  const activity = activityFixture()
+  stubFetch(t, () => ok(overviewValue({ activity, tags: { items: [], total: 0 } })))
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const spark = byClass(tree, 'mem-kpi-spark')
+  assert.equal(spark.length, 1, 'the 记忆条目 cell carries the growth shape')
+  assert.equal(
+    spark[0].props['aria-hidden'],
+    true,
+    'the shape is decorative; the number is the reading',
+  )
+  const polyline = nodes(spark[0]).find((node) => node?.type === 'polyline')
+  assert.ok(polyline, 'the sparkline is one polyline')
+  const points = String(polyline.props.points)
+    .trim()
+    .split(/\s+/u)
+    .map((pair) => pair.split(',').map(Number))
+  // Design §3.4 item 1 asks for a 12-point line. One point per day drew 84 points in
+  // a 60×16 box — a step thirty times finer than the box can resolve.
+  assert.equal(points.length, 12, 'twelve weekly points for an 84-day window')
+  assert.equal(points[0][0], 0, 'the line starts at the left edge')
+  assert.equal(points.at(-1)[0], 60, 'and ends at the right edge')
+  // Hard-coded from the fixture's day rule, not recomputed with the implementation's
+  // loop: a day whose index is a multiple of 7 contributes 2 and one whose index is a
+  // multiple of 5 contributes 1 (two such days can share one week), so the twelve
+  // weekly `created` sums are 3,3,4,3,3,3,3,4,3,3,3,3. The line is scaled to its own
+  // total, so each plotted value is recovered from its y and compared.
+  const expected = [3, 6, 10, 13, 16, 19, 22, 26, 29, 32, 35, 38]
+  const createdTotal = activity.created.reduce((sum, n) => sum + n, 0)
+  assert.equal(expected.at(-1), createdTotal, 'the hard-coded series ends at the created total')
+  const plotted = points.map(([, y]) => ((16 - y) / 16) * createdTotal)
+  plotted.forEach((value, index) =>
+    assert.ok(
+      Math.abs(value - expected[index]) < 0.15,
+      'point ' + index + ' plots ' + expected[index] + ', got ' + value,
+    ),
+  )
+  assert.ok(Math.abs(plotted.at(-1) - createdTotal) < 0.001, 'the last point is the created total')
+  assert.ok(
+    plotted.every((value, index) => index === 0 || value >= plotted[index - 1]),
+    'the running total never drops',
+  )
+})
+
+test('a 30-day sparkline window groups its days from the window end', async (t) => {
+  // 30 days is four full weeks plus two days, so the grouping direction is observable:
+  // a trailing resample puts the two-day chunk first (cumulative 1,4,7,10,13), while a
+  // start-aligned one would put it last (4,7,9,13,13). The sparkline's contract is a
+  // bounded decorative series of weekly marks, so it keeps its own trailing resample —
+  // deliberately not the calendar weeks the flow bars draw.
+  const base = activityFixture()
+  const activity = {
+    ...base,
+    from: base.days.slice(-30)[0],
+    to: base.days.at(-1),
+    days: base.days.slice(-30),
+    created: base.created.slice(-30),
+    updated: base.updated.slice(-30),
+  }
+  stubFetch(t, () => ok(overviewValue({ activity, tags: { items: [], total: 0 } })))
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const polyline = nodes(byClass(tree, 'mem-kpi-spark')[0]).find(
+    (node) => node?.type === 'polyline',
+  )
+  const points = String(polyline.props.points)
+    .trim()
+    .split(/\s+/u)
+    .map((pair) => pair.split(',').map(Number))
+  assert.equal(points.length, 5, 'four weeks plus the two-day tail is five points')
+  const total = activity.created.reduce((sum, n) => sum + n, 0)
+  assert.equal(total, 13, 'the window carries 13 new notes')
+  const plotted = points.map(([, y]) => ((16 - y) / 16) * total)
+  ;[1, 4, 7, 10, 13].forEach((value, index) =>
+    assert.ok(
+      Math.abs(plotted[index] - value) < 0.1,
+      'point ' + index + ' plots ' + value + ', got ' + plotted[index],
+    ),
+  )
+})
+
+test('a window that cannot hold two weekly points draws no sparkline', async (t) => {
+  const full = activityFixture()
+  const short = {
+    ...full,
+    days: full.days.slice(-7),
+    created: [0, 0, 0, 0, 0, 0, 4],
+    updated: [0, 0, 0, 0, 0, 0, 0],
+  }
+  stubFetch(t, () => ok(overviewValue({ activity: short, tags: { items: [], total: 0 } })))
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  // Seven days is exactly one weekly point, and a one-point line has no shape: the
+  // cell shows the number alone rather than a single dot.
+  assert.equal(byClass(tree, 'mem-kpi-spark').length, 0)
+})
+
+test('a year-long window still draws twelve points ending at the whole created total', async (t) => {
+  // The index API accepts up to a year of days (`MAX_ACTIVITY_DAYS` in lib/index-db.js);
+  // the panel route asks for 84 today, but "at most twelve points" cannot depend on the
+  // caller always sending a twelve-week window.
+  const end = new Date(2026, 9, 29)
+  const days = []
+  for (let offset = 364; offset >= 0; offset -= 1) {
+    const date = new Date(end)
+    date.setDate(date.getDate() - offset)
+    const pad = (n) => String(n).padStart(2, '0')
+    days.push(date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()))
+  }
+  // One created note per day: the window total is 365.
+  const activity = {
+    from: days[0],
+    to: days[364],
+    days,
+    created: days.map(() => 1),
+    updated: days.map(() => 0),
+  }
+  stubFetch(t, () => ok(overviewValue({ activity, tags: { items: [], total: 0 } })))
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const polyline = nodes(byClass(tree, 'mem-kpi-spark')[0]).find(
+    (node) => node?.type === 'polyline',
+  )
+  const points = String(polyline.props.points)
+    .trim()
+    .split(/\s+/u)
+    .map((pair) => pair.split(',').map(Number))
+  assert.equal(points.length, 12, 'a year still plots at most twelve points')
+  // 365 days is 53 weekly chunks (the oldest is one day); the oldest 42 fold into the
+  // first point and the last eleven stay whole weeks of seven, so the cumulative line
+  // opens at 365 − 11 × 7 = 288 and closes on the whole window total of 365.
+  const expectedFirstY = 16 - ((365 - 11 * 7) / 365) * 16
+  assert.ok(Math.abs(points[0][1] - expectedFirstY) < 0.06, 'the head folds into point one')
+  assert.ok(Math.abs(points.at(-1)[1]) < 0.001, 'the last point is the whole-window total')
+  for (let index = 1; index < points.length; index += 1)
+    assert.ok(points[index][1] <= points[index - 1][1] + 0.001, 'the running total never drops')
+})
+
+test('an all-zero window renders an empty sentence with its own week count', async (t) => {
   const flat = activityFixture()
   flat.created = flat.created.map(() => 0)
   flat.updated = flat.updated.map(() => 0)
@@ -616,10 +900,35 @@ test('an all-zero window renders an empty sentence instead of twelve zero bars',
   render(chartProps())
   await setImmediate()
   const tree = render(chartProps())
-  assert.equal(byClass(tree, 'mem-flow-svg').length, 0, 'no twelve-zero-bar chart')
-  assert.equal(countText(tree, '近 12 周没有新建或更新记录。'), 1, 'the empty sentence, once')
+  assert.equal(byClass(tree, 'mem-flow-svg').length, 0, 'a zero window draws no bars')
+  // The empty sentence counts the same calendar weeks the drawn chart would: the
+  // 84-day fixture spans 13, not the static "12" the copy used to say.
+  assert.equal(countText(tree, '近 13 周没有新建或更新记录。'), 1, 'the empty sentence, once')
+  assert.equal(countText(tree, '近 12 周没有新建或更新记录。'), 0, 'never a hard-coded 12')
+  assert.equal(byClass(tree, 'mem-kpi-spark').length, 0, 'a zero total has no shape to draw')
   // The heat map still draws: a zero window is a real reading, not a missing one.
   assert.equal(byClass(tree, 'mem-heat-grid').length, 1)
+})
+
+test('the empty-flow sentence names the short window’s own week count', async (t) => {
+  // A 30-day window starting Wednesday 2026-09-30 touches five Sunday-first weeks, so
+  // the empty state must derive its count from the grouping too: 5, not 13 or 12.
+  const full = activityFixture()
+  const activity = {
+    ...full,
+    from: full.days.slice(-30)[0],
+    to: full.days.at(-1),
+    days: full.days.slice(-30),
+    created: full.created.slice(-30).map(() => 0),
+    updated: full.updated.slice(-30).map(() => 0),
+  }
+  stubFetch(t, () => ok(overviewValue({ activity, tags: { items: [], total: 0 } })))
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  assert.equal(byClass(tree, 'mem-flow-svg').length, 0, 'a zero window draws no bars')
+  assert.equal(countText(tree, '近 5 周没有新建或更新记录。'), 1, 'five calendar weeks, once')
 })
 
 test('the tag ranking counts tags, not occurrences, in its remainder line', async (t) => {
@@ -715,7 +1024,6 @@ test('the composition bar caps at three REAL segments and folds status into one 
     'the three segments account for the whole: ' + widths.join('+'),
   )
   assert.equal(byClass(tree, 'mem-comp-status').length, 1, 'status is one line, not a chip row')
-  assert.equal(byClass(tree, 'mem-stamps').length, 0)
   void byType
 })
 
@@ -872,6 +1180,47 @@ test('with no shell callback the chips still render and a run reads once', async
   let tree = render(searchProps({ onFilter: undefined }))
   assert.equal(sent.length, 1)
   assert.equal(byClass(tree, 'mem-filter-option').length >= 6, true, 'the groups still render')
+})
+
+test('the results head offers 返回 only when the shell can close the search', async (t) => {
+  stubFetch(t, () => ok({ hits: [hit('a.md', '决策一')], limit: 25, hasMore: false, tookMs: 1 }))
+  const render = mount(t, 'SearchView')
+  const closed = []
+  const withClose = searchProps({ onClose: () => closed.push('close') })
+  render(withClose)
+  await setImmediate()
+  let tree = render(withClose)
+  const back = byText(tree, '返回')
+  assert.equal(back.length, 1, 'one 返回 action when onClose is wired')
+  back[0].props.onClick()
+  assert.deepEqual(closed, ['close'], '返回 reports to the shell that owns the search state')
+  // The view can also be mounted without the callback; then there is nowhere to go
+  // back to and it must not offer a dead control.
+  render(searchProps({ onClose: undefined }))
+  await setImmediate()
+  tree = render(searchProps({ onClose: undefined }))
+  assert.equal(byText(tree, '返回').length, 0, 'no 返回 without a shell callback')
+})
+
+test('显示更多 reports the wider page to the shell instead of running its own read', async (t) => {
+  const sent = stubFetch(t, () =>
+    ok({ hits: [hit('a.md', '决策一')], limit: 25, hasMore: true, tookMs: 1 }),
+  )
+  const render = mount(t, 'SearchView')
+  const limits = []
+  const props = searchProps({ onLimit: (value) => limits.push(value) })
+  render(props)
+  await setImmediate()
+  const tree = render(props)
+  const more = byText(tree, '显示更多')
+  assert.equal(more.length, 1, 'a partial page offers 显示更多')
+  const before = sent.length
+  more[0].props.onClick()
+  // One owner for the page size: the view reports 50 upward and the shell's props
+  // drive the next read, because a view-local 50 leaves the shell believing 25 and a
+  // retry on the wider page silently drops rows.
+  assert.deepEqual(limits, [50], 'the page size is reported, not owned')
+  assert.equal(sent.length, before, 'the view itself starts no read')
 })
 
 test('the search footer reports a real total only for a complete page', async (t) => {
