@@ -47,6 +47,33 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Changed
 
+- **The top bar is now the tab strip itself, and 检索 is a results page rather than
+  a page with its own search box.** The dedicated header — project name, vault line,
+  binding stamp — repeated what the host's own sidebar already shows, and a panel
+  that is a tab strip over a body should open on its tabs. What survives is the one
+  reading no other surface gives: the freshness clock, set small at the strip's tail
+  beside the refresh control (`mem-tabbar` / `mem-tabbar-meta`). The 44px hit area,
+  the 8px leaf overlap and the active leaf's merge into the content surface are
+  unchanged; they belong to the row that now holds both the leaves and that tail.
+  `SearchView` loses the field, the submit button and the `role="search"` form it
+  used to render — the shell's box above the strip is the one owner of the query —
+  and gains `{ sessionId, query, scope, type, status, limit, visible, onFilter }`:
+  the query and the three filters arrive as props, and a filter chip reports its
+  intent through `onFilter` instead of keeping a second copy of the filter state.
+  One run per `(query, filter)` a new set of props announces; an empty query stays
+  idle and spends no request. The unbound→all fallback reports the scope change
+  through the same callback, so it is still one owner. Retired with the form:
+  `searchIcon`, `clearIcon`, the `svg` helper, `searchPlaceholder`, `searchSubmit`
+  and the internal `query/scope/type/status/limit` state, which the shell would
+  otherwise have shadowed. Also fixed: `health` now returns `project`, the identity
+  `overview` already carried — without it the masthead relabelled itself "项目记忆"
+  as soon as the user opened 健康, since it reads the project from whichever view
+  reported last. Verified: `node test/panel-client.test.js` 16 pass, `node
+  test/panel-ui.test.js` 25 pass, `node test/memory-panel-behavior.test.js` 4 pass,
+  `node test/panel-route.test.js` 26 pass, `node test/panel-assets.test.js` 7 pass,
+  `node test/architecture.test.js` 8 pass, eslint, prettier and `tsc --noEmit`
+  clean. Not verified: the 320/375px visual pass — no browser drove this tree yet.
+
 - **The memory panel's tab strip has three folder-form tabs and no longer has a 检索
   page; searching moves to a persistent shell-level box.** The 检索 tab is gone, so
   `MEMORY_VIEWS` is exactly 概览 / 图谱 / 健康, and `.mem-tabs` is a flex row instead

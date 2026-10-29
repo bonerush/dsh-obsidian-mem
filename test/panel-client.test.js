@@ -183,38 +183,47 @@ test('the graph keeps its canvas and gains the truncation notice', async () => {
   assert.ok(script.includes("' 个节点；共有 '"), 'the notice names the total')
 })
 
-test('the masthead is a compact modern header with an icon refresh and no inert clock', async () => {
+test('the top bar is the tab strip itself, with the freshness line and refresh at its tail', async () => {
   const { script } = await bundle()
+  // The dedicated masthead is gone: the project name and vault line repeated what
+  // the host's own sidebar already says, and the panel is a tab strip over a body.
+  // What survives is the one reading no other surface gives — how fresh the
+  // figures are — carried small at the strip's tail, plus the refresh control.
+  assert.equal(script.includes('function Masthead'), false, 'the separate header is retired')
+  assert.equal(script.includes("className: 'mem-masthead'"), false, 'and its element with it')
   for (const marker of [
-    "'mem-masthead'",
-    'mem-masthead-top',
-    'mem-masthead-name',
-    'mem-masthead-sub',
-    'mem-masthead-meta',
+    "'mem-tabbar'",
+    "'mem-tabbar-meta'",
     "'mem-clock'",
     "'mem-refresh'",
-    "'已绑定'",
-    "'未绑定'",
     "'数据截至 '",
     "'读取失败'",
     '正在读取…',
     '刷新记忆数据',
     "icon('refresh')",
-    'onMeta: report.current',
-    'React.useState(null)',
   ])
-    assert.ok(script.includes(marker), 'the shell masthead contains ' + marker)
-  assert.ok(script.includes('mem-display'), 'the name keeps the headline hook')
-  assert.equal(script.includes("'刷新'"), false, 'the underlined 刷新 text button retired')
+    assert.ok(script.includes(marker), 'the strip carries ' + marker)
+  // The clock stays guarded exactly as before: a tab that never polls must not
+  // show a permanent "正在读取…" that will never resolve.
   assert.ok(
     script.includes('const hasClock = meta !== null || onRefresh !== null'),
     'the clock is withheld when no view reported and the tab has no poll',
   )
   const guard = script.indexOf('const hasClock = meta !== null || onRefresh !== null')
   assert.ok(
-    script.indexOf('正在读取…') > guard,
+    script.indexOf("clock = '正在读取…'") > guard,
     'the fallback clock text sits behind the guard, not in the always-on row',
   )
+  // The strip is the first thing in the panel and the search box follows it.
+  const shell = script.slice(
+    script.indexOf('function MemoryPanel'),
+    script.indexOf('function SearchBox'),
+  )
+  const tabs = shell.indexOf('h(MemoryTabs,')
+  const box = shell.indexOf('h(SearchBox,')
+  assert.ok(tabs >= 0 && box >= 0, 'both the strip and the box are rendered by the shell')
+  assert.ok(tabs < box, 'the tab strip is the top bar; the search box sits under it')
+  assert.equal(shell.indexOf("className: 'mem-panel'") < tabs, true, 'the strip opens the panel')
 })
 
 test('the stylesheet is a token-only host-type design system with bounded radii', async () => {
@@ -265,14 +274,21 @@ test('the tab strip is a folder strip: flex, overlapping tabs, the active page m
     css.indexOf('.mem-panel .mem-tabs{'),
     css.indexOf('}', css.indexOf('.mem-panel .mem-tabs{')) + 1,
   )
+  for (const marker of ['display:flex', 'gap:0'])
+    assert.ok(tabs.includes(marker), 'the folder strip declares ' + marker)
+  // The strip's background and bottom rule belong to the row that now carries
+  // both the leaves and the freshness tail (`mem-tabbar`), not to the tablist.
+  const bar = css.slice(
+    css.indexOf('.mem-panel .mem-tabbar{'),
+    css.indexOf('}', css.indexOf('.mem-panel .mem-tabbar{')) + 1,
+  )
   for (const marker of [
-    'display:flex',
-    'gap:0',
     'background:var(--dsw-alias-bg-layer-1)',
     'border-bottom:1px solid var(--dsw-alias-border-l1)',
     'padding:',
+    'display:flex',
   ])
-    assert.ok(tabs.includes(marker), 'the folder strip declares ' + marker)
+    assert.ok(bar.includes(marker), 'the top bar declares ' + marker)
   // Adjacent tabs overlap, and the active one sits above its neighbours so the
   // shared rounded edge reads as one folder leaf.
   assert.ok(css.includes('.mem-tab + .mem-tab{margin-left:-8px}'), 'adjacent tabs overlap by 8px')
@@ -302,11 +318,13 @@ test('the tab strip is a folder strip: flex, overlapping tabs, the active page m
   assert.equal(/overflow-x:(auto|scroll)/u.test(css), false, 'nothing scrolls sideways')
   for (const marker of ['flex:0 1 auto', 'align-items:flex-end'])
     assert.ok(css.includes(marker), 'the folder strip row contains ' + marker)
-  // The 44px click target comes from the strip's padding plus the leaf's own
+  // The 44px click target comes from the top bar's padding plus the leaf's own
   // upward hit extension — the leaf itself stays 32px so the folder look holds.
+  // The padding moved from the tablist to `mem-tabbar` when the tile gained its
+  // freshness tail; the geometry it buys is unchanged.
   assert.ok(
-    tabs.includes('padding:6px 8px 0'),
-    'the strip keeps the folder strip padding from the design',
+    bar.includes('padding:6px 14px 0'),
+    'the top bar keeps the folder strip padding from the design',
   )
   assert.ok(css.includes('top:-12px'), 'the leaf extends its own hit area upward')
   assert.ok(css.includes('height:32px'), 'the leaf stays a 32px folder tab')
@@ -335,21 +353,19 @@ test('the shell keeps a persistent search box between the masthead and the tabs'
     'SearchView',
   ])
     assert.ok(script.includes(marker), 'the shell search box contains ' + marker)
-  // The search box is shell-level: MemoryPanel renders it between the masthead
-  // and the tablist, so it is visible on every page and the results page only
-  // replaces the mounted view body.
+  // The search box is shell-level: MemoryPanel renders it directly under the tab
+  // strip, so it is visible on every page and the results page only replaces the
+  // mounted view body.
   const shell = script.slice(
     script.indexOf('function MemoryPanel'),
     script.indexOf('function SearchBox'),
   )
-  const masthead = shell.indexOf('h(Masthead,')
   const box = shell.indexOf('h(SearchBox,')
   const tabs = shell.indexOf('h(MemoryTabs,')
-  assert.ok(masthead >= 0, 'the shell renders the masthead')
   assert.ok(box >= 0, 'the shell renders the search box itself, not a view')
   assert.ok(tabs >= 0, 'the shell renders the tab strip')
-  assert.ok(masthead < box && box < tabs, 'masthead → search box → tab strip')
-  assert.ok(shell.indexOf("className: 'mem-view'") > tabs, 'the one tabpanel follows the strip')
+  assert.ok(tabs < box, 'tab strip → search box')
+  assert.ok(shell.indexOf("className: 'mem-view'") > box, 'the one tabpanel follows the strip')
   // In search mode SearchView gets the shell's own state, not an internally owned form.
   for (const prop of [
     'sessionId',
@@ -416,11 +432,8 @@ test('every class the redesigned views consume is styled in the one stylesheet',
   const hooks = [
     'mem-panel',
     'mem-display',
-    'mem-masthead',
-    'mem-masthead-top',
-    'mem-masthead-name',
-    'mem-masthead-sub',
-    'mem-masthead-meta',
+    'mem-tabbar',
+    'mem-tabbar-meta',
     'mem-clock',
     'mem-refresh',
     'mem-tabs',
@@ -582,7 +595,10 @@ test('the panel keeps a visible focus ring, one clear control and passive cells'
     false,
     'a passive summary cell has no hover lift',
   )
-  for (const hook of ['mem-masthead-sub', 'mem-clock', 'mem-viewhead-meta', 'mem-label']) {
+  // The metadata rules that actually carry a line of CJK text sit on the CJK
+  // line-height floor. `mem-tabbar-meta` is the flex slot around that text, not a
+  // text rule of its own, so it is not in this list.
+  for (const hook of ['mem-clock', 'mem-viewhead-meta', 'mem-label']) {
     const start = css.indexOf('.mem-panel .' + hook + '{')
     assert.ok(start >= 0, 'the metadata rule exists: ' + hook)
     const rule = css.slice(start, css.indexOf('}', start))

@@ -295,6 +295,24 @@ function stubFetch(t, handler) {
   return sent
 }
 
+/**
+ * The props the shell hands `SearchView`. The box and the filters live in the
+ * shell now, so a view test supplies them the way the shell would; `query` is the
+ * one the box holds and `onFilter` is the shell's one filter setter.
+ */
+const searchProps = (overrides = {}) => ({
+  sessionId: 'session-a',
+  query: 'binding',
+  scope: 'project',
+  type: null,
+  status: null,
+  limit: 25,
+  visible: true,
+  onFilter: () => {},
+  onClose: () => {},
+  ...overrides,
+})
+
 test('the confirm sheet is a modal with a trap, Escape, live status and an in-flight lock', async () => {
   const source = await readFile(MODULE, 'utf8')
   for (const marker of [
@@ -422,7 +440,7 @@ test('overview KPI cells jump: 待处理 opens 健康, the other three open 检�
   assert.deepEqual(jumps, ['search', 'search', 'search', 'health'])
 })
 
-test('search renders a modern field, named filter groups and marked result rows', async (t) => {
+test('search is a results page: no field of its own, named filter groups and marked rows', async (t) => {
   const sent = stubFetch(t, (body) =>
     ok({
       query: body.query,
@@ -452,12 +470,21 @@ test('search renders a modern field, named filter groups and marked result rows'
     }),
   )
   const render = mount(t, 'SearchView')
-  let tree = render({ sessionId: 'session-a' })
+  // The box belongs to the shell, so the results page must not carry a second one:
+  // two `role="search"` forms in one DOM is two owners of the same query.
+  let tree = render(searchProps())
   assert.equal(
-    texts(tree).some((text) => text === '输入关键词开始检索，结果来自本地记忆索引。'),
-    true,
-    'the idle sentence is the modern one',
+    find(tree, (node) => node?.type === 'form'),
+    undefined,
+    'no form in the view',
   )
+  assert.equal(byClass(tree, 'mem-searchbar').length, 0, 'no search bar in the view')
+  assert.equal(
+    find(tree, (node) => node?.type === 'input'),
+    undefined,
+    'no input in the view',
+  )
+  assert.equal(liveRegions(tree).length, 1, 'the body still owns one status region')
   assert.ok(
     texts(tree).some((text) => text === '本地记忆索引'),
     'the head names the local index',
@@ -467,25 +494,11 @@ test('search renders a modern field, named filter groups and marked result rows'
     false,
   )
 
-  const form = find(tree, (node) => node?.type === 'form')
-  assert.equal(form.props.className, 'mem-searchbar')
-  assert.equal(form.props.role, 'search')
-  assert.equal(byClass(tree, 'mem-search-field').length, 1)
-  assert.equal(byClass(tree, 'mem-search-icon').length, 1)
-  assert.equal(
-    byClass(tree, 'mem-search-clear').length,
-    0,
-    'no clear control while the field is empty',
-  )
-  find(tree, (node) => node?.type === 'input').props.onChange({ target: { value: 'binding' } })
-  tree = render({ sessionId: 'session-a' })
-  assert.equal(byClass(tree, 'mem-search-clear').length, 1, 'a clear control appears with text')
-  assert.equal(find(tree, (node) => node?.type === 'input').props.className, 'mem-search-input')
-
-  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
   await setImmediate()
-  tree = render({ sessionId: 'session-a' })
-  assert.equal(sent.length, 1)
+  tree = render(searchProps())
+  assert.equal(sent.length, 1, 'mounting with a query runs exactly one read')
+  assert.equal(sent[0].body.query, 'binding')
+  assert.equal(sent[0].body.scope, 'project')
   assert.equal(byClass(tree, 'mem-result').length, 2)
   assert.equal(byClass(tree, 'mem-result-index').length, 0, 'result ordinals are retired')
   const groups = byClass(tree, 'mem-filter')
@@ -532,12 +545,39 @@ test('search renders a modern field, named filter groups and marked result rows'
   )
   assert.equal(byClass(tree, 'mem-snippet').length, 2)
   assert.ok(texts(tree).some((text) => String(text).startsWith('共 2 条 · 用时 3 ms')))
+})
 
-  // The clear control empties the field and returns focus to it.
-  byClass(tree, 'mem-search-clear')[0].props.onClick()
-  tree = render({ sessionId: 'session-a' })
-  assert.equal(byClass(tree, 'mem-search-clear').length, 0)
-  assert.ok(render.focused.includes('input:mem-search-input'))
+test('a filter chip asks the shell for the change instead of owning filter state', async (t) => {
+  const sent = stubFetch(t, () => ok({ hits: [], limit: 25, hasMore: false, tookMs: 1 }))
+  const asked = []
+  const render = mount(t, 'SearchView')
+  render(searchProps({ onFilter: (field, value) => asked.push([field, value]) }))
+  await setImmediate()
+  let tree = render(searchProps({ onFilter: (field, value) => asked.push([field, value]) }))
+  const before = sent.length
+  byText(tree, '决策')[0].props.onClick()
+  // The view reports the intent and does NOT run its own read: the shell rewrites
+  // the search object, the new props arrive, and that is the one read.
+  assert.deepEqual(asked, [['type', 'decision']])
+  assert.equal(sent.length, before, 'a chip click is the shell’s run, not a second one')
+  // Scope is filterable the same way; the unbound fallback is the view's one
+  // self-initiated change, and it reports it through the same callback.
+  assert.deepEqual(
+    byClass(tree, 'mem-filter-option')
+      .filter((node) => node.props['aria-pressed'] === true)
+      .map((node) => node.props.children[0]),
+    ['全部', '全部', '当前项目'],
+  )
+})
+
+test('with no shell callback the chips still render and a run reads once', async (t) => {
+  const sent = stubFetch(t, () => ok({ hits: [], limit: 25, hasMore: false, tookMs: 1 }))
+  const render = mount(t, 'SearchView')
+  render(searchProps({ onFilter: undefined }))
+  await setImmediate()
+  let tree = render(searchProps({ onFilter: undefined }))
+  assert.equal(sent.length, 1)
+  assert.equal(byClass(tree, 'mem-filter-option').length >= 6, true, 'the groups still render')
 })
 
 test('the search footer reports a real total only for a complete page', async (t) => {
@@ -561,12 +601,9 @@ test('the search footer reports a real total only for a complete page', async (t
     }),
   )
   const render = mount(t, 'SearchView')
-  let tree = render({ sessionId: 'session-a' })
-  find(tree, (node) => node?.type === 'input').props.onChange({ target: { value: 'binding' } })
-  tree = render({ sessionId: 'session-a' })
-  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
+  render(searchProps())
   await setImmediate()
-  tree = render({ sessionId: 'session-a' })
+  let tree = render(searchProps())
   assert.deepEqual(
     texts(tree).filter((text) => /条 · 用时/u.test(String(text))),
     ['已显示 1 条 · 用时 4 ms'],
@@ -576,12 +613,14 @@ test('the search footer reports a real total only for a complete page', async (t
   assert.equal(byText(tree, '显示更多').length, 1)
   byText(tree, '显示更多')[0].props.onClick()
   await setImmediate()
-  tree = render({ sessionId: 'session-a' })
+  tree = render(searchProps())
   assert.equal(sent.at(-1).body.limit, 50, '显示更多 asks for the ceiling')
   assert.equal(countText(tree, '已达上限 50'), 1, 'the ceiling is named')
-  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
+  // A new run at the ceiling (the shell would hand down a fresh limit, or the user
+  // re-submits) turns the page complete: hasMore is false on the third answer.
+  render(searchProps({ limit: 50 }))
   await setImmediate()
-  tree = render({ sessionId: 'session-a' })
+  tree = render(searchProps({ limit: 50 }))
   assert.deepEqual(
     texts(tree).filter((text) => /条 · 用时/u.test(String(text))),
     ['共 1 条 · 用时 4 ms'],
@@ -611,14 +650,11 @@ test('search marks only terms of two or more characters, case-insensitively and 
     }),
   )
   const render = mount(t, 'SearchView')
-  let tree = render({ sessionId: 'session-a' })
-  find(tree, (node) => node?.type === 'input').props.onChange({
-    target: { value: 'x BINDING a+b' },
-  })
-  tree = render({ sessionId: 'session-a' })
-  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
+  // A query of two or more characters marks its terms; one character marks
+  // nothing. Both are one mount each, because the query now arrives as a prop.
+  render(searchProps({ query: 'x BINDING a+b' }))
   await setImmediate()
-  tree = render({ sessionId: 'session-a' })
+  let tree = render(searchProps({ query: 'x BINDING a+b' }))
   assert.deepEqual(
     nodes(tree)
       .filter((node) => node?.type === 'mark')
@@ -626,11 +662,9 @@ test('search marks only terms of two or more characters, case-insensitively and 
     ['A+B', 'binding'],
     'the single-character term is ignored; the regex metacharacters stay literal',
   )
-  find(tree, (node) => node?.type === 'input').props.onChange({ target: { value: 'x' } })
-  tree = render({ sessionId: 'session-a' })
-  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
+  render(searchProps({ query: 'x' }))
   await setImmediate()
-  tree = render({ sessionId: 'session-a' })
+  tree = render(searchProps({ query: 'x' }))
   assert.equal(
     nodes(tree).filter((node) => node?.type === 'mark').length,
     0,
@@ -678,7 +712,7 @@ test('health bands its summary, meter, digest and 诊断记录 timeline', async 
 // 検索: one derived status, one render site (the reported duplicate class)
 // ---------------------------------------------------------------------------
 
-test('search renders every status string at most once across mount, chips, loading, results, empty and error', async (t) => {
+test('search renders every status string at most once across idle, loading, results, empty and error', async (t) => {
   const first = deferred()
   let requests = 0
   const sent = stubFetch(t, () => {
@@ -689,26 +723,21 @@ test('search renders every status string at most once across mount, chips, loadi
   })
   const render = mount(t, 'SearchView')
   const idle = '输入关键词开始检索'
-  let tree = render({ sessionId: 'session-a' })
-  assert.equal(countText(tree, idle), 1, 'the idle sentence renders once on mount')
+  // An empty query is the idle state and sends nothing: the shell's box already
+  // refuses an empty submit, and the view must not spend a request on its own.
+  render(searchProps({ query: '' }))
+  await setImmediate()
+  let tree = render(searchProps({ query: '' }))
+  assert.equal(sent.length, 0, 'an empty query never reaches the route')
+  assert.equal(countText(tree, idle), 1, 'the idle sentence renders once')
   assert.equal(liveRegions(tree).length, 1, 'one status region owns the idle state')
 
-  // A chip click with an empty query changes no status and sends nothing.
-  byText(tree, '决策')[0].props.onClick()
-  tree = render({ sessionId: 'session-a' })
-  assert.equal(sent.length, 0, 'an empty-query chip sends no request')
-  assert.equal(countText(tree, idle), 1, 'the idle sentence is still single after a chip click')
-  byText(tree, '全部')[0].props.onClick()
-  tree = render({ sessionId: 'session-a' })
-  assert.equal(sent.length, 0, 'a second empty-query chip still sends nothing')
-  assert.equal(countText(tree, idle), 1, 'and still leaves exactly one idle sentence')
-
-  // Submit with a query: the loading state replaces the idle one.
-  find(tree, (node) => node?.type === 'input').props.onChange({ target: { value: 'binding' } })
-  tree = render({ sessionId: 'session-a' })
-  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
-  tree = render({ sessionId: 'session-a' })
-  assert.equal(requests, 1, 'one submit is one request')
+  // A query arrives: the loading state replaces the idle one, exactly once.
+  // The run starts in an effect (the props changed), so the loading frame is the
+  // next paint, the order the host mounts in.
+  render(searchProps())
+  tree = render(searchProps())
+  assert.equal(requests, 1, 'one query is one request')
   assert.equal(countText(tree, '正在检索…'), 1, 'the loading status renders once')
   assert.equal(countText(tree, idle), 0, 'the idle sentence is gone while loading')
   assert.equal(liveRegions(tree).length, 1, 'one status region owns the loading state')
@@ -723,23 +752,23 @@ test('search renders every status string at most once across mount, chips, loadi
     }),
   )
   await setImmediate()
-  tree = render({ sessionId: 'session-a' })
+  tree = render(searchProps())
   assert.equal(byClass(tree, 'mem-result').length, 2)
   assert.equal(countText(tree, '共 2 条'), 1, 'the results footer renders once')
   assert.equal(countText(tree, '正在检索…'), 0)
   assert.equal(countText(tree, idle), 0)
 
   // Empty results: one empty line, no idle fallback.
-  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
+  render(searchProps({ query: 'nothing-matches' }))
   await setImmediate()
-  tree = render({ sessionId: 'session-a' })
+  tree = render(searchProps({ query: 'nothing-matches' }))
   assert.equal(countText(tree, '没有匹配的记忆。'), 1, 'the empty status renders once')
   assert.equal(countText(tree, idle), 0)
 
   // A failure after results is a stale notice carrying the real last-read time.
-  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
+  render(searchProps({ query: 'explode' }))
   await setImmediate()
-  tree = render({ sessionId: 'session-a' })
+  tree = render(searchProps({ query: 'explode' }))
   assert.equal(countText(tree, '上次更新 '), 1, 'the stale notice renders once')
   assert.equal(countText(tree, '上次更新 —'), 0, 'a stale error never shows a fabricated time')
   assert.equal(
@@ -752,79 +781,91 @@ test('search renders every status string at most once across mount, chips, loadi
   assert.equal(byClass(tree, 'mem-result').length, 0)
 })
 
-test('a filter chip with an empty query focuses the field and sends no request', async (t) => {
+test('a filter chip with an empty query asks the shell and sends no request', async (t) => {
   const sent = stubFetch(t, () => ok({ hits: [], limit: 25, hasMore: false, tookMs: 1 }))
+  const asked = []
   const render = mount(t, 'SearchView')
-  let tree = render({ sessionId: 'session-a' })
+  let tree = render(
+    searchProps({ query: '', onFilter: (field, value) => asked.push([field, value]) }),
+  )
+  await setImmediate()
   byText(tree, '约定')[0].props.onClick()
-  tree = render({ sessionId: 'session-a' })
+  tree = render(searchProps({ query: '', onFilter: (field, value) => asked.push([field, value]) }))
   assert.equal(sent.length, 0, 'the empty query is not sent to the route')
-  assert.deepEqual(render.focused, ['input:mem-search-input'], 'focus returns to the search field')
+  assert.deepEqual(asked, [['type', 'convention']], 'the chip reports the intent to the shell')
   assert.equal(countText(tree, '输入关键词开始检索'), 1)
   byText(tree, '全部')[0].props.onClick()
-  tree = render({ sessionId: 'session-a' })
+  tree = render(searchProps({ query: '', onFilter: (field, value) => asked.push([field, value]) }))
   assert.equal(sent.length, 0)
   assert.deepEqual(
-    render.focused,
-    ['input:mem-search-input', 'input:mem-search-input'],
-    'every empty chip click refocuses',
+    asked,
+    [
+      ['type', 'convention'],
+      ['type', null],
+    ],
+    'a second chip still reports without reading',
   )
   assert.equal(countText(tree, '输入关键词开始检索'), 1)
 })
 
-test('a filter chip with a query sends exactly one request', async (t) => {
+test('a filter chip with a query reports once and the shell’s new props do the read', async (t) => {
   const sent = stubFetch(t, () =>
     ok({ hits: [hit('a.md', '决策一')], limit: 25, hasMore: false, tookMs: 1 }),
   )
+  const asked = []
   const render = mount(t, 'SearchView')
-  let tree = render({ sessionId: 'session-a' })
-  find(tree, (node) => node?.type === 'input').props.onChange({ target: { value: 'binding' } })
-  tree = render({ sessionId: 'session-a' })
-  byText(tree, '决策')[0].props.onClick()
+  render(searchProps({ onFilter: (field, value) => asked.push([field, value]) }))
   await setImmediate()
-  tree = render({ sessionId: 'session-a' })
-  assert.equal(sent.length, 1, 'one chip click is one request')
-  assert.equal(sent[0].body.query, 'binding')
-  assert.equal(sent[0].body.type, 'decision')
+  let tree = render(searchProps({ onFilter: (field, value) => asked.push([field, value]) }))
+  const before = sent.length
+  byText(tree, '决策')[0].props.onClick()
+  assert.deepEqual(asked, [['type', 'decision']])
+  assert.equal(sent.length, before, 'the chip itself never reads')
+  // The shell then hands down the refined filter; that is the one read.
+  render(searchProps({ type: 'decision', onFilter: () => {} }))
+  await setImmediate()
+  tree = render(searchProps({ type: 'decision', onFilter: () => {} }))
+  assert.equal(sent.length, before + 1, 'the refined filter runs exactly one more request')
+  assert.equal(sent.at(-1).body.query, 'binding')
+  assert.equal(sent.at(-1).body.type, 'decision')
   assert.equal(byClass(tree, 'mem-result').length, 1)
 })
 
-test('the unbound scope switch renders its notice once, then the fallback results', async (t) => {
+test('the unbound scope switch reports its notice once, then the fallback results', async (t) => {
   const fallback = deferred()
   let requests = 0
   const sent = stubFetch(t, () => {
     requests += 1
     return requests === 1 ? failure(422, 'unbound', 'project unbound') : fallback.promise
   })
+  const asked = []
   const render = mount(t, 'SearchView')
-  let tree = render({ sessionId: 'session-a' })
-  find(tree, (node) => node?.type === 'input').props.onChange({ target: { value: 'binding' } })
-  tree = render({ sessionId: 'session-a' })
-  find(tree, (node) => node?.type === 'form').props.onSubmit({ preventDefault() {} })
+  render(searchProps({ onFilter: (field, value) => asked.push([field, value]) }))
   await setImmediate()
-  tree = render({ sessionId: 'session-a' })
+  let tree = render(searchProps({ onFilter: (field, value) => asked.push([field, value]) }))
   assert.equal(requests, 2, 'the unbound fallback runs one more request')
   assert.equal(sent[1].body.scope, 'all', 'the fallback asks the all-project scope')
+  assert.deepEqual(asked, [['scope', 'all']], 'the view tells the shell the scope moved')
   assert.equal(
     countText(tree, '当前项目未绑定；正在搜索全部项目。'),
     1,
     'the notice is no longer dead copy and renders once',
   )
   assert.equal(countText(tree, '输入关键词开始检索'), 0)
-  assert.ok(
-    byClass(tree, 'mem-filter-option').some(
-      (node) => node.props.children[0] === '全部' && node.props['aria-pressed'] === true,
-    ),
-    'the 范围 group shows the switched scope',
-  )
   fallback.resolve(ok({ hits: [hit('a.md', '决策一')], limit: 25, hasMore: false, tookMs: 2 }))
   await setImmediate()
-  tree = render({ sessionId: 'session-a' })
+  tree = render(searchProps({ scope: 'all', onFilter: () => {} }))
   assert.equal(byClass(tree, 'mem-result').length, 1)
   assert.equal(
     countText(tree, '当前项目未绑定；正在搜索全部项目。'),
     0,
     'the run-scoped notice is replaced by the results status',
+  )
+  assert.ok(
+    byClass(tree, 'mem-filter-option').some(
+      (node) => node.props.children[0] === '全部' && node.props['aria-pressed'] === true,
+    ),
+    'the 范围 group shows the switched scope',
   )
 })
 

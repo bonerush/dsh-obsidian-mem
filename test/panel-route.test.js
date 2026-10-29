@@ -255,6 +255,9 @@ test('an unbound project answers a 200 state with the refusal reason, but search
   const health = await h.post({ sessionId: SESSION, action: 'health' })
   assert.equal(health.status, 200)
   assert.equal(health.body.value.health, null)
+  // 健康 answers the same unbound identity 概览 does, so switching tabs never
+  // changes what the header says the project is.
+  assert.deepEqual(health.body.value.project, { state: 'unbound', reason: 'no-pointer' })
   const projectSearch = await h.post({
     sessionId: SESSION,
     action: 'search',
@@ -1355,6 +1358,13 @@ test('overview and health carry capabilities and the bounded failed-job list', a
   assert.equal(health.status, 200)
   assert.deepEqual(health.body.value.capabilities, expected)
   assert.deepEqual(health.body.value.queue.failedJobs, listed)
+  // The health payload carries the same project identity 概览 does: the shell's
+  // masthead reads it from whichever view reported last, so a 健康 read that
+  // omitted it would relabel the header "项目记忆" the moment the user switched
+  // tabs. Both actions answer one identity shape.
+  assert.deepEqual(health.body.value.project, overview.body.value.project)
+  assert.equal(health.body.value.project.state, 'bound')
+  assert.equal(health.body.value.project.name, 'alpha')
   const unbound = await harness(t, {
     services,
     resolveBinding: async () => ({ kind: 'unbound', reason: 'no-pointer' }),
