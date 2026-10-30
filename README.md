@@ -186,9 +186,10 @@ lay their data out in bands rather than stacked bordered cards. **图谱** keeps
 graph below, unchanged, including its remembered controls.
 
 **概览** opens on five charts: a calendar heat map of the activity window whose numbers
-live in the section head (`近 N 周（84 天）· 本周 N 天有更新 · 合计 M 条`) because a
-square is a shape and not a reading, new-versus-updated flow bars sharing one zero line —
-one bar per calendar week, the same weeks the heat map draws, each carrying the reading
+live in the section head (`近 N 周（182 天）· 本周 N 天有更新 · 合计 M 条`) because a
+square is a shape and not a reading; the calendar widens with the panel — twelve weeks
+at the 320px floor up to twenty-six on a wide sidebar — and the new-versus-updated flow
+bars below share one zero line and the same calendar weeks, each carrying the reading
 `WW 周 · 新建 n · 更新 m` — the tag frequency ranking, the type→status composition
 Sankey (real joint counts: node heights and link bands share one unit-per-note scale,
 names and counts written beside both columns; the chart fills the panel and re-measures
@@ -271,11 +272,12 @@ page on reload instead of waiting for the host to restart. A **new** asset is th
 exception: the route list is registered when the plugin mounts, so adding a file needs
 one remount before the browser can fetch it.
 
-The interface and force/rendering rules were adapted by inspecting the installed
-Obsidian graph source. Canvas drawing uses its node-size, label-fade and
-zoom rules; the worker uses the same D3 fallback force model. The package bundles
-pinned upstream D3 code and its ISC notices, with no CDN request or additional
-runtime dependency. No Obsidian application code is included in the package.
+The interface, the force model and the seeding/drag protocol were extracted from the
+installed Obsidian graph source: canvas drawing uses its node-size, label-fade and zoom
+rules, and the worker is a 1:1 port of the app's D3 fallback simulator — the same
+forces, alpha schedule and integration, verified position-identical on the same input.
+The package bundles pinned upstream D3 code and its ISC notices, with no CDN request or
+additional runtime dependency. No Obsidian application code is included in the package.
 
 ---
 

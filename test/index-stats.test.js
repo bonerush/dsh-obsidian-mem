@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import { IndexError, MAX_STATUS_PATHS, openIndex } from '../lib/index-db.js'
+import { activityWindow, bucketActivity } from '../lib/index-stats.js'
 
 const ALPHA = '11111111-1111-4111-8111-111111111111'
 const BETA = '22222222-2222-4222-8222-222222222222'
@@ -343,18 +344,21 @@ function datedNote(fields) {
 /**
  * A vault whose activity is known day by day. All notes are in project ALPHA
  * unless stated:
- *   n1  created -3, updated -1          → creation at -3; update suppressed (see below)
- *   n2  created -1, updated -1          → a creation at -1 only
+ *   n1  created -3, updated -1          → created at -3 AND an update at -1 (later day)
+ *   n2  created -1, updated -1          → a creation at -1 only (same-day edit)
  *   n3  created -1, updated -10         → a creation at -1 only (stale update)
  *   n4  no created, file mtime -2 noon  → a creation at -2, from the mtime fallback
  *   n5  created -40, updated -40        → outside 7 days, inside 60
  *   n6  created -40, updated -2         → an UPDATE at -2: created long before the window
  *   b1  project BETA, created -1        → never counted in a project scope
  *
- * The `updated` suppression on n1 is the point of n6: a note already created
- * before the window contributes only an update, while a note created inside the
- * window contributes only a creation. That is `lib/digest.js`'s rule ("new notes
- * and updates do not overlap"), and the two surfaces must not disagree.
+ * The three cases are the rule: a note written and edited on the same local day is
+ * one creation (n2); an edit on a later day is also an update, even though its
+ * creation is inside the window (n1); a note created before the window contributes
+ * only an update (n6). A note created in the window and edited on a later day counts
+ * once in each series — a window-wide "created notes never update" rule erased the
+ * panel's updated series whenever the window covered the whole vault. The digest
+ * projects the same two values with the same rule, and the two must not disagree.
  */
 async function makeActivityVault() {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-activity-'))
@@ -417,15 +421,51 @@ for (const [backend, label] of BACKENDS) {
     assert.equal(at(value.created, -3), 1)
     assert.equal(at(value.created, -2), 1)
     assert.equal(at(value.created, -1), 2)
-    // `created` and `updated` never overlap: n1 was created inside the window, so
-    // its later edit is not also counted as an update (digest.js's rule). The one
-    // update in the window belongs to n6, created 40 days ago and edited at -2.
+    // A creation and an edit on the same local day are one creation (n2), but an
+    // edit on a later day is also an update even when the creation is inside the
+    // window: n1 (created -3, edited -1) contributes both, and n6 (created 40 days
+    // ago, edited -2) contributes only the update.
     assert.equal(at(value.updated, -2), 1)
-    assert.equal(at(value.updated, -1), 0)
+    assert.equal(at(value.updated, -1), 1)
     assert.equal(at(value.updated, -3), 0)
     assert.equal(
       value.days.reduce((sum, _, i) => sum + value.created[i], 0),
       4,
+    )
+    assert.equal(
+      value.days.reduce((sum, _, i) => sum + value.updated[i], 0),
+      2,
+    )
+  })
+
+  test('same-day creation and edit is one creation; a later-day edit is also an update', () => {
+    // The rule the panel's activity series (and the digest) project onto the two
+    // frontmatter values, isolated from the fixture above: a note created and edited
+    // on the same local day counts once, as a creation; an edit on a later day is an
+    // update even when its creation is inside the window; a note created before the
+    // window contributes only its update.
+    const window = activityWindow(7)
+    const day = (offset) => window.days[6 + offset]
+    const series = bucketActivity(window, [
+      { created: day(-2), updated: day(-2), mtimeDay: null }, // same local day
+      { created: day(-3), updated: day(-1), mtimeDay: null }, // later day, created inside
+      { created: day(-30), updated: day(-2), mtimeDay: null }, // created before the window
+    ])
+    const at = (values, offset) => values[window.days.indexOf(day(offset))]
+    assert.equal(at(series.created, -3), 1, 'the later-day note was still created')
+    assert.equal(at(series.created, -2), 1, 'the same-day note was created')
+    assert.equal(at(series.updated, -1), 1, 'a later-day edit of an in-window note is an update')
+    assert.equal(at(series.updated, -2), 1, 'the before-window note contributes its update')
+    assert.equal(at(series.updated, -3), 0, 'a same-day edit is never a second event')
+    assert.equal(
+      series.created.reduce((sum, n) => sum + n, 0),
+      2,
+      'two creations',
+    )
+    assert.equal(
+      series.updated.reduce((sum, n) => sum + n, 0),
+      2,
+      'two updates',
     )
   })
 

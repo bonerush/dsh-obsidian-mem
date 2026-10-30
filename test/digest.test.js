@@ -129,8 +129,13 @@ test('source timestamps control counts; invalid and missing dates never invent c
       sources: world.sources.map((source) => ({ ...source, updated: '2026-10-27' })),
     }),
   })
+  // c is a real note created and edited on different local days, both inside the
+  // window, so it is one creation AND one update; a's invalid dates and b's missing
+  // dates still invent neither. The window-wide suppression this test used to pin
+  // ("created inside the window is never also an update") is gone: it made the
+  // digest and the panel's 84-day activity series disagree with the vault.
   assert.equal(result.notes.created, 1)
-  assert.equal(result.notes.updated, 0)
+  assert.equal(result.notes.updated, 1)
   assert.equal(result.recent.find((row) => row.path.endsWith('/b.md')).updated, null)
 })
 
@@ -334,6 +339,58 @@ test('pure rendering projects values without sorting or changing supplied record
   assert.equal(result.notes.created, 1)
   assert.equal(result.notes.updated, 1)
   assert.deepEqual(records, before)
+})
+
+test('a same-day edit is one creation; an edit on a later day is also an update', () => {
+  // The digest and the panel's activity series project the same two frontmatter
+  // values with the same rule: a note created and edited on the same local day
+  // counts once, as a creation; an edit on a later local day is an update even when
+  // the creation also falls inside this window; a note created before the window
+  // contributes only its update.
+  const window = { days: 2, from: '2026-10-25T12:00:00.000Z', to: '2026-10-27T12:00:00.000Z' }
+  const records = [
+    {
+      path: 'same-day.md',
+      title: 'same-day',
+      type: 'gotcha',
+      status: 'active',
+      updated: '2026-10-27',
+      data: { created: '2026-10-27' },
+    },
+    {
+      path: 'later-day.md',
+      title: 'later-day',
+      type: 'convention',
+      status: 'active',
+      updated: '2026-10-27',
+      data: { created: '2026-10-26' },
+    },
+    {
+      path: 'before-window.md',
+      title: 'before-window',
+      type: 'gotcha',
+      status: 'active',
+      updated: '2026-10-26',
+      data: { created: '2026-09-01' },
+    },
+  ]
+  const result = renderDigest(records, {
+    window,
+    hot: HOT,
+    queue: QUEUE,
+    appraisal: { findings: [], total: 0, truncated: false, scanned: 3 },
+    collection: { inspected: 3, truncated: false, incomplete: false, reasons: [] },
+  })
+  assert.equal(
+    result.notes.created,
+    2,
+    'the same-day and later-day notes were created in the window',
+  )
+  assert.equal(result.notes.updated, 2, 'the later-day and before-window notes were edited')
+  assert.deepEqual(result.notes.byType, [
+    { type: 'convention', created: 1, updated: 1 },
+    { type: 'gotcha', created: 1, updated: 1 },
+  ])
 })
 
 test('a date-only created value is compared in the vault calendar, not as UTC midnight', () => {

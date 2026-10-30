@@ -750,6 +750,12 @@ const BUDGETS = {
   // their name at 2.5-8.1px, and the tiles' aspect ratio tripled between the 292px
   // floor and a 590px panel. The alternative to the width model is shipping a font
   // metrics table, which is the dependency this module exists without.
+  // The next round (2026-10-30) measured 2964 lines, still inside this budget, so it
+  // needed no raise: it calibrated that width model against the real font (the model
+  // over-predicted latin by 32-52%), replaced the "complete name only" predicate with
+  // a 44px floor that lets the existing CSS ellipsis render a truncated name, and
+  // kept the 41px two-line height. The width model is still the alternative to a font
+  // metrics table; it is now calibrated from measurement rather than assumed.
   'lib/memory-panel.js': 3000,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
@@ -880,7 +886,10 @@ const BUDGETS = {
   // The graph panel's remembered controls: the record shape, the per-field fallback
   // and the bounds that keep an edited `localStorage` entry from blanking the graph.
   'lib/graph-settings.js': 200,
-  // Upstream minified D3 plus the reviewed source in client/graph-worker.js.
+  // Upstream minified D3 plus the reviewed source in client/graph-worker.js, which is
+  // a 1:1 port of Obsidian sim.js's d3 fallback. The parity port removed the locally
+  // tuned size policy and grid force, so the adapter measures 113 lines and the
+  // generated asset 126 — inside the original 150-line budget, which stands.
   'lib/graph-worker.js': 150,
   'lib/graph-activity.js': 100,
   'lib/graph-route.js': 200,

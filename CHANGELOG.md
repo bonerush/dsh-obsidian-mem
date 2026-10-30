@@ -11,6 +11,81 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Fixed
+
+- **图谱 1:1 复刻 Obsidian 的模拟器，移动中的节点也不再挤成环带。** 用户重启后反馈：
+  静止时的环带已减轻，但**只要节点在动**（刚进入页面、拖拽加热）又复现；要求按 Obsidian
+  实现一比一复刻。根因是此前两处本地改动：`client/graph-worker.js` 在 d3 fallback 上
+  加了 `distanceMax(2500)`/`theta(1.2)`，并按节点数换用/丢弃碰撞；`lib/graph-renderer.js`
+  给冷启动加了 phyllotaxis spiral 播种（Obsidian 没有这个分支）。这次按本机 Obsidian
+  1.14.4 的 `obsidian.asar` 提取件重做：`/sim.js`（17,693 B，sha256 `549be2f…`，与
+  2026-09-28 记录相同）的 d3 fallback 逐常量照搬（forceX/Y 0.1、link 250、charge
+  -1000/distanceMin 30、collide 60/0.5 始终开启、alpha 300 步、velocityDecay 0.6），
+  删除了大小策略与网格碰撞；`app.js` 的 `setData` 播种规则（邻居均值 ± sqrt(3600·新增)
+  抖动；无已放置邻居时随机角 + 环）与拖拽消息（alpha .3 / alphaTarget .3 / 释放
+  alphaTarget 0）也按原样复刻，删除了 spiral 冷启动。验证：同一 400 节点/592 边真实
+  子图、同一初始位置，300 tick 后新 worker 与 Obsidian `sim.js` fallback 的节点位置
+  **逐点完全一致（max/mean delta = 0.000）**，旧 worker 相对它最大偏差 530.1、均值
+  144.5；真实 1,236 节点初始布局动画帧（480×800，t=150/350/700/1400/3000 ms）的
+  最小对距 2.2/1.6/2.8/11.0/10.7 → **7.6/15.6/19.1/29.7/36.5**，静止后最小邻距中位
+  仍约 112。未复制 Obsidian 的 wasm 模拟器（其自有二进制）与 SharedArrayBuffer 快路径；
+  fallback 的 quadtree 碰撞在超大图（>2000 节点）比此前的本地调优慢，这是 1:1 行为的
+  代价，Windows 性能未复测。测试：`test/graph-worker.test.js` 的策略用例改为 parity
+  不变量（902 叶子密环最小对距 > 40），`test/graph-renderer.test.js` 新增「冷启动播种
+  与 app.js 一致、拖拽协议与 app.js 一致」用例；记录见 `docs/obsidian-graph-source.md`
+  2026-10-31 节。
+
+- **概览「新建与更新」的「更新」不再恒为 0。** 根因是 `lib/index-stats.js` 的
+  `bucketOneDay` 把互斥做在了**窗口**级：只要 `created` 落在窗口内就直接 `return`，
+  永远不再计 `updated`。概览用 84 天窗口，而本 vault 的 950 条笔记全部创建于窗口内，
+  于是 13 周的更新柱被数学上钉死为 0——同一份数据「健康」页今日摘要却能报出 5 条更新，
+  两个视图自相矛盾。修复改为**同日互斥**：同日创建 + 编辑仍算一次创建，跨日编辑算一次
+  更新（即使创建也在窗口内）；`lib/digest.js` 的 `renderDigest` 对齐同一规则，digest
+  的 days=7/30 也不再出现「窗口越大更新越少」的非单调。真实 vault 只读复算：84 天
+  created 950 / updated **0 → 142**（123 条 supersede 重链 + 13 条正文编辑 + 6 条 hub
+  维护写），digest days=30 的 updated 13 → 40。注意这仍是「frontmatter `updated` 有
+  变化」的口径；只看正文编辑是 13 条，若要更窄口径需另定。
+  `test/index-stats.test.js`（28）与 `test/digest.test.js`（16）新增三情形回归，
+  旧实现 red、新实现 green。
+
+- **标签频率的长名字不再被直接隐掉。** 0.4.3 的 treemap 判定
+  `box.w < nameWidthOf(name)` 要求**完整名字**的预测宽度，而宽度模型把 latin 预估为
+  9 px/字符，真实字体（11px）实测只有 5.0–6.4 px/字符，多预测 32–52%：用户 659px 面板
+  下 24 个块只显示 16 个名字，被隐的 8 个里 7 个其实放得下（`verification` 实测
+  60.01px vs 块内宽 79px），最大块 `obsidian-mem` 的名字只在 581–707px 窗口出现
+  （580px 时差 0.1px），更窄或更宽都消失。修复：宽度模型校准为
+  `{cjk:11, latin:6.6, digit:7, other:5.6}`，判定改为「完整名字放不下**且**块宽 < 44px」
+  才降级为只显示数字；其余一律渲染名字，溢出交给既有的 CSS 省略号（`title` 与
+  `mem-sr` 全量清单不变）。真实 payload 实测各宽度显示名字数 320/375/480/590/659/720
+  = 3/4/10/18/16/17 → **8/15/20/23/24/24**，659px 下只剩 `dsh-obsidian-mem` 一个
+  省略号；旧的「破碎字形」缺陷来自 26px 高度门槛，已由 41px 两行门槛解决，与宽度
+  省略号无关。记录见 `docs/validation/panel-label-and-spacing-2026-10-30.md`。
+
+- **新建与更新分流柱改成直角矩形，KPI 四格居中。** 分流柱的 created/updated 两个
+  `rect` 各带 `rx:2`，圆角把两段从共享零线处各切掉一块，视觉上出现缝隙、短柱像压扁的
+  药丸；几何本身已保证 `created.y + height = updated.y = 40`，删掉 `rx` 后两段在零线处
+  干净相接（测试钉住：无 rx、同周两段下沿 = 上沿 = 零线、x/width 一致）。KPI 四格此前
+  左对齐，宽面板下每格右侧大片留白、整组看起来偏左：`.mem-kpi` 改 `align-items:center`，
+  sparkline 限宽 120px 并随格心居中——659px 实测四格中心 x=93.63，标签/数值行/spark
+  中心都对齐到 93.63；320px 的 2×2 布局与区块高度不回归。
+
+- **概览的搜索框与首块内容之间的间距最终收到 18px。** 组合进 shell 后 viewhead 被隐藏，
+  `.mem-kpiline` 作为第一张图的 14px 顶部间距没有撤掉，与搜索行 10px 底部内边距、
+  `.mem-view` 18px 顶部内边距叠成 42px（健康/检索/图谱首内容当时是 28px）。两轮修复：
+  先把首个 `.mem-kpiline` 的 margin 归零（42→28），再把 `.mem-view` 顶部内边距 18→8
+  （28→**18px**）——搜索行 10 + 正文 8，四个视图共用同一条内边距，实测
+  320/375/480/590/659/720 全部 18px。
+
+- **活动热度图随面板变宽展示更长时段。** 旧实现固定 12 周、`max-width:292px` 居中，
+  宽面板两侧各空出约 169px。现在视图一次请求 `days:182`（26 周），按测得正文宽取尾部
+  整周切片（12→26 周，cell 约 21-22px），grid 填满正文：实测 320px 292/12 周（不变）、
+  375px 347/15、480px 452/19、590px 562/24、659px 631/26、720px 692/26（24.7px 封顶），
+  无横向溢出；flowBars 共用同一窗口（659px 下 viewBox 140→308，每柱约 16.4px 仍有
+  自己的周 title）。路由新增 `days` 参数并把窗口钳在 84..182（缺省/非法→84，>182→182，
+  旧视图不发 days 时行为完全不变），`shrink()` 第一步先把超设计窗口的 activity 收回
+  84 天再走原 §3.6 顺序。真实数据 182 天 envelope **10,704B**（84 天 9,038B），距 16KB
+  上限余 5,680B；84 天复算与实时 payload 逐字节相等后扩窗验证。
+
 ## 0.4.3 — 2026-10-30
 
 ### Added

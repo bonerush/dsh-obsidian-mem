@@ -816,3 +816,66 @@ test('idle rendering stops and interaction wakes it; destroy cancels work', () =
   assert.equal(s.events.size, 0)
   assert.equal(s.workers[0].terminated, true)
 })
+test('a cold graph is seeded exactly as Obsidian app.js setData seeds it, never on a spiral', () => {
+  const s = surface()
+  const nodes = Array.from({ length: 40 }, (_, index) => s.node('n' + index))
+  s.renderer.update(s.model(nodes))
+  const message = s.workers[0].lastMessage
+  const entries = Object.entries(message.nodes)
+  assert.equal(entries.length, 40, 'every node of the first sync is new and carries a seed')
+  const limit = Math.sqrt((3600 * 40) / Math.PI)
+  const radii = entries.map(([, [x, y]]) => Math.hypot(x, y))
+  for (const radius of radii)
+    assert.ok(radius <= limit + 1e-6, 'a cold seed stays inside the ring app.js grows')
+  // app.js: a node with no placed neighbour gets a random angle and a radius of
+  // oldRadius + sqrt(random) * ring. The radii are therefore unordered. The deleted
+  // cold-start spiral made radius grow strictly with the projection index, which is
+  // the shape that read as arcs while the layout was still moving.
+  let decreasing = 0
+  for (let index = 1; index < radii.length; index += 1)
+    if (radii[index] < radii[index - 1]) decreasing += 1
+  assert.ok(decreasing > 0, 'cold seeds are a random ring, not a radius-ordered spiral')
+  s.renderer.destroy()
+})
+
+test('a late node lands beside its placed neighbour inside app.js jitter, and placed nodes keep their point', () => {
+  const s = surface()
+  s.renderer.update(s.model([s.node('a')]))
+  const first = s.workers[0].lastMessage.nodes
+  const placed = first.a
+  assert.ok(Array.isArray(placed), 'the first node is seeded')
+  s.renderer.update({
+    ...s.model([s.node('a'), s.node('b')]),
+    graph: {
+      nodes: [s.node('a'), s.node('b')],
+      edges: [{ source: 'a', target: 'b' }],
+    },
+  })
+  const second = s.workers[0].lastMessage.nodes
+  assert.equal(second.a, false, 'a placed node is sent as false and keeps its position')
+  const jitter = Math.sqrt(3600 * 1)
+  assert.ok(Math.abs(second.b[0] - placed[0]) <= jitter / 2 + 1e-6, 'x lands inside the jitter box')
+  assert.ok(Math.abs(second.b[1] - placed[1]) <= jitter / 2 + 1e-6, 'y lands inside the jitter box')
+  s.renderer.destroy()
+})
+test('a node drag speaks the app.js force protocol: alpha .3 with alphaTarget .3, release clears the pin', () => {
+  const s = surface()
+  s.renderer.update(s.model([s.node('one')]))
+  s.emit(['one'], [0, 0])
+  s.step()
+  s.events.get('pointerdown')({ button: 0, clientX: 400, clientY: 350, pointerId: 1 })
+  s.events.get('pointermove')({ clientX: 430, clientY: 370 })
+  const dragMessage = s.workers[0].lastMessage
+  assert.deepEqual(Object.keys(dragMessage).sort(), ['alpha', 'alphaTarget', 'forceNode', 'run'])
+  assert.equal(dragMessage.alpha, 0.3)
+  assert.equal(dragMessage.alphaTarget, 0.3)
+  assert.equal(dragMessage.run, true)
+  assert.equal(dragMessage.forceNode.id, 'one')
+  assert.equal(typeof dragMessage.forceNode.x, 'number')
+  assert.equal(typeof dragMessage.forceNode.y, 'number')
+  s.events.get('pointerup')()
+  const releaseMessage = s.workers[0].lastMessage
+  assert.deepEqual(releaseMessage.forceNode, { id: 'one', x: null, y: null })
+  assert.equal(releaseMessage.alphaTarget, 0)
+  s.renderer.destroy()
+})

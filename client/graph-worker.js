@@ -1,6 +1,26 @@
 /* global self, postMessage, d3 */
-// The force contract is measured from Obsidian 1.13.7's sim.js fallback.
-// Use the upstream D3 implementation; render and host adapters stay independent.
+// 1:1 port of Obsidian's graph simulator fallback, extracted 2026-10-31 from
+// /Applications/Obsidian.app/Contents/Resources/obsidian.asar /sim.js
+// (17,693 bytes, sha256 549be2f69710af360d521c92b80c83718f673594d3dc2255a65e251199eee25d;
+// unchanged from the file the 2026-09-28 port measured). The desktop app prefers a
+// WebAssembly simulator of its own; when that contract is unavailable it runs this
+// d3 fallback, which is the branch this panel ports. Every constant and step below
+// is the extracted one:
+//
+//   forceX(0) / forceY(0)   strength 0.1
+//   forceLink()             id by node id, distance 250, d3 default strength
+//   forceManyBody()         strength -1000, distanceMin 30, d3 defaults otherwise
+//   forceCollide(60)        strength 0.5 — always on, at every graph size
+//   alpha                   1 → 0.001 over 300 steps, alphaTarget 0
+//   integration             vx *= 0.6 (d3's velocityDecay accessor takes 1 - 0.4)
+//
+// Deliberately not ported: the wasm simulator (Obsidian's own binary, not
+// redistributable) and the SharedArrayBuffer fast path (it only avoids copying the
+// positions this worker already posts). An earlier revision of this file added
+// distanceMax(2500)/theta(1.2) and a size policy that dropped or swapped collision
+// above 800 nodes; those were local tuning, and measured on this repository's own
+// vault they let a 1,236-node layout merge into rings *while it moved* — the exact
+// symptom the panel user reported. Parity is the fix: no local policy remains.
 const link = d3
   .forceLink()
   .id((node) => node.id)
@@ -8,17 +28,7 @@ const link = d3
 const baseLinkStrength = link.strength()
 const x = d3.forceX(0).strength(0.1)
 const y = d3.forceY(0).strength(0.1)
-// MEASURED (2026-10-30, scratch/qa/bench-report): charge is 72% of the layout cost
-// at 4 000 nodes and collision 26%, while link is 0.9%. A charge force with no
-// `distanceMax` walks the whole quadtree for every node; bounding the interaction
-// radius to 2 500 world units took 2 000 nodes from 32.7 ms to 9.7 ms per tick and
-// 4 000 from 50.2 to 20.9, and the layout it produces is measurably the same: at 800
-// nodes the minimum spacing stayed 108.8 px with zero overlaps, spread 4358 x 4338.
-// (`distanceMax(600)` is NOT that trade — it flattens the spread from 5597 to 3158 —
-// so the bound is set at the distance the panel's own slider can already produce.)
-// `theta(1.2)` makes the quadtree approximate more of the far field, which is what
-// the same measurement supports; the original 0.9 is kept nowhere.
-const charge = d3.forceManyBody().strength(-1000).distanceMin(30).distanceMax(2500).theta(1.2)
+const charge = d3.forceManyBody().strength(-1000).distanceMin(30)
 const collision = d3.forceCollide(60).strength(0.5)
 const simulation = d3
   .forceSimulation([])
@@ -34,35 +44,12 @@ let lookup = new Map()
 let timer = null
 let linkStrength = 1
 
-// MEASURED (2026-10-30, scratch/qa/graph-bench.mjs, this machine): one tick at the
-// shipped forces costs 7.6 ms at 500 nodes, 30-35 ms at 1 000 and 68-113 ms at
-// 2 000-4 000 — and the cost is dominated by forceCollide, the only force whose
-// quadtree walk grows super-linearly: with collision removed the same 1 000-node
-// graph costs 5 ms. The panel now draws every node, so a large vault must not be
-// laid out at a cost nobody can interact with.
-//
-// Two derived settings keep the whole graph usable instead of capping what is
-// drawn. Collision is dropped above COLLISION_LIMIT nodes: overlap in a dense
-// graph reads as a cluster, while a 60 ms tick reads as a broken panel. And a
-// large graph cools at a coarser alpha step, so it settles in about the same
-// wall-clock time as a small one instead of in hundreds of frames.
-const COLLISION_LIMIT = 800
-const LARGE_GRAPH = 1500
-let collisionOn = true
-
-/** Apply the measured size policy to the running simulation. */
-function applySizePolicy() {
-  const size = lookup.size
-  const wanted = size <= COLLISION_LIMIT
-  if (wanted !== collisionOn) {
-    collisionOn = wanted
-    simulation.force('collision', wanted ? collision : null)
-  }
-  // 300 steps is the shipped decay; a large graph reaches the same alpha floor in
-  // half as many, which is what keeps its settle time bounded.
-  simulation.alphaDecay(1 - Math.pow(0.001, 1 / (size > LARGE_GRAPH ? 150 : 300)))
-}
-
+/**
+ * One simulator frame, exactly the fallback loop in sim.js: run the five forces
+ * and the integration step, then post the positions. The loop stops when the
+ * surviving alpha reaches d3's alphaMin, which the 300-step decay puts at the
+ * same frame count Obsidian stops on.
+ */
 function frame() {
   timer = null
   if (simulation.alpha() <= 0.001 || lookup.size === 0) return
@@ -77,6 +64,12 @@ function frame() {
   timer = setTimeout(frame, 1000 / 60)
 }
 
+// The message contract is sim.js's own. nodes maps id to [x, y] for a new node or
+// false for an already placed one; links are [source, target] id pairs; forceNode
+// pins/releases a dragged node; forces carries the panel's four sliders;
+// alpha/alphaTarget/run control the loop. The fallback starts at alpha 1 and only
+// ever raises it, so the first frame of a new graph animates even though the panel
+// asks for 0.3 — the same behaviour as the app's own graph.
 self.onmessage = ({ data }) => {
   if (data.nodes) {
     const next = new Map()
@@ -88,7 +81,6 @@ self.onmessage = ({ data }) => {
     lookup = next
     link.links([])
     simulation.nodes([...lookup.values()])
-    applySizePolicy()
   }
   if (data.links) {
     link.links(

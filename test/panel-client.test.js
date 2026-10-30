@@ -580,36 +580,98 @@ test('the bundle reads only host tokens on the measured allowlist', async () => 
   )
 })
 
-test('the heat-map grid clears the chart-container floor without outgrowing the section', async () => {
+test('the heat map fills the measured body instead of a fixed 292px cap', async () => {
   const { script } = await bundle()
   const css = panelCss(script)
   const start = css.indexOf('.mem-panel .mem-heat-grid{')
   assert.ok(start >= 0, 'the heat grid rule exists')
   const rule = css.slice(start, css.indexOf('}', start))
-  const cap = /max-width:(\d+)px/u.exec(rule)
-  assert.ok(cap, 'the grid declares a pixel cap so the squares stop growing on a wide panel')
-  // The floor arithmetic is derived from the panel's own layout rather than
-  // repeating its constant here: read `.mem-view`'s horizontal padding (currently
-  // 14px, so the 320px panel's content box is 320 - 2×14 = 292px) and use it as
-  // the cap's upper bound. If the padding moves, this fails loudly instead of
-  // silently disagreeing with the stylesheet; the `width:100%` beside the cap
-  // already keeps the grid inside the section, so the cap only has to fill the
-  // narrowest supported content box without overshooting it.
+  // The grid used to be capped at 292px — the 320px panel's content box — so a wide
+  // panel drew twelve weeks in a fixed block with empty gutters on both sides
+  // (measured 169.5px per side at 659px). The column count is now width-driven (the
+  // view asks for a longer window), so the grid must share the whole measured body.
+  assert.equal(/max-width:/u.test(rule), false, 'no fixed pixel cap: ' + rule)
+  assert.ok(rule.includes('width:100%'), 'the grid fills its section: ' + rule)
+  assert.ok(rule.includes('grid-auto-columns:minmax(0,1fr)'), 'every column shares the width')
+  assert.ok(rule.includes('grid-auto-flow:column'), 'the 7 rows still build Sunday-first columns')
+  // Design §6.6 floor, now guaranteed by the body inset instead of a cap: the 320px
+  // panel's content box is 320 − 2×14 = 292px, still above the 280px floor.
   const viewStart = css.indexOf('.mem-panel .mem-view{')
   assert.ok(viewStart >= 0, 'the view body rule exists so the floor arithmetic has a source')
   const viewRule = css.slice(viewStart, css.indexOf('}', viewStart))
   const padding = /padding:\d+px (\d+)px \d+px/u.exec(viewRule)
   assert.ok(padding, '.mem-view declares the three-value padding the arithmetic reads')
-  const viewPadding = Number(padding[1])
-  // Design §6.6: every chart container is at least 280px wide in the panel's
-  // supported range, so the cap must land in [280, 320 − 2×padding].
-  assert.ok(Number(cap[1]) >= 280, 'the chart container clears the 280px floor, found ' + cap[1])
+  const contentWidth = 320 - 2 * Number(padding[1])
   assert.ok(
-    Number(cap[1]) <= 320 - 2 * viewPadding,
-    'the cap fits the 320px content box: cap ' +
-      cap[1] +
-      ', content box ' +
-      (320 - 2 * viewPadding),
+    contentWidth >= 280,
+    'the narrowest content box clears the 280px floor: ' + contentWidth,
+  )
+  // The cells stay square so a longer window cannot turn the calendar into stripes.
+  const cellStart = css.indexOf('.mem-panel .mem-heat-cell{')
+  assert.ok(cellStart >= 0, 'the heat cell rule exists')
+  const cellRule = css.slice(cellStart, css.indexOf('}', cellStart))
+  assert.ok(cellRule.includes('aspect-ratio:1'), 'a heat cell is square: ' + cellRule)
+})
+
+test('the composed overview starts on the body inset, not on a doubled margin', async () => {
+  const { script } = await bundle()
+  const css = panelCss(script)
+  // 概览's first block in the composed shell has no view head above it: the shell
+  // passes `onMeta`, so the view drops its own heading and the KPI band is the
+  // first thing the body paints. The band's `margin-top:14px` belongs to the
+  // standalone layout (a view head or project card above it); left in the composed
+  // layout it doubles the body inset — measured 42px from the search field to the
+  // KPI card instead of the 28px 健康 and 检索 start from. The first block is
+  // zeroed; every later KPI band keeps its separation.
+  assert.ok(
+    css.includes(
+      '.mem-panel .mem-view>.mem-ledger>.mem-block:first-child>.mem-kpiline{margin-top:0}',
+    ),
+    "the composed overview zeroes the first KPI band's standalone top margin",
+  )
+  const start = css.indexOf('.mem-panel .mem-kpiline{')
+  assert.ok(start >= 0, 'the KPI band rule exists')
+  const rule = css.slice(start, css.indexOf('}', start))
+  assert.ok(
+    rule.includes('margin-top:14px'),
+    'every non-first KPI band keeps the standalone separation',
+  )
+  // Round 2 left 28px from the search field to the first content (10px search-row
+  // padding + 18px body inset); the user asked for 16–20px, so the body's top inset
+  // dropped to 8px. The two declarations that compose the gap are asserted as a sum:
+  // the number the user sees is the contract, not either padding alone.
+  const searchStart = css.indexOf('.mem-panel > .mem-searchbar{')
+  assert.ok(searchStart >= 0, 'the shell search row rule exists')
+  const searchRule = css.slice(searchStart, css.indexOf('}', searchStart))
+  const searchPadding = /padding:(\d+)px (\d+)px (\d+)px/u.exec(searchRule)
+  assert.ok(searchPadding, 'the search row declares the three-value padding: ' + searchRule)
+  const viewStart = css.indexOf('.mem-panel .mem-view{')
+  assert.ok(viewStart >= 0, 'the view body rule exists')
+  const viewRule = css.slice(viewStart, css.indexOf('}', viewStart))
+  const viewPadding = /padding:(\d+)px (\d+)px (\d+)px/u.exec(viewRule)
+  assert.ok(viewPadding, '.mem-view declares the three-value padding: ' + viewRule)
+  const gap = Number(searchPadding[3]) + Number(viewPadding[1])
+  assert.ok(gap >= 16 && gap <= 20, 'search field to first content is ' + gap + 'px (target 16–20)')
+})
+
+test('every KPI cell centres its content and the sparkline stays a bounded shape', async () => {
+  const { script } = await bundle()
+  const css = panelCss(script)
+  const start = css.indexOf('.mem-panel .mem-kpi{')
+  assert.ok(start >= 0, 'the KPI cell rule exists')
+  const rule = css.slice(start, css.indexOf('}', start))
+  // The four cells are equal quarters of the band. Left-aligned content pinned each
+  // reading to its quarter's left edge and left the wide panel's right side empty
+  // (measured 87px of unused content width in the 659px band's 记忆条目 cell), so the
+  // rows are centred. The quarter dividers stay.
+  assert.ok(rule.includes('align-items:center'), 'the cell rows share one centre line: ' + rule)
+  const sparkStart = css.indexOf('.mem-panel .mem-kpi-spark{')
+  assert.ok(sparkStart >= 0, 'the sparkline rule exists')
+  const sparkRule = css.slice(sparkStart, css.indexOf('}', sparkStart))
+  assert.ok(sparkRule.includes('width:100%'), 'the shape may use the cell: ' + sparkRule)
+  assert.ok(
+    /max-width:120px/u.test(sparkRule),
+    'and stops growing on a wide cell so it stays a shape, not a rule: ' + sparkRule,
   )
 })
 

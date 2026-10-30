@@ -165,42 +165,46 @@ test('graph worker preserves existing positions, pins a dragged node and removes
   assert.ok(Math.hypot(...sim.tick(100).get('a')) < Math.hypot(155, 90))
 })
 
-test('a large graph drops collision and cools at a coarser step, a small one keeps both', async () => {
-  // The measured policy (scratch/qa/graph-bench.mjs): collision is the only force
-  // that grows super-linearly, so above COLLISION_LIMIT nodes the panel trades
-  // overlap for interactivity. A test that only asserted 'it still lays out' would
-  // pass with the forces unchanged, so the geometry is pinned in both directions.
-  const pair = async (count) => {
+test("the ported Obsidian forces keep a dense large graph's leaves apart exactly as a small graph", async () => {
+  // 1:1 parity: sim.js keeps forceCollide(60, 0.5) on at every size — it has no size
+  // policy at all — so a graph above the old 800-node threshold separates its leaves
+  // the same way a small one does. The fixture is a ring whose leaves start 30 world
+  // units apart. Measured on 2026-10-30 (macOS 27.2, Node 25.9.0, 320 ticks): the
+  // parity worker settles the 902-leaf ring at a minimum pair distance of ~49 and the
+  // 500-leaf ring at ~70, while the old drop-collision policy settled the 902-leaf
+  // ring at ~31. The threshold pins the invariant "leaves keep the force's minimum
+  // spacing", not the exact geometry.
+  const ring = async (count) => {
     const sim = await worker()
-    const nodes = { a: [-80, 0], b: [80, 0] }
-    const links = [['a', 'b']]
-    for (let i = 0; i < count - 2; i += 1) nodes['filler' + i] = [1e6 + i, 1e6]
+    const nodes = { hub: [0, 0] }
+    const links = []
+    for (let i = 0; i < count - 1; i += 1) {
+      const angle = (i / (count - 1)) * Math.PI * 2
+      nodes['leaf' + i] = [Math.cos(angle) * 30, Math.sin(angle) * 30]
+      links.push(['hub', 'leaf' + i])
+    }
     sim.send({ nodes, links, run: true })
-    const points = sim.tick(320)
-    return Math.abs(points.get('a')[0] - points.get('b')[0])
+    return sim.tick(320)
   }
-  // Two nodes plus far-away fillers is still a small graph, so collision is on:
-  // the control that proves the policy did not simply disable the force.
-  assert.ok((await pair(2)).toFixed(1) && (await pair(2)) > 60, 'a small graph keeps collision')
-  const huge = await worker()
-  const nodes = { a: [-80, 0], b: [80, 0] }
-  const links = [['a', 'b']]
-  for (let i = 0; i < 900; i += 1) {
-    nodes['filler' + i] = [Math.cos(i) * 1600, Math.sin(i) * 1600]
-    links.push(['a', 'filler' + i])
+  const minimum = (points) => {
+    const list = [...points.values()]
+    let min = Infinity
+    for (let i = 0; i < list.length; i += 1)
+      for (let j = i + 1; j < list.length; j += 1)
+        min = Math.min(min, Math.hypot(list[i][0] - list[j][0], list[i][1] - list[j][1]))
+    return min
   }
-  huge.send({ nodes, links, run: true })
-  const points = huge.tick(320)
-  assert.equal(points.size, 902)
-  for (const point of points.values()) assert.ok(point.every(Number.isFinite))
-  // Every filler is linked to a, so the force adds a ring rather than one pair:
-  // the assertion is that a 902-node graph still spreads and still converges.
-  const a = points.get('a')
-  const fillers = [...points].filter(([id]) => id.startsWith('filler'))
-  assert.equal(fillers.length, 900)
+  const small = await ring(500)
+  assert.equal(small.size, 500)
+  for (const point of small.values()) assert.ok(point.every(Number.isFinite))
+  assert.ok(minimum(small) > 60, 'a small graph still answers the quadtree force')
+  const large = await ring(902)
+  assert.equal(large.size, 902)
+  for (const point of large.values()) assert.ok(point.every(Number.isFinite))
+  const largeMinimum = minimum(large)
   assert.ok(
-    fillers.some(([, point]) => Math.hypot(point[0] - a[0], point[1] - a[1]) > 60),
-    'a 902-node graph still spreads its branches',
+    largeMinimum > 40,
+    'a 902-node graph keeps its leaves apart: ' + largeMinimum.toFixed(1),
   )
 })
 

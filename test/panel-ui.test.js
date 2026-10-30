@@ -433,6 +433,34 @@ test('the overview reports project, clock and refresh to the shell and bands its
   assert.equal(byText(strip, '全部 →').length, 1, 'one action opens the health view')
 })
 
+test('each KPI cell is one label, one value line and its own unit, centred as a row', async (t) => {
+  // The band is four equal cells; centring is a stylesheet job, so this test pins the
+  // template it centres — every cell keeps exactly one label, one value line and one
+  // unit, and only 记忆条目 carries the sparkline row. A cell that grew a second label
+  // or lost its unit would centre the wrong reading.
+  stubFetch(t, () =>
+    ok(overviewValue({ activity: activityFixture(), tags: { items: [], total: 0 } })),
+  )
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const cells = byClass(tree, 'mem-kpi')
+  assert.equal(cells.length, 4, 'four cells')
+  assert.deepEqual(
+    byClass(tree, 'mem-kpi-label').map((node) => node.props.children[0]),
+    ['记忆条目', '关系', '孤立', '待处理'],
+  )
+  for (const cell of cells) {
+    assert.equal(byClass(cell, 'mem-kpi-label').length, 1, 'one label per cell')
+    assert.equal(byClass(cell, 'mem-kpi-line').length, 1, 'one value line per cell')
+    assert.equal(byClass(cell, 'mem-kpi-value').length, 1, 'one value per cell')
+    assert.equal(byClass(cell, 'mem-kpi-unit').length, 1, 'one unit per cell')
+  }
+  assert.equal(byClass(cells[0], 'mem-kpi-spark').length, 1, 'the growth shape rides 记忆条目')
+  for (const cell of cells.slice(1)) assert.equal(byClass(cell, 'mem-kpi-spark').length, 0)
+})
+
 test('overview KPI cells jump: 待处理 opens 健康, the other three open 检索', async (t) => {
   stubFetch(t, () => ok(overviewValue()))
   const jumps = []
@@ -465,6 +493,33 @@ test('composed, the tab names the page: no duplicate heading and no search jump'
   })
   assert.equal(byClass(composed, 'mem-viewhead').length, 0, 'no page heading when composed')
   assert.equal(byText(composed, '去检索').length, 0, 'no jump to a box that is always visible')
+  // The composed body opens on a block, and that block paints the KPI band. The
+  // panel stylesheet's first-block rule targets exactly that chain
+  // (`.mem-view > .mem-ledger > .mem-block:first-child > .mem-kpiline`), so a
+  // wrapper inserted between them would silently bring back the doubled inset.
+  const renderChildren = (node) => {
+    const expand = (value) => {
+      if (value === null || value === undefined || value === false || value === true) return []
+      if (Array.isArray(value)) return value.flat(Infinity).flatMap(expand)
+      if (typeof value !== 'object') return []
+      if (typeof value.type === 'function') return expand(value.type(value.props))
+      return [value]
+    }
+    return expand(node?.props?.children ?? [])
+  }
+  const ledger = byClass(composed, 'mem-ledger')[0]
+  assert.ok(ledger, 'the composed body is the ledger')
+  const firstBlock = renderChildren(ledger)[0]
+  assert.equal(
+    firstBlock?.props?.className,
+    'mem-block',
+    'the body opens on a block, not a heading',
+  )
+  assert.equal(
+    renderChildren(firstBlock)[0]?.props?.className,
+    'mem-kpiline',
+    'the first block paints the KPI band the first-block rule zeroes',
+  )
   // Standalone (no `onMeta`) keeps the heading: there it is the only orientation.
   const alone = render({ sessionId: 'session-a', visible: true })
   assert.equal(byClass(alone, 'mem-viewhead').length, 1, 'standalone still says where it is')
@@ -474,22 +529,28 @@ test('composed, the tab names the page: no duplicate heading and no search jump'
 // The five 概览 charts (design §3.4, acceptance §6.5)
 // ---------------------------------------------------------------------------
 
-/** An 84-day series with a few busy days, so the buckets and weeks are non-zero. */
-function activityFixture() {
+/**
+ * An activity series with a few busy days, so the buckets and weeks are non-zero.
+ *
+ * The default is the designed 84-day window; a wider panel asks for up to 182 days
+ * (26 weeks), so the same generator with `days = 182` feeds the responsive tests.
+ * The series always ends on 2026-10-29 (a Thursday).
+ */
+function activityFixture(days = 84) {
   const day = (offset) => {
     const date = new Date(2026, 9, 29)
     date.setDate(date.getDate() - offset)
     const pad = (n) => String(n).padStart(2, '0')
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
   }
-  const days = []
-  for (let i = 83; i >= 0; i -= 1) days.push(day(i))
+  const list = []
+  for (let i = days - 1; i >= 0; i -= 1) list.push(day(i))
   return {
-    from: days[0],
-    to: days[83],
-    days,
-    created: days.map((_d, index) => (index % 7 === 0 ? 2 : index % 5 === 0 ? 1 : 0)),
-    updated: days.map((_d, index) => (index % 6 === 0 ? 1 : 0)),
+    from: list[0],
+    to: list[days - 1],
+    days: list,
+    created: list.map((_d, index) => (index % 7 === 0 ? 2 : index % 5 === 0 ? 1 : 0)),
+    updated: list.map((_d, index) => (index % 6 === 0 ? 1 : 0)),
   }
 }
 
@@ -571,6 +632,61 @@ test('the activity heat map draws every day of the window and prints the matchin
   assert.equal(byClass(tree, 'mem-flow').length, 1, 'the flow chart is drawn from it too')
 })
 
+test('the heat map draws a longer window as the panel widens, capped at 26 weeks', async (t) => {
+  // The route will serve up to 26 weeks (182 days) in one payload, so a resize never
+  // refetches: the view slices the trailing weeks to the measured body. 12 weeks is
+  // the 292px design floor, 26 is the ceiling, and a payload that is shorter than the
+  // request (an older host that ignores `days`) is drawn as-is instead of blanking.
+  const wide = activityFixture(182)
+  const sent = stubFetch(t, () =>
+    ok(overviewValue({ activity: wide, tags: { items: [], total: 0 } })),
+  )
+  const realCells = (tree) =>
+    byClass(tree, 'mem-heat-cell').filter(
+      (cell) => !(cell.props.className ?? '').split(' ').includes('is-void'),
+    ).length
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  assert.equal(sent.length, 1, 'one read, not one per resize')
+  assert.equal(sent[0].body.days, 182, 'the view asks for the widest window the route serves')
+  const tree = render(chartProps())
+  assert.equal(realCells(tree), 84, 'at the 292px floor the map draws the designed twelve weeks')
+  assert.ok(countText(tree, '近 13 周（84 天）') >= 1, 'the meta names the drawn window')
+
+  const mid = mount(t, 'OverviewView', { sankeyWidth: 452 })
+  mid(chartProps())
+  await setImmediate()
+  const midTree = mid(chartProps())
+  assert.equal(realCells(midTree), 133, 'a 452px body draws nineteen weeks (133 days)')
+  assert.ok(countText(midTree, '近 20 周（133 天）') >= 1, 'the meta follows the drawn window')
+
+  const full = mount(t, 'OverviewView', { sankeyWidth: 631 })
+  full(chartProps())
+  await setImmediate()
+  const fullTree = full(chartProps())
+  assert.equal(realCells(fullTree), 182, 'a 631px body draws the whole 26-week payload window')
+  assert.ok(countText(fullTree, '近 27 周（182 天）') >= 1, 'the meta names the whole window')
+})
+
+test('an older host that ignores the wider window still draws its own twelve weeks', async (t) => {
+  // Version skew is a supported state (the panel asset and the host plugin upgrade
+  // independently): a route that does not know `days` answers 84, and a wide panel
+  // must draw that window rather than nothing.
+  stubFetch(t, () =>
+    ok(overviewValue({ activity: activityFixture(), tags: { items: [], total: 0 } })),
+  )
+  const render = mount(t, 'OverviewView', { sankeyWidth: 631 })
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const real = byClass(tree, 'mem-heat-cell').filter(
+    (cell) => !(cell.props.className ?? '').split(' ').includes('is-void'),
+  )
+  assert.equal(real.length, 84, 'the payload window is the ceiling, not the request')
+  assert.ok(countText(tree, '近 13 周（84 天）') >= 1, 'and the meta still matches it')
+})
+
 test('the flow bars share one zero line and normalise to the larger side', async (t) => {
   const activity = activityFixture()
   stubFetch(t, () => ok(overviewValue({ activity, tags: { items: [], total: 0 } })))
@@ -603,6 +719,32 @@ test('the flow bars share one zero line and normalise to the larger side', async
       Math.abs(y + height - 40) < 0.01 || Math.abs(y - 40) < 0.01,
       'a bar touches the zero line: y=' + y + ' h=' + height,
     )
+  }
+  // The bar is a plain rectangle, not a rounded one: a rounded corner at the zero
+  // line leaves a notch on both streams (the reported defect — a visible gap where
+  // created meets updated, and a pill-shaped bar), and rounding styles the data.
+  for (const bar of bars)
+    assert.equal(
+      bar.props.rx,
+      undefined,
+      'a flow bar is square, found rx on ' + bar.props.className,
+    )
+  // A week that carries both streams joins them on the shared zero line: created's
+  // bottom edge IS updated's top edge, and both are the same eight-unit bar.
+  const weeks = new Map()
+  for (const bar of bars) {
+    const week = weeks.get(bar.props.x) ?? {}
+    if (bar.props.className.includes('created')) week.created = bar.props
+    else week.updated = bar.props
+    weeks.set(bar.props.x, week)
+  }
+  const both = [...weeks.values()].filter((week) => week.created && week.updated)
+  assert.ok(both.length > 0, 'the fixture has a week with both streams, so the join is measured')
+  for (const week of both) {
+    assert.equal(week.created.y + week.created.height, 40, 'created ends on the zero line')
+    assert.equal(week.updated.y, 40, 'updated starts on the zero line')
+    assert.equal(week.created.x, week.updated.x, 'the two streams share the bar')
+    assert.equal(week.created.width, week.updated.width, 'and its width')
   }
   // sup erseded is a status snapshot, never a dated flow: no third stream exists.
   assert.equal(
@@ -848,10 +990,11 @@ test('a window that cannot hold two weekly points draws no sparkline', async (t)
   assert.equal(byClass(tree, 'mem-kpi-spark').length, 0)
 })
 
-test('a year-long window still draws twelve points ending at the whole created total', async (t) => {
-  // The index API accepts up to a year of days (`MAX_ACTIVITY_DAYS` in lib/index-db.js);
-  // the panel route asks for 84 today, but "at most twelve points" cannot depend on the
-  // caller always sending a twelve-week window.
+test('a window longer than the panel draws is sliced, and the sparkline totals the drawn window', async (t) => {
+  // The wire can carry more days than the charts draw: a wide panel asks the route for
+  // 26 weeks, an older host might answer a year. The view slices the trailing days to
+  // the measured body first, so the calendar, the flow bars and this cumulative line
+  // all read one window — and "at most twelve points" holds on the DRAWN window.
   const end = new Date(2026, 9, 29)
   const days = []
   for (let offset = 364; offset >= 0; offset -= 1) {
@@ -860,7 +1003,7 @@ test('a year-long window still draws twelve points ending at the whole created t
     const pad = (n) => String(n).padStart(2, '0')
     days.push(date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()))
   }
-  // One created note per day: the window total is 365.
+  // One created note per day: the 365-day payload carries 365, each drawn window its own.
   const activity = {
     from: days[0],
     to: days[364],
@@ -868,27 +1011,44 @@ test('a year-long window still draws twelve points ending at the whole created t
     created: days.map(() => 1),
     updated: days.map(() => 0),
   }
+  const sparkPoints = (tree) => {
+    const polyline = nodes(byClass(tree, 'mem-kpi-spark')[0]).find(
+      (node) => node?.type === 'polyline',
+    )
+    return String(polyline.props.points)
+      .trim()
+      .split(/\s+/u)
+      .map((pair) => pair.split(',').map(Number))
+  }
   stubFetch(t, () => ok(overviewValue({ activity, tags: { items: [], total: 0 } })))
   const render = mount(t, 'OverviewView')
   render(chartProps())
   await setImmediate()
   const tree = render(chartProps())
-  const polyline = nodes(byClass(tree, 'mem-kpi-spark')[0]).find(
-    (node) => node?.type === 'polyline',
+  const points = sparkPoints(tree)
+  assert.equal(points.length, 12, 'a 365-day wire still plots at most twelve points')
+  // The default 292px body draws 84 days: twelve whole weeks, so no head folds and
+  // the line closes on the window's own 84 created notes (not the payload's 365).
+  const plotted = points.map(([, y]) => ((16 - y) / 16) * 84)
+  ;[7, 14, 21, 28, 35, 42, 49, 56, 63, 70, 77, 84].forEach((value, index) =>
+    assert.ok(
+      Math.abs(plotted[index] - value) < 0.3,
+      'point ' + index + ' plots the drawn window total ' + value + ', got ' + plotted[index],
+    ),
   )
-  const points = String(polyline.props.points)
-    .trim()
-    .split(/\s+/u)
-    .map((pair) => pair.split(',').map(Number))
-  assert.equal(points.length, 12, 'a year still plots at most twelve points')
-  // 365 days is 53 weekly chunks (the oldest is one day); the oldest 42 fold into the
-  // first point and the last eleven stay whole weeks of seven, so the cumulative line
-  // opens at 365 − 11 × 7 = 288 and closes on the whole window total of 365.
-  const expectedFirstY = 16 - ((365 - 11 * 7) / 365) * 16
-  assert.ok(Math.abs(points[0][1] - expectedFirstY) < 0.06, 'the head folds into point one')
-  assert.ok(Math.abs(points.at(-1)[1]) < 0.001, 'the last point is the whole-window total')
+  assert.ok(Math.abs(points.at(-1)[1]) < 0.001, 'the last point is the drawn window total')
   for (let index = 1; index < points.length; index += 1)
     assert.ok(points[index][1] <= points[index - 1][1] + 0.001, 'the running total never drops')
+  // A wide body draws 182 days; 26 weekly chunks fold the oldest 15 weeks into point one,
+  // and the line still closes on the drawn window (182 created notes over 182 days).
+  const wide = mount(t, 'OverviewView', { sankeyWidth: 631 })
+  wide(chartProps())
+  await setImmediate()
+  const widePoints = sparkPoints(wide(chartProps()))
+  assert.equal(widePoints.length, 12, 'the wide window is still twelve points')
+  const widePlotted = widePoints.map(([, y]) => ((16 - y) / 16) * 182)
+  assert.ok(Math.abs(widePlotted[0] - (182 - 11 * 7)) < 0.5, 'the wide head folds into point one')
+  assert.ok(Math.abs(widePlotted.at(-1) - 182) < 0.5, 'and the tail is the whole 182-day window')
 })
 
 test('an all-zero window renders an empty sentence with its own week count', async (t) => {
@@ -1208,9 +1368,9 @@ test('the treemap stays honest at any payload length', async (t) => {
         Math.abs(tiles[index].area - mapArea * share) < 0.5,
         label + ': area is the count share for ' + item.tag,
       )
-      // The printed count is the reading; the area is the shape. A tile that
-      // only fits the number says so with `is-minor` instead of printing a name
-      // it would clip.
+      // The printed count is the reading; the area is the shape. A tile too small
+      // for a readable label says so with `is-minor`; every other tile prints its
+      // tag leaf and lets the stylesheet ellipsize it.
       assert.equal(tiles[index].value, formatCountForTest(item.n))
       if (tiles[index].minor)
         assert.equal(tiles[index].tag, null, label + ': no name in a minor tile')
@@ -1271,9 +1431,10 @@ test('a tile the width of its own name is never reduced to a bare count', async 
     distinct: 6,
   }
   stubFetch(t, () => ok(overviewValue({ activity: activityFixture(), tags })))
-  // The wide panel is where the defect showed: at the 292px floor the dominant
-  // tile is genuinely too narrow for a 16-character name, and count-only is the
-  // honest answer there. At 590px the same tile has room, so it must be labelled.
+  // The wide panel is where the original defect showed (the tile was judged against
+  // a fixed 292-unit space). This test pins the invariant: a tile with room for its
+  // name prints it. The 292px floor is the truncation case and is pinned separately
+  // below.
   const render = mount(t, 'OverviewView', { sankeyWidth: 590 })
   render(chartProps())
   await setImmediate()
@@ -1297,11 +1458,59 @@ test('a tile the width of its own name is never reduced to a bare count', async 
   )
 })
 
-test('a count-only tile is one that genuinely cannot hold its name', async (t) => {
-  // The complement of the test above, and the invariant that keeps the model honest:
-  // is-minor must be EARNED. A tile may print only its count when it is too short
-  // for two lines or too narrow for ITS OWN name — never for a rank cut, and never
-  // for a name that would have fit.
+test('a name that only fits truncated is printed, not dropped', async (t) => {
+  // The reported user defect: once a long name's predicted width crossed the
+  // threshold the tile printed a bare count, even when the tile was wide enough for
+  // most of the name. The label decision now separates "does not fit" (ellipsize —
+  // the stylesheet already declares `text-overflow:ellipsis`) from "cannot hold a
+  // readable label at all" (count only). The full name stays in the native title and
+  // the `mem-sr` list either way.
+  const tags = {
+    items: [
+      { tag: 'project/dsh-obsidian-mem', n: 8 },
+      { tag: 'dsh-mem/hub', n: 7 },
+      { tag: 'git', n: 3 },
+      { tag: '架构', n: 2 },
+      { tag: 'docs', n: 1 },
+      { tag: 'npm', n: 1 },
+    ],
+    total: 22,
+    distinct: 6,
+  }
+  stubFetch(t, () => ok(overviewValue({ activity: activityFixture(), tags })))
+  // The 292px design floor: the dominant tile is 106px wide. Its 16-character name
+  // needs 150px under the retired per-character model (the real 11px face measures
+  // 101.7px), so the old rule printed a bare "8". A 106px tile can hold most of the
+  // name, so trimming the label is the honest answer — dropping the name is not.
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const dominant = treemapTiles(tree).find((tile) =>
+    String(tile.title).startsWith('project/dsh-obsidian-mem'),
+  )
+  assert.ok(dominant, 'the dominant tag has a tile')
+  assert.equal(
+    dominant.minor,
+    false,
+    'a tile with room for a truncated label is labelled (' + dominant.w + 'x' + dominant.h + ')',
+  )
+  assert.equal(dominant.tag, 'dsh-obsidian-mem', 'the label is the tag leaf')
+  assert.equal(dominant.value, '8', 'the count is still printed beside it')
+  // The remainder of the name is not lost: the title and the accessibility list
+  // both carry the full tag.
+  assert.match(
+    String(dominant.title),
+    /^project\/dsh-obsidian-mem · 8 次$/u,
+    'the native title is the full reading even when the label is clipped',
+  )
+})
+
+test('a count-only tile is one that genuinely cannot hold a readable label', async (t) => {
+  // The complement of the tests above, and the invariant that keeps the label
+  // floor honest: is-minor must be EARNED. A tile may print only its count when it
+  // is too short for two lines (41px) or too narrow for any readable label (44px) —
+  // never for a rank cut, and never merely because the full name needs trimming.
   const tags = {
     items: Array.from({ length: 24 }, (_x, index) => ({
       tag: 'dsh-mem/tag-' + index,
@@ -1320,11 +1529,13 @@ test('a count-only tile is one that genuinely cannot hold its name', async (t) =
   assert.ok(countsOnly.length > 0, 'a 24-tag map at the 292px floor does have tail tiles')
   for (const tile of countsOnly) {
     const tooShort = tile.h < 41
-    // `dsh-mem/tag-NN` is 10-11 glyphs, so at least one of the two bounds must bite.
-    const tooNarrow = tile.w < 10 * 6 // a lower bound no honest model can go under
+    // The label floor: below 44px wide even a truncated single line cannot hold a
+    // useful word, so the tile prints its exact count instead. Both bounds are the
+    // component's own constants; a count-only tile must fail at least one of them.
+    const tooNarrow = tile.w < 44
     assert.ok(
       tooShort || tooNarrow,
-      'a count-only tile is genuinely too small for both lines: ' +
+      'a count-only tile is genuinely too small for a readable label: ' +
         tile.title +
         ' at ' +
         tile.w +
@@ -1332,6 +1543,18 @@ test('a count-only tile is one that genuinely cannot hold its name', async (t) =
         tile.h,
     )
   }
+  // ...and the complement: a tile tall enough and wide enough prints its name even
+  // when the FULL name does not fit — the stylesheet ellipsizes it. In this fixture
+  // `tag-4` is 48.9px wide (its 10-character name needs 52px under the retired
+  // model), so it was the first tail tile the old rule dropped for no good reason.
+  const firstTail = tiles.find((tile) => String(tile.title).startsWith('dsh-mem/tag-4 '))
+  assert.ok(firstTail, 'tag-4 has a tile')
+  assert.equal(
+    firstTail.minor,
+    false,
+    'a 48.9px tile is wide enough for a truncated label (' + firstTail.w + 'x' + firstTail.h + ')',
+  )
+  assert.equal(firstTail.tag, 'tag-4', 'the truncated label still names the tag')
   // Every tile still states its exact count, so nothing is unreadable.
   for (const tile of tiles) assert.ok(String(tile.value).length > 0, 'every tile prints a count')
 })

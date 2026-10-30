@@ -649,6 +649,73 @@ test('overview carries the chart aggregates and asks for the route-driven window
   for (const item of value.tags.items) assert.equal(Number.isInteger(item.n), true)
 })
 
+test('overview reads the activity window the client asks for, inside the route bound', async (t) => {
+  // A wide panel asks for a longer calendar (up to 26 weeks) so its heat map can fill
+  // the body; the route is the bound on that ask, because the 16 KB ceiling and the
+  // index's own 365-day limit are both behind it. Absent, malformed or out-of-range
+  // values fall back to the designed twelve weeks instead of failing the read.
+  const calls = []
+  const base = stubServices()
+  const services = {
+    ...base.services,
+    async indexForBinding() {
+      return {
+        boundProjectId: BOUND.projectId,
+        status: () => ({
+          backend: 'sqlite',
+          ready: true,
+          degraded: false,
+          stale: false,
+          scanning: false,
+          notes: 3,
+          lastScan: null,
+          quarantined: [],
+          skipped: {},
+          fts: true,
+        }),
+        stats: async () => ({
+          notes: 3,
+          links: 0,
+          orphans: 0,
+          byType: [],
+          byStatus: [],
+          updatedAt: null,
+        }),
+        activity: async (args) => {
+          calls.push(args)
+          return activitySeries(args.days, 1)
+        },
+        tagFrequencies: async () => ({ items: [], total: 0 }),
+        recent: async () => [],
+      }
+    },
+  }
+  const h = await harness(t, { services })
+  const read = async (days) =>
+    h.post(
+      days === undefined
+        ? { sessionId: SESSION, action: 'overview' }
+        : { sessionId: SESSION, action: 'overview', days },
+    )
+
+  const wide = await read(182)
+  assert.equal(wide.status, 200)
+  assert.deepEqual(calls.at(-1), { scope: 'project', days: 182 })
+  assert.equal(wide.body.value.activity.days.length, 182, 'the wire carries the whole window')
+  assert.ok(wide.bytes <= 16 * 1024, 'the wide window still fits the ceiling: ' + wide.bytes)
+
+  // Past the bound clamps to 26 weeks (it does not fail, and it does not grow).
+  await read(500)
+  assert.deepEqual(calls.at(-1), { scope: 'project', days: 182 }, 'a request past the bound clamps')
+  // Below the design window falls back to the twelve weeks the charts are designed on.
+  await read(28)
+  assert.deepEqual(calls.at(-1), { scope: 'project', days: 84 }, 'a short request falls back')
+  await read('182')
+  assert.deepEqual(calls.at(-1), { scope: 'project', days: 84 }, 'a non-integer falls back')
+  await read()
+  assert.deepEqual(calls.at(-1), { scope: 'project', days: 84 }, 'absent means the design window')
+})
+
 test('an index build without the joint flow still answers overview', async (t) => {
   // The panel asset and the host plugin upgrade independently. An older index
   // build returns the two margins without the joint counts; the route must pass
@@ -903,6 +970,56 @@ function ladderHarness(t) {
   const post = async () => (await ready).post({ sessionId: SESSION, action: 'overview' })
   return { state, post }
 }
+
+test('a wider activity window is the first thing the ceiling gives back', async (t) => {
+  // The wide-panel window is the newest enhancement to the payload, and the only one
+  // whose loss still leaves both charts drawn at the designed twelve weeks. So it is
+  // the first thing shrunk when the answer crosses 16 KB — before the tag page or any
+  // distribution pays — and the charts keep their design window instead of a 4-week
+  // last resort.
+  const CEILING = 16 * 1024
+  const SLACK = 400
+  const { state, post } = ladderHarness(t)
+  const rows = (count, make) => Array.from({ length: count }, (_x, index) => make(index))
+  const zeros = (days) => ({
+    ...activitySeries(days),
+    created: new Array(days).fill(0),
+    updated: new Array(days).fill(0),
+  })
+  const section = (name = 'done') => ({
+    name,
+    chars: 10,
+    entries: 1,
+    pointers: 0,
+    moveable: 0,
+  })
+  state.activity = zeros(182)
+  state.tagPage = { items: [], total: 0 }
+  state.byType = []
+  state.byStatus = []
+  state.sections = [section()]
+  state.recent = []
+  state.digest = null
+  const before = (await post()).bytes
+  const width = Math.max(8, CEILING + SLACK - before)
+  state.sections = rows(6, (index) => ({
+    ...section('sec-' + index + '-' + 'x'.repeat(Math.ceil(width / 6))),
+  }))
+  const trimmed = await post()
+  assert.equal(trimmed.status, 200)
+  assert.ok(trimmed.bytes <= CEILING, 'the answer is ' + trimmed.bytes + ' bytes')
+  const window = trimmed.body.value.activity
+  assert.equal(
+    window.days.length,
+    84,
+    'the wider window shrinks to the designed twelve weeks first',
+  )
+  assert.equal(window.created.length, 84, 'the series are cut with the calendar')
+  assert.equal(window.updated.length, 84)
+  assert.equal(window.from, zeros(182).days[98], 'from moves to the new first day')
+  assert.equal(window.to, zeros(182).days[181], 'to never moves')
+  assert.equal(trimmed.body.value.hot.sections.length, 6, 'the hot sections are untouched')
+})
 
 test('overview trims the charts before the text lists, in the design §3.6 order', async (t) => {
   const CEILING = 16 * 1024
