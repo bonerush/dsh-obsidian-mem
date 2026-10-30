@@ -1,19 +1,76 @@
 #!/usr/bin/env node
 // Explicit maintenance build. prepack only checks the already shipped asset.
+//
+// Each distribution is resolved the way Node itself would resolve it, starting
+// from the one package that depends on all four (d3-force), instead of assuming a
+// flat `node_modules/<name>` layout. A pnpm tree keeps d3-quadtree, d3-dispatch
+// and d3-timer under `node_modules/.pnpm/d3-force@…/node_modules/`, so the flat
+// assumption made `--check` fail with ENOENT on an otherwise complete install and
+// the rebuild guarantee was skipped. `createRequire(...).resolve` follows the real
+// links, which is what makes the check runnable on both layouts.
+import { readFileSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = new URL('../', import.meta.url)
 const packages = ['d3-quadtree', 'd3-dispatch', 'd3-timer', 'd3-force']
+
+/**
+ * The directory one distribution is installed in.
+ *
+ * Resolution starts at d3-force's own entry file, because that package declares the
+ * other three as its dependencies; resolving from the repository root would only
+ * see what the root happens to hoist.
+ *
+ * @param {string} name - the package name to locate.
+ * @returns {string} the package directory.
+ */
+/**
+ * The directory one distribution is installed in.
+ *
+ * The chain matters: d3-force declares the other three as its dependencies, so the
+ * resolution has to start from d3-force's RESOLVED entry — the real `.pnpm/…` path —
+ * not from `node_modules/d3-force`, which on a pnpm tree is a symlink whose lexical
+ * neighbours are the hoisted packages rather than its own. Asking from the symlink
+ * therefore looks in the wrong `node_modules` and finds nothing.
+ *
+ * `<name>/package.json` is deliberately not requested: d3's packages publish an
+ * `exports` map with no `./package.json` subpath, so that subpath is refused even on
+ * a complete install. Walking up from the resolved entry needs no subpath.
+ *
+ * @param {string} name - the package name to locate.
+ * @param {{resolve: Function}} from - a `require` anchored where the lookup should start.
+ * @returns {string} the package directory.
+ */
+function packageDirectory(name, from) {
+  const entry = from.resolve(name)
+  for (let directory = dirname(entry); ; directory = dirname(directory)) {
+    try {
+      const manifest = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'))
+      if (manifest.name === name) return directory
+    } catch {
+      // No readable manifest at this level yet; keep walking up.
+    }
+    if (dirname(directory) === directory) throw new Error('no installed package named ' + name)
+  }
+}
+
 const scripts = []
 const notices = []
+// Anchored at d3-force: it is the one package that depends on the other three, and
+// its RESOLVED directory is where a package manager put the sibling links this build
+// reads. (`d3-force/package.json` must not be resolved through its `exports` map —
+// the map has no such subpath — so the directory is found the same way as the others.)
+const rootRequire = createRequire(import.meta.url)
+const forceDirectory = packageDirectory('d3-force', rootRequire)
+const anchor = createRequire(join(forceDirectory, 'package.json'))
 for (const name of packages) {
-  const directory = new URL(`node_modules/${name}/`, root)
-  const manifest = JSON.parse(await readFile(new URL('package.json', directory), 'utf8'))
-  scripts.push(await readFile(new URL(`dist/${name}.min.js`, directory), 'utf8'))
-  notices.push(
-    `${name} ${manifest.version}\n${await readFile(new URL('LICENSE', directory), 'utf8')}`,
-  )
+  const directory = name === 'd3-force' ? forceDirectory : packageDirectory(name, anchor)
+  const manifest = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'))
+  scripts.push(await readFile(join(directory, 'dist', name + '.min.js'), 'utf8'))
+  notices.push(`${name} ${manifest.version}\n${await readFile(join(directory, 'LICENSE'), 'utf8')}`)
 }
 scripts.push(await readFile(new URL('client/graph-worker.js', root), 'utf8'))
 const outputs = [

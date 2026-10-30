@@ -931,12 +931,40 @@ test('the empty-flow sentence names the short window’s own week count', async 
   assert.equal(countText(tree, '近 5 周没有新建或更新记录。'), 1, 'five calendar weeks, once')
 })
 
-test('the tag ranking counts tags, not occurrences, in its remainder line', async (t) => {
-  // Ten distinct tags, five occurrences each; only eight fit. The remainder is two
-  // TAGS, not the ten occurrences those two tags account for. Deriving it from
-  // `total` once printed "另有 10 个标签" where two tags existed — the label and the
-  // number were in different units, and it was only right when every unshown tag
-  // happened to have one occurrence.
+// ---------------------------------------------------------------------------
+// 标签频率 as a squarified treemap. The chart's one quantitative channel is AREA,
+// so every expectation below recomputes an area from the tile's own percentages
+// and compares it with the tag's share — the layout is never taken on trust.
+// ---------------------------------------------------------------------------
+
+/** The tiles of the 标签频率 treemap, in reading order, with their geometry. */
+function treemapTiles(tree) {
+  return byClass(tree, 'mem-treemap-tile').map((node) => {
+    const style = node.props.style
+    const pct = (value) => Number.parseFloat(String(value))
+    // The container is the 292 × 148 coordinate space the layout runs in; the
+    // percentages are shares of it, so multiplying them back recovers units.
+    const w = (pct(style.width) / 100) * 292
+    const h = (pct(style.height) / 100) * 148
+    return {
+      node,
+      tag: byClass(node, 'mem-treemap-name').map((name) => name.props.children[0])[0] ?? null,
+      value: byClass(node, 'mem-treemap-value').map((label) => label.props.children[0])[0] ?? null,
+      left: (pct(style.left) / 100) * 292,
+      top: (pct(style.top) / 100) * 148,
+      w,
+      h,
+      area: w * h,
+      minor: (node.props.className ?? '').split(' ').includes('is-minor'),
+      rank: (node.props.className ?? '').split(' ').find((name) => name.startsWith('is-rank')),
+      title: node.props.title,
+    }
+  })
+}
+
+test('the tag frequency chart is a treemap whose areas are the tag counts', async (t) => {
+  // Ten distinct tags, five occurrences each; only the console payload's own
+  // limit decides how many arrive, and the view must draw whatever it is given.
   const items = Array.from({ length: 10 }, (_x, index) => ({
     tag: 'dsh-mem/tag-' + index,
     n: 5,
@@ -953,14 +981,81 @@ test('the tag ranking counts tags, not occurrences, in its remainder line', asyn
   render(chartProps())
   await setImmediate()
   const tree = render(chartProps())
-  assert.equal(byClass(tree, 'mem-freq-row').length, 8, 'eight rows at most')
-  assert.equal(countText(tree, '另有 2 个标签'), 1, 'the remainder counts the two unshown TAGS')
+
+  // One chart, one image role, one label that states both units.
+  assert.equal(byClass(tree, 'mem-freq-row').length, 0, 'the old eight-row list is gone')
+  const treemap = byClass(tree, 'mem-treemap')
+  assert.equal(treemap.length, 1, 'one treemap surface')
+  assert.equal(treemap[0].props.role, 'img', 'the whole map is one image')
+  assert.equal(
+    treemap[0].props['aria-label'],
+    '标签频率：10 个标签，共 50 次',
+    'the image label names the tag count and the occurrence count, in their own units',
+  )
+
+  const tiles = treemapTiles(tree)
+  assert.equal(tiles.length, 10, 'every tag the payload carries gets a tile')
+  // Areas sum to the container and are proportional to the counts. Five
+  // occurrences each means ten equal tiles, so each area is a tenth of 292×148.
+  const mapArea = 292 * 148
+  const totalArea = tiles.reduce((sum, tile) => sum + tile.area, 0)
+  assert.ok(
+    Math.abs(totalArea - mapArea) < 0.5,
+    'the tiles tile the map exactly: ' + totalArea + ' vs ' + mapArea,
+  )
+  for (const tile of tiles)
+    assert.ok(
+      Math.abs(tile.area - mapArea / 10) < 0.5,
+      'a tile is a tenth of the map: ' + tile.area,
+    )
+  // No two tiles overlap: the layout's other promise. A percentage layout that
+  // double-counted a cell would still sum to 100% and look wrong only visually.
+  for (let i = 0; i < tiles.length; i += 1)
+    for (let j = i + 1; j < tiles.length; j += 1) {
+      const a = tiles[i]
+      const b = tiles[j]
+      const overlapX = Math.min(a.left + a.w, b.left + b.w) - Math.max(a.left, b.left)
+      const overlapY = Math.min(a.top + a.h, b.top + b.h) - Math.max(a.top, b.top)
+      assert.ok(overlapX <= 0.01 || overlapY <= 0.01, 'tiles never overlap: ' + i + ' vs ' + j)
+    }
+  // Each tile names its tag and states its count, and the count is the same
+  // number the payload carried — no tile reads an estimate off its area.
+  for (const tile of tiles) {
+    assert.equal(tile.value, '5', 'the tile prints its own count')
+    assert.match(String(tile.title), /^dsh-mem\/tag-\d · 5 次$/u, 'the native title is the reading')
+  }
+  assert.ok(
+    tiles.filter((tile) => tile.tag !== null).length === 10,
+    'ten 100×148-ish tiles all fit a name',
+  )
+  // Rank colour is identity only (0 = biggest) and the palette is six deep: a
+  // seventh tint would be the same colour twice, which reads as a duplicate band,
+  // so every tile past the fifth shares the last rank. Equal counts keep the
+  // payload's own order — the sort belongs to the index, not to this view.
+  assert.deepEqual(
+    tiles.map((tile) => tile.rank),
+    Array.from({ length: 10 }, (_x, index) => 'is-rank' + Math.min(index, 5)),
+    'ranks follow the payload order and stop at the palette depth',
+  )
+  // The full list is in the accessibility tree, not only in a tooltip. It is the
+  // 标签频率 section's own list — the heat map also owns a `mem-sr` span per cell —
+  // so the lookup starts at that section rather than at the view root.
+  const frequency = nodes(tree).find(
+    (node) => node?.type === 'section' && node.props['aria-label'] === '标签频率',
+  )
+  assert.ok(frequency, 'the 标签频率 section exists')
+  const spoken = byClass(frequency, 'mem-sr').map((node) => String(node.props.children[0]))
+  assert.equal(spoken.length, 1, 'one screen-reader list')
+  for (let index = 0; index < 10; index += 1)
+    assert.ok(spoken[0].includes('dsh-mem/tag-' + index + ' 5'), 'the list names tag ' + index)
+
+  // The two printed numbers are each in their own unit. The occurrence count is
+  // the section meta's readable text; the tag count is the image label's, because
+  // a shape cannot be counted by eye and the `role="img"` label is what states it.
+  assert.equal(countText(tree, '50 次'), 1, 'occurrences are labelled 次 and printed once')
+  assert.equal(countText(tree, '10 个标签'), 0, 'the tag count is not scattered through the body')
+  assert.equal(countText(tree, '另有'), 0, 'every tag is drawn, so no remainder is claimed')
   assert.equal(countText(tree, '另有 10 个标签'), 0, 'never the occurrences they hold')
-  // The head count is occurrences, and it says so with its own unit.
-  assert.equal(countText(tree, '50 次'), 1, 'occurrences are labelled 次')
-  // The bars are proportional to the ranking's own maximum.
-  const fills = byClass(tree, 'mem-freq-fill').map((node) => node.props.style.width)
-  assert.equal(fills[0], '100%', 'the biggest tag fills the track')
 })
 
 test('without a flow, the composition falls back to the capped bar and legend', async (t) => {
@@ -1028,6 +1123,111 @@ test('without a flow, the composition falls back to the capped bar and legend', 
   assert.equal(byClass(tree, 'mem-comp-status').length, 1, 'status is one line, not a chip row')
   void byType
 })
+
+test('the treemap stays honest at any payload length', async (t) => {
+  // The route asks for TAG_LIMIT = 24 today, but the view must not depend on it:
+  // an older host sends fewer, the trimmer may halve the list mid-flight, and a
+  // vault may have one tag. Each case is checked for the same two invariants —
+  // areas sum to the map, no two tiles overlap — plus the unit-correct printing.
+  const cases = [
+    {
+      label: '24 tags, a Zipf tail',
+      tags: {
+        items: Array.from({ length: 24 }, (_x, index) => ({
+          tag: 'dsh-mem/tag-' + index,
+          n: Math.max(1, Math.round(200 / (index + 1))),
+        })),
+        total: 500,
+        distinct: 24,
+      },
+    },
+    { label: 'one tag', tags: { items: [{ tag: 'only', n: 9 }], total: 9, distinct: 1 } },
+    {
+      label: 'two tags, one dominant',
+      tags: {
+        items: [
+          { tag: 'big', n: 3 },
+          { tag: 'small', n: 1 },
+        ],
+        total: 4,
+        distinct: 2,
+      },
+    },
+    {
+      label: 'a zero-count row that carries no area',
+      tags: {
+        items: [
+          { tag: 'a', n: 5 },
+          { tag: 'empty', n: 0 },
+        ],
+        total: 5,
+        distinct: 2,
+      },
+    },
+  ]
+  for (const { label, tags } of cases) {
+    stubFetch(t, () => ok(overviewValue({ activity: activityFixture(), tags })))
+    const render = mount(t, 'OverviewView')
+    render(chartProps())
+    await setImmediate()
+    const tree = render(chartProps())
+    const tiles = treemapTiles(tree)
+    const drawn = tags.items.filter((item) => item.n > 0)
+    assert.equal(tiles.length, drawn.length, label + ': one tile per positive count')
+    const mapArea = 292 * 148
+    const totalArea = tiles.reduce((sum, tile) => sum + tile.area, 0)
+    assert.ok(
+      Math.abs(totalArea - mapArea) < 0.5,
+      label + ': the tiles tile the map (' + totalArea + ' vs ' + mapArea + ')',
+    )
+    const total = drawn.reduce((sum, item) => sum + item.n, 0)
+    drawn.forEach((item, index) => {
+      const share = item.n / total
+      assert.ok(
+        Math.abs(tiles[index].area - mapArea * share) < 0.5,
+        label + ': area is the count share for ' + item.tag,
+      )
+      // The printed count is the reading; the area is the shape. A tile that
+      // only fits the number says so with `is-minor` instead of printing a name
+      // it would clip.
+      assert.equal(tiles[index].value, formatCountForTest(item.n))
+      if (tiles[index].minor)
+        assert.equal(tiles[index].tag, null, label + ': no name in a minor tile')
+      else
+        // A roomy tile prints the tag's LEAF, not the namespace it repeats with every
+        // other tile: `dsh-mem/convention` needs about 120px at 11px bold, which no
+        // tile in a 24-tag map has. The full tag is still the tile's native title and
+        // its `mem-sr` line, which the assertions below check.
+        assert.equal(
+          tiles[index].tag,
+          item.tag.slice(item.tag.lastIndexOf('/') + 1),
+          label + ': a roomy tile prints its tag leaf',
+        )
+    })
+    // The full list survives for assistive technology even when names are hidden.
+    const frequency = nodes(tree).find(
+      (node) => node?.type === 'section' && node.props['aria-label'] === '标签频率',
+    )
+    const spoken = byClass(frequency, 'mem-sr').map((node) => String(node.props.children[0]))
+    for (const item of drawn)
+      assert.ok(
+        spoken[0].includes(item.tag + ' ' + formatCountForTest(item.n)),
+        label + ': ' + item.tag,
+      )
+    // The remainder still counts TAGS, in its own unit.
+    const remaining = tags.distinct - drawn.length
+    assert.equal(
+      countText(tree, '另有 ' + remaining + ' 个标签'),
+      remaining > 0 ? 1 : 0,
+      label + ': the remainder is ' + remaining + ' tags',
+    )
+  }
+})
+
+/** The panel's own thousands separator, so the test does not re-implement it twice. */
+function formatCountForTest(value) {
+  return String(Math.trunc(Number(value))).replace(/\B(?=(\d{3})+(?!\d))/gu, ',')
+}
 
 // ---------------------------------------------------------------------------
 // The 构成 Sankey (joint type×status flow). The fixture's two margins add up on
@@ -1752,39 +1952,197 @@ test('search marks only terms of two or more characters, case-insensitively and 
   )
 })
 
-test('health bands its summary, meter, digest and 诊断记录 timeline', async (t) => {
-  stubFetch(t, () => ok(healthValue()))
+test('the health page leads with gauges and keeps every reading a number', async (t) => {
+  // The appraisal carries real findings so the 今日摘要 section draws its severity
+  // bar chart; the empty-appraisal branch is asserted separately below.
+  stubFetch(t, () =>
+    ok(
+      healthValue({
+        digest: {
+          ...healthValue().digest,
+          appraisal: {
+            findings: [
+              { code: 'dead-link', severity: 'error', path: 'a.md', title: '死链' },
+              { code: 'orphan', severity: 'warn', path: 'b.md', title: '孤立' },
+              { code: 'stale', severity: 'info', path: 'c.md', title: '过期' },
+              { code: 'dup', severity: 'error', path: 'd.md', title: '重名' },
+            ],
+            total: 4,
+            truncated: false,
+          },
+        },
+      }),
+    ),
+  )
   const render = mount(t, 'HealthView')
   render({ sessionId: 'session-a', visible: true })
   await setImmediate()
-  const next = render({ sessionId: 'session-a', visible: true })
-  const summary = find(next, (node) => node?.props?.['aria-label'] === '健康摘要')
-  assert.ok(summary, 'the summary band comes first')
-  assert.equal(byClass(next, 'mem-summary-item').length, 4, 'a 2x2 band of 索引/队列/热层/摘要')
+  const tree = render({ sessionId: 'session-a', visible: true })
+
+  // The summary band is four gauges: a label, a printed reading and a small
+  // track whose fill repeats the same ratio as a shape. It is a passive group,
+  // not a button, and its cells never become a click target.
+  const band = find(tree, (node) => node?.props?.['aria-label'] === '健康摘要')
+  assert.ok(band, 'the summary band comes first')
+  assert.equal(band.type, 'div')
+  const gauges = byClass(band, 'mem-gauge')
+  assert.equal(gauges.length, 4, 'four gauges: 索引/队列/热层/摘要')
   assert.deepEqual(
-    byClass(next, 'mem-label')
-      .map((node) => node.props.children[0])
-      .slice(0, 4),
+    byClass(band, 'mem-gauge-label').map((node) => node.props.children[0]),
     ['索引', '队列', '热层', '摘要'],
   )
-  assert.ok(byClass(next, 'mem-stamp').some((node) => node.props.children[0] === '就绪'))
-  assert.ok(byClass(next, 'mem-meter-track').length === 1)
-  assert.ok(byClass(next, 'mem-digest').length === 1)
-  assert.ok(texts(next).some((text) => String(text).includes('今日摘要')))
-  assert.ok(byClass(next, 'mem-row-title').some((node) => node.props.children[0] === '已完成'))
+  assert.deepEqual(
+    byClass(band, 'mem-gauge-value').map((node) => node.props.children[0]),
+    ['就绪', '2 个', '80%', '最近 1 天'],
+    'each gauge states its own reading in digits or a one-word state',
+  )
+  // The fills are the same ratios as the readings: 索引 ready is full, the queue
+  // is 1 failed of 2 pending, the hot zone is 7200/9000 and the digest exists.
+  const fills = byClass(band, 'mem-gauge-fill')
+  assert.deepEqual(
+    fills.map((node) => node.props.style.width),
+    ['100%', '50%', '80%', '100%'],
+    'the fill is the reading, not a decoration',
+  )
+  assert.deepEqual(
+    fills.map(
+      (node) => (node.props.className ?? '').split(' ').filter((c) => c.startsWith('is-'))[0],
+    ),
+    ['is-ok', 'is-err', 'is-ok', 'is-ok'],
+    'state colour rides the fill, and only alongside the printed reading',
+  )
+  for (const gauge of gauges) {
+    const track = byClass(gauge, 'mem-gauge-track')
+    assert.equal(track.length, 1, 'each gauge carries one track')
+    assert.equal(track[0].props['aria-hidden'], true, 'the track is the reading’s echo')
+  }
+
+  // 索引: the six-row <dl> is now one figure grid plus the state stamp.
+  assert.equal(byClass(tree, 'mem-facts').length, 0, 'the ledger rows are retired')
+  const figures = byClass(tree, 'mem-figure')
+  assert.ok(figures.length >= 6, 'every index fact keeps a cell: ' + figures.length)
+  assert.deepEqual(
+    byClass(tree, 'mem-figure-key')
+      .map((node) => node.props.children[0])
+      .slice(0, 6),
+    ['笔记', '隔离', '全文检索', '扫描', '上次扫描', '后端'],
+  )
+  assert.ok(byClass(tree, 'mem-stamp').some((node) => node.props.children[0] === '就绪'))
+  assert.equal(byClass(tree, 'mem-meter-track').length, 1, 'the hot meter is kept')
+
+  // 待处理作业 is one stacked bar over 排队/失败/延迟, and its legend prints each
+  // count: a segment width alone would be unreadable at 320px.
+  const queueSection = find(
+    tree,
+    (node) => node?.type === 'section' && node.props['aria-label'] === '待处理作业',
+  )
+  const queueTrack = byClass(queueSection, 'mem-stackbar-track')[0]
+  assert.ok(queueTrack, 'the queue section draws a stack bar')
+  assert.equal(queueTrack.props.role, 'img', 'the stacked bar is one image')
+  assert.equal(
+    queueTrack.props['aria-label'],
+    '待处理作业：排队 1 · 失败 1 · 延迟 0',
+    'the label states every part with its count',
+  )
+  assert.deepEqual(
+    byClass(queueSection, 'mem-stackbar-seg').map((node) => node.props.style.width),
+    ['50%', '50%'],
+    'a zero part draws no zero-width band',
+  )
+  assert.deepEqual(
+    byClass(queueSection, 'mem-bar-name').map((node) => node.props.children[0]),
+    ['排队', '失败', '延迟'],
+  )
+  assert.deepEqual(
+    byClass(queueSection, 'mem-bar-value').map((node) => node.props.children[0]),
+    ['1', '1', '0'],
+    'the legend prints the counts the bar cannot',
+  )
+
+  // 热层: the meter, two figures and one zone stacked bar with its per-zone line.
+  const hotSection = find(
+    tree,
+    (node) => node?.type === 'section' && node.props['aria-label'] === '热层',
+  )
+  assert.deepEqual(
+    byClass(hotSection, 'mem-figure-key').map((node) => node.props.children[0]),
+    ['可归档', '可压缩'],
+  )
+  const hotRows = byClass(hotSection, 'mem-stackbar-row')
+  assert.equal(hotRows.length, 2, 'one legend row per hot zone')
+  assert.deepEqual(
+    byClass(hotSection, 'mem-bar-name').map((node) => node.props.children[0]),
+    ['已完成', '进行中'],
+  )
+  assert.deepEqual(
+    byClass(hotSection, 'mem-bar-value').map((node) => node.props.children[0]),
+    ['1,200', '5,400'],
+    'the segment length is the zone’s character count',
+  )
+
+  // 今日摘要: figures, a severity bar chart, and at most three named findings.
+  assert.equal(byClass(tree, 'mem-digest').length, 1)
+  assert.ok(texts(tree).some((text) => String(text).includes('今日摘要')))
+  const digestSection = find(
+    tree,
+    (node) => node?.type === 'section' && node.props['aria-label'] === '今日摘要',
+  )
+  assert.deepEqual(
+    byClass(digestSection, 'mem-figure-key').map((node) => node.props.children[0]),
+    ['新建', '更新', '取代', '待复核'],
+  )
+  const severity = byClass(digestSection, 'mem-bar-row')
+  assert.equal(severity.length, 3, 'one bar per severity, always all three')
+  assert.deepEqual(
+    byClass(digestSection, 'mem-bar-name').map((node) => node.props.children[0]),
+    ['错误', '注意', '提示'],
+    'the severity distribution is one bar chart, worst first',
+  )
+  assert.deepEqual(
+    byClass(digestSection, 'mem-bar-value').map((node) => node.props.children[0]),
+    ['2', '1', '1'],
+    'each bar prints the count it encodes: two errors, one warn, one info',
+  )
+  // The bar lengths are proportional to the largest row, not to the total: the
+  // question is "which severity dominates", so a shared max is the right scale.
+  assert.deepEqual(
+    byClass(digestSection, 'mem-bar-fill').map((node) => node.props.style.width),
+    ['100%', '50%', '50%'],
+    'bar length is count / max',
+  )
+  // At most three findings are named; the rest are counted, not listed.
+  assert.equal(byClass(digestSection, 'mem-row-title').length, 3, 'three finding rows at most')
+  assert.ok(countText(tree, '另有 1 条待复核') === 1, 'the unnamed remainder is counted once')
+
+  // 诊断记录: an event-mix bar chart plus the three most recent rows.
   assert.ok(
-    texts(next).some((text) => String(text).includes('诊断记录')),
+    texts(tree).some((text) => String(text).includes('诊断记录')),
     'the section is retitled',
   )
   assert.equal(
-    texts(next).some((text) => String(text).includes('最近的决策')),
+    texts(tree).some((text) => String(text).includes('最近的决策')),
     false,
     'the old mislabel is gone',
   )
-  assert.equal(byClass(next, 'mem-event').length, 2)
-  assert.equal(byClass(next, 'mem-event-dot').length, 2, 'each event is a timeline dot')
+  const diagnostics = find(
+    tree,
+    (node) => node?.type === 'section' && node.props['aria-label'] === '诊断记录',
+  )
+  assert.deepEqual(
+    byClass(diagnostics, 'mem-bar-name').map((node) => node.props.children[0]),
+    ['brief', 'search'],
+    'one bar per event kind, no repeated text row per event',
+  )
+  assert.deepEqual(
+    byClass(diagnostics, 'mem-bar-value').map((node) => node.props.children[0]),
+    ['1', '1'],
+  )
+  assert.equal(byClass(diagnostics, 'mem-event').length, 2, 'three recent rows at most')
+  assert.equal(byClass(diagnostics, 'mem-event-dot').length, 2)
   assert.ok(
-    byClass(next, 'mem-event').every((event) => byClass(event, 'mem-event-dot').length === 1),
+    byClass(diagnostics, 'mem-event').every(
+      (event) => byClass(event, 'mem-event-dot').length === 1,
+    ),
   )
 })
 

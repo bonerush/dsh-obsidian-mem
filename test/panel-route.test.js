@@ -627,7 +627,10 @@ test('overview carries the chart aggregates and asks for the route-driven window
   assert.equal(result.status, 200)
   const value = result.body.value
   assert.deepEqual(calls.activity, { scope: 'project', days: 84 })
-  assert.deepEqual(calls.tags, { scope: 'project', limit: 12 })
+  // 24 is the treemap's page: it draws area-proportional tiles plus a tail row, so
+  // the old twelve rows would have shown the same short head twice. `distinct` (not
+  // this page size) is what still carries the real remainder.
+  assert.deepEqual(calls.tags, { scope: 'project', limit: 24 })
   assert.equal(value.activity.days.length, 84, 'a twelve-week calendar, per design §3.3')
   assert.equal(value.activity.from, value.activity.days[0])
   assert.equal(value.activity.to, value.activity.days[83])

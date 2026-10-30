@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
 import { spawnSync } from 'node:child_process'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /**
@@ -19,21 +19,36 @@ const UPSTREAM_PACKAGES = ['d3-quadtree', 'd3-dispatch', 'd3-timer', 'd3-force']
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 /**
- * The packages `scripts/build-graph-worker.mjs` reads from the package-root
- * `node_modules/`, or the ones this checkout does not have there.
+ * The packages `scripts/build-graph-worker.mjs` cannot resolve in this checkout.
  *
- * The script resolves every distribution from the *package root*, which is how a
- * flat `npm ci` tree looks. A partial or strictly-nested install (pnpm keeps
- * transitive dependencies under `node_modules/d3-force/node_modules/`) leaves the
- * script unable to rebuild, and that is a property of the checkout, not of the
- * shipped asset. Naming the missing packages is what keeps the skip honest: an
- * absolute skip would also hide a stale asset on a machine that can rebuild.
+ * The build resolves each distribution the way Node does, anchored at d3-force's
+ * own resolved directory, so a pnpm tree (which keeps the other three under
+ * `node_modules/.pnpm/d3-force@…/node_modules/`) is a supported layout rather than a
+ * permanent skip. This probe mirrors that resolution instead of testing for a flat
+ * `node_modules/<name>`: the old flat test reported a complete install as missing
+ * and cost the rebuild guarantee on every pnpm checkout.
  *
  * @returns {string[]} the missing package names; empty when the build can run.
  */
 function missingUpstreamPackages() {
+  const rootRequire = createRequire(join(REPO_ROOT, 'package.json'))
+  let anchor
+  try {
+    // The anchor is d3-force's RESOLVED directory: on a pnpm tree the hoisted
+    // `node_modules/d3-force` is a symlink whose lexical neighbours are not the
+    // package's own dependencies, so a lookup anchored there finds nothing.
+    anchor = createRequire(join(dirname(dirname(rootRequire.resolve('d3-force'))), 'package.json'))
+  } catch {
+    return [...UPSTREAM_PACKAGES]
+  }
   return UPSTREAM_PACKAGES.filter((name) => {
-    return !existsSync(join(REPO_ROOT, 'node_modules', name, 'package.json'))
+    try {
+      if (name === 'd3-force') rootRequire.resolve(name)
+      else anchor.resolve(name)
+      return false
+    } catch {
+      return true
+    }
   })
 }
 
@@ -148,6 +163,45 @@ test('graph worker preserves existing positions, pins a dragged node and removes
   assert.deepEqual(filtered.get('a'), [155, -90])
   sim.send({ forceNode: { id: 'a', x: null, y: null }, alpha: 0.3, run: true })
   assert.ok(Math.hypot(...sim.tick(100).get('a')) < Math.hypot(155, 90))
+})
+
+test('a large graph drops collision and cools at a coarser step, a small one keeps both', async () => {
+  // The measured policy (scratch/qa/graph-bench.mjs): collision is the only force
+  // that grows super-linearly, so above COLLISION_LIMIT nodes the panel trades
+  // overlap for interactivity. A test that only asserted 'it still lays out' would
+  // pass with the forces unchanged, so the geometry is pinned in both directions.
+  const pair = async (count) => {
+    const sim = await worker()
+    const nodes = { a: [-80, 0], b: [80, 0] }
+    const links = [['a', 'b']]
+    for (let i = 0; i < count - 2; i += 1) nodes['filler' + i] = [1e6 + i, 1e6]
+    sim.send({ nodes, links, run: true })
+    const points = sim.tick(320)
+    return Math.abs(points.get('a')[0] - points.get('b')[0])
+  }
+  // Two nodes plus far-away fillers is still a small graph, so collision is on:
+  // the control that proves the policy did not simply disable the force.
+  assert.ok((await pair(2)).toFixed(1) && (await pair(2)) > 60, 'a small graph keeps collision')
+  const huge = await worker()
+  const nodes = { a: [-80, 0], b: [80, 0] }
+  const links = [['a', 'b']]
+  for (let i = 0; i < 900; i += 1) {
+    nodes['filler' + i] = [Math.cos(i) * 1600, Math.sin(i) * 1600]
+    links.push(['a', 'filler' + i])
+  }
+  huge.send({ nodes, links, run: true })
+  const points = huge.tick(320)
+  assert.equal(points.size, 902)
+  for (const point of points.values()) assert.ok(point.every(Number.isFinite))
+  // Every filler is linked to a, so the force adds a ring rather than one pair:
+  // the assertion is that a 902-node graph still spreads and still converges.
+  const a = points.get('a')
+  const fillers = [...points].filter(([id]) => id.startsWith('filler'))
+  assert.equal(fillers.length, 900)
+  assert.ok(
+    fillers.some(([, point]) => Math.hypot(point[0] - a[0], point[1] - a[1]) > 60),
+    'a 902-node graph still spreads its branches',
+  )
 })
 
 test('repulsion and link distance controls change the actual worker geometry', async () => {

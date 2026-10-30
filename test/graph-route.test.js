@@ -81,6 +81,8 @@ test('graph route serves only same-origin requests for a live session', async (t
     },
   }
   const calls = []
+  /** What the route asked the index for, which is the uncapped claim under test. */
+  const asked = []
   const dispose = registerGraphRoute(ctx, {
     activity,
     resolveBinding: async (cwd) => ({ kind: 'bound', projectId: 'project-one', cwd }),
@@ -88,12 +90,15 @@ test('graph route serves only same-origin requests for a live session', async (t
       indexForBinding: async (binding) => {
         calls.push(binding)
         return {
-          graph: async ({ scope }) => ({
-            nodes: [{ id: scope, path: 'note.md', title: 'Note', type: 'decision' }],
-            edges: [],
-            truncated: false,
-            total: 1,
-          }),
+          graph: async (options) => {
+            asked.push(options)
+            return {
+              nodes: [{ id: options.scope, path: 'note.md', title: 'Note', type: 'decision' }],
+              edges: [],
+              truncated: false,
+              total: 1,
+            }
+          },
         }
       },
     },
@@ -122,6 +127,12 @@ test('graph route serves only same-origin requests for a live session', async (t
   assert.equal(graph.body.value.nodes[0].id, 'project')
   assert.equal(calls[0].projectId, 'project-one')
   assert.equal(calls[0].cwd, '/work/demo')
+  // 图谱 draws every node in scope, so the route may not pass a cap. Asserted on the
+  // options the index actually received, not on the source text: a limit added here
+  // would silently hide nodes again and the reply would still be a valid one.
+  assert.deepEqual(asked, [{ scope: 'project' }], 'the route asks for the whole graph')
+  await post({ sessionId: SESSION, scope: 'all' })
+  assert.deepEqual(asked.at(-1), { scope: 'all' }, 'and for the all-scope graph too')
 
   activity.record(SESSION, ['note.md'], 'read')
   const events = await post({ sessionId: SESSION, action: 'activity', cursor: 0 })

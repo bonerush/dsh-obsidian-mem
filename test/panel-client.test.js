@@ -408,16 +408,25 @@ test('the injected panel CSS is token-only, injected once and motion-gated', asy
   )
 })
 
-test('the graph keeps its canvas and gains the truncation notice', async () => {
+test('the graph keeps its canvas and counts what it drew instead of truncating', async () => {
   const { script } = await bundle()
   assert.ok(script.includes("role: 'img', tabIndex: 0"), 'the canvas is still the graph')
   assert.ok(
     script.includes("import('/obsidian-mem/graph-renderer.js')"),
     'the renderer is unchanged',
   )
-  assert.ok(script.includes('graph.truncated === true'), 'the snapshot truncation is rendered')
-  assert.ok(script.includes('仅显示前 '), 'the notice names the shown count')
-  assert.ok(script.includes("' 个节点；共有 '"), 'the notice names the total')
+  // 图谱 draws every node in scope: a "first N nodes" notice is the defect the
+  // change removed, so the panel must not carry the vocabulary for it either.
+  assert.equal(script.includes('graph.truncated'), false, 'no truncation state is rendered')
+  assert.equal(script.includes('仅显示前 '), false, 'the old partial-projection sentence is gone')
+  assert.ok(script.includes('graph-count'), 'the drawn count is stated instead')
+  assert.ok(script.includes("' 个节点 · '"), 'the count names the node total')
+  assert.ok(script.includes("' 条连接'"), 'and the edge total beside it')
+  // The route, not the client, is where a cap used to live: pin that it asks for the
+  // unscoped projection, because a reintroduced limit would silently hide nodes.
+  const route = await readFile(new URL('../lib/graph-route.js', import.meta.url), 'utf8')
+  assert.ok(route.includes('index.graph({ scope })'), 'the route requests the whole graph')
+  assert.equal(/index\.graph\(\{\s*scope,\s*limit/.test(route), false, 'no cap is passed')
 })
 
 test('the top bar is the tab strip itself, with the freshness line and refresh at its tail', async () => {
@@ -674,8 +683,22 @@ test('the tab strip is a Chrome-like row: separate roomy leaves, the active page
     css.indexOf('}', css.indexOf('.mem-tab-icon{')) + 1,
   )
   assert.ok(icon.includes('width:16px') && icon.includes('height:16px'), 'the glyph is 16px')
-  for (const marker of ['@container (max-width:359px)', '.mem-tab-icon{display:none}'])
-    assert.ok(css.includes(marker), 'the 320px fallback contains ' + marker)
+  // The narrow-panel step is 374px, not 359: measured, the 359 breakpoint made 360px
+  // WORSE than 359px, because the icon came back and ate 22px of a strip that gained
+  // only 6 (label widths 19/24 at 360 against 24/24 at 359). The step also tightens
+  // the leaves' padding and the row's gap, which is what clears truncation across
+  // the whole 280-374 band instead of only below it.
+  for (const marker of [
+    '@container (max-width:374px)',
+    '.mem-tab-icon{display:none}',
+    '.mem-tab{padding:0 8px;gap:4px}',
+  ])
+    assert.ok(css.includes(marker), 'the narrow-panel step contains ' + marker)
+  assert.equal(
+    css.includes('@container (max-width:359px)'),
+    false,
+    'the 359 step is gone: it was the defect, not the fallback',
+  )
 })
 
 test('the shell keeps one persistent search box between the tab strip and the view body', async () => {
@@ -923,12 +946,33 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     'mem-flow-legend',
     'mem-flow-swatch',
     'mem-flow-legend-label',
-    'mem-freq',
-    'mem-freq-row',
-    'mem-freq-name',
-    'mem-freq-track',
-    'mem-freq-fill',
-    'mem-freq-value',
+    // 标签频率 is a squarified treemap now: area is the count, and each tile prints
+    // its own digits. The five `mem-freq*` bar classes are retired with their
+    // producer (the ranked list they styled is gone, not merely unused).
+    'mem-treemap',
+    'mem-treemap-tile',
+    'mem-treemap-name',
+    'mem-treemap-value',
+    // 健康's charts: the gauge band, the figure grid, and the two bar shapes.
+    'mem-gauges',
+    'mem-gauge',
+    'mem-gauge-label',
+    'mem-gauge-value',
+    'mem-gauge-track',
+    'mem-gauge-fill',
+    'mem-figures',
+    'mem-figure',
+    'mem-figure-value',
+    'mem-figure-key',
+    'mem-stackbar',
+    'mem-stackbar-track',
+    'mem-stackbar-seg',
+    'mem-stackbar-legend',
+    'mem-stackbar-row',
+    'mem-bars',
+    'mem-bar-row',
+    'mem-bar-name',
+    'mem-bar-value',
     'mem-chart-empty',
     'mem-block',
     'mem-section',
@@ -1036,9 +1080,13 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     [],
     'classes the views emit but the list does not guard: ' + unguarded.join(', '),
   )
+  // Re-derived for the 图表 round: 115 before it, minus the six retired `mem-freq*`
+  // bar classes, plus the 23 the treemap and 健康's charts emit. The count is what
+  // makes a deleted producer fail even when the list happens to still cover the
+  // rest — the subset check alone would pass on a shrunken view.
   assert.equal(
     emitted.length,
-    115,
+    132,
     'the views scan still sees every emitted class (re-derive the count with the list)',
   )
   for (const hook of hooks)

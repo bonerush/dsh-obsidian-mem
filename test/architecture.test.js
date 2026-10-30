@@ -714,7 +714,25 @@ const BUDGETS = {
   // renderer so a wide panel draws a wider chart whose 11px type still renders
   // 1:1. Measured 2475 formatted lines; measured-plus-30 is 2505, rounded up to
   // 2550.
-  'lib/memory-panel.js': 2550,
+  // Raised from 2550 by the 图表 round (2836 formatted lines measured;
+  // measured-plus-30 is 2866, rounded up to 2900). What the 286 lines buy, and why
+  // they are not spread across files:
+  //
+  // * 标签频率 became a squarified treemap: the layout heuristic, the tile geometry
+  //   and the minor-tile rule replaced an eight-row bar list that cost 35 lines and
+  //   showed the same eight tags forever. A treemap needs real layout code, and the
+  //   only place it can live is the one served asset — a charting dependency would
+  //   have to be shipped beside it, which this panel deliberately does not have.
+  // * 健康 turned from a ledger into a dashboard: the gauge band, the figure grid,
+  //   the stack bar and the named-count bars, plus the sections that now ask for
+  //   those shapes instead of printing `<dl>` rows. The page's text lines went from
+  //   roughly thirty to under ten; the lines moved from prose to shared chart
+  //   helpers, which is the trade this round is.
+  //
+  // The raise is inside the measured-plus-30 rule rather than above it, and it was
+  // argued for rather than inherited: every one of the four new shapes is one shared
+  // helper reused by two or more sections, so a fifth page section costs a call.
+  'lib/memory-panel.js': 2900,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})
@@ -803,8 +821,23 @@ const BUDGETS = {
   // ceiling — no raise; it was set by the chart round and this round added 47 lines
   // to the stylesheet, so the headroom is 11 lines rather than the 88 the previous
   // figure suggested.
-  'lib/client.js': 1350,
-  'lib/graph-renderer.js': 700,
+  // Raised from 1350 by the 图表 round (1374 formatted lines measured;
+  // measured-plus-30 is 1404, rounded up to 1450). What the 24 lines over the old
+  // ceiling buy: the 标签频率 treemap's six rank tints and its tile/name/value
+  // rules, the 健康 gauge band, the figure grid, the stack bar and the named-count
+  // bars. The previous eight-row ranking stylesheet is deleted rather than left
+  // behind, so most of the chart CSS is a trade, not an addition: the frequency
+  // block went from five rules to twelve and 健康 gained four shapes, which is
+  // what makes the page read as charts instead of text.
+  'lib/client.js': 1450,
+  // Raised from 700 by the whole-graph round (716 formatted lines measured;
+  // measured-plus-30 is 746, rounded up to 750). What the 16 lines buy: the
+  // `spiralSeed` helper and the cold-frame branch that uses it, plus the comment
+  // recording why the neighbour-mean rule is right for an increment and wrong for
+  // the frame that carries the whole projection at once. The raise buys a first
+  // frame that is already a graph instead of a random cloud, not new surface — the
+  // culling that keeps a large graph cheap was already in the renderer.
+  'lib/graph-renderer.js': 750,
   // The eleven-slot table, its two CSS forms and the probe read, split out of the
   // renderer when the label-size work pushed that file past its budget.
   'lib/graph-palette.js': 160,

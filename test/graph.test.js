@@ -85,6 +85,47 @@ for (const backend of ['scan', 'sqlite']) {
       true,
     )
   })
+
+  test(`${backend} graph projects every node and edge when no limit is given`, async (t) => {
+    // The panel asks without a limit, because a capped projection is the reported
+    // defect ("节点一多就开始选择性展示"): a hidden node hides the edges that reach it
+    // and makes the picture disagree with the vault. The fixture holds 25 isolated
+    // notes plus the hub and the three linked ones, so this also pins that the
+    // unconnected tail is projected rather than sorted away.
+    const { index } = await fixture(t, backend, 25)
+    const graph = await index.graph({ scope: 'project' })
+    assert.equal(graph.truncated, false)
+    assert.equal(graph.nodes.length, graph.total)
+    const ids = new Set(graph.nodes.map((node) => node.id))
+    for (let i = 0; i < 25; i += 1) assert.ok(ids.has('extra-' + i), 'isolated node ' + i)
+    assert.ok(ids.has('hub-one') && ids.has('decision-one') && ids.has('convention-one'))
+    assert.equal(
+      graph.edges.some((edge) => edge.source === 'hub-one' && edge.target === 'extra-0'),
+      true,
+    )
+    // The order is still by degree first, then by path: a refresh must not
+    // re-arrange the picture, because the force worker seeds unplaced points in the
+    // projection's own order. Asserted as the shape of the sort rather than as one
+    // node's id — several fixture notes have degree 1, and the tie breaks by path.
+    const degree = new Map()
+    for (const edge of graph.edges) {
+      degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1)
+      degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1)
+    }
+    const degrees = graph.nodes.map((node) => degree.get(node.id) ?? 0)
+    assert.deepEqual(
+      degrees,
+      [...degrees].sort((left, right) => right - left),
+      'the projection is ordered by descending degree',
+    )
+    assert.equal(degrees[0], 1)
+    // The whole projection is also what the route now requests, and the shipped
+    // renderer culls off-screen work per frame instead of the data plane dropping
+    // facts — so "all" has to mean all on both backends.
+    const project = await index.graph({ scope: 'project', limit: 2 })
+    assert.equal(project.truncated, true)
+    assert.equal(project.nodes.length, 2)
+  })
 }
 
 for (const backend of ['scan', 'sqlite']) {
