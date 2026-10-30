@@ -68,6 +68,18 @@ release artifact. The versioning policy is in the README, under Development.
   环上的随机构点。现在冷启动用黄金角螺旋播种（与力模拟自己给未定位节点用的同一
   打包），第一帧就已经是一张图。
 
+- **概览图表的纯投影从 `index-db.js` 抽成 `lib/index-stats.js`。** 索引模块是仓库最大的
+  一个文件（2879 行），其中日算术（`shiftDay`/`localDayOfMicros`/`normalizeDay`）、活动
+  窗口与分桶（`activityWindow`/`bucketOneDay`）、项目范围谓词（`eligibleForProject`）和
+  标签排名（排序 → 截断 → `distinct`）没有一处碰数据库句柄、记录 Map 或文件系统——它们
+  只吃行、只回数字。这些搬走后两个后端（sqlite 与 scan）调同一份投影，而不是各自留一份
+  分桶规则；这正是索引模块存在的理由（两个后端不能各说各话）从"注释里承诺"变成"代码上
+  不可能"。
+
+  新模块落在 L1 而不是 L0，唯一原因是活动窗口需要 `note-health.js`（L0）的今日本地日期；
+  它不导入任何后端或文件系统。层表与预算同步各加一行，理由写在那两处，因为仓库存量文件
+  的预算必须逐条论证而不是默默抬高。`index-db.js` 2879 → 2750 行。
+
 ### Removed
 
 - **四个零引用导出与十九行无人按名导入的再导出。** `CURATION_FINDING_KINDS`（唯一引用是

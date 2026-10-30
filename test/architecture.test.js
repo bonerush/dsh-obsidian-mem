@@ -125,6 +125,13 @@ const LAYERS = {
   // lateral edge into `index-db` (L2) that a same-file tokenizer would create.
   'index-text': 0,
   'index-db': 2,
+  // The pure halves of the 概览 aggregates: day arithmetic, the activity window
+  // and bucketing, the project-scope predicate and the tag ranking. Extracted from
+  // `index-db` (2) so the two backends call one projection instead of each keeping
+  // a copy of the bucketing rule — the disagreement the index exists to prevent.
+  // L1 rather than L0 only because the window needs today's local day from
+  // `note-health` (L0); nothing here imports a backend or a filesystem.
+  'index-stats': 1,
   receipts: 2,
   pending: 3,
   search: 3,
@@ -761,7 +768,19 @@ const BUDGETS = {
   // sides. Measured 2871 formatted lines; measured-plus-30 is 2901, rounded up to
   // 2950 — the raise is the headroom rule, not new surface beyond the one extra
   // reader per backend.
-  'lib/index-db.js': 2950,
+  // Lowered back to 2900 when the pure projections moved out to `index-stats`: the
+  // day helpers, the activity window and bucketing, the project-scope predicate and
+  // the tag ranking are not readers, so the sentence above that defended keeping the
+  // day helpers "here beside the two backends" is now spent — they live in a module
+  // both backends call. Measured 2748 formatted lines; measured-plus-30 is 2778,
+  // rounded up to 2800, and the entry is left at 2900 rather than 2800 because the
+  // next reader this file grows should not need an accounting round to land. The
+  // gap is headroom on a file that just lost 131 lines, not standing debt.
+  'lib/index-db.js': 2900,
+  // The extracted 概览 projections. Measured 207 formatted lines; measured-plus-30
+  // is 237, rounded up to 250. It is a move, not new surface: the code left
+  // `index-db` and arrived here, and the two backends now call it.
+  'lib/index-stats.js': 250,
   // Measured 119 formatted lines when the v0.4 sparse baseline moved the shared
   // tokenizer out of `index-db`; measured-plus-30 is 149, rounded to 150.
   'lib/index-text.js': 150,
