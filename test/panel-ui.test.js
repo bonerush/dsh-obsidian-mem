@@ -937,21 +937,27 @@ test('the empty-flow sentence names the short window’s own week count', async 
 // and compares it with the tag's share — the layout is never taken on trust.
 // ---------------------------------------------------------------------------
 
-/** The tiles of the 标签频率 treemap, in reading order, with their geometry. */
+/**
+ * The tiles of the 标签频率 treemap, in reading order, with their geometry.
+ *
+ * The layout runs in MEASURED pixel space — the map's box is the measured block
+ * width by a height derived from it — so every style value here is a plain CSS
+ * pixel string and the map's own inline height is the rectangle the tiles divide.
+ * Reading percentages would silently rescale every area, which is exactly the
+ * class of mistake this test exists to catch.
+ */
 function treemapTiles(tree) {
   return byClass(tree, 'mem-treemap-tile').map((node) => {
     const style = node.props.style
-    const pct = (value) => Number.parseFloat(String(value))
-    // The container is the 292 × 148 coordinate space the layout runs in; the
-    // percentages are shares of it, so multiplying them back recovers units.
-    const w = (pct(style.width) / 100) * 292
-    const h = (pct(style.height) / 100) * 148
+    const px = (value) => Number.parseFloat(String(value))
+    const w = px(style.width)
+    const h = px(style.height)
     return {
       node,
       tag: byClass(node, 'mem-treemap-name').map((name) => name.props.children[0])[0] ?? null,
       value: byClass(node, 'mem-treemap-value').map((label) => label.props.children[0])[0] ?? null,
-      left: (pct(style.left) / 100) * 292,
-      top: (pct(style.top) / 100) * 148,
+      left: px(style.left),
+      top: px(style.top),
       w,
       h,
       area: w * h,
@@ -960,6 +966,16 @@ function treemapTiles(tree) {
       title: node.props.title,
     }
   })
+}
+
+/** The rectangle the treemap divides: its measured width by its derived height. */
+function treemapBox(tree) {
+  const map = byClass(tree, 'mem-treemap')[0]
+  const height = Number.parseFloat(String(map?.props.style?.height))
+  // The component's default seed is the 292px design floor; the payload's own
+  // measured width replaces it in the host, and the test asserts the seed.
+  const width = Number.parseFloat(String(map?.props.style?.width)) || 292
+  return { width, height, area: width * height }
 }
 
 test('the tag frequency chart is a treemap whose areas are the tag counts', async (t) => {
@@ -996,8 +1012,11 @@ test('the tag frequency chart is a treemap whose areas are the tag counts', asyn
   const tiles = treemapTiles(tree)
   assert.equal(tiles.length, 10, 'every tag the payload carries gets a tile')
   // Areas sum to the container and are proportional to the counts. Five
-  // occurrences each means ten equal tiles, so each area is a tenth of 292×148.
-  const mapArea = 292 * 148
+  // occurrences each means ten equal tiles, so each area is a tenth of the map's
+  // own measured box — the rectangle the layout actually divided.
+  const box = treemapBox(tree)
+  assert.ok(box.height > 0, 'the map states its own height: ' + box.height)
+  const mapArea = box.area
   const totalArea = tiles.reduce((sum, tile) => sum + tile.area, 0)
   assert.ok(
     Math.abs(totalArea - mapArea) < 0.5,
@@ -1174,7 +1193,9 @@ test('the treemap stays honest at any payload length', async (t) => {
     const tiles = treemapTiles(tree)
     const drawn = tags.items.filter((item) => item.n > 0)
     assert.equal(tiles.length, drawn.length, label + ': one tile per positive count')
-    const mapArea = 292 * 148
+    const box = treemapBox(tree)
+    const mapArea = box.area
+    assert.ok(mapArea > 0, label + ': the map states a positive area ' + mapArea)
     const totalArea = tiles.reduce((sum, tile) => sum + tile.area, 0)
     assert.ok(
       Math.abs(totalArea - mapArea) < 0.5,
@@ -1224,6 +1245,133 @@ test('the treemap stays honest at any payload length', async (t) => {
   }
 })
 
+// ---------------------------------------------------------------------------
+// The treemap's label decision is measured, and the three failures below were all
+// visible in one real capture of this vault's own tag ranking: the biggest tile
+// printed a bare "8" with no label, eight tail tiles printed their name at 2.5-8.1
+// pixels, and the map's tiles reached a 3.59 aspect ratio at panel width. Each test
+// pins the invariant that was missing, not the pixel count that happened to hold.
+// ---------------------------------------------------------------------------
+
+test('a tile the width of its own name is never reduced to a bare count', async (t) => {
+  // The reported defect: at a wide panel the biggest tile renders ~211px wide but
+  // was judged against a fixed 292-unit coordinate space, so it went minor and the
+  // reader saw a number with no label. Area still has to be readable — the count is
+  // printed either way — but a tile with ROOM for its name must print it.
+  const tags = {
+    items: [
+      { tag: 'project/dsh-obsidian-mem', n: 8 },
+      { tag: 'dsh-mem/hub', n: 7 },
+      { tag: 'git', n: 3 },
+      { tag: '架构', n: 2 },
+      { tag: 'docs', n: 1 },
+      { tag: 'npm', n: 1 },
+    ],
+    total: 22,
+    distinct: 6,
+  }
+  stubFetch(t, () => ok(overviewValue({ activity: activityFixture(), tags })))
+  // The wide panel is where the defect showed: at the 292px floor the dominant
+  // tile is genuinely too narrow for a 16-character name, and count-only is the
+  // honest answer there. At 590px the same tile has room, so it must be labelled.
+  const render = mount(t, 'OverviewView', { sankeyWidth: 590 })
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const tiles = treemapTiles(tree)
+  const box = treemapBox(tree)
+  assert.ok(box.height >= 148, 'the map is at least the design floor: ' + box.height)
+  // The name is one 11px bold line, the count a second; a tile that prints both
+  // needs 41px of height, which is where the 26px threshold used to be wrong.
+  for (const tile of tiles.filter((candidate) => !candidate.minor)) {
+    assert.ok(tile.h >= 41, 'a named tile is tall enough for both lines: ' + tile.h)
+    assert.ok(tile.tag !== null, 'a named tile prints a name')
+  }
+  // The dominant tag is the map's largest tile; it must be labelled.
+  const dominant = tiles.find((tile) => String(tile.title).startsWith('project/dsh-obsidian-mem'))
+  assert.ok(dominant, 'the dominant tag has a tile')
+  assert.equal(
+    dominant.minor,
+    false,
+    'the largest tile is labelled, not a bare number (' + dominant.w + 'x' + dominant.h + ')',
+  )
+})
+
+test('a count-only tile is one that genuinely cannot hold its name', async (t) => {
+  // The complement of the test above, and the invariant that keeps the model honest:
+  // is-minor must be EARNED. A tile may print only its count when it is too short
+  // for two lines or too narrow for ITS OWN name — never for a rank cut, and never
+  // for a name that would have fit.
+  const tags = {
+    items: Array.from({ length: 24 }, (_x, index) => ({
+      tag: 'dsh-mem/tag-' + index,
+      n: Math.max(1, Math.round(200 / (index + 1))),
+    })),
+    total: 500,
+    distinct: 24,
+  }
+  stubFetch(t, () => ok(overviewValue({ activity: activityFixture(), tags })))
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const tiles = treemapTiles(tree)
+  const countsOnly = tiles.filter((tile) => tile.minor)
+  assert.ok(countsOnly.length > 0, 'a 24-tag map at the 292px floor does have tail tiles')
+  for (const tile of countsOnly) {
+    const tooShort = tile.h < 41
+    // `dsh-mem/tag-NN` is 10-11 glyphs, so at least one of the two bounds must bite.
+    const tooNarrow = tile.w < 10 * 6 // a lower bound no honest model can go under
+    assert.ok(
+      tooShort || tooNarrow,
+      'a count-only tile is genuinely too small for both lines: ' +
+        tile.title +
+        ' at ' +
+        tile.w +
+        'x' +
+        tile.h,
+    )
+  }
+  // Every tile still states its exact count, so nothing is unreadable.
+  for (const tile of tiles) assert.ok(String(tile.value).length > 0, 'every tile prints a count')
+})
+
+test('the map keeps its proportion as the panel widens', async (t) => {
+  // The percentage layout scaled width with the panel and left height fixed, so the
+  // aspect ratio of the average tile tripled between the 292px floor and a 590px
+  // panel — the treemap stopped reading as a treemap. Height is now derived from the
+  // measured width, so the map's own proportion is stable within its clamp.
+  const tags = {
+    items: [
+      { tag: 'a', n: 8 },
+      { tag: 'b', n: 7 },
+      { tag: 'c', n: 3 },
+      { tag: 'd', n: 2 },
+    ],
+    total: 20,
+    distinct: 4,
+  }
+  stubFetch(t, () => ok(overviewValue({ activity: activityFixture(), tags })))
+  const heights = []
+  for (const sankeyWidth of [292, 375, 480, 590, 800]) {
+    const render = mount(t, 'OverviewView', { sankeyWidth })
+    render(chartProps())
+    await setImmediate()
+    const tree = render(chartProps())
+    const box = treemapBox(tree)
+    heights.push(box.height)
+    assert.ok(box.height >= 148, 'never below the design floor at ' + sankeyWidth)
+    assert.ok(box.height <= 300, 'never above the ceiling at ' + sankeyWidth)
+    // Derived from the width, so a wider panel is never SHORTER than a narrow one.
+    const expected = Math.min(300, Math.max(148, Math.round(sankeyWidth * 0.55)))
+    assert.equal(box.height, expected, 'height follows the measured width at ' + sankeyWidth)
+  }
+  for (let index = 1; index < heights.length; index += 1)
+    assert.ok(
+      heights[index] >= heights[index - 1],
+      'the map grows with the panel: ' + heights.join(' -> '),
+    )
+})
 /** The panel's own thousands separator, so the test does not re-implement it twice. */
 function formatCountForTest(value) {
   return String(Math.trunc(Number(value))).replace(/\B(?=(\d{3})+(?!\d))/gu, ',')

@@ -739,7 +739,18 @@ const BUDGETS = {
   // The raise is inside the measured-plus-30 rule rather than above it, and it was
   // argued for rather than inherited: every one of the four new shapes is one shared
   // helper reused by two or more sections, so a fifth page section costs a call.
-  'lib/memory-panel.js': 2900,
+  // Raised from 2900 to 3000 by the treemap label fix (2940 formatted lines measured;
+  // measured-plus-30 is 2970, rounded up to 3000, so the raise stays inside the rule).
+  // What the 40 lines buy: the layout now runs in the measured pixel space instead of
+  // a fixed 292 x 148 coordinate grid, so its height is derived from the measured
+  // width inside a floor/ceiling clamp, and the minor-tile decision became a measured
+  // predicate — a per-character-class width model plus the 41px two-line height. Each
+  // of the three was a defect visible in one capture of this vault's own tag ranking:
+  // the biggest tile printed a bare count with no label, eight tail tiles printed
+  // their name at 2.5-8.1px, and the tiles' aspect ratio tripled between the 292px
+  // floor and a 590px panel. The alternative to the width model is shipping a font
+  // metrics table, which is the dependency this module exists without.
+  'lib/memory-panel.js': 3000,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})
