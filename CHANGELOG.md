@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.4.3 — 2026-10-30
+
 ### Added
 
 - **图谱画出范围内的每一个节点，不再按连接数截断。** 之前路由传 `limit: 500`，
