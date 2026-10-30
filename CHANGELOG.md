@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 0.4.4 — 2026-10-30
+
 ### Fixed
 
 - **图谱 1:1 复刻 Obsidian 的模拟器，移动中的节点也不再挤成环带。** 用户重启后反馈：
