@@ -195,6 +195,7 @@ async function mountShell(sessionId = 'session-shell', globals = {}) {
   return {
     script,
     shell,
+    tab,
     render: (overrides) => shell.render(panel.type, { sessionId, visible: true, ...overrides }),
   }
 }
@@ -861,16 +862,18 @@ test('the tab strip is a Chrome-like row: separate roomy leaves, the active page
   assert.ok(css.includes('z-index:2'), 'the active tab rides above the strip rule')
   assert.ok(css.includes('min-width:0'), 'tabs may truncate instead of overflowing')
   assert.ok(tabs.includes('flex-wrap:nowrap'), 'the leaves stay on one row')
-  // Nothing at the page level scrolls sideways. The fixed heat calendar is the one
-  // exception and it scrolls inside its own box: that split is what keeps a 634px
-  // calendar usable in a 320px panel without the body gaining a scrollbar.
+  // Nothing at the page level scrolls sideways. Two measured drawings are the
+  // exceptions, and each scrolls inside its own box: the fixed heat calendar and
+  // the composition Sankey, whose English labels are too wide to shrink without
+  // truncating them. That split is what keeps a 634px calendar and a full-label
+  // Sankey usable in a 320px panel without the body gaining a scrollbar.
   const sideways = [...css.matchAll(/([^{}]+)\{[^}]*overflow-x:(?:auto|scroll)/gu)].map((match) =>
     match[1].split('\n').at(-1).trim().replace(/^'|'$/gu, ''),
   )
   assert.deepEqual(
     sideways,
-    ['.mem-panel .mem-heat-scroll'],
-    'only the heat calendar scrolls sideways, inside its own box',
+    ['.mem-panel .mem-heat-scroll', '.mem-panel .mem-sankey-scroll'],
+    'only the heat calendar and the Sankey scroll sideways, each inside its own box',
   )
   for (const marker of ['flex:0 1 auto', 'align-items:flex-end'])
     assert.ok(css.includes(marker), 'the tab row contains ' + marker)
@@ -1099,6 +1102,8 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     'mem-tabbar-meta',
     'mem-clock',
     'mem-refresh',
+    // Round 2: the in-panel language switch the shell paints beside the clock.
+    'mem-locale',
     'mem-tabs',
     'mem-tab',
     'mem-tab-icon',
@@ -1216,7 +1221,10 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     // The 构成 Sankey: an SVG drawn only from the real type×status joint counts; the
     // bar above stays as the fallback when the wire carries no flow.
     'mem-sankey',
+    // Round 2: the Sankey's own horizontal scroll box and the canvas inside it.
+    'mem-sankey-scroll',
     'mem-sankey-svg',
+    'mem-sankey-canvas',
     'mem-sankey-node',
     'mem-sankey-link',
     'mem-sankey-label',
@@ -1315,12 +1323,13 @@ test('every class the redesigned views consume is styled in the one stylesheet',
   // Re-derived for the round-4 UI: 132 before it, minus the six retired `mem-recent*`
   // and `mem-dot` hooks, plus the nine the GitHub-style heat map and the thirteen the
   // activity rail add. Round 5 adds the inline outcome line, the hot trigger state and
-  // the sampled-day hint on the activity rail. The count is what makes a deleted
-  // producer fail even when the list happens to still cover the rest — the subset
-  // check alone would pass on a shrunken view.
+  // the sampled-day hint on the activity rail; round 2 adds the composition Sankey's
+  // scroll box and canvas pair. The count is what makes a deleted producer fail even
+  // when the list happens to still cover the rest — the subset check alone would pass
+  // on a shrunken view.
   assert.equal(
     emitted.length,
-    151,
+    153,
     'the views scan still sees every emitted class (re-derive the count with the list)',
   )
   for (const hook of hooks)
@@ -1670,4 +1679,223 @@ test('the English copy only a live graph can reach is still in the bundle', asyn
     script.includes("' 个节点 · '"),
     'the Chinese count literal stays for the default render',
   )
+})
+
+// ---------------------------------------------------------------------------
+// Round-2 shell fixes: the in-panel language switch (default English, persisted
+// in the host page's localStorage), the search row centred in the gap it opens,
+// and the Sankey's own horizontal scroll box.
+
+/** A localStorage stand-in: one fixed stored value, plus a log of every write. */
+function storeSandbox(stored = null) {
+  const writes = []
+  return {
+    writes,
+    globals: {
+      localStorage: {
+        getItem: () => stored,
+        setItem: (key, value) => writes.push([key, value]),
+      },
+    },
+  }
+}
+
+test('the panel opens in English by default and switches to Chinese in place', async () => {
+  const store = storeSandbox()
+  const { script, shell, render, tab } = await mountShell('session-locale-toggle', store.globals)
+  assert.equal(tab.title, 'Memory', 'a browser hosting the panel opens it in English by default')
+  const panel = () => render()
+  const renderChild = (name) => {
+    const element = component(panel(), name)
+    assert.ok(element, 'the shell renders ' + name)
+    return shell.render(element.type, element.props)
+  }
+  const tabs = () => renderChild('MemoryTabs')
+  const metaTree = () => {
+    const element = component(tabs(), 'TabbarMeta')
+    assert.ok(element, 'the strip renders the freshness meta')
+    return shell.render(element.type, element.props)
+  }
+  const switchButton = () => {
+    const button = byClass(metaTree(), 'mem-locale')[0]
+    assert.ok(button, 'the strip carries the language switch')
+    return button
+  }
+  assert.deepEqual(
+    byClass(tabs(), 'mem-tab-label').map((node) => node.props.children.join('')),
+    ['Overview', 'Graph', 'Health'],
+    'the tabs are English before any interaction',
+  )
+  assert.equal(byRole(tabs(), 'tablist').props['aria-label'], 'Memory view')
+  const meta = metaTree()
+  const localeIndex = nodes(meta).indexOf(byClass(meta, 'mem-locale')[0])
+  const clockIndex = nodes(meta).indexOf(byClass(meta, 'mem-clock')[0])
+  assert.ok(localeIndex >= 0 && clockIndex > localeIndex, 'the switch sits before the clock')
+  let button = switchButton()
+  assert.deepEqual(button.props.children, ['ZH'], 'the switch names the language it offers')
+  assert.equal(button.props['aria-label'], 'Switch to Chinese')
+  assert.equal(button.props.title, 'Switch to Chinese')
+  assert.equal(button.props.type, 'button', 'the switch is a real button, not a link')
+  button.props.onClick()
+  assert.deepEqual(
+    store.writes,
+    [['dsh-obsidian-mem:locale', 'zh']],
+    'the choice is persisted for the next session',
+  )
+  assert.deepEqual(
+    byClass(tabs(), 'mem-tab-label').map((node) => node.props.children.join('')),
+    ['概览', '图谱', '健康'],
+    'the strip re-renders in Chinese without a reload',
+  )
+  assert.equal(byRole(tabs(), 'tablist').props['aria-label'], '记忆视图')
+  const box = renderChild('SearchBox')
+  assert.equal(byClass(box, 'mem-search-input')[0].props.placeholder, '搜索记忆…')
+  assert.ok(chromeText(metaTree()).includes('正在读取…'), 'the clock re-renders in Chinese')
+  button = switchButton()
+  assert.deepEqual(button.props.children, ['EN'], 'the switch now offers English back')
+  assert.equal(button.props['aria-label'], '切换到英文')
+  button.props.onClick()
+  assert.deepEqual(
+    store.writes,
+    [
+      ['dsh-obsidian-mem:locale', 'zh'],
+      ['dsh-obsidian-mem:locale', 'en'],
+    ],
+    'switching back persists the English choice too',
+  )
+  assert.deepEqual(
+    byClass(tabs(), 'mem-tab-label').map((node) => node.props.children.join('')),
+    ['Overview', 'Graph', 'Health'],
+  )
+  // The served views are built from the module locale, so the import effect must
+  // depend on the rendered value as well: otherwise a switch leaves the old
+  // locale's view tree mounted under the new chrome.
+  assert.ok(
+    script.includes('[visible, attempt, localeValue]'),
+    'the served-module import effect re-runs when the language switches',
+  )
+})
+
+test('a stored language choice beats the browser language in both directions', async () => {
+  const register = async (globals) => {
+    const { exports } = await bundle(undefined, globals)
+    let tab
+    exports.apply({
+      betterSidebar: {
+        registerTab(value) {
+          tab = value
+        },
+      },
+      effect(callback) {
+        callback()
+      },
+    })
+    return tab
+  }
+  const storedEn = await register({
+    ...storeSandbox('en').globals,
+    navigator: { language: 'zh-CN' },
+  })
+  assert.equal(storedEn.title, 'Memory', 'a stored English choice wins over a Chinese navigator')
+  const storedZh = await register({
+    ...storeSandbox('zh').globals,
+    navigator: { language: 'en-US' },
+  })
+  assert.equal(storedZh.title, '记忆', 'a stored Chinese choice wins over an English navigator')
+  const unknown = await register(storeSandbox('fr').globals)
+  assert.equal(unknown.title, 'Memory', 'an unknown stored value still opens English')
+  const quiet = await register({})
+  assert.equal(quiet.title, '记忆', 'no store at all keeps the old detected default')
+})
+
+test('switching the language rebuilds the graph canvas into the new locale', async () => {
+  const store = storeSandbox()
+  const { script, shell, render } = await mountShell('session-locale-graph', store.globals)
+  const panel = () => render()
+  const tabs = () => {
+    const element = component(panel(), 'MemoryTabs')
+    assert.ok(element, 'the shell renders the strip')
+    return shell.render(element.type, element.props)
+  }
+  const meta = () => {
+    const element = component(tabs(), 'TabbarMeta')
+    assert.ok(element, 'the strip renders the freshness meta')
+    return shell.render(element.type, element.props)
+  }
+  const graphTab = nodes(tabs()).find((node) => node.props?.id === 'obsidian-mem-tab-graph')
+  assert.ok(graphTab, 'the graph tab is in the strip')
+  graphTab.props.onClick()
+  const canvasOf = () => {
+    const graphElement = component(panel(), 'GraphView')
+    assert.ok(graphElement, 'the graph tab mounts GraphView')
+    const graphTree = shell.render(graphElement.type, graphElement.props)
+    const canvasElement = component(graphTree, 'GraphCanvas')
+    assert.ok(canvasElement, 'GraphView mounts the canvas')
+    const canvas = shell.render(canvasElement.type, canvasElement.props)
+    return { graphElement, canvasElement, canvas }
+  }
+  let seen = canvasOf()
+  assert.equal(seen.graphElement.props.locale, 'en', 'GraphView receives the live locale')
+  assert.equal(seen.canvasElement.props.locale, 'en', 'GraphCanvas is rebuilt for the locale')
+  assert.equal(seen.canvas.props['aria-label'], 'Zoomable memory graph')
+  byClass(meta(), 'mem-locale')[0].props.onClick()
+  seen = canvasOf()
+  assert.equal(seen.graphElement.props.locale, 'zh', 'GraphView re-renders with the new locale')
+  assert.equal(seen.canvasElement.props.locale, 'zh', 'GraphCanvas re-renders with the new locale')
+  assert.equal(seen.canvas.props['aria-label'], '可缩放的记忆关系图谱')
+  // The canvas import effect must depend on the locale tag, or the mounted
+  // renderer would keep drawing the previous language's aria label.
+  assert.ok(
+    script.includes('[visible, localeTag]'),
+    'the renderer import effect re-runs when the language switches',
+  )
+})
+
+test('the search row is centred in the gap it opens above and below', async () => {
+  const { script } = await bundle()
+  const css = panelCss(script)
+  const searchStart = css.indexOf('.mem-panel > .mem-searchbar{')
+  assert.ok(searchStart >= 0, 'the shell search row rule exists')
+  const searchRule = css.slice(searchStart, css.indexOf('}', searchStart))
+  const searchPadding = /padding:(\d+)px (\d+)px (\d+)px/u.exec(searchRule)
+  assert.ok(searchPadding, 'the search row declares the three-value padding: ' + searchRule)
+  const viewStart = css.indexOf('.mem-panel .mem-view{')
+  assert.ok(viewStart >= 0, 'the view body rule exists')
+  const viewRule = css.slice(viewStart, css.indexOf('}', viewStart))
+  const viewPadding = /padding:(\d+)px (\d+)px (\d+)px/u.exec(viewRule)
+  assert.ok(viewPadding, '.mem-view declares the three-value padding: ' + viewRule)
+  const above = Number(searchPadding[1])
+  const below = Number(searchPadding[3]) + Number(viewPadding[1])
+  assert.equal(above, 16, '16px above the field')
+  assert.equal(below, 16, '16px below the field: 8px row padding + 8px body inset')
+})
+
+test('the Sankey scrolls inside its own horizontal box', async () => {
+  const { script } = await bundle()
+  const css = panelCss(script)
+  const start = css.indexOf('.mem-panel .mem-sankey-scroll{')
+  assert.ok(start >= 0, 'the Sankey scroll box rule exists')
+  const rule = css.slice(start, css.indexOf('}', start))
+  for (const marker of [
+    'overflow-x:auto',
+    'overflow-y:hidden',
+    'scrollbar-width:thin',
+    'padding-bottom:2px',
+  ])
+    assert.ok(rule.includes(marker), 'the Sankey scroll box declares ' + marker)
+  assert.ok(
+    css.includes('.mem-panel .mem-sankey-scroll::-webkit-scrollbar{width:8px;height:8px}'),
+    'the webkit fallback is the same 8px bar as the view',
+  )
+  assert.ok(
+    css.includes(
+      '.mem-panel .mem-sankey-scroll::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--dsw-alias-label-secondary) 35%,transparent);border-radius:4px}',
+    ),
+    'the thumb is the view scrollbar mix, rounded',
+  )
+  assert.ok(
+    css.includes('.mem-panel .mem-sankey-scroll::-webkit-scrollbar-track{background:transparent}'),
+    'the track stays invisible',
+  )
+  assert.ok(css.includes('.mem-panel .mem-sankey-canvas{display:block}'), 'the canvas is a block')
 })

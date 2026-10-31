@@ -4101,11 +4101,15 @@ test('an empty recent list has English copy too', async (t) => {
 })
 
 test('an explicit en locale renders the health cards and actions in English', async (t) => {
+  // The hot file's section headings are the plugin's own three zone names, so this
+  // feeds the REAL zh server data and pins the panel's translation of it rather than
+  // pretending the wire already spoke English.
   const hot = {
     ...healthValue().hot,
     sections: [
-      { name: 'Done', chars: 1200, entries: 1, pointers: 2, moveable: 3 },
-      { name: 'In progress', chars: 5400, entries: 6, pointers: 0, moveable: 2 },
+      { name: '强约束', chars: 600, entries: 1, pointers: 0, moveable: 1 },
+      { name: '已完成', chars: 1200, entries: 1, pointers: 2, moveable: 3 },
+      { name: '进行中', chars: 5400, entries: 6, pointers: 0, moveable: 2 },
     ],
   }
   const sent = stubFetch(t, () => ok(healthValue({ hot })))
@@ -4123,6 +4127,11 @@ test('an explicit en locale renders the health cards and actions in English', as
     'Digest',
     'Diagnostics',
     'Ready',
+    // The zone headings are panel copy, not user data: each standard name has an
+    // English label, and an unknown name would pass through as written.
+    'Strong constraints',
+    'In progress',
+    'Completed',
   ])
     assert.ok(strings.includes(copy), 'the en health page renders ' + copy)
   // The figure grids are named by aria-label, not by a text child.
@@ -4267,5 +4276,206 @@ test('an explicit en locale renders the confirm sheet in English', async (t) => 
   assert.equal(
     find(tree, (node) => node?.props?.role === 'alertdialog'),
     undefined,
+  )
+})
+
+/**
+ * A 60-note flow whose English labels are longer than the zh side columns: the left
+ * band must fit "Convention", the right one "Superseded"/"Provisional". The margins
+ * add up on paper — 30 convention = 20+8+2, 20 decision = 8+10+2, 10 doc = 2+2+6;
+ * the same rows read down give 30 active, 20 superseded, 10 provisional.
+ */
+const EN_FLOW_COUNTS = {
+  notes: 60,
+  links: 5,
+  orphans: 2,
+  byType: [
+    { type: 'convention', n: 30 },
+    { type: 'decision', n: 20 },
+    { type: 'doc', n: 10 },
+  ],
+  byStatus: [
+    { status: 'active', n: 30 },
+    { status: 'superseded', n: 20 },
+    { status: 'provisional', n: 10 },
+  ],
+  flow: [
+    { type: 'convention', status: 'active', n: 20 },
+    { type: 'convention', status: 'superseded', n: 8 },
+    { type: 'convention', status: 'provisional', n: 2 },
+    { type: 'decision', status: 'active', n: 8 },
+    { type: 'decision', status: 'superseded', n: 10 },
+    { type: 'decision', status: 'provisional', n: 2 },
+    { type: 'doc', status: 'active', n: 2 },
+    { type: 'doc', status: 'superseded', n: 2 },
+    { type: 'doc', status: 'provisional', n: 6 },
+  ],
+}
+
+test('an en locale widens the heat map weekday gutter for its day names', async (t) => {
+  // "Mon"/"Wed"/"Fri" are wider than 一/三/五, so the en chart reserves a 32px weekday
+  // column where the zh chart keeps 14px. The canvas width, the months row's offset
+  // and the frame's grid template all carry that number; the zh assertions above keep
+  // their own geometry untouched.
+  stubFetch(t, () =>
+    ok(
+      overviewValue({
+        activity: activityFixture(),
+        recent: [
+          {
+            path: 'a.md',
+            title: 'Decision note',
+            type: 'decision',
+            updated: '2026-10-27T12:00:00.000Z',
+          },
+          {
+            path: 'b.md',
+            title: 'Convention note',
+            type: 'convention',
+            updated: '2026-10-27T11:00:00.000Z',
+          },
+        ],
+      }),
+    ),
+  )
+  const render = mount(t, 'OverviewView', { locale: 'en' })
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  assert.deepEqual(
+    byClass(tree, 'mem-heat-weekday').map((node) => node.props.children[0]),
+    ['Mon', 'Wed', 'Fri'],
+    'the en gutter labels the same three rows in English',
+  )
+  const cells = byClass(tree, 'mem-heat-cell')
+  assert.equal(cells.length % 7, 0, 'whole Sunday-first columns')
+  const gridWidth = (cells.length / 7) * 12 - 2 // HEAT_PITCH 10 + 2, minus the trailing gap
+  const canvas = byClass(tree, 'mem-heat-canvas')
+  assert.equal(canvas.length, 1)
+  assert.equal(
+    canvas[0].props.style.width,
+    32 + gridWidth + 'px',
+    'the 32px gutter is part of the canvas width',
+  )
+  const months = byClass(tree, 'mem-heat-months')
+  assert.equal(months.length, 1)
+  assert.equal(months[0].props.style.width, gridWidth + 'px')
+  assert.equal(
+    months[0].props.style.marginLeft,
+    '32px',
+    'the months row starts right of the gutter',
+  )
+  const frame = byClass(tree, 'mem-heat-frame')
+  assert.equal(frame.length, 1)
+  assert.equal(frame[0].props.style.gridTemplateColumns, '32px auto')
+  assert.deepEqual(
+    rendered(tree).filter((value) => HAN.test(value)),
+    [],
+    'the en calendar is free of Han characters',
+  )
+})
+
+test('an en locale measures the Sankey columns and scrolls the whole chart', async (t) => {
+  const tree = await renderOverviewWith(t, EN_FLOW_COUNTS, { locale: 'en' })
+  assert.equal(byClass(tree, 'mem-sankey').length, 1, 'one Sankey surface')
+  // The chart lives in its own horizontal scroller: a narrow panel must be able to PAN
+  // a measured chart instead of clipping "Convention" into "Con…". The canvas carries
+  // the measured width and the SVG its viewBox, so both agree on the coordinate space.
+  const scroll = byClass(tree, 'mem-sankey-scroll')
+  const canvas = byClass(tree, 'mem-sankey-canvas')
+  const svg = byClass(tree, 'mem-sankey-svg')
+  assert.equal(scroll.length, 1, 'the chart sits in its own scroller')
+  assert.equal(canvas.length, 1, 'and on a measured canvas')
+  assert.equal(svg.length, 1)
+  const order = nodes(tree)
+  assert.ok(
+    order.indexOf(scroll[0]) < order.indexOf(canvas[0]),
+    'the canvas is inside the scroller',
+  )
+  assert.ok(order.indexOf(canvas[0]) < order.indexOf(svg[0]), 'the svg is inside the canvas')
+  // "Convention" advances 10 × 6.2 = 62.000…, which ceil()s to 63, + 2 = 65;
+  // "Provisional" advances 11 × 6.2 = 68.2 → 69, + 2 = 71. The value columns keep
+  // their zh floors (38/36), so leftNodeX is 65+38+4 = 107, the right block
+  // 12+36+71 = 119, and the 292px floor becomes 107+128+119 = 354.
+  assert.equal(canvas[0].props.style.width, '354px')
+  assert.equal(svg[0].props.viewBox, '0 0 354 200')
+  assert.equal(svg[0].props['aria-label'], 'Composition Sankey: 60 notes in total')
+  const labels = byClass(tree, 'mem-sankey-label')
+  assert.deepEqual(
+    labels.map((node) => node.props.children[1]),
+    ['Convention', 'Decision', 'Document', 'Active', 'Superseded', 'Provisional'],
+    'every en label prints in full',
+  )
+  assert.deepEqual(
+    labels.filter((node) => String(node.props.children[1]).endsWith('…')),
+    [],
+    'no en label is clipped',
+  )
+  // The measured columns move both bands, not just the label strings.
+  assert.deepEqual(
+    labels.map((node) => node.props.x),
+    [65, 65, 65, 283, 283, 283],
+  )
+  // Only the chart's own section is chrome: the fixture's recent titles live elsewhere.
+  const sectionNode = nodes(tree).find(
+    (node) => node?.type === 'section' && node.props['aria-label'] === 'Composition',
+  )
+  assert.ok(sectionNode, 'the Composition section')
+  assert.deepEqual(
+    rendered(sectionNode).filter((value) => HAN.test(value)),
+    [],
+    'no Han-character chrome inside the en Sankey',
+  )
+})
+
+test('the composed en health tab drops its own heading and translates the zone names', async (t) => {
+  // The shell passes onMeta from the 健康 tab; that tab already names the page, so the
+  // view must not print the title a second time. The hot file's zone names are real zh
+  // server data here, which also pins the panel's translation of them.
+  const hot = {
+    ...healthValue().hot,
+    sections: [
+      { name: '强约束', chars: 600, entries: 1, pointers: 0, moveable: 1 },
+      { name: '已完成', chars: 1200, entries: 1, pointers: 2, moveable: 3 },
+      { name: '进行中', chars: 5400, entries: 6, pointers: 0, moveable: 2 },
+    ],
+  }
+  stubFetch(t, () => ok(healthValue({ hot })))
+  const render = mount(t, 'HealthView', { locale: 'en' })
+  const props = { sessionId: 'session-a', visible: true, onMeta: () => {} }
+  render(props)
+  await setImmediate()
+  const tree = render(props)
+  assert.equal(byClass(tree, 'mem-viewhead').length, 0, 'the tab already names the page')
+  const strings = rendered(tree)
+  for (const copy of ['Strong constraints', 'In progress', 'Completed'])
+    assert.ok(strings.includes(copy), 'the en zone heading reads ' + copy)
+  assert.equal(strings.includes('Health'), false, 'the page title is not repeated')
+  assert.deepEqual(
+    strings.filter((value) => HAN.test(value)),
+    [],
+    'the real zh zone names are translated rather than leaked',
+  )
+})
+
+test('the composed zh health tab drops the repeated heading and keeps zone names literal', async (t) => {
+  // Same rule in the default locale: the 健康 tab names the page, so the composed view
+  // prints no 健康 heading. The zone names are still the server's own words.
+  stubFetch(t, () => ok(healthValue()))
+  const render = mount(t, 'HealthView')
+  const props = { sessionId: 'session-a', visible: true, onMeta: () => {} }
+  render(props)
+  await setImmediate()
+  const tree = render(props)
+  assert.equal(byClass(tree, 'mem-viewhead').length, 0, 'the composed zh page drops the heading')
+  assert.equal(
+    texts(tree).filter((value) => value === '健康').length,
+    0,
+    'and no 健康 title is printed below the search box',
+  )
+  assert.equal(
+    texts(tree).filter((value) => value === '已完成').length,
+    1,
+    'the zh zone name stays exactly as the server wrote it',
   )
 })

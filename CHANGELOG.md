@@ -11,6 +11,42 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Added
+
+- **面板内可以切换界面语言，真实浏览器默认英文。** 标签条右上角新增语言按钮：英文界面
+  显示 `ZH`（提示 *Switch to Chinese*），中文界面显示 `EN`（提示「切换到英文」）。
+  点击后外壳与三个视图立即换语言，选择写入 `localStorage` 的
+  `dsh-obsidian-mem:locale`，下次打开沿用。语言仍是中英两种：没有 `localStorage` 的
+  环境（`node --test`、旧宿主）保持原来的 `navigator` 探测与中文兜底，所以既有中文断言
+  不需要改写。侧栏标签页的标题与描述在插件注册时确定，切换语言后需刷新页面才更新；面板
+  内部立即生效。
+- **英文界面的排版与漏翻补齐：**
+  - Activity 热图的星期栏在英文下留 32px（`Mon/Wed/Fri` 不再压住第一列色块），中文
+    仍是 14px；画布宽度、月份行偏移、网格列宽与 tooltip 锚点用同一个宽度。
+  - Composition 桑基按本次实际打印的英文标签测宽（`Convention`、`Superseded` 等），
+    图表放进 `.mem-sankey-scroll`：窄面板下横向滚动看完整文字，而不是把标签截成
+    `Con…`。中文列宽保持原来的 34/38/36/40，几何与既有断言逐字不变。
+  - 健康页热层分区的三个标准区名翻成英文（强约束 → Strong constraints、进行中 →
+    In progress、已完成 → Completed），与 `lib/panel-copy.js` 的对话框用词一致；
+    用户自定义区名是数据，原样保留。
+
+### Fixed
+
+- **搜索框在上下空隙中垂直居中。** `.mem-searchbar` 的 padding 由 14/10 改为 16/8：
+  加上视图区的 8px 上内边距后，搜索框上方 16px、下方 16px，不再偏上。
+- **健康页不再重复标题。** 外壳的健康标签页把 `onMeta` 传给视图，页面不再在搜索框下面
+  再印一个「健康 / Health」标题；独立渲染（无 `onMeta`）仍保留标题，概览页的既有门控
+  行为不变。
+
+- 证据：`DSH_HOME=$(mktemp -d) node --test test/panel-ui.test.js` 85/85 通过（新增 4
+  条：英文热图 gutter、英文桑基测宽与滚动、组合健康页的中英标题门控）；同法
+  `test/panel-client.test.js` 32/32 通过（新增 5 条：默认英文、点击切换并持久化、
+  存储优先、renderer 随语言重建、居中与滚动条 CSS）；`test/architecture.test.js`
+  8/8 通过（两个越界文件的预算按实测行数 +30 向上取整后抬到 4300/1700，理由写在
+  预算注释里）。中文行为与 1.0.2 逐字节一致，`test/panel-ui.test.js` 原有 81 条与
+  `test/panel-client.test.js` 原有 27 条断言零改动通过（唯一调整是「只有热图横滚」的
+  断言改为同时承认桑基的滚动容器）。
+
 ## 1.0.2 — 2026-10-31
 
 ### Added

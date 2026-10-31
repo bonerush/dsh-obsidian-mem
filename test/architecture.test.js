@@ -840,7 +840,22 @@ const BUDGETS = {
   //     panel's own choice.
   // The alternative — a second served asset or a dependency — is still rejected: the
   // one view module stays the only place a chart and its copy can live.
-  'lib/memory-panel.js': 4200,
+  // Raised from 4200 by the 2026-10-31 English-UI fix round (m00644; 4247 formatted
+  // lines measured; measured-plus-30 is 4277, rounded up to 4300). What the 47 lines
+  // buy, all of it consequence of the panel now being switchable between two locales:
+  //   * the en heat calendar's 32px weekday gutter (HEAT_WEEKDAY_COLUMN_LATIN,
+  //     heatWeekdayGutter) reaching the canvas width, the months row and the frame's
+  //     inline grid template, so "Mon"/"Wed"/"Fri" no longer overlap the first column;
+  //   * the measured Sankey side columns (estimateTextWidth + englishSankeyColumns and
+  //     the widened sankeyGeometry): an English chart grows to fit "Convention" and
+  //     "Superseded" instead of clipping them, while the zh chart keeps the fixed
+  //     34/38/36/40 columns byte-identically;
+  //   * the .mem-sankey-scroll/.mem-sankey-canvas wrapper that turns a measured chart
+  //     wider than the panel into a horizontal pan instead of a crop;
+  //   * the zone-heading translation (ZONE_LABELS/zoneLabel, the same words
+  //     lib/panel-copy.js uses) and the onMeta gate that stops the composed 健康 tab
+  //     from printing its own title under the shell's search box.
+  'lib/memory-panel.js': 4300,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})
@@ -961,7 +976,15 @@ const BUDGETS = {
   // ceiling are the shell's inline en catalog (tab titles, notices, search,
   // loading and error copy) plus the locale detection helper and the graph option
   // plumbing; the zh branch's rendered strings are unchanged.
-  'lib/client.js': 1600,
+  // Raised from 1600 by the same day's English-UI fix round (m00644; 1641 formatted
+  // lines measured; measured-plus-30 is 1671, rounded up to 1700). The 41 lines buy
+  // the shell half of the five fixes: storedLocale()/setLocale() with the
+  // 'dsh-obsidian-mem:locale' key (browsers default to en, a missing localStorage —
+  // tests, old hosts — still runs detectLocale), the '.mem-locale' toggle and its
+  // token-only rules, the locale prop that rebuilds GraphCanvas' renderer and its
+  // aria label, the search bar's 16px/8px padding that centres it in the gap, and the
+  // Sankey scroller rules the view module's new wrapper needs.
+  'lib/client.js': 1700,
   // Raised from 700 by the whole-graph round (716 formatted lines measured;
   // measured-plus-30 is 746, rounded up to 750). What the 16 lines buy: the
   // `spiralSeed` helper and the cold-frame branch that uses it, plus the comment
