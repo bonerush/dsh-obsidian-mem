@@ -11,6 +11,42 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Fixed
+
+- **`test/pack.test.js` 的 npm 可用性探针在 Windows 上必然误判，导致真实归档契约用例被跳过。**
+  探针直接 `spawnSync('npm', ['--version'])`：Windows 上 npm 是 `npm.cmd`，无 shell 的
+  spawn 报 EINVAL，于是 npm 12.0.2 已装好的本机也被判成「npm 不可用」，
+  `the archive this checkout really produces satisfies the contract` 一直 skip ——
+  而同一份解析早在 1.0.1 就改成了「用本 Node 跑 `npm-cli.js`」（`scripts/verify-tarball.mjs`），
+  只是测试里另写了一份。现在探针复用已导出的 `npmCommand()`，并新增一条用例钉住
+  「探针走本 Node 的 npm JS 入口，不 spawn `.cmd`」。
+  - 证据：修复前整仓套件 1,475 tests / 1,440 pass / 0 fail / **35 skipped**（其中一条就是它）；
+    修复后 `test/pack.test.js` 在本机 Windows 上 **27/27 通过、0 skip**，真实归档用例
+    耗时 1.8 s 并打印 `verify-tarball: OK … 89 entries, 79 lib modules`。
+
+### Changed
+
+- **Windows 兼容验证第 2 轮：全量门禁、面板布局与图谱性能在 Windows 上实测；除上面那条
+  测试探针外没有发现产品缺陷。** 本机 Windows 11（10.0.26220）+ Node v24.20.0 + npm 12.0.2
+  + 真实 Chrome 156.0.8078.74：
+  - `npm run check` 全绿：**1,476 tests / 1,442 pass / 0 fail / 34 skipped**；
+    `verify-pack` 与 `verify-tarball` 均 OK（89 entries / 79 lib modules）；
+    `scripts/build-graph-worker.mjs --check` 输出 `graph worker assets: current`。
+  - 面板三个视图（概览 / 检索 / 健康）× 中英 × 明暗 × 300–760 px 九个宽度 × DPR
+    1 / 1.25 / 1.5 / 2：**432 个真实 Chrome 状态、0 布局违规** —— 无页面横向滚动、无元素
+    越出视口；371 天热度图 53×7 格（10×10、列距 12）、月标签 0 重叠；KPI 宽屏单行
+    space-evenly、≤559 px 2×2；構成桑基铺满实测块宽（320 px 中文 292、760 px 732，
+    英文窄屏按设计横向滚动）；健康卡片 figure 网格空槽 0；DPR 变化时关键盒宽差 ≤0.5 px。
+    字体解析为 Segoe UI；唯一被截断的是 CSS 明写 ellipsis 的 `.mem-result-title`。
+  - README 里「Windows 上 >2,000 节点的性能未测」换成本机实测：**1,236 节点真实规模
+    中位 12.8 ms/tick（p95 16.2 ms）**，2,500 节点 28.8 ms、4,000 节点 50.7 ms、
+    6,000 节点 99.9 ms —— 与 0.4.4「为 1:1 复刻 Obsidian 付 quadtree 碰撞代价」的已知
+    取舍一致，不是本轮新缺陷；中英两半同步改写，`README.i18n.yaml` 的 blob hash 一并重记。
+  - 34 条 skip 全部是平台能力缺失或既有 opt-in（14 file symlink EPERM、10 expect/pty、
+    8 NTFS mode/ACL、1 `/dev/fd`、1 `MARKETPLACE_PROBE_LIVE`），没有一条为绿而跳。
+  - 证据：`docs/validation/windows-compat-2026-11-01.md`；测量产物在 `scratch/win-round/`
+    （已 gitignore，不入库）。
+
 ## 1.0.4 — 2026-10-31
 
 ### Changed

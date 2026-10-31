@@ -333,8 +333,13 @@ subgraph from the same initial positions, the ported worker lands
 an earlier locally tuned version deviated by 530.1/144.5 units; on the real
 1,236-node vault the layout no longer merges nodes while it moves and settles at a
 median minimum neighbour distance of about 112 units. The price of parity is the
-quadtree collision cost above roughly 2,000 nodes; Windows performance at that size
-is not measured and stays in the changelog's untested list.
+quadtree collision cost above roughly 2,000 nodes. Measured on Windows 11
+(2026-11-01, Node 24.20.0, the shipped worker in the same vm harness the tests
+use): the real 1,236-node vault costs **12.8 ms median per tick (p95 16.2 ms)**,
+at the edge of a 60 fps budget, while 2,500 nodes cost 28.8 ms, 4,000 nodes
+50.7 ms and 6,000 nodes 99.9 ms — above roughly 2,000 nodes the layout is a slow
+animation rather than an unusable graph. The untested list now keeps only what
+this round did not measure (drag reheating at that size).
 
 The settings button opens the same four sections as Obsidian's graph: filters,
 colour groups, display and forces. The **settings** are remembered, unlike the cues: scope, filters, colour groups,

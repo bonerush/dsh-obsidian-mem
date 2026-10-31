@@ -20,6 +20,7 @@ import { Range, parse, satisfies } from 'semver'
 import {
   REQUIRED_ENTRIES,
   listArchive,
+  npmCommand,
   parsePackReport,
   verifyTarballEntries,
 } from '../scripts/verify-tarball.mjs'
@@ -475,16 +476,19 @@ test('a pack report with no archive, or more than one, is refused', () => {
 /**
  * Whether this environment can run npm at all, which is the only way to pack.
  *
- * Measured 2026-10-28 on this Windows host: there is no npm on PATH, in
- * Program Files, in the per-user npm prefix or inside the bundled Node runtime,
- * so spawnSync('npm', ...) answers ENOENT and the verifier reports
- * "npm pack failed: undefined". A Windows npm install would additionally expose
- * npm.cmd, which a shell-less spawn answers with EINVAL.
+ * The probe asks through the SAME resolver the verifier packs with. Spawning bare
+ * `npm` is a POSIX assumption: on Windows the executable is `npm.cmd`, which a
+ * shell-less `spawnSync` answers with EINVAL, so a host with npm 12.0.2 installed
+ * used to skip the real-archive case (measured 2026-11-01 on Windows 11) even
+ * though `scripts/verify-tarball.mjs` — which already ran `npm-cli.js` through this
+ * Node — packs there fine. A missing npm still answers "not runnable", which is
+ * what the environment gate is for.
  *
- * @returns {boolean} true when npm --version exits 0.
+ * @returns {boolean} true when npm --version exits 0 through `npmCommand()`.
  */
 function npmRuns() {
-  const probe = spawnSync('npm', ['--version'], { encoding: 'utf8' })
+  const { command, args } = npmCommand()
+  const probe = spawnSync(command, [...args, '--version'], { encoding: 'utf8' })
   return probe.status === 0
 }
 
@@ -498,6 +502,17 @@ function npmRuns() {
 const NPM_SKIP = npmRuns()
   ? false
   : 'npm is not runnable in this environment (npm --version does not exit 0), so npm pack cannot produce the archive; expected to pass with npm installed'
+
+test('the npm probe uses the npm JS entry through this Node, never a shell-less .cmd', () => {
+  const { command, args } = npmCommand()
+  // No npm CLI beside this node: the environment gate exists for that host, and
+  // there is no path to pin beyond "the probe does not invent one".
+  if (command === 'npm') return
+  assert.equal(command, process.execPath)
+  assert.deepEqual(args, [
+    join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ])
+})
 
 // The archive case needs npm and tar, so it is skipped only where npm itself is absent.
 test('the archive this checkout really produces satisfies the contract', { skip: NPM_SKIP }, () => {

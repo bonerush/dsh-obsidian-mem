@@ -157,9 +157,14 @@ function parseArgs(argv) {
  * refuses elsewhere. Running npm's own JS entry through the current Node avoids
  * both: it needs no shell, no `.cmd` shim, and the same argv reaches npm.
  *
+ * Exported because `test/pack.test.js` asks the same question before it skips the
+ * real-archive case: a second copy of this resolution in the test is how the probe
+ * drifted back to a bare `spawnSync('npm', …)` and skipped a Windows host that could
+ * pack perfectly well.
+ *
  * @returns {{command: string, args: string[]}} the command to spawn with.
  */
-function npmCommand() {
+export function npmCommand() {
   const cli = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
   if (existsSync(cli)) return { command: process.execPath, args: [cli] }
   return { command: 'npm', args: [] }
