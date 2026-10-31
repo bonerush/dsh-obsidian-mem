@@ -11,6 +11,13 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 1.0.0 — 2026-10-31
+
+**第一个稳定版本。** 从 1.0.0 起，六个 `mem_*` 工具的名字与参数、vault 协议（指针文件、
+笔记 frontmatter 与随包技能）以及配置键按 SemVer 承诺向后兼容——其中任何一项的破坏性
+变更需要主版本号；行为修正与面板/图谱改进仍落在次版本与补丁版本。"稳定"承诺的是这些
+接口，不是宣称所有边界都已穷尽，本节末尾的未验证清单照旧保留。
+
 ### Added
 
 - **记忆面板能实时反映记忆变化，不再需要退出 DSH 重开。** 之前面板每 30 秒轮询一次，

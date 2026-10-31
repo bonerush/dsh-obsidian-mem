@@ -42,7 +42,7 @@ import { TOOL_NAMES, TOOL_PARAMETERS, createMemoryServices } from '../lib/tools.
 /** The MCP revision this server implements; `initialize` echoes the client's when it sends one. */
 export const PROTOCOL_VERSION = '2025-06-18'
 /** Identifies the server to the client. */
-export const SERVER_INFO = Object.freeze({ name: 'dsh-obsidian-mem', version: '0.4.4' })
+export const SERVER_INFO = Object.freeze({ name: 'dsh-obsidian-mem', version: '1.0.0' })
 
 /**
  * Codex-side descriptions. Short on purpose: the long-form rules live in the
