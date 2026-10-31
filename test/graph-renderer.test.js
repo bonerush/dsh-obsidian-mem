@@ -28,7 +28,7 @@ const DARK_SLOTS = {
   'color-text': { color: 'rgb(218, 218, 218)', opacity: '1' },
 }
 
-function surface() {
+function surface(options = {}) {
   const contexts = []
   const frames = new Map()
   const events = new Map()
@@ -211,7 +211,11 @@ function surface() {
     }
   }
   const canvas = makeCanvas()
-  const renderer = createGraphRenderer(canvas, (message) => assert.fail(message))
+  const renderer = createGraphRenderer(
+    canvas,
+    options.onError ?? ((message) => assert.fail(message)),
+    options,
+  )
   const node = (id, path = id + '.md') => ({
     id,
     path,
@@ -576,6 +580,42 @@ test('a called memory keeps its name on screen while the graph is zoomed out', (
     /正在调用 1 条记忆：one/u,
     'the canvas caption names the file',
   )
+  s.renderer.destroy()
+})
+
+test('the English renderer localizes its canvas caption and layout error', () => {
+  // The explicit option is the contract lib/client.js uses; detectLocale() is only
+  // the fallback, and outside a browser it stays zh (the Chinese tests above).
+  const errors = []
+  const s = surface({ locale: 'en', onError: (message) => errors.push(message) })
+  const view = (active = []) => {
+    const model = s.model([s.node('one', 'Docs/one.md'), s.node('two', 'Docs/two.md')])
+    model.active = active
+    return model
+  }
+  s.renderer.update(view())
+  s.emit(['one', 'two'], [0, 0, 120, 0])
+  s.wheel(0)
+  for (let i = 0; i < 5; i += 1) s.step()
+  assert.equal(
+    s.canvas.attributes['aria-label'],
+    'Zoomable memory graph, 2 nodes',
+    'the idle caption counts the nodes in English',
+  )
+  s.renderer.update(
+    view([
+      { path: 'Docs/one.md', at: Date.now() },
+      { path: 'Docs/two.md', at: Date.now() },
+    ]),
+  )
+  for (let i = 0; i < 5; i += 1) s.step()
+  assert.match(
+    String(s.canvas.attributes['aria-label']),
+    /Memory graph showing 2 memories: one, two/u,
+    'the active caption pluralizes and joins the file names in English',
+  )
+  s.workers[0].onerror()
+  assert.deepEqual(errors, ['Graph layout unavailable'])
   s.renderer.destroy()
 })
 

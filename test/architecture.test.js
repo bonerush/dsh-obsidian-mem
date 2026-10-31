@@ -72,6 +72,10 @@ const LAYERS = {
   'graph-settings': 0,
   'graph-renderer': 1,
   'graph-worker': 0,
+  // Server-side locale vocabulary (English panel UI): the panel's dialogs and the
+  // route resolve zh/en here. The two browser assets cannot import it — each is
+  // served standalone — so they inline the same primary-subtag rule instead.
+  locale: 0,
   'graph-activity': 0,
   'graph-route': 1,
   'graph-links': 0,
@@ -209,15 +213,22 @@ const LAYERS = {
   'hot-delivery': 0,
   'delivery-state': 3,
   'convention-rotation': 4,
-  // The browser route fence is import-free; the panel route imports only the
-  // fence and receives the services through its arguments. `appraisal` is the
-  // pure deterministic rule set the digest uses and imports note-health (L0).
+  // The browser route fence is import-free; the panel route receives the
+  // services through its arguments but resolves the request locale (L0), reads
+  // one date helper (L0) and calls the mutation state machine (L1), which fixes
+  // L2. `appraisal` is the pure deterministic rule set the digest uses and
+  // imports note-health (L0).
   'route-guard': 0,
-  'panel-route': 1,
-  // The v0.4 confirmed-mutation state machine imports only `node:crypto`; the
-  // route passes the services and the preview clock in, so it sits at the bottom
-  // beside the route fence rather than inventing a service-layer dependency.
-  'panel-actions': 0,
+  'panel-route': 2,
+  // The panel's dialog copy is a vocabulary leaf like `hot-text` and `locale`:
+  // import-free, one sentence per locale, read by `panel-actions` so a
+  // translation never touches the mutation state machine.
+  'panel-copy': 0,
+  // The v0.4 confirmed-mutation state machine imports `node:crypto` and now
+  // composes the locale vocabulary and the dialog copy (both L0); the route
+  // passes the services and the preview clock in, so it still invents no
+  // service-layer dependency. Raised from 0 to 1 by the English dialog copy.
+  'panel-actions': 1,
   appraisal: 1,
   // The deterministic digest collector is injection-only: no repository import,
   // no filesystem of its own, and the service owns both readers.
@@ -814,7 +825,22 @@ const BUDGETS = {
   //     groups that keep 昨天 visible when every sampled row is today.
   // All of it is copy and state in the one served view module; no chart library, no
   // second asset.
-  'lib/memory-panel.js': 3650,
+  // Raised from 3650 by the English UI round (2026-10-31; 4122 formatted lines
+  // measured; measured-plus-30 is 4152, rounded up to 4200). What the 472 lines buy:
+  //   * the zh strings this module rendered inline are collected into one catalog
+  //     per centralized map (type/status/index/severity/reason/COPY/MUTATION_*),
+  //     with the zh value kept byte-identical so the source stays the source;
+  //   * a second catalog and a text(zh, en) helper cover every inline render string
+  //     (heat map, flow bars, treemap, KPI, Sankey, health, recent timeline, search,
+  //     preview/confirm sheet), plus the English-only plural forms (1 day ago,
+  //     1 entry vs N entries);
+  //   * detectLocale() is inlined because this asset is served standalone and cannot
+  //     import lib/locale.js, and every POST body now carries locale so the route
+  //     cannot be steered by the host browser's Accept-Language instead of the
+  //     panel's own choice.
+  // The alternative — a second served asset or a dependency — is still rejected: the
+  // one view module stays the only place a chart and its copy can live.
+  'lib/memory-panel.js': 4200,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})
@@ -930,7 +956,12 @@ const BUDGETS = {
   // contribution-rail timeline that replaced the eight flat recent rows (13 rules in,
   // the old six .mem-recent*/.mem-dot rules out). The panel still carries one
   // token-only stylesheet and no hex/rgb/hsl literal.
-  'lib/client.js': 1500,
+  // Raised from 1500 by the English-UI round (1559 formatted lines measured;
+  // measured-plus-30 is 1589, rounded up to 1600). The 59 lines over the old
+  // ceiling are the shell's inline en catalog (tab titles, notices, search,
+  // loading and error copy) plus the locale detection helper and the graph option
+  // plumbing; the zh branch's rendered strings are unchanged.
+  'lib/client.js': 1600,
   // Raised from 700 by the whole-graph round (716 formatted lines measured;
   // measured-plus-30 is 746, rounded up to 750). What the 16 lines buy: the
   // `spiralSeed` helper and the cold-frame branch that uses it, plus the comment

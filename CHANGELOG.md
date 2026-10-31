@@ -11,6 +11,42 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Added
+
+- **英文界面：面板、图谱外壳与健康操作的对话框都能按系统语言显示英文，默认仍是中文。**
+  只新增一份英文文案，没有引入新的运行时或开发依赖；中文文案与改动前逐字节一致，
+  所以既有的中文断言不需要改写。语言解析集中在新文件 `lib/locale.js`：
+  - **解析顺序**：请求体 `locale` → 请求头 `Accept-Language` →（浏览器内）
+    `navigator.languages` / `navigator.language` → 兜底 `zh`。显式 `zh` 赢过英文
+    请求头；`fr-FR` 这类既非中英的明确偏好显示英文（界面只有两种语言，英文是唯一
+    能跨语种的兜底）；`*` 不算偏好——Node 的 `fetch` 默认就发
+    `accept-language: *`，把它当成英文会让不带偏好的请求凭空变英文。
+  - **面板**（`lib/memory-panel.js`）：概览 KPI、热图/流量条/树图/桑基、健康、最近
+    变化、检索结果、操作单与确认/预览全部按 locale 取词；`createMemoryViews({ React,
+    locale })` 可显式传入，未传时在浏览器里按 `navigator` 探测；每个 `POST` body
+    都带 `locale`，面板自己决定语言，不让路由被宿主浏览器的请求头改掉。
+  - **外壳与图谱**（`lib/client.js`、`lib/graph-renderer.js`）：标签页、搜索框、错误
+    与空状态、通知、图谱设置/筛选/滑块、画布 `aria-label` 与 worker 失败文案中英
+    双语。这两个资产由路由按文件原样送出，运行时不能 `import`，所以语言规则在各自
+    文件里内联一份；无 `window` 的环境（`node --test`）固定回中文，既有中文断言
+    不变。
+  - **服务端对话框**（新文件 `lib/panel-copy.js`，`lib/panel-actions.js` 与
+    `lib/panel-route.js` 接入）：重试失败任务、整理热层、发布项目摘要的标题、按钮、
+    字段、效果与警告按请求 locale 取英文；中文副本与改动前逐字节同一份。
+  - 证据：`DSH_HOME=$(mktemp -d) node --test` 定向套件全绿——`test/locale.test.js`、
+    `test/panel-route.test.js`、`test/panel-actions.test.js`、
+    `test/panel-client.test.js`、`test/graph-renderer.test.js`、
+    `test/panel-ui.test.js`；真实路由 seam 上，body 的 `locale` 胜过英文请求头、
+    只有 `Accept-Language: en-US` 得英文、两者都没有得中文、只有 `*` 得中文。
+    整仓 `npm run check` 全绿：1467 条测试 1466 pass / 0 fail / 1 skipped，verify-pack 与
+    verify-tarball 均 OK（归档 89 entries、79 lib modules，与 AGENTS.md 记录一致）。独立
+    验证（`scratch/i18n-verify.md`）另跑了真实路由与真实视图探针：route 导出与 HEAD 全等、
+    默认中文渲染文本逐串等于 HEAD、en 三视图与预览/确认单无汉字；唯一发现的空
+    "最近变化" 中文硬编码已修复并补了回归测试。
+  - **未验证**：真实桌面侧栏在系统语言为英文时的自动探测没有在真实 Electron 窗口里
+    点过（浏览器探测只有 DOM 级测试）；README 中英两半和 `README.i18n.yaml` 未改，
+    因为用户明确说 README 已有双语、不必处理。
+
 ## 1.0.1 — 2026-10-31
 
 ### Fixed

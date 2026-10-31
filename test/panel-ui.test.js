@@ -3419,6 +3419,9 @@ test('the retry action previews facts then confirms one token and reports the ou
     action: 'preview',
     mutation: 'retry-job',
     args: { jobId: 'job-0123456789abcdef0123456789abcdef' },
+    // The panel's resolved locale rides every POST body, so the route never has to
+    // guess from Accept-Language; zh is sent explicitly rather than left to the default.
+    locale: 'zh',
   })
   assert.equal(
     sent.filter((entry) => entry.body.action === 'confirm').length,
@@ -3435,6 +3438,7 @@ test('the retry action previews facts then confirms one token and reports the ou
     sessionId: 'session-a',
     action: 'confirm',
     token: 'token-case-1',
+    locale: 'zh',
   })
   assert.equal(
     find(tree, (node) => node?.props?.role === 'alertdialog'),
@@ -3979,4 +3983,289 @@ test('each action shows its own busy label while its preview is in flight', asyn
   await setImmediate()
   tree = render(props)
   byText(tree, '取消')[0].props.onClick()
+})
+
+// ---------------------------------------------------------------------------
+// English locale (i18n spec §2.5). Chinese stays the default: a mount with no
+// locale option runs the same view the suite always has, because this harness
+// has neither a window nor a navigator. Only an explicit `locale: 'en'` switches
+// the catalogue, and then every POST body carries the panel's own locale so the
+// route never has to guess from Accept-Language.
+// ---------------------------------------------------------------------------
+
+/** Every string a reader or screen reader sees in the rendered tree. */
+const rendered = (tree) => texts(tree).map((value) => String(value))
+/** Han ideographs: the English chrome must never contain one. */
+const HAN = /[\u4e00-\u9fff]/u
+
+test('an explicit en locale renders the overview chrome in English', async (t) => {
+  const activity = activityFixture()
+  const tags = {
+    items: [
+      { tag: 'dsh-mem/decision', n: 5 },
+      { tag: 'dsh-mem/convention', n: 3 },
+    ],
+    total: 8,
+    distinct: 2,
+  }
+  const recent = [
+    {
+      path: 'Projects/repo/Decisions/a.md',
+      title: 'Decision note',
+      type: 'decision',
+      updated: '2026-10-27T12:00:00.000Z',
+    },
+    {
+      path: 'Projects/repo/Conventions/b.md',
+      title: 'Convention note',
+      type: 'convention',
+      updated: '2026-10-27T11:00:00.000Z',
+    },
+  ]
+  const sent = stubFetch(t, () => ok(overviewValue({ activity, tags, recent })))
+
+  // The default mount (no locale option, no DOM globals) keeps the zh catalogue.
+  const zhRender = mount(t, 'OverviewView')
+  zhRender(chartProps())
+  await setImmediate()
+  const zhTree = zhRender(chartProps())
+  assert.ok(texts(zhTree).includes('最近变化'), 'the default mount stays Chinese')
+  assert.ok(texts(zhTree).includes('概览'), 'and keeps the zh shell title')
+  assert.equal(sent[0].body.locale, 'zh', 'even a zh body is tagged, not left to the route default')
+
+  const enRender = mount(t, 'OverviewView', { locale: 'en' })
+  // The "All →" strip actions only exist when the shell hands the view onJump;
+  // pass one so the en run also covers that inline label.
+  const composed = chartProps({ onJump: () => {} })
+  enRender(composed)
+  await setImmediate()
+  const tree = enRender(composed)
+  const strings = rendered(tree)
+  for (const copy of [
+    'Overview',
+    'Recent changes',
+    'Activity',
+    'Created & updated',
+    'Tag frequency',
+    'Composition',
+    'Memories',
+    'Links',
+    'Orphans',
+    'Pending',
+    'Health',
+    'All →',
+  ])
+    assert.ok(strings.includes(copy), 'the en overview renders ' + copy)
+  assert.equal(strings.includes('最近变化'), false, 'no Chinese chrome in the en overview')
+  // The heat map's spoken count is built from the series, so pin its English
+  // grammar rather than one fixture-dependent number.
+  const grid = byClass(tree, 'mem-heat-grid')[0]
+  assert.match(
+    String(grid.props['aria-label']),
+    /^Activity over the last \d+ weeks, \d+ entr(?:y|ies) in total, peak \d+$/u,
+  )
+  assert.ok(
+    strings.some((value) =>
+      /^Last \d+ weeks \(\d+ days\) · \d+ active days this week · \d+ entr(?:y|ies) total$/u.test(
+        value,
+      ),
+    ),
+    'the heat map meta line is English',
+  )
+  assert.equal(sent.at(-1).body.locale, 'en', 'an en mount tags every read body en')
+  assert.deepEqual(
+    strings.filter((value) => HAN.test(value)),
+    [],
+    'no Han-character chrome in the en overview',
+  )
+})
+
+test('an empty recent list has English copy too', async (t) => {
+  // The other en fixture always carries two recent notes, which is exactly why the
+  // hardcoded zh empty state survived until independent verification: the en tests
+  // never rendered it. Pin the empty branch itself.
+  const sent = stubFetch(t, () => ok(overviewValue({ recent: [] })))
+  const render = mount(t, 'OverviewView', { locale: 'en' })
+  const props = chartProps({ onJump: () => {} })
+  render(props)
+  await setImmediate()
+  const tree = render(props)
+  const strings = rendered(tree)
+  assert.ok(strings.includes('Nothing to show yet.'), 'the empty recent list is English')
+  assert.deepEqual(
+    strings.filter((value) => HAN.test(value)),
+    [],
+    'no Han-character chrome in the en empty recent list',
+  )
+  assert.equal(sent.at(-1).body.locale, 'en')
+})
+
+test('an explicit en locale renders the health cards and actions in English', async (t) => {
+  const hot = {
+    ...healthValue().hot,
+    sections: [
+      { name: 'Done', chars: 1200, entries: 1, pointers: 2, moveable: 3 },
+      { name: 'In progress', chars: 5400, entries: 6, pointers: 0, moveable: 2 },
+    ],
+  }
+  const sent = stubFetch(t, () => ok(healthValue({ hot })))
+  const render = mount(t, 'HealthView', { locale: 'en' })
+  const props = { sessionId: 'session-a', visible: true }
+  render(props)
+  await setImmediate()
+  const tree = render(props)
+  const strings = rendered(tree)
+  for (const copy of [
+    'Health',
+    'Index',
+    'Pending jobs',
+    'Hot zone',
+    'Digest',
+    'Diagnostics',
+    'Ready',
+  ])
+    assert.ok(strings.includes(copy), 'the en health page renders ' + copy)
+  // The figure grids are named by aria-label, not by a text child.
+  for (const label of ['Index figures', 'Hot zone figures', 'Digest figures'])
+    assert.ok(
+      find(tree, (node) => node?.props?.['aria-label'] === label),
+      'the en health page names the ' + label + ' group',
+    )
+  for (const copy of ['Retry job', 'Compact hot zone', 'Publish digest'])
+    assert.ok(byText(tree, copy).length >= 1, 'the en action reads ' + copy)
+  assert.equal(sent.at(-1).body.locale, 'en', 'the en health read is tagged en')
+  assert.deepEqual(
+    strings.filter((value) => HAN.test(value)),
+    [],
+    'no Han-character chrome on the en health page',
+  )
+})
+
+test('an explicit en locale renders the search page and its empty state in English', async (t) => {
+  const sent = stubFetch(t, () =>
+    ok({
+      query: 'binding',
+      hits: [
+        {
+          path: 'Projects/repo/Decisions/a.md',
+          title: 'Decision note',
+          type: 'decision',
+          status: 'active',
+          source: 'title',
+          snippet: 'Binding memory notes',
+          scoreSignals: ['title'],
+        },
+      ],
+      limit: 25,
+      hasMore: false,
+      tookMs: 2,
+    }),
+  )
+  const render = mount(t, 'SearchView', { locale: 'en' })
+  // An empty query is the idle state: the body shows the idle sentence and starts
+  // no read at all.
+  let tree = render(searchProps({ query: '' }))
+  let strings = rendered(tree)
+  assert.ok(strings.includes('Search'), 'the page head says Search')
+  assert.ok(strings.includes('Local memory index'), 'the local index is named')
+  assert.ok(
+    strings.includes('Type a keyword to start searching the local memory index.'),
+    'the idle sentence is English',
+  )
+  assert.equal(byText(tree, 'Back').length, 1, 'the way back is English')
+  assert.deepEqual(
+    byClass(tree, 'mem-filter')
+      .map((node) => node.props['aria-label'])
+      .sort(),
+    ['Scope', 'Status', 'Type'],
+    'the filter groups are named in English',
+  )
+  assert.deepEqual(
+    byClass(tree, 'mem-filter-option')
+      .filter((node) => node.props['aria-pressed'] === true)
+      .map((node) => node.props.children[0]),
+    ['All', 'All', 'Current project'],
+    'the default filter pills are English',
+  )
+  assert.equal(sent.length, 0, 'an empty query reads nothing')
+
+  render(searchProps({ query: 'binding' }))
+  await setImmediate()
+  tree = render(searchProps({ query: 'binding' }))
+  assert.equal(sent.length, 1, 'a query runs exactly one read')
+  assert.equal(sent[0].body.locale, 'en', 'the en search read is tagged en')
+  strings = rendered(tree)
+  for (const copy of ['Decision', 'Active', 'Source: Title'])
+    assert.ok(strings.includes(copy), 'the en result row renders ' + copy)
+  assert.ok(
+    strings.some((value) => value === '1 entry in total · 2 ms'),
+    'the footer counts in English',
+  )
+  assert.deepEqual(
+    strings.filter((value) => HAN.test(value)),
+    [],
+    'no Han-character chrome on the en search page',
+  )
+})
+
+test('an explicit en locale renders the confirm sheet in English', async (t) => {
+  const englishPreview = {
+    mutation: 'retry-job',
+    token: 'token-case-1',
+    expiresAt: Date.now() + 60_000,
+    preview: {
+      title: 'Retry failed job',
+      confirmLabel: 'Confirm',
+      facts: [
+        { label: 'Job', value: 'job-0123456789abcdef0123456789abcdef' },
+        { label: 'State', value: 'failed' },
+      ],
+      effects: ['The job re-enters the queue'],
+      warning: 'DSH may wake a worker; Codex only requeues the job.',
+    },
+  }
+  // The hot zone's section names are server data; feed English names so the
+  // no-Han assertion can only trip on chrome the panel itself writes.
+  const hot = {
+    ...healthValue().hot,
+    sections: [
+      { name: 'Done', chars: 1200, entries: 1, pointers: 2, moveable: 3 },
+      { name: 'In progress', chars: 5400, entries: 6, pointers: 0, moveable: 2 },
+    ],
+  }
+  const sent = stubFetch(t, (body) =>
+    body.action === 'preview' ? ok(englishPreview) : ok(healthValue({ hot })),
+  )
+  const render = mount(t, 'HealthView', { locale: 'en' })
+  const props = { sessionId: 'session-a', visible: true }
+  render(props)
+  await setImmediate()
+  let tree = render(props)
+  byText(tree, 'Retry job')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  const dialog = find(tree, (node) => node?.props?.role === 'alertdialog')
+  assert.ok(dialog, 'the en preview opens the sheet')
+  const strings = rendered(tree)
+  for (const copy of [
+    'Retry failed job',
+    'Preview valid for 60 seconds',
+    'Cancel',
+    'Confirm',
+    'Waiting for confirmation',
+  ])
+    assert.ok(strings.includes(copy), 'the en sheet renders ' + copy)
+  assert.equal(sent.filter((entry) => entry.body.action === 'preview')[0].body.locale, 'en')
+  assert.deepEqual(
+    strings.filter((value) => HAN.test(value)),
+    [],
+    'no Han-character chrome in the en confirm sheet',
+  )
+  byText(tree, 'Cancel')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  assert.equal(
+    find(tree, (node) => node?.props?.role === 'alertdialog'),
+    undefined,
+  )
 })

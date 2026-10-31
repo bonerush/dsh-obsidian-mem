@@ -62,8 +62,11 @@ test('browser bundle registers one memory graph tab through Better Sidebar', asy
   )
   // The renderer reads `display.label`; the panel has to offer it, with the
   // default requested by the user on 2026-09-28.
-  assert.ok(
-    script.includes("slider('标题文字大小', 'label', display, setDisplay"),
+  // The literal moved behind t() when the bundle gained its English copy; the pin
+  // still proves the one slider the renderer reads (display.label) is offered.
+  assert.match(
+    script,
+    /slider\(\s*t\('标题文字大小', 'Label size'\),\s*'label',\s*display,\s*setDisplay/u,
     'the display section exposes the title-size slider',
   )
   assert.ok(script.includes('label: 0.85'), 'the title-size default is 0.85')

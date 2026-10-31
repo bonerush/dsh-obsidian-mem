@@ -76,7 +76,9 @@ function shellReact() {
       useState(initial) {
         const { values } = slot()
         const index = cursor++
-        if (!(index in values)) values[index] = initial
+        // React calls a function initializer instead of storing it; GraphView
+        // passes `initialGroups` that way, so the stand-in has to as well.
+        if (!(index in values)) values[index] = typeof initial === 'function' ? initial() : initial
         return [
           values[index],
           (next) => {
@@ -97,6 +99,11 @@ function shellReact() {
       useEffect() {
         cursor += 1
       },
+      // GraphView and GraphCanvas memoize their filtered graph and styling; the
+      // stand-in recomputes on every render instead, which is what these tests read.
+      useMemo(factory) {
+        return factory()
+      },
     },
     render(component, props) {
       current = component
@@ -107,7 +114,7 @@ function shellReact() {
 }
 
 /** Register the bundle the way the host does, and return its factory exports. */
-async function bundle(react = shellReact().React) {
+async function bundle(react = shellReact().React, globals = {}) {
   const script = await source()
   let module
   const window = {
@@ -117,7 +124,7 @@ async function bundle(react = shellReact().React) {
       },
     },
   }
-  runInNewContext(script, { window })
+  runInNewContext(script, { window, ...globals })
   assert.equal(module.id, 'dsh-obsidian-mem')
   const exports = module.factory((name) => {
     assert.equal(name, 'react')
@@ -166,9 +173,9 @@ const byClass = (tree, className) =>
  * component the tab renders through the hook stand-in. `render` re-renders it
  * against the same state, which is how a test sees a state change land.
  */
-async function mountShell(sessionId = 'session-shell') {
+async function mountShell(sessionId = 'session-shell', globals = {}) {
   const shell = shellReact()
-  const { script, exports } = await bundle(shell.React)
+  const { script, exports } = await bundle(shell.React, globals)
   let tab
   const ctx = {
     betterSidebar: {
@@ -235,7 +242,11 @@ test('the shell loads the one served module and passes React into it', async () 
   // handed to `createMemoryViews` must be the bundle's own `React` binding — the
   // object `require('react')` returned — not a second global or a re-require.
   assert.match(script, /const React = require\('react'\)/u, 'React comes through require')
-  assert.match(script, /createMemoryViews\(\{\s*React\s*\}\)/u, 'the served factory receives React')
+  assert.match(
+    script,
+    /createMemoryViews\(\{\s*React,\s*locale\s*\}\)/u,
+    'the served factory receives React and the resolved locale',
+  )
   assert.ok(
     script.includes("import('/obsidian-mem/graph-renderer.js')"),
     'the graph renderer stays',
@@ -1457,5 +1468,206 @@ test('the view scrolls its own thin, token-built scrollbar', async () => {
       '::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--dsw-alias-label-secondary) 35%,transparent)',
     ),
     'the webkit thumb is the same mix',
+  )
+})
+
+// The English locale. The bundle's detectLocale() is gated on `window` because
+// Node ships a global navigator (language "en-US") — the vm harness supplies the
+// fake window, so a sandbox with no navigator still resolves zh, and these tests
+// define the browser's navigator to exercise the inferred-English path.
+
+const enSandbox = () => ({ navigator: { language: 'en-US' } })
+
+/** Every string a rendered tree would put in front of the reader. */
+function chromeText(tree) {
+  const found = []
+  for (const node of nodes(tree)) {
+    for (const child of node.props?.children ?? []) if (typeof child === 'string') found.push(child)
+    for (const key of ['title', 'aria-label', 'placeholder', 'description'])
+      if (typeof node.props?.[key] === 'string') found.push(node.props[key])
+  }
+  return found
+}
+
+const hasHan = (values) => values.some((value) => /[\u3400-\u9fff]/u.test(value))
+
+test('the shell infers English from the browser language and keeps zh otherwise', async () => {
+  const register = async (globals) => {
+    const { exports } = await bundle(undefined, globals)
+    let tab
+    exports.apply({
+      betterSidebar: {
+        registerTab(value) {
+          tab = value
+        },
+      },
+      effect(callback) {
+        callback()
+      },
+    })
+    return tab
+  }
+  const en = await register(enSandbox())
+  assert.equal(en.title, 'Memory', 'an en-US navigator selects the English tab title')
+  assert.equal(en.description, 'Project memory: overview, graph, search and health')
+  const zh = await register({})
+  assert.equal(zh.title, '记忆', 'a window without navigator keeps the source locale')
+  const zhTag = await register({ navigator: { languages: ['zh-CN', 'en-US'] } })
+  assert.equal(zhTag.title, '记忆', 'the first supported tag wins')
+  const unsupported = await register({ navigator: { language: 'fr-FR' } })
+  assert.equal(unsupported.title, 'Memory', 'an unsupported tag still selects English')
+})
+
+test('the English shell renders its tab strip, search box, clock and loading copy in English', async () => {
+  const { shell, render } = await mountShell('session-en', enSandbox())
+  const panel = () => render()
+  const renderChild = (name) => {
+    const element = component(panel(), name)
+    assert.ok(element, 'the shell renders ' + name)
+    return shell.render(element.type, element.props)
+  }
+  const tabs = () => renderChild('MemoryTabs')
+  const metaTree = () => {
+    const element = component(tabs(), 'TabbarMeta')
+    assert.ok(element, 'the strip renders the freshness meta')
+    return shell.render(element.type, element.props)
+  }
+  assert.deepEqual(
+    byClass(tabs(), 'mem-tab-label').map((node) => node.props.children.join('')),
+    ['Overview', 'Graph', 'Health'],
+    'the three tabs are English',
+  )
+  assert.equal(byRole(tabs(), 'tablist').props['aria-label'], 'Memory view')
+  const meta = metaTree()
+  assert.ok(chromeText(meta).includes('Loading…'), 'the clock says loading, not 正在读取…')
+  const refresh = byClass(meta, 'mem-refresh')[0]
+  assert.equal(refresh.props.title, 'Refresh memory data')
+  assert.equal(refresh.props['aria-label'], 'Refresh memory data')
+  const box = renderChild('SearchBox')
+  const input = byClass(box, 'mem-search-input')[0]
+  assert.equal(input.props.placeholder, 'Search memories…')
+  assert.equal(input.props['aria-label'], 'Search memories')
+  const submit = byClass(box, 'mem-search-submit')[0]
+  assert.equal(submit.props['aria-label'], 'Search')
+  assert.deepEqual(submit.props.children, ['Search'])
+  assert.ok(
+    chromeText(panel()).includes('Loading memories…'),
+    'the served-module wait says loading in English',
+  )
+  assert.equal(
+    hasHan([
+      ...chromeText(panel()),
+      ...chromeText(tabs()),
+      ...chromeText(box),
+      ...chromeText(meta),
+    ]),
+    false,
+    'English shell chrome renders no Han characters',
+  )
+})
+
+test('the English graph controls localize every control and the empty state', async () => {
+  const { shell, render } = await mountShell('session-graph-en', enSandbox())
+  const panel = () => render()
+  const tabs = () => {
+    const element = component(panel(), 'MemoryTabs')
+    return shell.render(element.type, element.props)
+  }
+  const graphTab = nodes(tabs()).find((node) => node.props?.id === 'obsidian-mem-tab-graph')
+  assert.ok(graphTab, 'the graph tab is in the strip')
+  graphTab.props.onClick()
+  const graph = () => {
+    const element = component(panel(), 'GraphView')
+    assert.ok(element, 'the graph tab mounts GraphView')
+    return shell.render(element.type, element.props)
+  }
+  let tree = graph()
+  assert.equal(byRole(tree, 'region').props['aria-label'], 'Graph settings')
+  // Every section starts collapsed; opening all four is what renders their controls.
+  const headers = byClass(tree, 'tree-item-self')
+  assert.equal(headers.length, 4, 'the four control sections are there')
+  for (const header of headers) header.props.onClick()
+  tree = graph()
+  const canvas = shell.render(
+    component(tree, 'GraphCanvas').type,
+    component(tree, 'GraphCanvas').props,
+  )
+  assert.equal(canvas.props['aria-label'], 'Zoomable memory graph')
+  // The per-group row copy only exists once a group does; an empty section
+  // renders just its add button.
+  const addGroup = nodes(tree).find(
+    (node) =>
+      node.props?.className === 'mod-cta' && node.props?.children?.includes('New color group'),
+  )
+  assert.ok(addGroup, 'the color-group section offers its add button')
+  addGroup.props.onClick()
+  tree = graph()
+  const text = [...chromeText(tree), ...chromeText(canvas)]
+  for (const copy of [
+    'Close',
+    'Open graph settings',
+    'Start animation',
+    'Reset to defaults',
+    'Filters',
+    'Search notes…',
+    'Search notes',
+    'Tags',
+    'Attachments',
+    'Show created notes only',
+    'Orphans',
+    'Scope',
+    'Graph scope',
+    'All memories',
+    'Current project',
+    'Color groups',
+    'Enter a query…',
+    'Color group query 1',
+    'Click to change color; drag to reorder',
+    'Color group color 1',
+    'Delete color group 1',
+    'New color group',
+    'Appearance',
+    'Arrows',
+    'Text opacity',
+    'Label size',
+    'Node size',
+    'Link thickness',
+    'Play animation',
+    'Force',
+    'Center force',
+    'Repel force',
+    'Link force',
+    'Link distance',
+    'No memories yet',
+  ])
+    assert.ok(text.includes(copy), 'English graph copy: ' + copy)
+  assert.equal(hasHan(text), false, 'English graph chrome renders no Han characters')
+})
+
+test('the English copy only a live graph can reach is still in the bundle', async () => {
+  const { script } = await bundle()
+  for (const copy of [
+    "'Graph unavailable'",
+    "'Graph rendering unavailable'",
+    "' · All memories'",
+    "'Open a session to see its memories'",
+    "'Search memories…'",
+    "'Clear search'",
+    "'Graph settings'",
+  ])
+    assert.ok(script.includes(copy), 'the bundled fallback copy exists: ' + copy)
+  assert.match(script, /quantity\(/u, 'the node/link count pluralizes through quantity()')
+  assert.match(
+    script,
+    /if \(locale === 'en'\) clock = 'Loading…'/u,
+    'the clock has its English branch',
+  )
+  assert.ok(
+    script.includes("'正在读取…'"),
+    'the Chinese loading literal stays for the default render',
+  )
+  assert.ok(
+    script.includes("' 个节点 · '"),
+    'the Chinese count literal stays for the default render',
   )
 })

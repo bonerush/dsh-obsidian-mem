@@ -252,6 +252,15 @@ function assertCode(status, code) {
 }
 
 /**
+ * English chrome must carry no Han characters. Callers pass labels, titles and
+ * effects only: a fixture's own data values are not chrome.
+ */
+function assertNoHan(values) {
+  const joined = values.join('\n')
+  assert.equal(/[\u3400-\u9fff]/u.test(joined), false, joined)
+}
+
+/**
  * A throwaway root plus the registrar that removes it last.
  *
  * `node:test` runs its hooks in registration order, so a plain `t.after(rm)`
@@ -675,6 +684,144 @@ test('a digest preview tolerates sub-day clock drift but a changed digest is sta
     assertCode(409, 'preview-stale'),
   )
   assert.equal(staleStub.state.refreshed, false)
+})
+
+test('an English retry preview translates the dialog copy and falls back to Chinese', async () => {
+  const preview = await previewPanelAction({
+    operation: 'retry-job',
+    args: { jobId: JOB_ID },
+    ...panelEnv(previewStub()),
+    locale: 'en',
+  })
+  assert.equal(preview.preview.title, 'Retry failed job')
+  assert.equal(preview.preview.confirmLabel, 'Retry')
+  assert.deepEqual(
+    preview.preview.facts.map((fact) => fact.label),
+    ['Job', 'Project', 'Status', 'Attempts', 'Failed at', 'Error'],
+  )
+  assert.equal(preview.preview.facts.find((fact) => fact.label === 'Job').value, JOB_ID)
+  assert.deepEqual(preview.preview.effects, [
+    'The job re-enters the queue',
+    'Attempts reset to zero',
+    'Whether it runs immediately depends on the host',
+  ])
+  assert.match(preview.preview.warning, /DSH/u)
+  assert.match(preview.preview.warning, /Codex/u)
+  assertNoHan([
+    preview.preview.title,
+    preview.preview.confirmLabel,
+    ...preview.preview.facts.map((fact) => fact.label),
+    ...preview.preview.effects,
+    preview.preview.warning,
+  ])
+
+  // Missing, unsupported and explicit zh locales all keep the source copy: the
+  // pre-i18n behaviour is the default, not a special case.
+  for (const locale of [undefined, 'fr', 'zh']) {
+    const chinese = await previewPanelAction({
+      operation: 'retry-job',
+      args: { jobId: JOB_ID },
+      ...panelEnv(previewStub()),
+      locale,
+    })
+    assert.equal(chinese.preview.title, '重新排队失败任务', String(locale))
+    assert.equal(chinese.preview.confirmLabel, '重新排队', String(locale))
+  }
+})
+
+test('an English hot preview translates zones, effects and the below-trigger warning', async () => {
+  const preview = await previewPanelAction({
+    operation: 'compact-hot',
+    args: {},
+    ...panelEnv(previewStub()),
+    locale: 'en-US',
+  })
+  assert.equal(preview.preview.title, 'Compact hot zone')
+  assert.equal(preview.preview.confirmLabel, 'Compact')
+  assert.deepEqual(preview.preview.facts.slice(0, 4), [
+    { label: 'Used', value: '7200 / 9000 code points' },
+    { label: 'Trigger', value: '6030 code points' },
+    { label: 'Movable', value: '5' },
+    { label: 'Archivable', value: '3' },
+  ])
+  // The fixed zone names are translated; entries and pointers agree in number.
+  const completed = preview.preview.facts.find((fact) => fact.label === 'Completed')
+  assert.equal(completed?.value, '1 complete entry, 2 pointers, 3 movable')
+  assert.equal(
+    preview.preview.facts.some((fact) => fact.label === 'In progress'),
+    true,
+  )
+  assert.equal(
+    preview.preview.facts.some((fact) => fact.label === 'Strong constraints'),
+    true,
+  )
+  assert.deepEqual(preview.preview.effects, [
+    'Moves terminated Completed/In progress entries into the archive',
+    'Folds pointer lines in Completed',
+    'Moves at most 5 entries this time',
+  ])
+  assert.equal(preview.preview.warning, undefined, 'no warning above the trigger')
+  assertNoHan([
+    preview.preview.title,
+    preview.preview.confirmLabel,
+    ...preview.preview.facts.map((fact) => fact.label),
+    ...preview.preview.effects,
+  ])
+
+  const below = await previewPanelAction({
+    operation: 'compact-hot',
+    args: {},
+    ...panelEnv(previewStub({ hot: hotFixture({ used: 5728, trigger: 6030 }) })),
+    locale: 'en',
+  })
+  assert.deepEqual(below.preview.effects, [
+    'Only folds legacy per-entry pointer lines in Completed',
+    'No entries are archived; the archive and sections stay as they are',
+  ])
+  assert.equal(
+    below.preview.warning,
+    'The hot zone is below its trigger (5728 / 6030 code points): this compact moves no entries.',
+  )
+})
+
+test('an English digest preview translates its target, window and effects', async () => {
+  const preview = await previewPanelAction({
+    operation: 'refresh-digest',
+    args: { days: 1 },
+    ...panelEnv(previewStub()),
+    locale: 'en',
+  })
+  assert.equal(preview.preview.title, 'Publish project digest')
+  assert.equal(preview.preview.confirmLabel, 'Write digest')
+  assert.deepEqual(
+    preview.preview.facts.map((fact) => fact.label),
+    ['Target', 'Project', 'Window', 'Created', 'Updated', 'Sources checked'],
+  )
+  assert.equal(
+    preview.preview.facts.find((fact) => fact.label === 'Target').value,
+    '_meta/digest.md',
+  )
+  assert.equal(preview.preview.facts.find((fact) => fact.label === 'Window').value, 'Last day')
+  assert.deepEqual(preview.preview.effects, [
+    'Re-collect and render the digest for the window',
+    'Writes Projects/demo--11111111/_meta/digest.md',
+    'No file is written when the content is unchanged',
+  ])
+  assert.equal(preview.preview.warning, undefined)
+  assertNoHan([
+    preview.preview.title,
+    preview.preview.confirmLabel,
+    ...preview.preview.facts.map((fact) => fact.label),
+    ...preview.preview.effects,
+  ])
+
+  const wider = await previewPanelAction({
+    operation: 'refresh-digest',
+    args: { days: 30 },
+    ...panelEnv(previewStub()),
+    locale: 'en',
+  })
+  assert.equal(wider.preview.facts.find((fact) => fact.label === 'Window').value, 'Last 30 days')
 })
 
 test('previews refuse missing, foreign and non-terminal jobs and a missing hot file', async () => {

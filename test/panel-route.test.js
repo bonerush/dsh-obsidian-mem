@@ -2382,6 +2382,66 @@ test('compact-hot and refresh-digest preview, confirm and replay over the wire',
   assert.equal(stub.calls.refreshes, 1)
 })
 
+test('a preview locale comes from the body or Accept-Language and defaults to Chinese', async (t) => {
+  const stub = mutationStubServices()
+  const h = await harness(t, { services: stub.services })
+
+  // An explicit body locale wins over the request header.
+  const english = await h.post(
+    {
+      sessionId: SESSION,
+      action: 'preview',
+      mutation: 'retry-job',
+      args: { jobId: JOB_ID },
+      locale: 'en',
+    },
+    { ...ORIGIN_HEADER(h), 'accept-language': 'zh-CN' },
+  )
+  assert.equal(english.status, 200)
+  assert.equal(english.body.value.preview.title, 'Retry failed job')
+  assert.equal(english.body.value.preview.confirmLabel, 'Retry')
+  assert.equal(english.body.value.preview.facts.find((fact) => fact.label === 'Job').value, JOB_ID)
+  assert.equal(
+    english.body.value.preview.facts.some((fact) => fact.label === '任务'),
+    false,
+  )
+
+  // Without a body locale the Accept-Language header decides.
+  const headerOnly = await h.post(
+    { sessionId: SESSION, action: 'preview', mutation: 'compact-hot' },
+    { ...ORIGIN_HEADER(h), 'accept-language': 'en-US,en;q=0.9' },
+  )
+  assert.equal(headerOnly.status, 200)
+  assert.equal(headerOnly.body.value.preview.title, 'Compact hot zone')
+
+  // Neither stays on the Chinese source copy, which is the pre-i18n behaviour.
+  // Node's fetch sends "accept-language: *" by default; the route drops a
+  // wildcard-only header instead of reading it as a request for English.
+  const chinese = await h.post(
+    { sessionId: SESSION, action: 'preview', mutation: 'retry-job', args: { jobId: JOB_ID } },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(chinese.status, 200)
+  assert.equal(chinese.body.value.preview.title, '重新排队失败任务')
+  assert.equal(chinese.body.value.preview.facts.find((fact) => fact.label === '任务').value, JOB_ID)
+
+  // An explicit Chinese body locale also wins over an English header.
+  const explicitZh = await h.post(
+    {
+      sessionId: SESSION,
+      action: 'preview',
+      mutation: 'retry-job',
+      args: { jobId: JOB_ID },
+      locale: 'zh',
+    },
+    { ...ORIGIN_HEADER(h), 'accept-language': 'en' },
+  )
+  assert.equal(explicitZh.status, 200)
+  assert.equal(explicitZh.body.value.preview.title, '重新排队失败任务')
+  assert.equal(stub.state.compacted, false, 'every preview read only')
+  assert.equal(stub.calls.retries, 0)
+})
+
 test('mutation preconditions keep their coded status over the wire', async (t) => {
   const stub = mutationStubServices()
   const h = await harness(t, { services: stub.services })
