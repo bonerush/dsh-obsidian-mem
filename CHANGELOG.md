@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 1.0.2 — 2026-10-31
+
 ### Added
 
 - **英文界面：面板、图谱外壳与健康操作的对话框都能按系统语言显示英文，默认仍是中文。**
