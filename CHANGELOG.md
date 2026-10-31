@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 1.0.5 — 2026-10-31
+
 ### Fixed
 
 - **`test/pack.test.js` 的 npm 可用性探针在 Windows 上必然误判，导致真实归档契约用例被跳过。**
