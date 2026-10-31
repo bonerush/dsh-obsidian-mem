@@ -11,6 +11,27 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Changed
+
+- **语言切换按钮改用翻译图标，不再印 `EN`/`ZH`。** 两字母徽标读起来像「当前是什么
+  语言」的状态标签，而不是「点它会切到哪一个」的动作；现在画的是常见翻译标记（文/A 组合，
+  Material translate 的实心路径，16px），`title` 与 `aria-label` 仍然写明目标语言
+  （英文界面 *Switch to Chinese*、中文界面「切换到英文」），按钮仍是 28×28 的方形热区，
+  与刷新按钮同高对齐。外壳与三个视图的语言行为本身不受影响。
+
+### Fixed
+
+- **窄面板下的关键数字卡片不再挤压、裁字。** 四列 KPI 的折叠断点由 339px 提到 559px：
+  实测英文/中文数字 "1,049 条" 需要 107.4px（26px 数字 87.4px 加单元格左右内边距
+  20px），而面板 446px 时四列每格只有 104px —— 最后一格被 `overflow:hidden` 裁掉、
+  第一个数字几乎贴边，看起来像整排既没居中也不等宽。现在 559px 及以下折成 2×2，
+  560px 起仍是四列（每格 127px 起，左右各余 26px），列内居中不变。证据：headless
+  Chrome 用真实样式在 390/446/559/560/655/932/1246 七个面板宽度量过每格
+  `scrollWidth-clientWidth` 全为 0，446px 截图是 2×2、655/1246px 是四列。
+- 证据：`DSH_HOME=$(mktemp -d) node --test test/panel-client.test.js test/panel-ui.test.js`
+  117/117 通过（新增断言：559px 折叠规则与 339px 规则删除、语言按钮是 28px 方形且
+  16px 图形、按钮 children 是 svg 且不再有 `EN`/`ZH` 文本；原有中文断言未改）。
+
 ## 1.0.3 — 2026-10-31
 
 ### Added

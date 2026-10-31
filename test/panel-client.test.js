@@ -922,6 +922,40 @@ test('the tab strip is a Chrome-like row: separate roomy leaves, the active page
     false,
     'the 359 step is gone: it was the defect, not the fallback',
   )
+  // The KPI band folds to 2x2 at 559px, not 339px. Measured in headless Chrome against
+  // this stylesheet: "1,049 条" needs 107.4px (87.4px of digits plus the unit, 20px of
+  // cell padding), while a 446px panel gives a four-across cell only 104px — so the old
+  // fold point left the last figure clipped and the first hugging its edge. 559 is the
+  // panel width at which a cell reaches 127px; see the rule's comment for the arithmetic.
+  for (const marker of [
+    '@container (max-width:559px)',
+    '.mem-kpi:nth-child(3){border-left:0;border-top:1px solid var(--dsw-alias-border-l1)}',
+    '.mem-kpi:nth-child(4){border-top:1px solid var(--dsw-alias-border-l1)}',
+  ])
+    assert.ok(css.includes(marker), 'the KPI fold contains ' + marker)
+  assert.equal(
+    css.includes('@container (max-width:339px)'),
+    false,
+    'the 339 fold is gone: it folded only after four cells had already run into each other',
+  )
+  // The language switch is a 28px square glyph button now, not a two-letter badge:
+  // "ZH" printed on the button read as the panel's current state rather than as the
+  // action a click takes, so the switch carries the translate mark instead.
+  const localeRule = css.slice(
+    css.indexOf('.mem-panel .mem-locale{'),
+    css.indexOf('}', css.indexOf('.mem-panel .mem-locale{')) + 1,
+  )
+  for (const marker of ['width:28px', 'height:28px', 'padding:0'])
+    assert.ok(localeRule.includes(marker), 'the language switch is a square button: ' + marker)
+  assert.equal(
+    localeRule.includes('font:var(--dsw-font'),
+    false,
+    'the button no longer sets type for a printed EN/ZH badge',
+  )
+  assert.ok(
+    css.includes('.mem-panel .mem-locale svg{width:16px;height:16px}'),
+    'the glyph is drawn 16px',
+  )
 })
 
 test('the shell keeps one persistent search box between the tab strip and the view body', async () => {
@@ -1715,6 +1749,26 @@ function storeSandbox(stored = null) {
   }
 }
 
+/** The language switch draws the translate mark, not a printed "EN"/"ZH" badge. */
+function assertLocaleGlyph(button, message) {
+  const children = button.props.children
+  assert.equal(children.length, 1, message + ': one glyph replaces the badge text')
+  const glyph = children[0]
+  assert.equal(glyph.type, 'svg', message + ': an inline svg')
+  assert.equal(glyph.props.viewBox, '0 0 24 24')
+  assert.equal(glyph.props['aria-hidden'], true, message + ': decorative for the reader')
+  assert.ok(
+    children.every((child) => typeof child === 'object' && child !== null),
+    message + ': no letters are printed',
+  )
+  const path = nodes(glyph).find((node) => node.type === 'path')
+  assert.ok(path, message + ': a path paints the glyph')
+  assert.ok(
+    path.props.d.startsWith('M12.87'),
+    message + ': the translate mark (a 文/A pair) is the Material glyph',
+  )
+}
+
 test('the panel opens in English by default and switches to Chinese in place', async () => {
   const store = storeSandbox()
   const { script, shell, render, tab } = await mountShell('session-locale-toggle', store.globals)
@@ -1747,7 +1801,7 @@ test('the panel opens in English by default and switches to Chinese in place', a
   const clockIndex = nodes(meta).indexOf(byClass(meta, 'mem-clock')[0])
   assert.ok(localeIndex >= 0 && clockIndex > localeIndex, 'the switch sits before the clock')
   let button = switchButton()
-  assert.deepEqual(button.props.children, ['ZH'], 'the switch names the language it offers')
+  assertLocaleGlyph(button, 'the switch offers Chinese from English')
   assert.equal(button.props['aria-label'], 'Switch to Chinese')
   assert.equal(button.props.title, 'Switch to Chinese')
   assert.equal(button.props.type, 'button', 'the switch is a real button, not a link')
@@ -1767,7 +1821,7 @@ test('the panel opens in English by default and switches to Chinese in place', a
   assert.equal(byClass(box, 'mem-search-input')[0].props.placeholder, '搜索记忆…')
   assert.ok(chromeText(metaTree()).includes('正在读取…'), 'the clock re-renders in Chinese')
   button = switchButton()
-  assert.deepEqual(button.props.children, ['EN'], 'the switch now offers English back')
+  assertLocaleGlyph(button, 'the switch offers English back from Chinese')
   assert.equal(button.props['aria-label'], '切换到英文')
   button.props.onClick()
   assert.deepEqual(
