@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 1.0.3 — 2026-10-31
+
 ### Added
 
 - **面板内可以切换界面语言，真实浏览器默认英文。** 标签条右上角新增语言按钮：英文界面
