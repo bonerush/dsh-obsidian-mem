@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 1.0.1 — 2026-10-31
+
 ### Fixed
 
 - **CI 的浮动 `node` 平台不再被 npm 12 的 `npm pack --json` 输出形状打红。** 该平台实际装的是 Node `27.0.0-alpha.0.0.0` + npm `12.1.0`；npm 12 把这个输出从数组 `[{…}]` 改成按包名索引的对象 `{"dsh-obsidian-mem": {…}}`，而 `scripts/verify-tarball.mjs` 原有的 `const [packed] = JSON.parse(run.stdout)` 对对象解构会抛 `object is not iterable`，于是 `the archive this checkout really produces satisfies the contract` 断言 `2 !== 0`、job 退出 1（run 41176291759）。这不是 1.0.0 引入的：0.4.4 的推送在同一平台上已因同一原因红（run 41093967549）。现在 `parsePackReport(stdout)` 同时接受数组与按包名索引的对象两种信封，并且只接受**恰好一个**归档记录：0 个或多个都抛出带数量的错误，不再静默挑一个；真实打包与归档检查路径不变。
