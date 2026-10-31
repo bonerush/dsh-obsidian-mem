@@ -803,25 +803,58 @@ test('the composed overview starts on the body inset, not on a doubled margin', 
   assert.ok(gap >= 16 && gap <= 20, 'search field to first content is ' + gap + 'px (target 16–20)')
 })
 
-test('every KPI cell centres its content and the sparkline stays a bounded shape', async () => {
+test('the KPI band spreads its readings evenly and the sparkline stays a bounded shape', async () => {
   const { script } = await bundle()
   const css = panelCss(script)
+  // Equal quarters centred each reading inside a fixed 140.75px box, but the readings
+  // are not equally wide: the sparkline makes the first cell 120px while "0 个" leaves
+  // the last one 29px. The band's own ink therefore measured 25px of space on the left
+  // against 69px on the right at a 593px panel, and the row read as shifted left (the
+  // reported "左右两边的空隙还是不一致"). space-evenly sizes each cell to its content
+  // and divides the remainder equally, so both outer margins and every gap between
+  // cells measure the same; the wide layout drops the dividers that would then sit at
+  // uneven positions.
+  const bandStart = css.indexOf('.mem-panel .mem-kpiline{')
+  assert.ok(bandStart >= 0, 'the KPI band rule exists')
+  const band = css.slice(bandStart, css.indexOf('}', bandStart))
+  assert.ok(band.includes('display:flex'), 'the band lays its cells out as a row: ' + band)
+  assert.ok(
+    band.includes('justify-content:space-evenly'),
+    'and spends equal whitespace between them and at both ends: ' + band,
+  )
   const start = css.indexOf('.mem-panel .mem-kpi{')
   assert.ok(start >= 0, 'the KPI cell rule exists')
   const rule = css.slice(start, css.indexOf('}', start))
-  // The four cells are equal quarters of the band. Left-aligned content pinned each
-  // reading to its quarter's left edge and left the wide panel's right side empty
-  // (measured 87px of unused content width in the 659px band's 记忆条目 cell), so the
-  // rows are centred. The quarter dividers stay.
   assert.ok(rule.includes('align-items:center'), 'the cell rows share one centre line: ' + rule)
+  assert.ok(rule.includes('flex:0 0 auto'), 'a cell is its own content, not a quarter: ' + rule)
   const sparkStart = css.indexOf('.mem-panel .mem-kpi-spark{')
   assert.ok(sparkStart >= 0, 'the sparkline rule exists')
   const sparkRule = css.slice(sparkStart, css.indexOf('}', sparkStart))
-  assert.ok(sparkRule.includes('width:100%'), 'the shape may use the cell: ' + sparkRule)
+  assert.ok(sparkRule.includes('width:120px'), 'the shape names its width: ' + sparkRule)
   assert.ok(
-    /max-width:120px/u.test(sparkRule),
-    'and stops growing on a wide cell so it stays a shape, not a rule: ' + sparkRule,
+    /max-width:100%/u.test(sparkRule),
+    'and only gives way inside a narrower folded cell: ' + sparkRule,
   )
+})
+
+test('the figure grid declares its column count so a short card fills its row', async () => {
+  const { script } = await bundle()
+  const css = panelCss(script)
+  // A fixed three-column grid rounds its cells up to a whole row, and the cells it never
+  // fills show the container's own background: the 热层 card (two cells) printed one
+  // solid grey block and the 摘要 card (four cells) printed two. figures() declares how
+  // many cells it has, so a short card spans its row; six keep two full rows of three.
+  for (const marker of [
+    '.mem-figures[data-columns="1"]{grid-template-columns:minmax(0,1fr)}',
+    '.mem-figures[data-columns="2"]{grid-template-columns:repeat(2,minmax(0,1fr))}',
+    '.mem-figures[data-columns="4"]{grid-template-columns:repeat(4,minmax(0,1fr))}',
+  ])
+    assert.ok(css.includes(marker), 'the figure grid declares ' + marker)
+  const start = css.indexOf('.mem-panel .mem-figure{')
+  assert.ok(start >= 0, 'the figure cell rule exists')
+  const rule = css.slice(start, css.indexOf('}', start))
+  assert.ok(rule.includes('align-items:center'), 'a cell centres its reading: ' + rule)
+  assert.ok(rule.includes('text-align:center'), 'and its key line: ' + rule)
 })
 
 test('the tab strip is a Chrome-like row: separate roomy leaves, the active page merged', async () => {
@@ -922,15 +955,19 @@ test('the tab strip is a Chrome-like row: separate roomy leaves, the active page
     false,
     'the 359 step is gone: it was the defect, not the fallback',
   )
-  // The KPI band folds to 2x2 at 559px, not 339px. Measured in headless Chrome against
-  // this stylesheet: "1,049 条" needs 107.4px (87.4px of digits plus the unit, 20px of
-  // cell padding), while a 446px panel gives a four-across cell only 104px — so the old
-  // fold point left the last figure clipped and the first hugging its edge. 559 is the
-  // panel width at which a cell reaches 127px; see the rule's comment for the arithmetic.
+  // The KPI band folds to 2x2 at 559px. With content-sized cells the four readings plus
+  // their insets need 385px in Chinese and 439px in English; at a 560px panel the band
+  // still has 28.9px and 18.3px of whitespace to distribute, and at the 446px panel that
+  // prompted the earlier fold it has none at all. The folded grid restores equal
+  // quarters, their dividers and the figure grid's own 2x2 fallback (a four-column
+  // figures row would otherwise print two grey holes).
   for (const marker of [
     '@container (max-width:559px)',
-    '.mem-kpi:nth-child(3){border-left:0;border-top:1px solid var(--dsw-alias-border-l1)}',
-    '.mem-kpi:nth-child(4){border-top:1px solid var(--dsw-alias-border-l1)}',
+    '.mem-kpiline{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));justify-content:normal}',
+    '.mem-kpi:nth-child(2){border-left:1px solid var(--dsw-alias-border-l1)}',
+    '.mem-kpi:nth-child(3){border-top:1px solid var(--dsw-alias-border-l1)}',
+    '.mem-kpi:nth-child(4){border-left:1px solid var(--dsw-alias-border-l1);border-top:1px solid var(--dsw-alias-border-l1)}',
+    '.mem-figures[data-columns="4"]{grid-template-columns:repeat(2,minmax(0,1fr))}',
   ])
     assert.ok(css.includes(marker), 'the KPI fold contains ' + marker)
   assert.equal(

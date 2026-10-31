@@ -2901,6 +2901,14 @@ test('the health page leads with gauges and keeps every reading a number', async
   )
   assert.ok(byClass(tree, 'mem-stamp').some((node) => node.props.children[0] === '就绪'))
   assert.equal(byClass(tree, 'mem-meter-track').length, 1, 'the hot meter is kept')
+  // Each grid declares how many cells it holds, so a short card fills its row instead
+  // of leaving the grid's own background showing through: 索引 prints six cells (two
+  // rows of three), 热层 two, 今日摘要 four.
+  assert.deepEqual(
+    byClass(tree, 'mem-figures').map((node) => node.props['data-columns']),
+    ['3', '2', '4'],
+    'the grid column count follows the number of cells it prints',
+  )
 
   // 待处理作业 is one stacked bar over 排队/失败/延迟, and its legend prints each
   // count: a segment width alone would be unreadable at 320px.
