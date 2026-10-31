@@ -37,6 +37,10 @@ release artifact. The versioning policy is in the README, under Development.
 - **健康页不再重复标题。** 外壳的健康标签页把 `onMeta` 传给视图，页面不再在搜索框下面
   再印一个「健康 / Health」标题；独立渲染（无 `onMeta`）仍保留标题，概览页的既有门控
   行为不变。
+- **热图月份行滑到星期栏下方时不再露出半截。** 星期栏的遮罩过去只和网格同高，
+  横向滚动后月份标签会从 `Mon/Wed/Fri` 上方探出半个字。现在给 `.mem-heat-weekdays`
+  加一个向上 14px 的同色伪元素（`::before`，与月份行同高），遮罩正好盖住整条月份行，
+  中文标签只在星期栏右侧出现。中文 14px 与英文 32px 的星期栏通用，布局与网格尺寸未变。
 
 - 证据：`DSH_HOME=$(mktemp -d) node --test test/panel-ui.test.js` 85/85 通过（新增 4
   条：英文热图 gutter、英文桑基测宽与滚动、组合健康页的中英标题门控）；同法

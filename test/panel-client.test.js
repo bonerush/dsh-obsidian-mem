@@ -632,6 +632,21 @@ test('the heat map is a fixed 10px GitHub-style calendar in its own scroll box',
     weekdaysRule.includes('background:var(--dsw-alias-bg-base)'),
     'the sticky gutter paints over the cells it covers',
   )
+  // A scrolled month label must not survive above the gutter: the mask is painted
+  // upward by one month-row height so "Nov" cannot peek out over "Mon".
+  const maskStart = css.indexOf('.mem-panel .mem-heat-weekdays::before{')
+  assert.ok(maskStart > weekdaysStart, 'the gutter extends its mask above the grid')
+  const maskRule = css.slice(maskStart, css.indexOf('}', maskStart))
+  for (const declaration of [
+    'content:""',
+    'position:absolute',
+    'left:0',
+    'right:0',
+    'top:-14px',
+    'height:14px',
+    'background:var(--dsw-alias-bg-base)',
+  ])
+    assert.ok(maskRule.includes(declaration), 'the month-row mask declares ' + declaration)
   const frameStart = css.indexOf('.mem-panel .mem-heat-frame{')
   assert.ok(frameStart >= 0, 'the frame rule exists')
   const frameRule = css.slice(frameStart, css.indexOf('}', frameStart))
