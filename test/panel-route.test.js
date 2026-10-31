@@ -15,7 +15,13 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { createPreviewTokens } from '../lib/panel-actions.js'
-import { PANEL_ACTIONS, registerPanelRoute } from '../lib/panel-route.js'
+import {
+  PANEL_ACTIONS,
+  PANEL_HEADER,
+  PANEL_HEADER_VALUE,
+  PANEL_REFRESH_INTERVAL_MS,
+  registerPanelRoute,
+} from '../lib/panel-route.js'
 import { resolveScope } from '../lib/search.js'
 
 const SESSION = 'panel-session'
@@ -135,7 +141,7 @@ function stubServices(overrides = {}) {
 /** One harness: a fake webServer, a real HTTP server, and a loopback fetch. */
 async function harness(
   t,
-  { services = stubServices().services, resolveBinding, assets, previewTokens } = {},
+  { services = stubServices().services, resolveBinding, assets, previewTokens, now } = {},
 ) {
   const routes = new Map()
   const dispose = registerPanelRoute(
@@ -159,6 +165,7 @@ async function harness(
       scopeOf: resolveScope,
       ...(assets === undefined ? {} : { assets }),
       ...(previewTokens === undefined ? {} : { previewTokens }),
+      ...(now === undefined ? {} : { now }),
     },
   )
   t.after(dispose)
@@ -295,8 +302,12 @@ test('method, fence, body cap and unknown action are refused before any read', a
   const unknown = await h.post({ sessionId: SESSION, action: 'digest' })
   assert.equal(unknown.status, 400)
   const noSession = await h.post({ sessionId: 'other', action: 'overview' })
-  assert.equal(noSession.status, 404)
+  // 503, never 404: the browser asset treats 404 as "the route was not registered"
+  // and shows the fatal restart notice, so an unresolvable session (a resumed
+  // session racing the panel's first poll) must be a retryable unavailability.
+  assert.equal(noSession.status, 503)
   assert.equal(noSession.body.error.code, 'session-missing')
+  assert.equal(noSession.body.error.message, 'memory panel unavailable')
   assert.equal(stub.calls.admin.length, 0)
   assert.equal(stub.calls.indexForBinding.length, 0)
   assert.match(origin, /^http:\/\/127\.0\.0\.1:/u)
@@ -468,7 +479,7 @@ test('a status filter is applied before hasMore is decided', async (t) => {
   assert.equal(more.body.value.hasMore, true, 'kept rows beyond the window prove more')
 })
 
-test('overview trims its lists to stay inside the 16 KB ceiling', async (t) => {
+test('overview trims its lists to stay inside the 20 KB ceiling', async (t) => {
   const byType = Array.from({ length: 500 }, (_x, index) => ({
     type: 'type-' + index + '-' + 'x'.repeat(20),
     n: index,
@@ -548,7 +559,7 @@ test('overview trims its lists to stay inside the 16 KB ceiling', async (t) => {
   const h = await harness(t, { services })
   const result = await h.post({ sessionId: SESSION, action: 'overview' })
   assert.equal(result.status, 200)
-  assert.ok(result.bytes <= 16 * 1024, 'overview is ' + result.bytes + ' bytes')
+  assert.ok(result.bytes <= 20 * 1024, 'overview is ' + result.bytes + ' bytes')
   // The padded flow is over the ceiling on its own, so it is dropped whole; a
   // halved flow would leave a Sankey whose links disagree with the printed totals.
   assert.deepEqual(result.body.value.counts.flow, [], 'flow is dropped whole')
@@ -650,10 +661,10 @@ test('overview carries the chart aggregates and asks for the route-driven window
 })
 
 test('overview reads the activity window the client asks for, inside the route bound', async (t) => {
-  // A wide panel asks for a longer calendar (up to 26 weeks) so its heat map can fill
-  // the body; the route is the bound on that ask, because the 16 KB ceiling and the
-  // index's own 365-day limit are both behind it. Absent, malformed or out-of-range
-  // values fall back to the designed twelve weeks instead of failing the read.
+  // A wide panel asks for the whole year (53 weeks, 371 days) so its fixed GitHub-style
+  // heat map can fill the body; the route is the bound on that ask, because the 20 KB
+  // ceiling and the index's own 371-day limit are both behind it. Absent, malformed or
+  // out-of-range values fall back to the designed twelve weeks instead of failing the read.
   const calls = []
   const base = stubServices()
   const services = {
@@ -698,19 +709,19 @@ test('overview reads the activity window the client asks for, inside the route b
         : { sessionId: SESSION, action: 'overview', days },
     )
 
-  const wide = await read(182)
+  const wide = await read(371)
   assert.equal(wide.status, 200)
-  assert.deepEqual(calls.at(-1), { scope: 'project', days: 182 })
-  assert.equal(wide.body.value.activity.days.length, 182, 'the wire carries the whole window')
-  assert.ok(wide.bytes <= 16 * 1024, 'the wide window still fits the ceiling: ' + wide.bytes)
+  assert.deepEqual(calls.at(-1), { scope: 'project', days: 371 })
+  assert.equal(wide.body.value.activity.days.length, 371, 'the wire carries the whole window')
+  assert.ok(wide.bytes <= 20 * 1024, 'the wide window still fits the ceiling: ' + wide.bytes)
 
-  // Past the bound clamps to 26 weeks (it does not fail, and it does not grow).
+  // Past the bound clamps to 53 weeks (it does not fail, and it does not grow).
   await read(500)
-  assert.deepEqual(calls.at(-1), { scope: 'project', days: 182 }, 'a request past the bound clamps')
+  assert.deepEqual(calls.at(-1), { scope: 'project', days: 371 }, 'a request past the bound clamps')
   // Below the design window falls back to the twelve weeks the charts are designed on.
   await read(28)
   assert.deepEqual(calls.at(-1), { scope: 'project', days: 84 }, 'a short request falls back')
-  await read('182')
+  await read('371')
   assert.deepEqual(calls.at(-1), { scope: 'project', days: 84 }, 'a non-integer falls back')
   await read()
   assert.deepEqual(calls.at(-1), { scope: 'project', days: 84 }, 'absent means the design window')
@@ -826,7 +837,509 @@ test('an unbound project keeps its pre-chart shape', async (t) => {
   assert.equal('tags' in result.body.value, false)
 })
 
-test('overview stays inside 16 KB with fifty notes and the full 84-day window', async (t) => {
+// ---------------------------------------------------------------------------
+// Item 1: a live read refreshes the project index behind the panel
+// ---------------------------------------------------------------------------
+
+/**
+ * One index object shared across reads, with an observable `refresh` seam.
+ *
+ * The route throttles per index OBJECT (a WeakMap key), so the stub must answer
+ * the same handle every time. The real `indexForBinding` does; a fresh object per
+ * call would make every read look like the first and defeat the throttle.
+ */
+function refreshableIndex() {
+  const state = {
+    scanning: () => false,
+    refreshes: 0,
+    events: [],
+    failure: null,
+    gate: null,
+    entered: null,
+  }
+  const index = {
+    boundProjectId: BOUND.projectId,
+    async refresh() {
+      state.refreshes += 1
+      state.events.push('refresh')
+      if (state.entered !== null) state.entered()
+      if (state.gate !== null) await state.gate
+      if (state.failure !== null) throw state.failure
+    },
+    status: () => ({
+      backend: 'sqlite',
+      ready: true,
+      degraded: false,
+      stale: false,
+      scanning: state.scanning(),
+      notes: 5,
+      lastScan: null,
+      quarantined: [],
+      skipped: {},
+      fts: true,
+    }),
+    async stats() {
+      state.events.push('stats')
+      return { notes: 5, links: 2, orphans: 1, byType: [], byStatus: [], updatedAt: null }
+    },
+    async activity(args) {
+      return activitySeries(args.days)
+    },
+    async tagFrequencies() {
+      return { items: [], total: 0 }
+    },
+    async recent() {
+      return []
+    },
+    async search() {
+      const hits = []
+      Object.defineProperty(hits, 'candidatesScored', { value: 0, enumerable: false })
+      return hits
+    },
+  }
+  const base = stubServices()
+  const services = {
+    ...base.services,
+    async indexForBinding() {
+      return index
+    },
+  }
+  return { index, state, services }
+}
+
+test('overview and health refresh the project index at most once per throttle window', async (t) => {
+  // The panel polls forever; the index is only re-scanned after a write in THIS
+  // process. A memory created by another process (another profile, the Codex
+  // adapter, Obsidian itself) is invisible until the index is asked to rescan, so
+  // both live reads refresh it — but a scan per poll would re-walk the vault every
+  // few seconds for a panel that only redraws.
+  const { state, services } = refreshableIndex()
+  let clock = 1_000_000
+  const h = await harness(t, { services, now: () => clock })
+  const read = () => h.post({ sessionId: SESSION, action: 'overview' })
+
+  assert.equal((await read()).status, 200)
+  assert.equal(state.refreshes, 1, 'the first live read refreshes the index')
+  assert.equal(state.events[0], 'refresh', 'and it refreshes before the cards are read')
+
+  await read()
+  assert.equal(state.refreshes, 1, 'a second read inside the window does not')
+  clock += PANEL_REFRESH_INTERVAL_MS - 1
+  await read()
+  assert.equal(state.refreshes, 1, 'one millisecond before the window ends still does not')
+  clock += 1
+  await read()
+  assert.equal(state.refreshes, 2, 'at the window boundary the next read refreshes')
+
+  clock += PANEL_REFRESH_INTERVAL_MS
+  const health = await h.post({ sessionId: SESSION, action: 'health' })
+  assert.equal(health.status, 200)
+  assert.equal(state.refreshes, 3, '健康 is a live read too and shares the same window')
+})
+
+test('a scanning index is left alone, and the skip does not spend the window', async (t) => {
+  const { state, services } = refreshableIndex()
+  state.scanning = () => true
+  let clock = 1_000_000
+  const h = await harness(t, { services, now: () => clock })
+  const read = () => h.post({ sessionId: SESSION, action: 'overview' })
+
+  assert.equal((await read()).status, 200)
+  assert.equal(
+    state.refreshes,
+    0,
+    'the index already reports scanning; queueing a second scan is waste',
+  )
+
+  state.scanning = () => false
+  clock += PANEL_REFRESH_INTERVAL_MS
+  assert.equal((await read()).status, 200)
+  assert.equal(state.refreshes, 1, 'the skipped read never stamped a window of its own')
+})
+
+test('the refresh window is stamped before the scan is awaited, so polls do not stampede', async (t) => {
+  // Set the timestamp BEFORE awaiting the scan. Otherwise two panels polling in
+  // the same watchdog tick both see an empty window and both start a vault scan.
+  const { state, services } = refreshableIndex()
+  let release
+  state.gate = new Promise((resolve) => {
+    release = resolve
+  })
+  let entered
+  state.entered = () => {
+    if (entered !== undefined) entered()
+  }
+  const started = new Promise((resolve) => {
+    entered = resolve
+  })
+  const h = await harness(t, { services, now: () => 1_000_000 })
+  const read = () => h.post({ sessionId: SESSION, action: 'overview' })
+
+  const first = read()
+  await started
+  const second = await read()
+  assert.equal(second.status, 200)
+  assert.equal(state.refreshes, 1, 'the second poll saw the window already stamped')
+  release()
+  assert.equal((await first).status, 200)
+})
+
+test('a failed index refresh never fails the read and still spends the window', async (t) => {
+  const { state, services } = refreshableIndex()
+  state.failure = new Error('scan failed')
+  const h = await harness(t, { services, now: () => 1_000_000 })
+  const first = await h.post({ sessionId: SESSION, action: 'overview' })
+  assert.equal(first.status, 200, 'a refresh failure is swallowed; the read still answers')
+  assert.equal(first.body.value.counts.notes, 5, 'the previous scan is still a valid answer')
+  assert.equal(first.body.value.activity.days.length, 84, 'and the charts still render')
+  const second = await h.post({ sessionId: SESSION, action: 'overview' })
+  assert.equal(second.status, 200)
+  assert.equal(state.refreshes, 1, 'the failed attempt stamped the window before awaiting')
+})
+
+test('search and unbound reads never trigger the refresh', async (t) => {
+  const { state, services } = refreshableIndex()
+  const h = await harness(t, { services, now: () => 1_000_000 })
+  const search = await h.post({ sessionId: SESSION, action: 'search', query: 'x', scope: 'all' })
+  assert.equal(search.status, 200)
+  assert.equal(state.refreshes, 0, '检索 answers from the index as it is')
+
+  const unbound = await harness(t, {
+    services,
+    now: () => 1_000_000,
+    resolveBinding: async () => ({ kind: 'unbound', reason: 'no-pointer' }),
+  })
+  const read = await unbound.post({ sessionId: SESSION, action: 'overview' })
+  assert.equal(read.status, 200)
+  assert.equal(state.refreshes, 0, 'an unbound read answers before an index is ever resolved')
+})
+
+test('a real-shaped dense year fits the 20 KB ceiling without trimming', async (t) => {
+  // The heat map requests all 371 days on every load, so a year where every day
+  // carries counts is the largest honest activity series the panel can produce.
+  // It must answer whole at the new ceiling: if the trimmer's first stage fired it
+  // would cut the series to the designed 84 days and silently snap the heat map
+  // back to twelve weeks. This fixture is the evidence the CEILINGS comment cites:
+  // a dense 371-day series (two-digit counts every day) plus real-shaped cards —
+  // counts, 24 tags, 8 recent rows, the collector's digest — measures 15,209 B.
+  const year = () => {
+    const list = localDays(371)
+    return {
+      from: list[0],
+      to: list[list.length - 1],
+      days: list,
+      created: list.map((_day, index) => 10 + (index % 25)),
+      updated: list.map((_day, index) => 10 + ((index * 7) % 30)),
+    }
+  }
+  const byType = [
+    { type: 'gotcha', n: 363 },
+    { type: 'convention', n: 324 },
+    { type: 'decision', n: 261 },
+    { type: 'doc', n: 11 },
+    { type: 'hub', n: 7 },
+    { type: 'session-log', n: 6 },
+    { type: 'hot', n: 1 },
+  ]
+  const tags = Array.from({ length: 24 }, (_x, index) => ({
+    tag: 'dsh-mem/tag-' + index,
+    n: 24 - index,
+  }))
+  const recent = Array.from({ length: 8 }, (_x, index) => ({
+    path:
+      'Projects/alpha--11111111/Conventions/发布前核对包内两份 manifest 版本一致-' + index + '.md',
+    title: '发布前核对包内两份 manifest 版本一致 · 第 ' + index + ' 条',
+    type: 'convention',
+    status: 'active',
+    // Two rows per day across four days, so the day-diverse feed keeps all eight:
+    // this fixture still measures the real-shaped eight-row recent card.
+    updated: '2026-10-' + String(31 - Math.floor(index / 2)).padStart(2, '0'),
+  }))
+  const sections = ['已完成', '进行中', '强约束'].map((name) => ({
+    name,
+    chars: 1200,
+    entries: 2,
+    pointers: 3,
+    moveable: 1,
+  }))
+  // The digest card as the real collector shapes it — it is the second-largest card
+  // on the wire (2,800 B measured), so leaving it out would understate the payload.
+  const digestYear = () => ({
+    window: { days: 1, from: '2026-10-30T03:32:24.639Z', to: '2026-10-31T03:32:24.639Z' },
+    notes: {
+      created: 31,
+      updated: 4,
+      superseded: 0,
+      byType: [
+        { type: 'convention', created: 15, updated: 0 },
+        { type: 'gotcha', created: 12, updated: 0 },
+        { type: 'doc', created: 4, updated: 0 },
+        { type: 'hub', created: 0, updated: 4 },
+      ],
+    },
+    hot: {
+      missing: false,
+      used: 5728,
+      capacity: 9000,
+      trigger: 6030,
+      ratio: 0.67,
+      sections: [
+        { name: '强约束', chars: 1, entries: 0, pointers: 0, moveable: 0 },
+        { name: '进行中', chars: 1, entries: 0, pointers: 0, moveable: 0 },
+        { name: '已完成', chars: 5464, entries: 14, pointers: 1, moveable: 14 },
+      ],
+      archivable: 14,
+      compactable: 14,
+    },
+    queue: { queued: 0, failed: 0, deferred: 0 },
+    appraisal: { findings: [], total: 0, truncated: true, scanned: 35 },
+    recent: recent.map((row) => ({ ...row, updated: '2026-10-30' })),
+    snapshot: {
+      at: '2026-10-31T03:32:24.639Z',
+      basis: 'current-status-among-inspected-sources',
+      fields: ['notes.superseded', 'hot', 'queue'],
+    },
+    collection: {
+      basis: 'inspected-source-notes',
+      inspected: 35,
+      limit: 200,
+      truncated: true,
+      incomplete: false,
+      reasons: ['source-limit'],
+    },
+  })
+  const services = {
+    async indexForBinding() {
+      return {
+        boundProjectId: BOUND.projectId,
+        status: () => ({
+          backend: 'sqlite',
+          ready: true,
+          degraded: false,
+          stale: false,
+          scanning: false,
+          notes: 973,
+          lastScan: '2026-10-30T17:03:55.034Z',
+          quarantined: [],
+          skipped: { large: 0, symlink: 0, internal: 10, depth: 0, other: 0 },
+          fts: true,
+        }),
+        stats: async () => ({
+          notes: 973,
+          links: 1101,
+          orphans: 844,
+          byType,
+          byStatus: [
+            { status: 'active', n: 588 },
+            { status: 'superseded', n: 199 },
+            { status: 'accepted', n: 90 },
+            { status: 'proposed', n: 43 },
+            { status: 'provisional', n: 39 },
+            { status: 'archived', n: 14 },
+          ],
+          flow: [
+            { type: 'gotcha', status: 'active', n: 242 },
+            { type: 'convention', status: 'active', n: 226 },
+            { type: 'decision', status: 'active', n: 95 },
+            { type: 'gotcha', status: 'superseded', n: 89 },
+            { type: 'decision', status: 'accepted', n: 80 },
+            { type: 'convention', status: 'superseded', n: 71 },
+            { type: 'decision', status: 'superseded', n: 39 },
+            { type: 'decision', status: 'proposed', n: 35 },
+            { type: 'gotcha', status: 'provisional', n: 15 },
+            { type: 'convention', status: 'provisional', n: 13 },
+            { type: 'gotcha', status: 'archived', n: 12 },
+            { type: 'decision', status: 'provisional', n: 11 },
+            { type: 'doc', status: 'active', n: 11 },
+            { type: 'convention', status: 'accepted', n: 7 },
+            { type: 'hub', status: 'active', n: 7 },
+            { type: 'convention', status: 'proposed', n: 6 },
+            { type: 'session-log', status: 'active', n: 6 },
+            { type: 'gotcha', status: 'accepted', n: 3 },
+            { type: 'gotcha', status: 'proposed', n: 2 },
+            { type: 'convention', status: 'archived', n: 1 },
+            { type: 'decision', status: 'archived', n: 1 },
+            { type: 'hot', status: 'active', n: 1 },
+          ],
+          updatedAt: '2026-10-30T17:03:54.798Z',
+        }),
+        activity: async () => year(),
+        tagFrequencies: async () => ({ items: tags, total: 411, distinct: 24 }),
+        recent: async () => recent,
+      }
+    },
+    async admin(args) {
+      if (args.action === 'hot')
+        return {
+          action: 'hot',
+          result: { ...hotView({ sections }), sections },
+        }
+      if (args.action === 'digest') return { action: 'digest', result: digestYear() }
+      return { action: 'jobs', result: { jobs: [], failed: 0, deferred: 0 } }
+    },
+  }
+  const h = await harness(t, { services })
+  const result = await h.post({ sessionId: SESSION, action: 'overview', days: 371 })
+  assert.equal(result.status, 200)
+  assert.ok(result.bytes <= 20 * 1024, 'a dense year is ' + result.bytes + ' bytes')
+  const value = result.body.value
+  assert.equal(value.activity.days.length, 371, 'the whole year reaches the heat map untrimmed')
+  assert.equal(value.activity.created.length, 371)
+  assert.equal(value.tags.items.length, 24, 'the tag treemap page is intact')
+  assert.equal(value.recent.length, 8)
+  assert.notEqual(value.digest, null)
+  assert.equal(value.hot.sections.length, 3)
+})
+
+// ---------------------------------------------------------------------------
+// 最近变化: a day-diverse sample instead of a flat newest-8 page
+// ---------------------------------------------------------------------------
+
+/** A row as `index.recent` answers it; the index is newest first by file mtime. */
+function recentView(day, index) {
+  return {
+    path: 'Projects/alpha--11111111/Decisions/' + String(day) + '-' + index + '.md',
+    title: 'note ' + String(day) + ' #' + index,
+    type: 'decision',
+    status: 'active',
+    updated: day === null ? null : day + 'T10:00:00.000Z',
+  }
+}
+
+/** One overview read from an index whose recent page is fixed; the ask is recorded. */
+async function recentRead(t, rows) {
+  const calls = []
+  const base = stubServices()
+  const services = {
+    ...base.services,
+    async indexForBinding() {
+      return {
+        boundProjectId: BOUND.projectId,
+        status: () => ({
+          backend: 'sqlite',
+          ready: true,
+          degraded: false,
+          stale: false,
+          scanning: false,
+          notes: 60,
+          lastScan: null,
+          quarantined: [],
+          skipped: {},
+          fts: true,
+        }),
+        stats: async () => ({
+          notes: 60,
+          links: 0,
+          orphans: 0,
+          byType: [],
+          byStatus: [],
+          updatedAt: null,
+        }),
+        activity: async (args) => activitySeries(args.days, 1),
+        tagFrequencies: async () => ({ items: [], total: 0 }),
+        async recent(args) {
+          calls.push(args)
+          return rows
+        },
+      }
+    },
+  }
+  const h = await harness(t, { services })
+  const result = await h.post({ sessionId: SESSION, action: 'overview' })
+  return { calls, result }
+}
+
+test('最近变化 samples up to two notes per day across the newest four days', async (t) => {
+  // Live 2026-10-31: the overview's eight recent rows were ALL updated that day
+  // (the digest reported 45 notes created in the last day), so a flat newest-8
+  // window could only ever draw one day group. The route scans a wide INTERNAL
+  // page and keeps a day-diverse sample; the wire still carries <= 8 rows, so the
+  // overview byte ceiling is untouched.
+  const rows = [
+    ...Array.from({ length: 45 }, (_x, index) => recentView('2026-10-31', index)),
+    ...Array.from({ length: 3 }, (_x, index) => recentView('2026-10-30', index)),
+    ...Array.from({ length: 2 }, (_x, index) => recentView('2026-10-29', index)),
+    ...Array.from({ length: 2 }, (_x, index) => recentView('2026-10-28', index)),
+    ...Array.from({ length: 1 }, (_x, index) => recentView('2026-10-27', index)),
+  ]
+  const { calls, result } = await recentRead(t, rows)
+  assert.equal(result.status, 200)
+  assert.deepEqual(calls, [{ limit: 500 }], 'the internal scan asks for the wide page')
+  const value = result.body.value.recent
+  assert.equal(value.length, 8)
+  assert.deepEqual(
+    value.map((row) => row.updated.slice(0, 10)),
+    [
+      '2026-10-31',
+      '2026-10-31',
+      '2026-10-30',
+      '2026-10-30',
+      '2026-10-29',
+      '2026-10-29',
+      '2026-10-28',
+      '2026-10-28',
+    ],
+    'two rows per day, newest days first, original mtime order preserved',
+  )
+  assert.equal(
+    value.some((row) => row.updated.startsWith('2026-10-27')),
+    false,
+    'a fifth day is beyond the four-day sample',
+  )
+  for (const row of value)
+    assert.deepEqual(
+      Object.keys(row).sort(),
+      ['path', 'status', 'title', 'type', 'updated'],
+      'the wire row shape is unchanged',
+    )
+})
+
+test('a busy single day is bounded to two rows instead of a flat newest-8', async (t) => {
+  const rows = Array.from({ length: 12 }, (_x, index) => recentView('2026-10-31', index))
+  const { result } = await recentRead(t, rows)
+  assert.equal(result.status, 200)
+  assert.deepEqual(
+    result.body.value.recent.map((row) => row.path),
+    rows.slice(0, 2).map((row) => row.path),
+    'only the newest two rows of the only day reach the wire',
+  )
+})
+
+test('rows without an updated day form a final unknown bucket with the same cap', async (t) => {
+  // The timeline renders undated rows as a final 未知 group; the route keeps them
+  // as one bucket (at most two rows) and never lets them displace a dated day.
+  const rows = [
+    recentView(null, 0),
+    recentView('2026-10-31', 0),
+    recentView(null, 1),
+    recentView('2026-10-31', 1),
+    recentView(null, 2),
+    recentView('2026-10-30', 0),
+    recentView('2026-10-30', 1),
+  ]
+  const { result } = await recentRead(t, rows)
+  const value = result.body.value.recent
+  assert.equal(value.length, 6, 'two dated days plus two unknown rows still fit the wire')
+  assert.equal(
+    value.filter((row) => row.updated === null).length,
+    2,
+    'the unknown bucket keeps the same two-row cap',
+  )
+  assert.deepEqual(
+    value.map((row) => row.updated),
+    [
+      null,
+      '2026-10-31T10:00:00.000Z',
+      null,
+      '2026-10-31T10:00:00.000Z',
+      '2026-10-30T10:00:00.000Z',
+      '2026-10-30T10:00:00.000Z',
+    ],
+    'the original mtime order is preserved across buckets',
+  )
+})
+
+test('overview stays inside 20 KB with fifty notes and the full 84-day window', async (t) => {
   const recent = Array.from({ length: 8 }, (_x, index) => ({
     path: 'Projects/alpha--11111111/Decisions/note-' + index + '.md',
     title: 'a realistic note title number ' + index,
@@ -895,13 +1408,15 @@ test('overview stays inside 16 KB with fifty notes and the full 84-day window', 
   const h = await harness(t, { services })
   const result = await h.post({ sessionId: SESSION, action: 'overview' })
   assert.equal(result.status, 200)
-  assert.ok(result.bytes <= 16 * 1024, 'overview is ' + result.bytes + ' bytes')
+  assert.ok(result.bytes <= 20 * 1024, 'overview is ' + result.bytes + ' bytes')
   const value = result.body.value
   // A realistic overview fits untrimmed: the 84-day window and twelve tag rows
   // are the designed payload, not the overflow case.
   assert.equal(value.activity.days.length, 84)
   assert.equal(value.tags.items.length, 12)
-  assert.equal(value.recent.length, 8)
+  // This fixture's eight rows are eight DIFFERENT days, so the day-diverse feed
+  // samples two rows for each of the newest four days instead of all eight.
+  assert.equal(value.recent.length, 4)
   assert.notEqual(value.digest, null)
 })
 
@@ -974,10 +1489,10 @@ function ladderHarness(t) {
 test('a wider activity window is the first thing the ceiling gives back', async (t) => {
   // The wide-panel window is the newest enhancement to the payload, and the only one
   // whose loss still leaves both charts drawn at the designed twelve weeks. So it is
-  // the first thing shrunk when the answer crosses 16 KB — before the tag page or any
+  // the first thing shrunk when the answer crosses 20 KB — before the tag page or any
   // distribution pays — and the charts keep their design window instead of a 4-week
   // last resort.
-  const CEILING = 16 * 1024
+  const CEILING = 20 * 1024
   const SLACK = 400
   const { state, post } = ladderHarness(t)
   const rows = (count, make) => Array.from({ length: count }, (_x, index) => make(index))
@@ -993,7 +1508,7 @@ test('a wider activity window is the first thing the ceiling gives back', async 
     pointers: 0,
     moveable: 0,
   })
-  state.activity = zeros(182)
+  state.activity = zeros(371)
   state.tagPage = { items: [], total: 0 }
   state.byType = []
   state.byStatus = []
@@ -1016,13 +1531,13 @@ test('a wider activity window is the first thing the ceiling gives back', async 
   )
   assert.equal(window.created.length, 84, 'the series are cut with the calendar')
   assert.equal(window.updated.length, 84)
-  assert.equal(window.from, zeros(182).days[98], 'from moves to the new first day')
-  assert.equal(window.to, zeros(182).days[181], 'to never moves')
+  assert.equal(window.from, zeros(371).days[287], 'from moves to the new first day')
+  assert.equal(window.to, zeros(371).days[370], 'to never moves')
   assert.equal(trimmed.body.value.hot.sections.length, 6, 'the hot sections are untouched')
 })
 
 test('overview trims the charts before the text lists, in the design §3.6 order', async (t) => {
-  const CEILING = 16 * 1024
+  const CEILING = 20 * 1024
   const SLACK = 400
   const { state, post } = ladderHarness(t)
   const rows = (count, make) => Array.from({ length: count }, (_x, index) => make(index))
@@ -1223,6 +1738,9 @@ test('overview trims the charts before the text lists, in the design §3.6 order
     (width) => {
       state.recent = rows(4, (index) => ({
         ...recentRow(index),
+        // Two days × two rows: the day-diverse feed keeps all four, so the last
+        // list still has something to halve.
+        updated: '2026-10-' + (27 + (index % 2)),
         title: 'x'.repeat(Math.ceil(width / 4)),
       }))
     },
@@ -1264,7 +1782,7 @@ test('overview drops the whole flow before it halves a distribution', async (t) 
   // The flow is all-or-nothing: a halved flow would draw a Sankey whose link sum
   // disagrees with the printed totals, so a too-large flow is dropped entirely
   // and the view falls back to the stacked bar instead.
-  const CEILING = 16 * 1024
+  const CEILING = 20 * 1024
   const { state, post } = ladderHarness(t)
   const flat = (days) => ({
     ...activitySeries(days),
@@ -1346,7 +1864,7 @@ test('a fixed-field overflow returns a bounded error after optional lists are ex
     resolveBinding: async () => ({ ...BOUND, displayName: 'x'.repeat(100000) }),
   })
   const result = await h.post({ sessionId: SESSION, action: 'overview' })
-  assert.ok(result.bytes <= 16384, 'final response is ' + result.bytes + ' bytes')
+  assert.ok(result.bytes <= 20480, 'final response is ' + result.bytes + ' bytes')
   assert.equal(result.body.ok, false)
   assert.equal(result.body.error.code, 'response-too-large')
 })
@@ -1512,6 +2030,9 @@ function mutationStubServices() {
 }
 
 const ORIGIN_HEADER = (h) => ({ origin: h.origin })
+
+/** The desktop proxy's request shape: forwardWebRequest deletes Origin, keeping only custom headers. */
+const DESKTOP_HEADER = { [PANEL_HEADER]: PANEL_HEADER_VALUE }
 
 test('overview and health carry capabilities and the bounded failed-job list', async (t) => {
   const entry = (jobId, state, minutes) =>
@@ -1680,7 +2201,14 @@ test('an expired token over the wire is 409 preview-expired and writes nothing',
   assert.equal(stub.calls.retries, 0)
 })
 
-test('mutations refuse a missing Origin, a foreign Origin, a non-JSON body and bad requests', async (t) => {
+test('mutations accept the desktop proxy shape and still refuse a foreign or headerless request', async (t) => {
+  // The DSH desktop app loads the GUI through dsh-app:// and its main-process
+  // proxy (forwardWebRequest) DELETES host/origin/cookie/sec-fetch-site before
+  // forwarding to loopback. So every real GUI mutation arrives with no Origin, and
+  // the old "Origin required" fence 403'd both write actions. The fence is now:
+  // JSON body, and either a matching Origin or the panel's own custom header —
+  // a header a cross-site page cannot send without a preflight this route never
+  // answers, which is what keeps the CSRF meaning the proxy stripped.
   const stub = mutationStubServices()
   const h = await harness(t, { services: stub.services })
   const body = {
@@ -1692,11 +2220,26 @@ test('mutations refuse a missing Origin, a foreign Origin, a non-JSON body and b
   const missing = await h.post(body)
   assert.equal(missing.status, 403)
   assert.equal(missing.body.error.code, 'forbidden')
-  const foreign = await h.post(body, { origin: 'https://evil.example' })
-  assert.equal(foreign.status, 403)
-  const notJson = await h.post(body, { ...ORIGIN_HEADER(h), 'content-type': 'text/plain' })
+  assert.equal(missing.body.error.message, 'same-origin request required')
+  const foreign = await h.post(body, { origin: 'https://evil.example', ...DESKTOP_HEADER })
+  assert.equal(foreign.status, 403, 'a mismatched Origin is refused by trusted()')
+  const wrongValue = await h.post(body, { [PANEL_HEADER]: '0' })
+  assert.equal(wrongValue.status, 403, 'only the panel header value counts')
+  const notJson = await h.post(body, { ...DESKTOP_HEADER, 'content-type': 'text/plain' })
   assert.equal(notJson.status, 400)
   assert.equal(notJson.body.error.code, 'bad-request')
+  const notJsonOrigin = await h.post(body, { ...ORIGIN_HEADER(h), 'content-type': 'text/plain' })
+  assert.equal(notJsonOrigin.status, 400)
+  assert.equal(stub.calls.admin.length, 0, 'no rejected request reached the service')
+
+  // The two accepted shapes: the desktop proxy's (no Origin, panel header) and a
+  // browser page's same-origin JSON POST (matching Origin, no header needed).
+  const desktop = await h.post(body, DESKTOP_HEADER)
+  assert.equal(desktop.status, 200, 'the desktop request shape previews')
+  assert.equal(typeof desktop.body.value.token, 'string')
+  const explicit = await h.post(body, ORIGIN_HEADER(h))
+  assert.equal(explicit.status, 200, 'a matching Origin is still enough on its own')
+
   const unknownMutation = await h.post({ ...body, mutation: 'lint' }, ORIGIN_HEADER(h))
   assert.equal(unknownMutation.status, 400)
   assert.equal(unknownMutation.body.error.code, 'bad-request')
@@ -1706,7 +2249,9 @@ test('mutations refuse a missing Origin, a foreign Origin, a non-JSON body and b
   )
   assert.equal(noArgs.status, 400)
   const missingSession = await h.post({ ...body, sessionId: 'gone' }, ORIGIN_HEADER(h))
-  assert.equal(missingSession.status, 404)
+  // The route reserves 404 for "not registered"; a missing session is a retryable
+  // 503 with its own code, exactly as on the read path.
+  assert.equal(missingSession.status, 503)
   assert.equal(missingSession.body.error.code, 'session-missing')
   const unknownToken = await h.post(
     { sessionId: SESSION, action: 'confirm', token: 'never-issued' },
@@ -1723,7 +2268,21 @@ test('mutations refuse a missing Origin, a foreign Origin, a non-JSON body and b
   )
   assert.equal(oversizedMutation.status, 400)
   assert.equal(oversizedMutation.body.error.code, 'bad-request')
-  assert.equal(stub.calls.admin.length, 0, 'no rejected request reached the service')
+})
+
+test('both panel halves pin the same custom request header', async () => {
+  // lib/memory-panel.js is served to the browser as one standalone ES module, so it
+  // cannot import this route's constant. The literal is therefore duplicated, and
+  // this test reads both sources and pins them equal: drift here would 403 every
+  // mutation in the desktop GUI again — the exact bug this round fixes.
+  assert.equal(PANEL_HEADER, 'x-obsidian-mem-panel')
+  assert.equal(PANEL_HEADER_VALUE, '1')
+  const client = await readFile(new URL('../lib/memory-panel.js', import.meta.url), 'utf8')
+  assert.ok(client.includes('x-obsidian-mem-panel'), 'the browser half sends the header name')
+  assert.ok(
+    /PANEL_HEADER_VALUE\s*=\s*'1'/u.test(client),
+    'the browser half sends the same header value',
+  )
 })
 
 test('a stale, cross-session or expired preview never mutates', async (t) => {

@@ -1,13 +1,25 @@
 # dsh-obsidian-mem
 
-English | [中文](README.zh.md)
+<p align="center">
+  <b>Project memory and a knowledge graph for DeepSeek Harness — plain Markdown in an Obsidian vault</b>
+</p>
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![Node >= 22.22.2](https://img.shields.io/badge/node-%3E%3D22.22.2-brightgreen.svg)](#requirements)
-[![DSH plugin](https://img.shields.io/badge/DSH-plugin-blueviolet.svg)](https://github.com/topics/dsh-plugin)
+<p align="center">
+  <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
+  <a href="https://github.com/bonerush/dsh-obsidian-mem/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/bonerush/dsh-obsidian-mem?style=flat&color=4d6bfe" /></a>
+  <img alt="Node 22.22.2 or newer" src="https://img.shields.io/badge/node-%3E%3D22.22.2-brightgreen.svg" />
+  <img alt="DSH plugin" src="https://img.shields.io/badge/DSH-plugin-blueviolet.svg" />
+</p>
+
+<p align="center">
+  <b>English</b> · <a href="./README.zh.md">中文</a>
+</p>
 
 A **DeepSeek Harness host plugin** that keeps a project's documents and long-term
-memory as plain Markdown in a dedicated [Obsidian](https://obsidian.md) vault.
+memory as plain Markdown in a dedicated [Obsidian](https://obsidian.md) vault, and
+draws that memory in the native sidebar: a GitHub-style contribution calendar, a
+day-grouped activity timeline, searchable notes with highlighted snippets, and a
+force-directed knowledge graph.
 
 One repository gets one stable `projectId`, one committed pointer file and one
 fixed directory in the vault. The plugin writes there; Obsidian just shows you
@@ -46,6 +58,41 @@ Two layers, on purpose:
 > When something misbehaves, the package can produce a report you attach to an
 > Issue yourself: generate it, read the JSON, then attach it. See
 > [Diagnostic report for an Issue](#diagnostic-report-for-an-issue).
+
+---
+<a id="highlights"></a>
+## Highlights
+
+| | What it gives you |
+|---|---|
+| 🧠 **Plain-Markdown memory** | One project gets one stable `projectId`, one committed pointer file and one directory in the vault. Obsidian only displays the result; the vault outlives DSH and stays readable with the plugin uninstalled. |
+| 🔌 **Protocol plus adapters** | Vault layout, pointer and note frontmatter are a protocol: `skills/obsidian-mem/SKILL.md` ships it for any Agent-Skills harness, and `codex/` installs the same six operations into Codex CLI through an MCP server that imports `lib/` instead of copying it. |
+| ✍️ **Six memory tools** | `mem_search`, `mem_read`, `mem_write`, `mem_log`, `mem_brief`, `mem_admin` — transactional writes, a rebuildable SQLite/FTS5 cache, and a session brief that stays inside a fixed character budget. |
+| 🔎 **Hybrid retrieval** | FTS5/BM25 plus a sparse ranker, same-day create/update accounting, per-turn relevant-note recall, and a brief that is navigation rather than a content dump. |
+| 🗂️ **Distillation and curation** | Completed turns distill into typed notes in the background; near-duplicates and risky rewrites are parked as proposals that only a person can approve — with `dsh-obsidian-mem-review`, in a terminal. |
+| 📊 **Live memory panel** | A GitHub-style 53-week activity calendar with fixed 10 px cells, month and weekday labels, a hover tooltip and in-figure horizontal scrolling; new-versus-updated flow bars, a tag treemap, a type→status composition Sankey, a KPI sparkline, a day-grouped activity timeline, and a 健康 dashboard whose three maintenance actions report their outcome in the card that owns the button. Background polls re-scan the index silently, so memory written by another process appears without a DSH restart. |
+| 🕸️ **Knowledge graph** | Every node in scope is drawn — no top-N truncation — with a 1:1 port of Obsidian's D3 fallback forces, alpha schedule and seeding/drag protocol. Filters, colour groups, display and forces persist per browser origin; read/write/search/reinjection cues light up the nodes a turn touched. |
+| 🔒 **Safe by default** | The panel is read-only; exactly three maintenance operations can write, each preview → confirm behind a single-use 60-second token. The web route keeps its loopback/same-origin fences even through the desktop shell's `dsh-app://` proxy. |
+| ✅ **Evidence before claims** | The changelog names what was measured, on which host, and what is still untested; the suite and the pack contract run in CI on every push. |
+
+<a id="screenshots"></a>
+## Screenshots
+
+Real renders of the shipped view module with the host's own theme tokens, inside
+the DSH sidebar shell.
+
+| Overview — activity calendar and charts | Recent changes — day-grouped activity rail |
+|---|---|
+| ![Overview](assets/panel-overview.png) | ![Recent changes](assets/panel-timeline.png) |
+
+| 健康 — dashboard with inline result lines | 图谱 — the knowledge graph |
+|---|---|
+| ![Health](assets/panel-health.png) | ![Graph](assets/panel-graph.png) |
+
+| 检索 — highlighted snippets and filters | |
+|---|---|
+| ![Search](assets/panel-search.png) | |
+
 
 ---
 
@@ -185,12 +232,18 @@ sans type throughout (no serif display face, no negative tracking), and the data
 lay their data out in bands rather than stacked bordered cards. **图谱** keeps the
 graph below, unchanged, including its remembered controls.
 
-**概览** opens on five charts: a calendar heat map of the activity window whose numbers
-live in the section head (`近 N 周（182 天）· 本周 N 天有更新 · 合计 M 条`) because a
-square is a shape and not a reading; the calendar widens with the panel — twelve weeks
-at the 320px floor up to twenty-six on a wide sidebar — and the new-versus-updated flow
-bars below share one zero line and the same calendar weeks, each carrying the reading
-`WW 周 · 新建 n · 更新 m` — the tag frequency ranking, the type→status composition
+#### 概览 — five charts
+
+**概览** opens on five charts: a GitHub-style contribution calendar of the trailing 53
+weeks (371 days; fixed 10×10 px cells on a 2 px gap, month labels above the columns and
+a sticky 一/三/五 weekday gutter) whose numbers live in the section head
+(`近 N 周（371 天）· 本周 N 天有更新 · 合计 M 条`) because a square is a shape and not a
+reading. The calendar scrolls horizontally inside its own box when the panel is narrower
+than the year, is pinned to the current week on first paint, and a hover tooltip names
+the day (`2026-10-27 · 3 条`); a host that still answers the old 84-day window is drawn
+as it arrives. The new-versus-updated flow bars below start at the first week with
+activity and share one zero line, each carrying the reading
+`WW 周 · 新建 n · 更新 m`; then the tag frequency ranking, the type→status composition
 Sankey (real joint counts: node heights and link bands share one unit-per-note scale,
 names and counts written beside both columns; the chart fills the panel and re-measures
 on resize while its type and scale stay 1:1; when the host serves no joint flow it
@@ -200,12 +253,22 @@ the others put the caret in the search box) with a twelve-point sparkline of the
 new-note total in the first cell.
 There is no archived series: `superseded` is a current status snapshot and the vault
 records no day a note reached it, so drawing it as a flow would invent a transition.
-Recent rows follow, then a passive health summary whose only action, **全部 →**, opens
+#### Recent changes — a day-grouped activity rail
+
+Recent changes follow as a contribution-activity rail: one group per day
+(今天 / 昨天 / YYYY-MM-DD) with a note node on a continuous hairline and one dot per
+note. Each day prints its total change count and lists up to two sampled notes
+(仅显示最近 2 条); the sample is drawn from up to 500 recent notes across the newest
+four days, so a busy day cannot hide yesterday — and when every sampled row is still
+today, two older days are shown from the activity series as aggregate-only groups
+(共 N 条). Then a passive health summary whose only action, **全部 →**, opens
 **健康**. Search results show the path and a highlighted snippet, keeping exactly one
 status line — idle shows `输入关键词开始检索，结果来自本地记忆索引。` — and their
 total says `共 N 条` only for a complete page and `已显示 N 条` while more results
 exist. **健康** is a summary band over the index, queue, hot layer and the
 deterministic digest, followed by a **诊断记录** timeline (time, event, outcome).
+
+#### 健康 and the three confirmed actions
 
 The panel is read-only by default and adds exactly three confirmed maintenance
 operations when the service advertises them: **重新排队失败任务** (retry one
@@ -219,65 +282,91 @@ refreshes the view; a replayed confirmation returns the original result instead
 of writing twice. When a read payload carries no `capabilities.mutations` — an
 older service, or a route that is not registered — those controls are hidden and
 every view stays fully usable read-only. The six tools remain the other write
-path. The **图谱** view's
-settings button opens the same four sections as Obsidian's graph: filters,
-colour groups, display and forces. Under filters, **Scope** switches all memory/current project; all memory
-is the initial view.
-Colours are resolved the way Obsidian's graph resolves them: the eleven
-`.graph-view.color-*` slots are read from the host theme, so the view follows the
-DSH light/dark theme exactly as Obsidian's graph follows its own. The defaults are
-neutral nodes and lines with an accent highlight for hover and memory access;
-colour groups start empty. Labels are rasterized at 85% of Obsidian's
-`14 + node size / 4` because this graph lives in a narrow sidebar, and the display
-section's **标题文字大小** slider moves that factor between 0.4 and 1.6; position,
-`sqrt(scale)` scaling and the pinned size of a hovered node are unchanged.
-Lines resolve wikilinks, Markdown links, embeds and YAML
-wikilinks with Obsidian's filename and relative-path rules. Scroll to zoom, drag the canvas or a node,
-and hover to reveal its label and connected branch. Colour groups support note
-type queries such as `[type:decision]`. The view displays at most 500 nodes,
-prioritising connected hubs and branches. All-memory scope includes historical
-notes, unresolved targets and the administrative Markdown links that connect
-projects. Administrative notes remain excluded from memory retrieval; the graph
-exposes only their labels and relationships. **Existing files only** hides
-unresolved targets. Attachments are outside this Markdown view and remain disabled.
+path. **整理热层** is the recovery path for an over-trigger hot layer: while the file
+is still inside its trigger line the preview says so and the confirmed run archives
+nothing (only legacy per-entry pointer lines may be folded); a confirmed action's
+outcome is printed in the card that owns its button, so a no-op, a move, and a digest
+that stayed unchanged all report what happened instead of only flashing a line at the
+top of the page.
 
-When this DSH process does something to memory, the matching node and adjacent links
-pulse briefly and that node's file name stays on screen at any zoom, so the cue
-names what was touched: a successful `mem_read`, or a host `read`/`grep` that opens
-a note in the vault (a **read**, in the accent colour); the notes a `mem_search`
-returned (the same colour, lighter); and the notes a `mem_write`/`mem_log`, or a
-host `edit`/`write`, wrote (a **write**, in the tag colour). Injecting a
-relevant-note map into a turn lights its notes too. A host call counts only when
-its arguments name one `.md` inside the vault — `bash` and `run_code` deliberately
-do not, because their arguments are command or program text. These cues
-are per session and kept in memory only; reloading the host clears them. A cue moves
-a label's colour and opacity but never its size: every lit label in a frame is drawn
-at one size, so two notes touched in the same second cannot disagree. The graph
-endpoint is read-only and accepts same-origin requests from the local DSH web UI.
-Without Better Sidebar, the six memory tools continue to work.
+The two live views poll every 15 s while visible (a returning window reads once) and
+each read refreshes the project index at most once every 5 s, so a memory written by
+another process — another DSH profile, the Codex adapter, Obsidian itself — appears
+without restarting DSH. Those background polls are silent: only the refresh button
+announces a refresh. One transport detail matters for the confirmed operations: the
+desktop app loads this panel through its `dsh-app://` scheme, whose main-process
+proxy strips `Origin` before forwarding to loopback, so a mutation carries the
+panel's own `x-obsidian-mem-panel: 1` header as its same-origin proof. A web page
+cannot send that header (or an `application/json` body) without a CORS preflight the
+route never answers, and the loopback/Host/`sec-fetch-site` fence still applies.
 
-The controls themselves are remembered, unlike the cues: scope, filters, colour
-groups, display and forces are kept in this browser's `localStorage` under one key
-(`dsh-obsidian-mem:graph-settings`), so they survive a page reload and a host
-restart. They belong to the browser profile and the origin, which makes
-`127.0.0.1:3080` and `localhost:3080` two separate panels; nothing about them leaves
-the browser, and the endpoint above stays read-only. **恢复默认设置** writes the
-built-in values back over the stored record. A record another version wrote, or one
-edited by hand, is never trusted as it stands: every field is checked and falls back
-to its default, because a `NaN` force blanks the graph instead of merely looking
-wrong.
+#### 图谱 — the knowledge graph
 
-The browser assets are re-read on every request, so a change under `lib/` reaches the
-page on reload instead of waiting for the host to restart. A **new** asset is the one
-exception: the route list is registered when the plugin mounts, so adding a file needs
-one remount before the browser can fetch it.
+The **图谱** tab draws one canvas over the project's memory notes. It draws
+**every node in scope** — the old top-N cut is gone, so a hidden node can no longer
+take its edges with it — and keeps the cost bounded at the render layer: nodes,
+edges and labels outside the viewport are culled per frame, and the bottom line
+reports the real count as `N 个节点 · M 条连接`. **Scope** switches all-memory and
+current-project; all-memory is the initial view and includes historical notes,
+unresolved targets and the administrative Markdown links that connect projects.
+Administrative notes stay excluded from retrieval; the graph shows only their
+labels and relationships. **Existing files only** hides unresolved targets, and
+attachments (outside this Markdown view) remain disabled.
 
-The interface, the force model and the seeding/drag protocol were extracted from the
-installed Obsidian graph source: canvas drawing uses its node-size, label-fade and zoom
-rules, and the worker is a 1:1 port of the app's D3 fallback simulator — the same
-forces, alpha schedule and integration, verified position-identical on the same input.
-The package bundles pinned upstream D3 code and its ISC notices, with no CDN request or
-additional runtime dependency. No Obsidian application code is included in the package.
+Links resolve wikilinks, Markdown links, embeds and YAML wikilinks with Obsidian's
+filename and relative-path rules. Scroll to zoom, drag the canvas or a node, and
+hover to reveal a label and its connected branch. Colour groups accept note-type
+queries such as `[type:decision]`; colours are resolved the way Obsidian resolves
+them — the eleven `.graph-view.color-*` slots are read from the host theme, so the
+graph follows the DSH light/dark theme exactly. The defaults are neutral nodes and
+lines with an accent highlight for hover and memory access, and colour groups start
+empty. Labels are rasterized at 85% of Obsidian's `14 + node size / 4` because this
+graph lives in a narrow sidebar; **标题文字大小** moves that factor between 0.4 and
+1.6, while position, `sqrt(scale)` scaling and the pinned size of a hovered node
+stay unchanged.
+
+The **physics is a 1:1 port** of the graph simulator installed with Obsidian 1.14.4:
+the same forces, alpha schedule, integration and drag protocol, and the same
+seeding rule for an incremental update. Measured on the same 400-node / 592-edge
+subgraph from the same initial positions, the ported worker lands
+**position-identical** to Obsidian's own D3 fallback (max/mean delta 0.000), where
+an earlier locally tuned version deviated by 530.1/144.5 units; on the real
+1,236-node vault the layout no longer merges nodes while it moves and settles at a
+median minimum neighbour distance of about 112 units. The price of parity is the
+quadtree collision cost above roughly 2,000 nodes; Windows performance at that size
+is not measured and stays in the changelog's untested list.
+
+The settings button opens the same four sections as Obsidian's graph: filters,
+colour groups, display and forces. The **settings** are remembered, unlike the cues: scope, filters, colour groups,
+display and forces live in `localStorage` under
+`dsh-obsidian-mem:graph-settings` and survive a page reload and a host restart. They
+belong to the browser profile and origin — `127.0.0.1:3080` and `localhost:3080` are
+two separate panels — and nothing about them leaves the browser. **恢复默认设置**
+writes the built-in values back. A record written by another version, or edited by
+hand, is never trusted as it stands: every field is checked and falls back to its
+default, because a `NaN` force blanks the graph instead of merely looking wrong.
+
+When this DSH process touches memory, the matching node and adjacent links pulse
+briefly and that node's file name stays visible at any zoom: a **read** in the accent
+colour (`mem_read`, or a host `read`/`grep` that opens a note in the vault), the notes
+a **search** returned in the same colour lighter, and a **write** in the tag colour
+(`mem_write`/`mem_log`, or a host `edit`/`write`). Injecting a relevant-note map into
+a turn lights its notes too. These cues are per session and in memory only; reloading
+the host clears them. A cue moves a label's colour and opacity but never its size, so
+two notes touched in the same second cannot disagree.
+
+The graph endpoint is **read-only** and accepts same-origin requests from the local
+DSH web UI. Without Better Sidebar, the six memory tools continue to work. The
+browser assets are re-read on every request, so a change under `lib/` reaches the
+page on reload instead of waiting for a host restart; a **new** asset is the one
+exception, because the route list is registered when the plugin mounts.
+
+The canvas drawing, the force model and the seeding/drag protocol were extracted
+from the installed Obsidian graph source: node-size, label-fade and zoom rules are
+Obsidian's own, and the worker is the 1:1 port of its D3 fallback simulator
+described above. The package bundles pinned upstream D3 code and its ISC notices,
+with no CDN request and no additional runtime dependency; no Obsidian application
+code is included.
 
 ---
 
@@ -1051,11 +1140,19 @@ Release**, and `.github/workflows/release.yml` creates both.
 |---|---|---|
 | `0.0.1` | every push into `main` | the workflow, mechanically |
 | `0.1` | a notable feature | a person, before the push |
-| `1` | a breaking change | a person, before the push |
+| `1` | a breaking change, or the first stable release | a person, before the push |
 
 Only the patch bump is automated: nothing infers "a notable feature" or
 "breaking" from a diff, so a minor or major release is `package.json` edited by
 hand with the changelog section written for it.
+
+**`1.0.0` (2026-10-31) is the first stable release.** From it, the tool surface
+(the six `mem_*` names and their parameters), the vault protocol (the pointer file,
+note frontmatter and the shipped skill) and the configuration keys are treated as
+compatibility promises under SemVer — a breaking change to any of them needs a major
+bump. Behaviour fixes, panel and graph work still land in minor and patch releases.
+"Stable" is a promise about those interfaces, not a claim that every boundary is
+exhausted; the changelog keeps the untested list.
 
 Every Release also carries the packed plugin as `dsh-obsidian-mem-<version>.tgz`,
 so an install can skip the build-from-source path — which needs a `prepare`

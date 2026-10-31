@@ -580,37 +580,159 @@ test('the bundle reads only host tokens on the measured allowlist', async () => 
   )
 })
 
-test('the heat map fills the measured body instead of a fixed 292px cap', async () => {
+test('the heat map is a fixed 10px GitHub-style calendar in its own scroll box', async () => {
   const { script } = await bundle()
   const css = panelCss(script)
-  const start = css.indexOf('.mem-panel .mem-heat-grid{')
-  assert.ok(start >= 0, 'the heat grid rule exists')
-  const rule = css.slice(start, css.indexOf('}', start))
-  // The grid used to be capped at 292px — the 320px panel's content box — so a wide
-  // panel drew twelve weeks in a fixed block with empty gutters on both sides
-  // (measured 169.5px per side at 659px). The column count is now width-driven (the
-  // view asks for a longer window), so the grid must share the whole measured body.
-  assert.equal(/max-width:/u.test(rule), false, 'no fixed pixel cap: ' + rule)
-  assert.ok(rule.includes('width:100%'), 'the grid fills its section: ' + rule)
-  assert.ok(rule.includes('grid-auto-columns:minmax(0,1fr)'), 'every column shares the width')
-  assert.ok(rule.includes('grid-auto-flow:column'), 'the 7 rows still build Sunday-first columns')
-  // Design §6.6 floor, now guaranteed by the body inset instead of a cap: the 320px
-  // panel's content box is 320 − 2×14 = 292px, still above the 280px floor.
-  const viewStart = css.indexOf('.mem-panel .mem-view{')
-  assert.ok(viewStart >= 0, 'the view body rule exists so the floor arithmetic has a source')
-  const viewRule = css.slice(viewStart, css.indexOf('}', viewStart))
-  const padding = /padding:\d+px (\d+)px \d+px/u.exec(viewRule)
-  assert.ok(padding, '.mem-view declares the three-value padding the arithmetic reads')
-  const contentWidth = 320 - 2 * Number(padding[1])
-  assert.ok(
-    contentWidth >= 280,
-    'the narrowest content box clears the 280px floor: ' + contentWidth,
-  )
-  // The cells stay square so a longer window cannot turn the calendar into stripes.
+  // A fixed calendar, not a fluid one: 10px cells on a 2px gap are the same size at
+  // every panel width. When the panel is narrower than the calendar the chart scrolls
+  // inside its own box, so the page itself never grows a horizontal scrollbar (the
+  // round-3 defect: cells shrank into stripes to fit instead).
+  const scrollStart = css.indexOf('.mem-panel .mem-heat-scroll{')
+  assert.ok(scrollStart >= 0, 'the heat scroll box rule exists')
+  const scrollRule = css.slice(scrollStart, css.indexOf('}', scrollStart))
+  assert.ok(scrollRule.includes('overflow-x:auto'), 'the calendar scrolls inside its own box')
+  assert.equal(scrollRule.includes('overflow-y:auto'), false, 'it is a horizontal scroll only')
+  assert.ok(scrollRule.includes('scrollbar-width:thin'), 'a thin scrollbar for the calendar')
+  const gridStart = css.indexOf('.mem-panel .mem-heat-grid{')
+  assert.ok(gridStart >= 0, 'the heat grid rule exists')
+  const gridRule = css.slice(gridStart, css.indexOf('}', gridStart))
+  for (const declaration of [
+    'grid-template-rows:repeat(7,10px)',
+    'grid-auto-flow:column',
+    'grid-auto-columns:10px',
+    'gap:2px',
+  ])
+    assert.ok(gridRule.includes(declaration), 'the fixed grid declares ' + declaration)
+  assert.equal(/minmax\(0,1fr\)/u.test(gridRule), false, 'no width-sharing columns')
   const cellStart = css.indexOf('.mem-panel .mem-heat-cell{')
   assert.ok(cellStart >= 0, 'the heat cell rule exists')
   const cellRule = css.slice(cellStart, css.indexOf('}', cellStart))
-  assert.ok(cellRule.includes('aspect-ratio:1'), 'a heat cell is square: ' + cellRule)
+  assert.ok(cellRule.includes('width:10px'), 'a heat cell is a fixed 10px: ' + cellRule)
+  assert.ok(cellRule.includes('height:10px'), 'and a fixed 10px tall')
+  assert.equal(cellRule.includes('aspect-ratio'), false, 'a fixed-size cell needs no aspect ratio')
+  // The weekday gutter rides inside the scroll box and sticks to its left edge.
+  const weekdaysStart = css.indexOf('.mem-panel .mem-heat-weekdays{')
+  assert.ok(weekdaysStart >= 0, 'the weekday gutter rule exists')
+  const weekdaysRule = css.slice(weekdaysStart, css.indexOf('}', weekdaysStart))
+  assert.ok(weekdaysRule.includes('position:sticky'), 'the weekday labels stick: ' + weekdaysRule)
+  assert.ok(weekdaysRule.includes('left:0'))
+  assert.ok(
+    weekdaysRule.includes('background:var(--dsw-alias-bg-base)'),
+    'the sticky gutter paints over the cells it covers',
+  )
+  const frameStart = css.indexOf('.mem-panel .mem-heat-frame{')
+  assert.ok(frameStart >= 0, 'the frame rule exists')
+  const frameRule = css.slice(frameStart, css.indexOf('}', frameStart))
+  assert.ok(frameRule.includes('grid-template-columns:14px auto'), '14px gutter + auto grid')
+  // Month labels above the columns, and the styled tooltip above the cell.
+  const monthsStart = css.indexOf('.mem-panel .mem-heat-months{')
+  assert.ok(monthsStart >= 0, 'the months row rule exists')
+  assert.ok(css.slice(monthsStart, css.indexOf('}', monthsStart)).includes('position:relative'))
+  const monthStart = css.indexOf('.mem-panel .mem-heat-month{')
+  assert.ok(monthStart >= 0, 'the month label rule exists')
+  assert.ok(css.slice(monthStart, css.indexOf('}', monthStart)).includes('position:absolute'))
+  const tipStart = css.indexOf('.mem-panel .mem-heat-tip{')
+  assert.ok(tipStart >= 0, 'the styled tooltip rule exists')
+  const tipRule = css.slice(tipStart, css.indexOf('}', tipStart))
+  assert.ok(tipRule.includes('position:absolute'), 'the tooltip floats over the cell: ' + tipRule)
+  assert.ok(tipRule.includes('pointer-events:none'), 'the tooltip never steals the hover')
+  // The scroll box gets the same thin, token-built scrollbar as the view body.
+  assert.ok(
+    css.includes('.mem-panel .mem-heat-scroll::-webkit-scrollbar{height:8px'),
+    'the webkit heat scrollbar is 8px',
+  )
+})
+
+test('the heat map keeps the blue business-primary ramp, token-only', async () => {
+  const { script } = await bundle()
+  const css = panelCss(script)
+  for (const level of [
+    'color-mix(in srgb,var(--dsw-alias-state-business-primary) 28%,transparent)',
+    'color-mix(in srgb,var(--dsw-alias-state-business-primary) 50%,transparent)',
+    'color-mix(in srgb,var(--dsw-alias-state-business-primary) 72%,transparent)',
+    'color-mix(in srgb,var(--dsw-alias-state-business-primary) 92%,transparent)',
+  ])
+    assert.ok(css.includes(level), 'the ramp keeps ' + level)
+  assert.ok(
+    css.includes('color-mix(in srgb,var(--dsw-alias-label-secondary) 16%,transparent)'),
+    'the empty cell is the label-secondary 16% mix',
+  )
+  // The token-only contract is asserted for the whole sheet elsewhere; this pins the
+  // heat map's own slice while it was redrawn, since it is the most colour-heavy block.
+  const heat = css.slice(css.indexOf('.mem-heat-scroll{'), css.indexOf('.mem-panel .mem-flow{'))
+  assert.ok(heat.length > 0, 'the heat slice is present')
+  assert.equal(/#[0-9a-f]{3,8}\b/iu.test(heat), false, 'no hex in the heat rules')
+  assert.equal(/\brgba?\(/u.test(heat), false, 'no rgb() in the heat rules')
+  assert.equal(/\bhsla?\(/u.test(heat), false, 'no hsl() in the heat rules')
+})
+
+test('最近变化 is a token-built activity rail, and the flat list rules are gone', async () => {
+  const { script } = await bundle()
+  const css = panelCss(script)
+  // The rail: one continuous 1px border-token line through the 12px node column.
+  const groupStart = css.indexOf('.mem-panel .mem-timeline-group{')
+  assert.ok(groupStart >= 0, 'the timeline group rule exists')
+  const groupRule = css.slice(groupStart, css.indexOf('}', groupStart))
+  assert.ok(
+    groupRule.includes('grid-template-columns:12px minmax(0,1fr)'),
+    'node column + body: ' + groupRule,
+  )
+  const railStart = css.indexOf('.mem-panel .mem-timeline-group::before{')
+  assert.ok(railStart >= 0, 'the rail pseudo-element exists')
+  const railRule = css.slice(railStart, css.indexOf('}', railStart))
+  assert.ok(railRule.includes('width:1px'), 'the rail is a hairline: ' + railRule)
+  // border-l1 is rgba(0,0,0,.04) on the host's light theme — measured invisible in the
+  // round-4 capture. A 22% label-secondary mix is still token-only and reads as one
+  // continuous hairline on both themes.
+  assert.ok(
+    railRule.includes(
+      'background:color-mix(in srgb,var(--dsw-alias-label-secondary) 22%,transparent)',
+    ),
+    'the rail is a visible token-only hairline: ' + railRule,
+  )
+  assert.equal(railRule.includes('--dsw-alias-border-l1'), false, 'not the 4% border token')
+  assert.ok(railRule.includes('bottom:0'), 'the rail continues into the next group')
+  const nodeStart = css.indexOf('.mem-panel .mem-timeline-node{')
+  assert.ok(nodeStart >= 0, 'the node rule exists')
+  const nodeRule = css.slice(nodeStart, css.indexOf('}', nodeStart))
+  assert.ok(nodeRule.includes('width:12px') && nodeRule.includes('height:12px'), 'a 12px node')
+  assert.ok(nodeRule.includes('border-radius:16px'), 'the node is a circle')
+  assert.ok(
+    nodeRule.includes('background:var(--dsw-alias-state-business-primary)'),
+    'the node is a filled accent circle',
+  )
+  assert.ok(
+    nodeRule.includes('border:2px solid var(--dsw-alias-bg-base)'),
+    'a bg-base ring separates the node from the rail',
+  )
+  const dotStart = css.indexOf('.mem-panel .mem-timeline-dot{')
+  assert.ok(dotStart >= 0, 'the item dot rule exists')
+  const dotRule = css.slice(dotStart, css.indexOf('}', dotStart))
+  assert.ok(dotRule.includes('width:6px') && dotRule.includes('height:6px'), 'a 6px item dot')
+  // Retired rules must be gone from BOTH sides: a stale rule is dead CSS, and a test
+  // that only checked the markup would never notice it.
+  for (const retired of ['.mem-panel .mem-recent{', '.mem-panel .mem-dot{'])
+    assert.equal(css.includes(retired), false, 'retired rule is gone: ' + retired)
+  assert.equal(script.includes('mem-recent-row'), false, 'and its markup with it')
+})
+
+test('the panel POST and the route fence share one same-origin header name', async () => {
+  // Two files own the two halves of the fence: the served browser module sends the
+  // header, and lib/panel-route.js accepts it when the desktop proxy stripped Origin.
+  // They cannot import each other (the served module is standalone), so the literals
+  // are pinned from BOTH sources here — a rename on either side fails this test
+  // instead of only a live 403 in the desktop app.
+  const client = await viewsSource()
+  const route = await readFile(new URL('../lib/panel-route.js', import.meta.url), 'utf8')
+  const nameIn = (text) => /'(x-obsidian-mem-panel)'/u.exec(text)?.[1] ?? null
+  const valueIn = (text) => /PANEL_HEADER_VALUE\s*=\s*'([^']+)'/u.exec(text)?.[1] ?? null
+  const clientName = nameIn(client)
+  const routeName = nameIn(route)
+  assert.equal(clientName, 'x-obsidian-mem-panel', 'the served module sends the header literal')
+  assert.equal(routeName, clientName, 'the route accepts the same literal it is sent')
+  assert.equal(valueIn(client), '1', 'the served module sends the value 1')
+  assert.ok(routeName, 'the route half has landed (a missing literal is the failure to fix)')
+  assert.equal(valueIn(route), valueIn(client), 'both halves agree on the value')
 })
 
 test('the composed overview starts on the body inset, not on a doubled margin', async () => {
@@ -728,7 +850,17 @@ test('the tab strip is a Chrome-like row: separate roomy leaves, the active page
   assert.ok(css.includes('z-index:2'), 'the active tab rides above the strip rule')
   assert.ok(css.includes('min-width:0'), 'tabs may truncate instead of overflowing')
   assert.ok(tabs.includes('flex-wrap:nowrap'), 'the leaves stay on one row')
-  assert.equal(/overflow-x:(auto|scroll)/u.test(css), false, 'nothing scrolls sideways')
+  // Nothing at the page level scrolls sideways. The fixed heat calendar is the one
+  // exception and it scrolls inside its own box: that split is what keeps a 634px
+  // calendar usable in a 320px panel without the body gaining a scrollbar.
+  const sideways = [...css.matchAll(/([^{}]+)\{[^}]*overflow-x:(?:auto|scroll)/gu)].map((match) =>
+    match[1].split('\n').at(-1).trim().replace(/^'|'$/gu, ''),
+  )
+  assert.deepEqual(
+    sideways,
+    ['.mem-panel .mem-heat-scroll'],
+    'only the heat calendar scrolls sideways, inside its own box',
+  )
   for (const marker of ['flex:0 1 auto', 'align-items:flex-end'])
     assert.ok(css.includes(marker), 'the tab row contains ' + marker)
   // The 44px click target is the strip's 8px top padding plus the 36px leaf: the
@@ -977,6 +1109,10 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     'mem-warn',
     'mem-notice',
     'mem-action-status',
+    // Round 5: the per-mutation outcome line drawn in the owning section, and the hot
+    // card's trigger state beside its 整理热层 action.
+    'mem-action-result',
+    'mem-hot-state',
     'mem-status',
     'mem-empty',
     'mem-skeleton',
@@ -994,9 +1130,21 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     // The 概览 charts landed with the chart redesign and are what this list is
     // really for: each hook is emitted by `lib/memory-panel.js` and has a rule in
     // the stylesheet, so a renamed class in either place fails here.
+    // The heat map is a fixed GitHub-style calendar now: a horizontal scroll box, a
+    // computed canvas, the months row, the sticky weekday gutter, the tooltip and the
+    // bottom legend. The cell/legend classes survive their redraw.
     'mem-heat',
+    'mem-heat-scroll',
+    'mem-heat-canvas',
+    'mem-heat-months',
+    'mem-heat-month',
+    'mem-heat-frame',
+    'mem-heat-weekdays',
+    'mem-heat-weekday',
     'mem-heat-grid',
     'mem-heat-cell',
+    'mem-heat-tip',
+    'mem-heat-hint',
     'mem-heat-legend',
     'mem-heat-legend-label',
     'mem-heat-swatch',
@@ -1063,12 +1211,24 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     'mem-sankey-label',
     'mem-sankey-value',
     'mem-sankey-leader',
-    'mem-recent',
-    'mem-recent-row',
-    'mem-recent-main',
-    'mem-recent-title',
-    'mem-recent-meta',
-    'mem-dot',
+    // 最近变化 is a GitHub contribution-activity rail: one group per updated day, a
+    // node per group, items with their own dots. The flat mem-recent* list and its
+    // mem-dot are retired with their producer (not merely unused).
+    'mem-timeline',
+    'mem-timeline-group',
+    'mem-timeline-node',
+    'mem-timeline-body',
+    'mem-timeline-head',
+    'mem-timeline-date',
+    'mem-timeline-count',
+    'mem-timeline-items',
+    'mem-timeline-item',
+    'mem-timeline-dot',
+    'mem-timeline-main',
+    'mem-timeline-title',
+    'mem-timeline-meta',
+    // Round 5: the quiet '仅显示最近 K 条' hint under a sampled day's total.
+    'mem-timeline-more',
     'mem-searchbar',
     'mem-search-field',
     'mem-search-icon',
@@ -1118,13 +1278,12 @@ test('every class the redesigned views consume is styled in the one stylesheet',
   ]
   // The list is only a guard if it is bound to the producer: read the served
   // views and extract every class token they emit from quoted literals (comments
-  // stripped first, see `stripComments`). The extraction finds 115 classes on
-  // this tree — the 31 chart hooks plus the 84 the earlier views already owned —
-  // and every one must be in the list, so a new or renamed view class fails here
-  // until the list and the stylesheet follow. The count is asserted as well: the
-  // subset check would pass vacuously if the scan ever stopped seeing the views
-  // (a quoting change, all names moving into template literals), and deleting an
-  // emitted class should force the list and this count to be re-derived.
+  // stripped first, see `stripComments`). Every one must be in the list, so a new
+  // or renamed view class fails here until the list and the stylesheet follow. The
+  // count is asserted as well: the subset check would pass vacuously if the scan
+  // ever stopped seeing the views (a quoting change, all names moving into template
+  // literals), and deleting an emitted class should force the list and this count
+  // to be re-derived.
   const emitted = [
     ...new Set(
       [
@@ -1142,13 +1301,15 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     [],
     'classes the views emit but the list does not guard: ' + unguarded.join(', '),
   )
-  // Re-derived for the 图表 round: 115 before it, minus the six retired `mem-freq*`
-  // bar classes, plus the 23 the treemap and 健康's charts emit. The count is what
-  // makes a deleted producer fail even when the list happens to still cover the
-  // rest — the subset check alone would pass on a shrunken view.
+  // Re-derived for the round-4 UI: 132 before it, minus the six retired `mem-recent*`
+  // and `mem-dot` hooks, plus the nine the GitHub-style heat map and the thirteen the
+  // activity rail add. Round 5 adds the inline outcome line, the hot trigger state and
+  // the sampled-day hint on the activity rail. The count is what makes a deleted
+  // producer fail even when the list happens to still cover the rest — the subset
+  // check alone would pass on a shrunken view.
   assert.equal(
     emitted.length,
-    132,
+    151,
     'the views scan still sees every emitted class (re-derive the count with the list)',
   )
   for (const hook of hooks)
@@ -1169,6 +1330,9 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     '.mem-summary-value.is-warn',
     '.mem-summary-value.is-err',
     '.mem-meter-fill.is-warn',
+    '.mem-action-result.is-error',
+    '.mem-hot-state.is-ok',
+    '.mem-hot-state.is-warn',
     '.mem-snippet mark',
     '.mem-filter-option[aria-pressed="true"]',
     '.mem-sankey-node.is-status',

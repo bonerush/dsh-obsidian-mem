@@ -576,15 +576,67 @@ test('compact-hot previews the current zones and confirms the one compact action
     preview.preview.facts.some((fact) => fact.label === '可搬出'),
     true,
   )
+  // Above the trigger (7200 > 6030) the promises stay: entries can move, bounded
+  // by the eligibility count, and no below-trigger warning is shown.
+  assert.equal(
+    preview.preview.effects.some((effect) => /本次最多搬出 5 条/u.test(effect)),
+    true,
+  )
+  assert.equal(preview.preview.warning, undefined, 'no warning above the trigger')
   const confirmed = await confirmPanelAction({ token: preview.token, ...env })
   assert.equal(confirmed.result.status, 'compacted')
   assert.equal(confirmed.result.moved, 3)
   assert.equal(confirmed.result.folded, 2)
+  // The confirm result carries the numbers the panel's outcome copy needs. Its
+  // exact shape is a contract with lib/memory-panel.js, so pin all seven keys.
+  assert.deepEqual(Object.keys(confirmed.result).sort(), [
+    'capacity',
+    'folded',
+    'moved',
+    'reclaimed',
+    'status',
+    'trigger',
+    'used',
+  ])
+  assert.equal(confirmed.result.used, 7200)
+  assert.equal(confirmed.result.capacity, 9000)
+  assert.equal(confirmed.result.trigger, 6030)
   assert.deepEqual(
     stub.calls.map((call) => (call.action === 'hot' ? call.operation : call.action)),
     ['status', 'status', 'compact'],
   )
   assert.equal(stub.state.compacted, true)
+})
+
+test('a compact preview below the trigger says no entries will be archived', async () => {
+  // Live 2026-10-31: used 5728 < trigger 6030, so lib/hot-archive.js planArchive
+  // is a deliberate no-op and the compact reports moved 0 / folded 0 / reclaimed 0
+  // while the old preview promised "本次最多搬出 14 条" and showed 可搬出 14 /
+  // 可归档 14 — the button looked broken. The preview must say what the planner
+  // will actually do: fold legacy per-entry pointer lines, archive nothing.
+  const stub = previewStub({
+    hot: hotFixture({ used: 5728, trigger: 6030, compactable: 14, archivable: 14 }),
+  })
+  const env = panelEnv(stub)
+  const preview = await previewPanelAction({ operation: 'compact-hot', args: {}, ...env })
+  const effects = preview.preview.effects.join('\n')
+  assert.equal(/本次最多搬出/u.test(effects), false, 'no move promise below the trigger')
+  assert.equal(/指针行/u.test(effects), true, 'folding pointer lines is still what may happen')
+  assert.equal(
+    preview.preview.effects.some((effect) => /不会搬出/u.test(effect)),
+    true,
+    'an effect must say nothing is archived',
+  )
+  const warning = preview.preview.warning
+  assert.equal(typeof warning, 'string', 'a below-trigger preview carries a warning')
+  assert.match(warning, /5728/u, 'the warning names the current usage')
+  assert.match(warning, /6030/u, 'and the trigger it is compared to')
+  assert.match(warning, /不会搬出/u, 'and says plainly that nothing will move')
+  assert.equal(/仍只会搬出/u.test(warning), false, 'the old half-truth is gone')
+  // The confirm path stays open — a below-trigger compact is safe, just a no-op.
+  const confirmed = await confirmPanelAction({ token: preview.token, ...env })
+  assert.equal(confirmed.replayed, false)
+  assert.equal(confirmed.result.status, 'compacted')
 })
 
 test('a digest preview tolerates sub-day clock drift but a changed digest is stale', async () => {

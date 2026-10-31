@@ -646,7 +646,28 @@ const BUDGETS = {
   // up to 800. The mutation state machine stays in its own module.
   // The joint-flow trim stage measured 763 formatted lines; measured-plus-30 is
   // 793, inside the same ceiling.
-  'lib/panel-route.js': 800,
+  // Raised from 800 by the 2026-10-31 chart/live round (888 formatted lines measured;
+  // measured-plus-30 is 918, rounded up to 950). What the 88 lines buy: the heat map's
+  // year window (ACTIVITY_DAYS_MAX 182 -> 371) and the 20 KiB overview ceiling with
+  // its measured evidence, the per-index refresh throttle that makes a memory written
+  // by another process visible without a DSH restart (WeakMap + stamp-before-await +
+  // scanning skip + swallowed failure), and the mutation fence rewritten for the
+  // desktop GUI: its dsh-app:// proxy strips Origin, so the fence now accepts a
+  // matching Origin or the panel's own x-obsidian-mem-panel header, which a cross-site
+  // page cannot send without a preflight this route never answers. The route still
+  // owns exactly the read dispatch and the two confirmed mutations; the mutation state
+  // machine stays in lib/panel-actions.js.
+  // Raised from 950 by the same day's round-5 fixes (974 formatted lines measured;
+  // measured-plus-30 is 1004, rounded up to 1050). What the 24 lines buy:
+  //   * the session-missing status moved from 404 to 503 — 404 is what the browser
+  //     asset reads as "this route is not registered", so a session still resuming at
+  //     startup used to show the fatal restart notice and stop polling;
+  //   * the day-diverse 最近变化 feed: one internal index.recent({limit: 500}) scan,
+  //     then up to 2 rows from each of the newest 4 updated days so a busy day cannot
+  //     hide yesterday. The wire stays <=8 rows, so the byte ceiling is untouched —
+  //     these are selection lines, not payload. The wide internal scan is why
+  //     lib/index-db.js's recent() bound moved from 50 to 500 in the same round.
+  'lib/panel-route.js': 1050,
   'lib/panel-actions.js': 900,
   'lib/appraisal.js': 300,
   // Measured 280 formatted lines; measured-plus-30 is 310, rounded to 350.
@@ -756,7 +777,44 @@ const BUDGETS = {
   // a 44px floor that lets the existing CSS ellipsis render a truncated name, and
   // kept the 41px two-line height. The width model is still the alternative to a font
   // metrics table; it is now calibrated from measurement rather than assumed.
-  'lib/memory-panel.js': 3000,
+  // Raised from 3000 to 3400 by the 2026-10-31 GitHub-form charts round (3332
+  // formatted lines measured; measured-plus-30 is 3362, rounded up to 3400). What
+  // the 368 lines buy, all in the one asset the browser loads:
+  //   * 活动热度 is a fixed GitHub-style calendar instead of a width-stretched grid:
+  //     the 371-day window constant, the 10px/2px geometry, the month-label
+  //     placement rule (first column, then every month change at least three
+  //     labelled columns away), the sticky 一/三/五 gutter, the one-scroll-container
+  //     canvas width computation, and the hover tooltip whose box is measured and
+  //     edge-clamped in a layout effect (the verifier measured the first
+  //     centre-only clamp 43.5px outside the panel at 320px).
+  //   * 新建与更新 drops leading all-zero weeks so the first bar starts at the left
+  //     edge, and the meta reports the trimmed window while the totals still cover
+  //     the wire's whole window.
+  //   * 最近变化 became GitHub's contribution-activity rail: day grouping from the
+  //     string's own date parts (a bare YYYY-MM-DD is UTC and shifts in negative
+  //     offsets), the node/dot rail markup, and the 今天/昨天 fallback wording.
+  //   * The poll splits user-triggered runs (announced in one live region) from
+  //     background interval/visibility/focus runs (silent), and the POST carries
+  //     the x-obsidian-mem-panel header the route's desktop-proxy fence needs.
+  // The alternative to any of the chart code is a charting dependency shipped as a
+  // second served asset, which this panel has deliberately never had; the one
+  // module stays the only place a chart can live.
+  // Raised from 3400 by the same day's round-5 UX fixes (3571 formatted lines
+  // measured; measured-plus-30 is 3601, rounded up to 3650). What the 171 lines buy:
+  //   * the startup race: post() reads a 404 body before classifying it, and the poll
+  //     treats route/session-missing as transient before the first data arrives
+  //     (1 s retries, 20-attempt cap) with role=status copy instead of the fatal
+  //     restart notice;
+  //   * per-action feedback: outcome state per mutation rendered inline in the card
+  //     that owns the action, per-button busy labels, truthful compact outcome copy
+  //     (below trigger vs moved/folded/reclaimed), digest updated/unchanged copy with
+  //     the char count, and the hot card's pre-click trigger state;
+  //   * the day-diverse 最近变化 client: per-day totals taken from the activity
+  //     series, the 仅显示最近 K 条 sample hint, and the two aggregate-only older-day
+  //     groups that keep 昨天 visible when every sampled row is today.
+  // All of it is copy and state in the one served view module; no chart library, no
+  // second asset.
+  'lib/memory-panel.js': 3650,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})
@@ -865,7 +923,14 @@ const BUDGETS = {
   // behind, so most of the chart CSS is a trade, not an addition: the frequency
   // block went from five rules to twelve and 健康 gained four shapes, which is
   // what makes the page read as charts instead of text.
-  'lib/client.js': 1450,
+  // Raised from 1450 by the 2026-10-31 GitHub-form round (1449 formatted lines
+  // measured; measured-plus-30 is 1479, rounded up to 1500). The 32 lines over the
+  // old ceiling are the replaced chart chrome: the heat calendar's scroll container,
+  // canvas/months/frame/weekday-gutter rules and the edge-clamped tooltip; the
+  // contribution-rail timeline that replaced the eight flat recent rows (13 rules in,
+  // the old six .mem-recent*/.mem-dot rules out). The panel still carries one
+  // token-only stylesheet and no hex/rgb/hsl literal.
+  'lib/client.js': 1500,
   // Raised from 700 by the whole-graph round (716 formatted lines measured;
   // measured-plus-30 is 746, rounded up to 750). What the 16 lines buy: the
   // `spiralSeed` helper and the cold-frame branch that uses it, plus the comment

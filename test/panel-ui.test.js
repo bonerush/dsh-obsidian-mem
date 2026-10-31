@@ -59,9 +59,28 @@ function mount(t, name, options = {}) {
       const ref = node?.props?.ref
       if (ref === null || typeof ref !== 'object' || !('current' in ref)) continue
       if (typeof node.type !== 'string') continue
+      // React attaches once and leaves the object alone afterwards; preserving a
+      // live ref is what lets a test simulate a scroll position that survives a
+      // re-render (the heat map pins its scroll once and must not yank it back).
+      if (ref.current !== null && ref.current !== undefined) continue
       ref.current = {
         focus: () =>
           focused.push(node.type + (node.props.className ? ':' + node.props.className : '')),
+        // The heat map's scroll box is the one ref a view reads numbers from: its
+        // mount effect pins the first draw to the current week, and a DOM-less
+        // runtime can only observe that through stubbed box numbers.
+        ...(String(node.props.className ?? '')
+          .split(' ')
+          .includes('mem-heat-scroll')
+          ? { scrollLeft: 0, scrollWidth: 648, clientWidth: 292 }
+          : {}),
+        // The tooltip's layout effect reads its RENDERED width, which is what the edge
+        // clamp needs; the stub makes the DOM-less runtime take the measured path too.
+        ...(String(node.props.className ?? '')
+          .split(' ')
+          .includes('mem-heat-tip')
+          ? { getBoundingClientRect: () => ({ width: 120 }) }
+          : {}),
       }
     }
   }
@@ -129,6 +148,18 @@ const failure = (status, code, message) => ({
   ok: false,
   status,
   json: async () => ({ ok: false, error: { code, message } }),
+})
+/**
+ * A 404 with NO envelope: in the browser that is the host answering "no such route",
+ * which is what the startup race looks like before the plugin's route is registered.
+ * An old host's coded session-missing also arrived as a 404 — but WITH an envelope.
+ */
+const plain404 = () => ({
+  ok: false,
+  status: 404,
+  json: async () => {
+    throw new SyntaxError('Unexpected token < in JSON at position 0')
+  },
 })
 
 const PROJECT = {
@@ -284,12 +315,12 @@ const confirmValue = (mutation = 'retry-job', replayed = false) => ({
           },
 })
 
-/** Record each fetch body and answer from one handler. */
+/** Record each fetch body/headers and answer from one handler. */
 function stubFetch(t, handler) {
   const sent = []
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     const body = JSON.parse(options.body)
-    sent.push({ url, body })
+    sent.push({ url, body, headers: options.headers ?? {} })
     return handler(body, sent.length)
   })
   return sent
@@ -404,20 +435,36 @@ test('the overview reports project, clock and refresh to the shell and bands its
     ['生效 514 · 待确认 1'],
   )
 
-  // Recent: ordinals retired, the type appears once, the meta is type · time.
-  assert.equal(byClass(tree, 'mem-recent-row').length, 2)
-  assert.equal(byClass(tree, 'mem-recent-index').length, 0, 'the numbered index is retired')
-  assert.equal(byClass(tree, 'mem-dot').length, 2, 'each recent row carries a type dot')
-  const recentMeta = byClass(tree, 'mem-recent-meta').map((node) => node.props.children[0])
+  // Recent: a GitHub-activity rail, one group per updated day. Both fixture rows
+  // share a day, so they land in one group rather than two flat rows.
+  assert.equal(byClass(tree, 'mem-recent-row').length, 0, 'the flat list is retired')
+  assert.equal(byClass(tree, 'mem-recent-meta').length, 0, 'and its rules with it')
+  const timeline = byClass(tree, 'mem-timeline')
+  assert.equal(timeline.length, 1, '最近变化 is one rail timeline')
+  const groups = byClass(tree, 'mem-timeline-group')
+  assert.equal(groups.length, 1, 'both rows share one updated day, so one group')
+  assert.equal(byClass(tree, 'mem-timeline-node').length, 1, 'a group is one rail node')
   assert.ok(
-    recentMeta.every((text) => /^(决策|约定) · /u.test(text)),
-    'meta is type · time',
+    nodes(groups[0]).some((node) => node?.type === 'svg'),
+    'the node holds the inline note glyph',
   )
-  assert.equal(
-    byClass(tree, 'mem-recent-row').reduce((sum, row) => sum + byClass(row, 'mem-stamp').length, 0),
-    0,
-    'the type is no longer printed twice',
+  assert.deepEqual(
+    byClass(groups[0], 'mem-timeline-count').map((node) => node.props.children[0]),
+    ['2 条'],
   )
+  const items = byClass(groups[0], 'mem-timeline-item')
+  assert.equal(items.length, 2, 'each row is an item under the group')
+  assert.equal(byClass(groups[0], 'mem-timeline-dot').length, 2, 'each item carries a dot')
+  assert.deepEqual(
+    byClass(groups[0], 'mem-timeline-title').map((node) => node.props.children[0]),
+    ['决策一', '约定一'],
+  )
+  assert.deepEqual(
+    byClass(groups[0], 'mem-timeline-meta').map((node) => node.props.children[0]),
+    ['决策 · 未标注', '约定 · 未标注'],
+    'the meta is type · status, and a row with no status says so once',
+  )
+  assert.equal(byClass(groups[0], 'mem-stamp').length, 0, 'the type is not printed twice')
 
   // The health strip is passive and one action opens 健康.
   const strip = nodes(tree).find(
@@ -556,7 +603,7 @@ function activityFixture(days = 84) {
 
 const chartProps = (overrides = {}) => ({ sessionId: 'session-a', visible: true, ...overrides })
 
-test('the activity heat map draws every day of the window and prints the matching total', async (t) => {
+test('the activity heat map is a fixed GitHub-style calendar of every served day', async (t) => {
   const activity = activityFixture()
   stubFetch(t, () => ok(overviewValue({ activity, tags: { items: [], total: 0 } })))
   const render = mount(t, 'OverviewView')
@@ -566,51 +613,63 @@ test('the activity heat map draws every day of the window and prints the matchin
   const grid = byClass(tree, 'mem-heat-grid')
   assert.equal(grid.length, 1, 'one grid')
   assert.equal(grid[0].props.role, 'img', 'the whole grid is a single image')
-  assert.ok(String(grid[0].props['aria-label']).includes('周活动'), 'its label states the window')
+  assert.match(String(grid[0].props['aria-label']), /^近 \d+ 周活动，共 \d+ 条，峰值 \d+$/u)
+  // Sunday-first columns laid out by the grid CSS from one flat run of cells, padded
+  // to whole weeks. The head partial column is REAL DATA, not padding: every served
+  // day gets a cell, so the printed total can never disagree with the series.
   const cells = byClass(tree, 'mem-heat-cell')
-  // Sunday-first columns laid out by the grid CSS (`grid-auto-flow:column`, 7 rows)
-  // from one flat run of cells, padded to whole weeks. The column count follows the
-  // calendar, NOT a hard-coded twelve: 84 days spans 13 columns unless the window
-  // starts on a Sunday, and that head partial column is real data. Dropping it once
-  // made this chart print 合计 82 under a grid of 84 days, beside a flow block
-  // reading 净增 84 — two answers for one window.
   assert.equal(cells.length % 7, 0, 'whole weeks only')
   const real = cells.filter((cell) => !(cell.props.className ?? '').split(' ').includes('is-void'))
   assert.equal(real.length, activity.days.length, 'every day in the window gets a cell')
-  // Spec §6.5: a void cell is a calendar gap, not a reading. The grid's
-  // `role="img"` already hides the run from assistive technology, but the
-  // criterion is named on the cell, and a gap must not become focusable either.
   const voids = cells.filter((cell) => (cell.props.className ?? '').split(' ').includes('is-void'))
   assert.ok(voids.length > 0, 'an unaligned window is padded to whole weeks')
   for (const cell of voids) {
     assert.equal(cell.props['aria-hidden'], true, 'a void cell is hidden from AT')
     assert.equal(cell.props.tabIndex, undefined, 'a void cell is not focusable')
   }
-  assert.equal(
-    byClass(tree, 'mem-heat-col').length,
-    0,
-    'no per-column wrappers: the grid does the column layout',
-  )
-  // A 6px square is far below the 24px focus floor: a tabbable grid would be a
-  // keyboard path nobody can use, so no cell may claim focus. The readings are
-  // carried by the section meta and by each cell's own `title`/`aria-label`.
+  // A 10px cell is far below the 24px focus floor: a tabbable grid would be a
+  // keyboard path nobody can use, so the reading stays on the section meta and the
+  // cell's aria-label (the native title is gone so the styled tooltip is the only
+  // tooltip on the page).
   for (const cell of cells) assert.equal(cell.props.tabIndex, undefined, 'no focusable cell')
-  // Spec §3.4/§6.5: a data cell names the date and the value. A body-level <span>
-  // has no tooltip of its own, so the same sentence is on `title` and `aria-label`
-  // and in a screen-reader span — it must not be an inert <title> child.
   for (const cell of real) {
-    assert.match(String(cell.props.title), /^\d{4}-\d{2}-\d{2} · \d+ 条$/u, 'date · value')
-    assert.equal(cell.props['aria-label'], cell.props.title, 'the cell is readable')
+    assert.match(String(cell.props['aria-label']), /^\d{4}-\d{2}-\d{2} · \d+ 条$/u, 'date · value')
+    assert.equal(cell.props.title, undefined, 'the native title is dropped')
     assert.equal(
       nodes(cell).some((node) => node?.type === 'title'),
       false,
       'no inert <title> inside an HTML cell',
     )
+    assert.equal(typeof cell.props.onMouseEnter, 'function', 'hover handlers live on the cells')
+    assert.equal(typeof cell.props.onMouseLeave, 'function')
   }
+  // The GitHub form: a months row above, the sticky weekday gutter beside a fixed
+  // 10px-cell grid, all of it inside its own horizontal scroll box.
+  assert.equal(byClass(tree, 'mem-heat-scroll').length, 1, 'the calendar scrolls in its own box')
+  const canvas = byClass(tree, 'mem-heat-canvas')
+  assert.equal(canvas.length, 1)
+  assert.match(String(canvas[0].props.style.width), /^\d+px$/u, 'the canvas width is computed')
+  const months = byClass(tree, 'mem-heat-month')
+  assert.ok(months.length > 0, 'month labels sit above the columns')
+  for (const month of months) {
+    assert.match(String(month.props.children[0]), /^\d{1,2}月$/u, 'the label is <month>月')
+    assert.match(String(month.props.style.left), /^\d+px$/u, 'a label is positioned by its column')
+  }
+  assert.deepEqual(
+    byClass(tree, 'mem-heat-weekday').map((node) => node.props.children[0]),
+    ['一', '三', '五'],
+    'the sticky gutter labels Monday, Wednesday and Friday',
+  )
+  assert.equal(byClass(tree, 'mem-heat-frame').length, 1, 'the gutter and the grid share one frame')
+  assert.equal(byClass(tree, 'mem-heat-weekdays').length, 1)
   const legend = byClass(tree, 'mem-heat-legend')
   assert.equal(legend.length, 1)
   assert.equal(legend[0].props['aria-hidden'], true, 'the legend is decorative')
   assert.deepEqual(byClass(legend[0], 'mem-heat-swatch').length, 5, 'five buckets, zero included')
+  assert.deepEqual(
+    byClass(legend[0], 'mem-heat-legend-label').map((node) => node.props.children[0]),
+    ['少', '多'],
+  )
   // The printed total must equal the series it annotates — that equality is the
   // whole contract the meta text claims.
   const expectedTotal =
@@ -632,47 +691,51 @@ test('the activity heat map draws every day of the window and prints the matchin
   assert.equal(byClass(tree, 'mem-flow').length, 1, 'the flow chart is drawn from it too')
 })
 
-test('the heat map draws a longer window as the panel widens, capped at 26 weeks', async (t) => {
-  // The route will serve up to 26 weeks (182 days) in one payload, so a resize never
-  // refetches: the view slices the trailing weeks to the measured body. 12 weeks is
-  // the 292px design floor, 26 is the ceiling, and a payload that is shorter than the
-  // request (an older host that ignores `days`) is drawn as-is instead of blanking.
-  const wide = activityFixture(182)
+test('the heat map requests the 371-day year once, at any panel width', async (t) => {
+  // The fixed calendar wants 53 whole weeks, so the view asks for the trailing year
+  // ONCE (HEAT_REQUEST_DAYS) and never refetches on resize: the flow bars keep the
+  // width-based window, the heat map does not.
+  const year = activityFixture(371)
   const sent = stubFetch(t, () =>
-    ok(overviewValue({ activity: wide, tags: { items: [], total: 0 } })),
+    ok(overviewValue({ activity: year, tags: { items: [], total: 0 } })),
   )
   const realCells = (tree) =>
     byClass(tree, 'mem-heat-cell').filter(
       (cell) => !(cell.props.className ?? '').split(' ').includes('is-void'),
     ).length
+  const bars = (tree) =>
+    nodes(byClass(tree, 'mem-flow-svg')[0]).filter((node) => node?.type === 'title').length
   const render = mount(t, 'OverviewView')
   render(chartProps())
   await setImmediate()
-  assert.equal(sent.length, 1, 'one read, not one per resize')
-  assert.equal(sent[0].body.days, 182, 'the view asks for the widest window the route serves')
   const tree = render(chartProps())
-  assert.equal(realCells(tree), 84, 'at the 292px floor the map draws the designed twelve weeks')
-  assert.ok(countText(tree, '近 13 周（84 天）') >= 1, 'the meta names the drawn window')
+  assert.equal(sent.length, 1, 'one read, not one per resize')
+  assert.equal(sent[0].body.days, 371, 'the view asks for the trailing year')
+  assert.equal(realCells(tree), 371, 'the fixed calendar draws every served day, no trailing slice')
+  const lead = new Date(year.days[0] + 'T00:00:00').getDay()
+  const columns = Math.ceil((lead + 371) / 7)
+  assert.ok(
+    countText(tree, '近 ' + columns + ' 周（371 天）') >= 1,
+    'the meta names the fixed window',
+  )
+  const floorBars = bars(tree)
 
-  const mid = mount(t, 'OverviewView', { sankeyWidth: 452 })
-  mid(chartProps())
+  // A wide mount asks its own live poll for the same 371 days — the request is not a
+  // function of width — and still draws all 371 cells.
+  const wide = mount(t, 'OverviewView', { sankeyWidth: 631 })
+  wide(chartProps())
   await setImmediate()
-  const midTree = mid(chartProps())
-  assert.equal(realCells(midTree), 133, 'a 452px body draws nineteen weeks (133 days)')
-  assert.ok(countText(midTree, '近 20 周（133 天）') >= 1, 'the meta follows the drawn window')
-
-  const full = mount(t, 'OverviewView', { sankeyWidth: 631 })
-  full(chartProps())
-  await setImmediate()
-  const fullTree = full(chartProps())
-  assert.equal(realCells(fullTree), 182, 'a 631px body draws the whole 26-week payload window')
-  assert.ok(countText(fullTree, '近 27 周（182 天）') >= 1, 'the meta names the whole window')
+  const wideTree = wide(chartProps())
+  assert.equal(sent.length, 2, 'each mounted view owns one read')
+  assert.equal(sent[1].body.days, 371, 'a wide panel asks for the same fixed year')
+  assert.equal(realCells(wideTree), 371, 'a resize never slices the heat map')
+  assert.ok(bars(wideTree) > floorBars, 'while the flow bars keep their width-based window')
 })
 
-test('an older host that ignores the wider window still draws its own twelve weeks', async (t) => {
+test('an older host that answers a shorter window is drawn as-is', async (t) => {
   // Version skew is a supported state (the panel asset and the host plugin upgrade
-  // independently): a route that does not know `days` answers 84, and a wide panel
-  // must draw that window rather than nothing.
+  // independently): a route that does not know the year window answers 84 days, and
+  // a wide panel must draw exactly that window rather than a blank region.
   stubFetch(t, () =>
     ok(overviewValue({ activity: activityFixture(), tags: { items: [], total: 0 } })),
   )
@@ -685,6 +748,87 @@ test('an older host that ignores the wider window still draws its own twelve wee
   )
   assert.equal(real.length, 84, 'the payload window is the ceiling, not the request')
   assert.ok(countText(tree, '近 13 周（84 天）') >= 1, 'and the meta still matches it')
+})
+
+test('the heat map starts at the current week and a refresh never yanks the scroll', async (t) => {
+  // The first paint must land on the current week (the right end of a fixed year);
+  // after that the reader owns the scroll position — a 15s background poll must not
+  // drag them back. The ref stub carries the box numbers a DOM would answer.
+  stubFetch(t, () =>
+    ok(overviewValue({ activity: activityFixture(371), tags: { items: [], total: 0 } })),
+  )
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const ref = byClass(tree, 'mem-heat-scroll')[0].props.ref
+  assert.equal(ref.current.scrollLeft, 648, 'the first draw is pinned to the current week')
+  // The reader scrolls back to the left; a later data refresh must leave them there.
+  ref.current.scrollLeft = 120
+  render(chartProps())
+  render(chartProps())
+  assert.equal(ref.current.scrollLeft, 120, 'a refresh keeps the reader where they scrolled')
+})
+
+test('the heat map tooltip is the only hover reading, and scrolling hides it', async (t) => {
+  stubFetch(t, () =>
+    ok(overviewValue({ activity: activityFixture(371), tags: { items: [], total: 0 } })),
+  )
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  let tree = render(chartProps())
+  const real = byClass(tree, 'mem-heat-cell').filter(
+    (cell) => !(cell.props.className ?? '').split(' ').includes('is-void'),
+  )
+  assert.equal(byClass(tree, 'mem-heat-tip').length, 0, 'no tooltip before a hover')
+  const busy = real.find((cell) => /· [1-9]\d* 条$/u.test(String(cell.props['aria-label'])))
+  assert.ok(busy, 'the fixture has busy days')
+  busy.props.onMouseEnter()
+  tree = render(chartProps())
+  const tip = byClass(tree, 'mem-heat-tip')
+  assert.equal(tip.length, 1, 'the styled tooltip renders while a cell is hovered')
+  assert.equal(tip[0].props['aria-hidden'], true, 'it is decorative, never a second announcement')
+  assert.match(String(tip[0].props.children[0]), /^\d{4}-\d{2}-\d{2} · [1-9]\d* 条$/u)
+  assert.match(String(tip[0].props.style.left), /^\d+px$/u, 'positioned over the hovered cell')
+  assert.match(String(tip[0].props.style.top), /^\d+px$/u)
+  // A quiet day says 无记录 in the tooltip while its aria-label keeps the honest count.
+  const quiet = real.find((cell) => /· 0 条$/u.test(String(cell.props['aria-label'])))
+  assert.ok(quiet, 'the fixture has quiet days')
+  quiet.props.onMouseEnter()
+  tree = render(chartProps())
+  assert.match(String(byClass(tree, 'mem-heat-tip')[0].props.children[0]), /· 无记录$/u)
+  quiet.props.onMouseLeave()
+  tree = render(chartProps())
+  assert.equal(byClass(tree, 'mem-heat-tip').length, 0, 'mouseleave hides the tooltip')
+  busy.props.onMouseEnter()
+  tree = render(chartProps())
+  assert.equal(byClass(tree, 'mem-heat-tip').length, 1)
+  byClass(tree, 'mem-heat-scroll')[0].props.onScroll()
+  tree = render(chartProps())
+  assert.equal(byClass(tree, 'mem-heat-tip').length, 0, 'scrolling hides it')
+  // The clamp moves the tooltip's BOX, not just its anchor. The stub reports a 120px
+  // rendered width in a 292px scroll box, so a right-edge cell must draw at 226px
+  // (292 − 60 − 6) and a left-edge cell at 66px (60 + 6) — the measured round-4 defect
+  // was the unclamped box hanging ~44px outside the panel at both ends.
+  const scroll = byClass(tree, 'mem-heat-scroll')[0]
+  scroll.props.ref.current.scrollLeft = 0
+  real.at(-1).props.onMouseEnter()
+  render(chartProps())
+  tree = render(chartProps())
+  assert.equal(
+    byClass(tree, 'mem-heat-tip')[0].props.style.left,
+    '226px',
+    'the right edge of the box is clamped inside the scroll box',
+  )
+  real[0].props.onMouseEnter()
+  render(chartProps())
+  tree = render(chartProps())
+  assert.equal(
+    byClass(tree, 'mem-heat-tip')[0].props.style.left,
+    '66px',
+    'and the left edge too, once the rendered width is measured',
+  )
 })
 
 test('the flow bars share one zero line and normalise to the larger side', async (t) => {
@@ -850,6 +994,102 @@ test('every flow bar covers exactly one Sunday-first calendar week', async (t) =
     created.reduce((sum, value) => sum + value, 0),
     (84 * 85) / 2,
     'the bars between them keep every day in the window',
+  )
+})
+
+test('the flow bars drop leading all-zero weeks so the first bar starts at the left', async (t) => {
+  // A wide panel draws a 26-week window, but a vault that only became active six
+  // weeks ago used to render twenty empty weeks and six bars squeezed against the
+  // right edge. Leading all-zero weeks are dropped (interior and trailing weeks are
+  // never touched), so the first drawn bar sits at x = 0; the meta names the trimmed
+  // window while the totals still cover every week.
+  const base = activityFixture(182)
+  // 182 days ending Thursday 2026-10-29 start on a Friday, so the calendar spans 27
+  // Sunday-first columns and only the last six (day indexes 142..181) carry data.
+  const activity = {
+    ...base,
+    created: base.days.map((_day, index) => (index >= 142 ? 1 : 0)),
+    updated: base.days.map(() => 0),
+  }
+  stubFetch(t, () => ok(overviewValue({ activity, tags: { items: [], total: 0 } })))
+  const render = mount(t, 'OverviewView', { sankeyWidth: 631 })
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const svgNode = byClass(tree, 'mem-flow-svg')[0]
+  const bars = nodes(svgNode).filter(
+    (node) => node?.type === 'rect' && node.props.className?.startsWith('mem-flow-'),
+  )
+  assert.equal(bars.length, 6, 'six non-empty calendar weeks draw six bars')
+  assert.equal(bars[0].props.x, 0, 'the first bar starts at the left edge')
+  assert.deepEqual(
+    bars.map((bar) => bar.props.x),
+    [0, 12, 24, 36, 48, 60],
+    'the bars keep the 8px bar + 4px gap pitch',
+  )
+  const titles = nodes(svgNode)
+    .filter((node) => node?.type === 'title')
+    .map((node) => String(node.props.children[0]))
+  assert.deepEqual(
+    titles.map((text) => /新建 (\d+)/u.exec(text)[1]),
+    ['7', '7', '7', '7', '7', '5'],
+    'the last six calendar weeks, partial tail included',
+  )
+  const flowSection = nodes(tree).find(
+    (node) => node?.type === 'section' && node.props['aria-label'] === '新建与更新',
+  )
+  assert.ok(
+    byClass(flowSection, 'mem-meta').some((node) => node.props.children[0] === '近 6 周净增 40'),
+    'the meta names the trimmed window and the full-window net',
+  )
+  assert.equal(
+    svgNode.props['aria-label'],
+    '近 6 周新建 40 条，更新 0 条',
+    'the image label follows the trimmed window',
+  )
+})
+
+test('a short flow window caps the drawn bar width instead of stretching it', async (t) => {
+  // The bars live in a viewBox and the svg is width:100% with preserveAspectRatio:none,
+  // so a six-bar window used to stretch each 8-unit bar into a ~65-100px blocky band on
+  // a wide panel. The cap is 3x the viewBox width: the 8-unit bar can never draw wider
+  // than 24px on screen, and the svg stays left-aligned in its column. The cap only ever
+  // trims SHORT windows: a long window's cap is larger than any panel body, so
+  // width:100% still fills it (measured widths 320-720, content box up to 692px).
+  const base = activityFixture(182)
+  const short = {
+    ...base,
+    created: base.days.map((_day, index) => (index >= 142 ? 1 : 0)),
+    updated: base.days.map(() => 0),
+  }
+  let reply = ok(overviewValue({ activity: short, tags: { items: [], total: 0 } }))
+  stubFetch(t, () => reply)
+  const render = mount(t, 'OverviewView', { sankeyWidth: 631 })
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const svgNode = byClass(tree, 'mem-flow-svg')[0]
+  const viewBoxWidth = Number(String(svgNode.props.viewBox).split(' ')[2])
+  assert.equal(viewBoxWidth, 68, 'six weeks of 8px bar + 4px gap')
+  assert.equal(svgNode.props.style.maxWidth, '204px', 'the cap is 3x the 68-unit viewBox')
+  assert.ok(
+    (8 * Number.parseFloat(svgNode.props.style.maxWidth)) / viewBoxWidth <= 24,
+    'the widest on-screen bar stays at most 24px',
+  )
+  // A 26-week window (the widest width-based window) spans 27 Sunday-first columns for
+  // this fixture, so its cap is 960px — above the 720px panel's 692px body, which keeps
+  // width:100% in charge and the chart filling the body.
+  reply = ok(overviewValue({ activity: activityFixture(371), tags: { items: [], total: 0 } }))
+  const long = mount(t, 'OverviewView', { sankeyWidth: 631 })
+  long(chartProps())
+  await setImmediate()
+  const longSvg = byClass(long(chartProps()), 'mem-flow-svg')[0]
+  const longViewBox = Number(String(longSvg.props.viewBox).split(' ')[2])
+  assert.equal(longViewBox, 320, 'a 26-week window spans 27 Sunday-first columns here')
+  assert.equal(longSvg.props.style.maxWidth, '960px', 'a long window keeps width:100% in charge')
+  assert.ok(
+    Number.parseFloat(longSvg.props.style.maxWidth) >= 692,
+    'the cap never limits a 320-720px panel body',
   )
 })
 
@@ -1089,6 +1329,267 @@ test('the empty-flow sentence names the short window’s own week count', async 
   const tree = render(chartProps())
   assert.equal(byClass(tree, 'mem-flow-svg').length, 0, 'a zero window draws no bars')
   assert.equal(countText(tree, '近 5 周没有新建或更新记录。'), 1, 'five calendar weeks, once')
+})
+
+// ---------------------------------------------------------------------------
+// 最近变化 as a GitHub contribution-activity rail (item 4). One group per updated
+// calendar day, newest first, read from the string's own date parts: a bare
+// `YYYY-MM-DD` must never go through Date.parse, because that parses as UTC
+// and shifts the day in every non-UTC zone.
+// ---------------------------------------------------------------------------
+
+/** A local calendar day, offset from today, as the wire's YYYY-MM-DD. */
+function calendarDayFromToday(offset) {
+  const date = new Date()
+  date.setDate(date.getDate() + offset)
+  const pad = (n) => String(n).padStart(2, '0')
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate())
+}
+
+test('最近变化 is a contribution-activity rail grouped by calendar day', async (t) => {
+  const today = calendarDayFromToday(0)
+  const yesterday = calendarDayFromToday(-1)
+  const recent = [
+    {
+      path: 't2.md',
+      title: '今天第二条',
+      type: 'decision',
+      status: 'active',
+      updated: today + 'T23:30:00.000Z',
+    },
+    { path: 't1.md', title: '今天第一条', type: 'convention', status: 'accepted', updated: today },
+    { path: 'y1.md', title: '昨天那条', type: 'gotcha', status: 'provisional', updated: yesterday },
+    {
+      path: 'o2.md',
+      title: '旧日期带时间',
+      type: 'doc',
+      status: 'superseded',
+      updated: '2020-01-02T23:30:00.000Z',
+    },
+    { path: 'o1.md', title: '旧日期', type: 'glossary', status: '', updated: '2020-01-02' },
+    { path: 'u1.md', title: '没有日期', type: 'log', status: 'archived', updated: null },
+  ]
+  stubFetch(t, () => ok(overviewValue({ activity: null, tags: null, recent })))
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const timeline = byClass(tree, 'mem-timeline')
+  assert.equal(timeline.length, 1, 'one rail timeline')
+  assert.equal(timeline[0].type, 'ol', 'the rail is an ordered list')
+  assert.equal(byClass(tree, 'mem-recent-row').length, 0, 'the flat list is retired')
+  assert.equal(byClass(tree, 'mem-dot').length, 0, 'and its dot rule with it')
+  const groups = byClass(tree, 'mem-timeline-group')
+  assert.equal(groups.length, 4, 'one group per calendar day plus the unknown bucket')
+  assert.deepEqual(
+    byClass(tree, 'mem-timeline-date').map((node) => node.props.children[0]),
+    ['今天', '昨天', '2020-01-02', '未知'],
+    'newest first, the unknown bucket last',
+  )
+  assert.deepEqual(
+    byClass(tree, 'mem-timeline-count').map((node) => node.props.children[0]),
+    ['2 条', '1 条', '2 条', '1 条'],
+    'each group states how many updates it holds',
+  )
+  // A timestamp groups by its own date part, not by the UTC instant: 23:30Z on
+  // 2020-01-02 belongs beside the bare 2020-01-02 row in every timezone.
+  assert.deepEqual(
+    byClass(groups[2], 'mem-timeline-title').map((node) => node.props.children[0]),
+    ['旧日期带时间', '旧日期'],
+    'the date part groups a timestamp with the bare date',
+  )
+  assert.deepEqual(
+    byClass(groups[0], 'mem-timeline-title').map((node) => node.props.children[0]),
+    ['今天第二条', '今天第一条'],
+    'items keep the quiet order the wire sent',
+  )
+  assert.deepEqual(
+    byClass(groups[0], 'mem-timeline-meta').map((node) => node.props.children[0]),
+    ['决策 · 生效', '约定 · 已采纳'],
+    'the meta is type · status',
+  )
+  assert.deepEqual(
+    byClass(groups[1], 'mem-timeline-meta').map((node) => node.props.children[0]),
+    ['踩坑 · 待确认'],
+  )
+  assert.deepEqual(
+    byClass(groups[2], 'mem-timeline-meta').map((node) => node.props.children[0]),
+    ['文档 · 已取代', '术语表 · 未标注'],
+    'a row with no status says 未标注 once',
+  )
+  assert.deepEqual(
+    byClass(groups[3], 'mem-timeline-meta').map((node) => node.props.children[0]),
+    ['日志 · 已归档'],
+  )
+  // One node per group, each holding the inline note glyph; every item a 6px dot.
+  for (const group of groups) {
+    assert.equal(byClass(group, 'mem-timeline-node').length, 1, 'one node per group')
+    assert.ok(
+      nodes(group).some((node) => node?.type === 'svg'),
+      'the node holds the inline note glyph',
+    )
+  }
+  assert.equal(byClass(tree, 'mem-timeline-item').length, 6, 'every row is one item')
+  assert.equal(byClass(tree, 'mem-timeline-dot').length, 6, 'every item carries its dot')
+  assert.equal(byClass(tree, 'mem-timeline-body').length, 4, 'each group owns one body')
+  // The section head keeps its jump action.
+  const sectionNode = nodes(tree).find(
+    (node) => node?.type === 'section' && node.props['aria-label'] === '最近变化',
+  )
+  assert.ok(sectionNode, 'the block is still 最近变化')
+})
+
+/** A minimal activity series: only the given day offsets carry changes. */
+function activityOnDays(totalsByOffset) {
+  const offsets = Object.keys(totalsByOffset).map(Number)
+  const days = []
+  const created = []
+  const updated = []
+  for (let offset = Math.min(...offsets); offset <= Math.max(...offsets); offset += 1) {
+    days.push(calendarDayFromToday(offset))
+    created.push(totalsByOffset[offset] ?? 0)
+    updated.push(0)
+  }
+  return { from: days[0], to: days.at(-1), days, created, updated }
+}
+
+test('a busy day prints its activity total with a sample hint', async (t) => {
+  // The route samples at most two rows per day while the day itself can hold dozens of
+  // changes (the live digest said 45 created in the last day). The count must be the
+  // DAY's total from the activity series, with a quiet hint when the rows are a sample.
+  const today = calendarDayFromToday(0)
+  const yesterday = calendarDayFromToday(-1)
+  const older = calendarDayFromToday(-5)
+  const quiet = calendarDayFromToday(-2) // activity, but no sampled row
+  const recent = [
+    { path: 't2.md', title: '今天第二条', type: 'decision', status: 'active', updated: today },
+    { path: 't1.md', title: '今天第一条', type: 'convention', status: 'accepted', updated: today },
+    { path: 'y2.md', title: '昨天第二条', type: 'decision', status: 'active', updated: yesterday },
+    {
+      path: 'y1.md',
+      title: '昨天第一条',
+      type: 'gotcha',
+      status: 'provisional',
+      updated: yesterday,
+    },
+    { path: 'o2.md', title: '更早第二条', type: 'doc', status: 'superseded', updated: older },
+    { path: 'o1.md', title: '更早第一条', type: 'glossary', status: 'active', updated: older },
+    { path: 'u1.md', title: '没有日期', type: 'log', status: 'archived', updated: null },
+  ]
+  stubFetch(t, () =>
+    ok(
+      overviewValue({
+        activity: activityOnDays({ 0: 45, '-1': 7, '-2': 4, '-5': 2 }),
+        tags: null,
+        recent,
+      }),
+    ),
+  )
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const groups = byClass(tree, 'mem-timeline-group')
+  assert.equal(groups.length, 4, 'three sampled days plus 未知')
+  assert.deepEqual(
+    byClass(tree, 'mem-timeline-date').map((node) => node.props.children[0]),
+    ['今天', '昨天', older, '未知'],
+    'newest first, 未知 last',
+  )
+  assert.deepEqual(
+    byClass(tree, 'mem-timeline-count').map((node) => node.props.children[0]),
+    ['共 45 条', '共 7 条', '2 条', '1 条'],
+    'a sampled day states its total; a whole-truth group keeps its own count',
+  )
+  assert.deepEqual(
+    byClass(tree, 'mem-timeline-more').map((node) => node.props.children[0]),
+    ['仅显示最近 2 条', '仅显示最近 2 条'],
+    'a sampled day says so once',
+  )
+  assert.equal(byClass(groups[0], 'mem-timeline-title').length, 2, 'the sampled rows stay listed')
+  assert.deepEqual(
+    byClass(groups[1], 'mem-timeline-title').map((node) => node.props.children[0]),
+    ['昨天第二条', '昨天第一条'],
+    'yesterday keeps its own rows',
+  )
+  // The unsampled day has activity but NO sampled row: aggregates are the worst-case
+  // fallback only, so with several sampled days it must not appear.
+  assert.equal(
+    byClass(tree, 'mem-timeline-date').some((node) => node.props.children[0] === quiet),
+    false,
+    'no aggregate day when the sample already spans several days',
+  )
+})
+
+test('when every sampled row is today, two older active days are aggregated', async (t) => {
+  // The reported live bug: the newest 8 notes were all from today, so the rail showed
+  // only 今天 although yesterday and the days before had changes. Up to two older days
+  // with activity and no sampled row are unioned as aggregate-only groups.
+  const today = calendarDayFromToday(0)
+  const twoDaysAgo = calendarDayFromToday(-2)
+  const threeDaysAgo = calendarDayFromToday(-3)
+  const recent = [
+    ...Array.from({ length: 7 }, (_x, index) => ({
+      path: 't' + index + '.md',
+      title: '今天第 ' + (index + 1) + ' 条',
+      type: 'decision',
+      status: 'active',
+      updated: today,
+    })),
+    { path: 'u1.md', title: '没有日期', type: 'log', status: 'archived', updated: null },
+  ]
+  stubFetch(t, () =>
+    ok(
+      overviewValue({
+        activity: activityOnDays({ 0: 45, '-1': 7, '-2': 3, '-3': 2 }),
+        tags: null,
+        recent,
+      }),
+    ),
+  )
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const groups = byClass(tree, 'mem-timeline-group')
+  assert.deepEqual(
+    byClass(tree, 'mem-timeline-date').map((node) => node.props.children[0]),
+    ['今天', '昨天', twoDaysAgo, '未知'],
+    'the two newest older active days are aggregated; 未知 stays last',
+  )
+  assert.deepEqual(
+    byClass(tree, 'mem-timeline-count').map((node) => node.props.children[0]),
+    ['共 45 条', '共 7 条', '共 3 条', '1 条'],
+  )
+  // An aggregate day lists nothing, but keeps the rail node/date/count geometry.
+  for (const group of [groups[1], groups[2]]) {
+    assert.equal(byClass(group, 'mem-timeline-node').length, 1, 'an aggregate group keeps its node')
+    assert.ok(nodes(group).some((node) => node?.type === 'svg'))
+    assert.equal(byClass(group, 'mem-timeline-items').length, 0, 'no item list')
+    assert.equal(byClass(group, 'mem-timeline-item').length, 0)
+    assert.equal(byClass(group, 'mem-timeline-more').length, 0, 'the count IS the whole day')
+  }
+  assert.equal(
+    byClass(tree, 'mem-timeline-item').length,
+    8,
+    'only the sampled rows are items: seven today plus the undated row',
+  )
+  assert.equal(
+    byClass(tree, 'mem-timeline-date').some((node) => node.props.children[0] === threeDaysAgo),
+    false,
+    'only two aggregate days are added',
+  )
+  assert.equal(byClass(groups[0], 'mem-timeline-more').length, 1, 'today keeps its sample hint')
+})
+
+test('an empty 最近变化 keeps its sentence instead of drawing an empty rail', async (t) => {
+  stubFetch(t, () => ok(overviewValue({ activity: null, tags: null, recent: [] })))
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  assert.equal(byClass(tree, 'mem-timeline').length, 0, 'no rail for no rows')
+  assert.equal(countText(tree, '还没有可显示的记录。'), 1, 'the empty sentence, once')
 })
 
 // ---------------------------------------------------------------------------
@@ -2720,6 +3221,106 @@ test('the overview owns its loading announcement once, from the skeleton, then r
   assert.equal(liveRegions(tree).length, 1)
 })
 
+test('a background interval poll updates silently; only a user refresh announces', async (t) => {
+  // The 15 s poll exists so memory written by another process shows up without a
+  // restart. Announcing every poll would flash a live region at the reader forever,
+  // so only a user-triggered run (the refresh button / refreshKey / attempt) speaks.
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const gates = [deferred(), deferred(), deferred()]
+  let calls = 0
+  stubFetch(t, () => gates[Math.min(calls++, gates.length - 1)].promise)
+  const render = mount(t, 'OverviewView')
+  const props = { sessionId: 'session-a', visible: true }
+  render(props)
+  await setImmediate()
+  gates[0].resolve(ok(overviewValue()))
+  await setImmediate()
+  let tree = render(props)
+  assert.equal(countText(tree, '正在刷新…'), 0, 'a landed read announces nothing')
+  t.mock.timers.tick(15000)
+  await setImmediate()
+  assert.equal(calls, 2, 'the interval started the second read')
+  tree = render(props)
+  assert.equal(countText(tree, '正在刷新…'), 0, 'an interval poll is silent')
+  assert.equal(liveRegions(tree).length, 0, 'no live region flashes for a background poll')
+  gates[1].resolve(ok(overviewValue()))
+  await setImmediate()
+  tree = render(props)
+  assert.equal(countText(tree, '正在刷新…'), 0)
+  // The refresh button is a reader action, so that run does announce while it runs.
+  const refresh = byText(tree, '刷新')[0]
+  assert.ok(refresh, 'the standalone 概览 can refresh')
+  refresh.props.onClick()
+  render(props)
+  tree = render(props)
+  assert.equal(countText(tree, '正在刷新…'), 1, 'the user refresh announces once')
+  assert.equal(liveRegions(tree).length, 1)
+  gates[2].resolve(ok(overviewValue()))
+  await setImmediate()
+  tree = render(props)
+  assert.equal(countText(tree, '正在刷新…'), 0, 'and stops announcing when it lands')
+})
+
+test('the panel re-reads when the window regains focus, silently', async (t) => {
+  // Coming back to the window is the second no-restart path. It is a background
+  // read too (silent), and the listener must be removed on cleanup.
+  const listeners = new Map()
+  const added = []
+  const removed = []
+  globalThis.window = {
+    addEventListener(type, listener) {
+      added.push(type)
+      listeners.set(type, listener)
+    },
+    removeEventListener(type) {
+      removed.push(type)
+      listeners.delete(type)
+    },
+  }
+  t.after(() => {
+    delete globalThis.window
+  })
+  const gates = [deferred(), deferred()]
+  let calls = 0
+  stubFetch(t, () => gates[Math.min(calls++, gates.length - 1)].promise)
+  const render = mount(t, 'OverviewView')
+  const props = { sessionId: 'session-a', visible: true }
+  render(props)
+  await setImmediate()
+  gates[0].resolve(ok(overviewValue()))
+  await setImmediate()
+  render(props)
+  assert.ok(added.includes('focus'), 'the poll listens for window focus')
+  listeners.get('focus')()
+  await setImmediate()
+  assert.equal(calls, 2, 'focus started a fresh read')
+  const tree = render(props)
+  assert.equal(countText(tree, '正在刷新…'), 0, 'a focus read is a background read: silent')
+  gates[1].resolve(ok(overviewValue()))
+  await setImmediate()
+  // A dependency change re-runs the effect, so cleanup runs here and the listener
+  // is removed before it is re-added for the new run.
+  render({ ...props, refreshKey: 1 })
+  assert.ok(removed.includes('focus'), 'the focus listener is removed on cleanup')
+})
+
+test('every panel POST carries the same-origin fence header', async (t) => {
+  // The desktop host's dsh-app:// proxy strips Origin before forwarding, so the
+  // route's CSRF fence has to accept a header a web page cannot send cross-site
+  // without a preflight the route never answers.
+  const sent = stubFetch(t, () => ok(overviewValue()))
+  const render = mount(t, 'OverviewView')
+  render({ sessionId: 'session-a', visible: true })
+  await setImmediate()
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0].headers['content-type'], 'application/json')
+  assert.equal(
+    sent[0].headers['x-obsidian-mem-panel'],
+    '1',
+    'the panel header is on every POST, reads included',
+  )
+})
+
 test('the health view owns its loading announcement once, from the skeleton', async (t) => {
   const gate = deferred()
   stubFetch(t, () => gate.promise)
@@ -2840,12 +3441,25 @@ test('the retry action previews facts then confirms one token and reports the ou
     undefined,
     'the sheet closes',
   )
+  // The success belongs to the card that owns the action: a notice at the top of the
+  // long 健康 page is off-screen while the reader is at the queue, which is precisely
+  // the "no visible feedback" bug.
+  const queueNode = find(
+    tree,
+    (node) => node?.type === 'section' && node.props['aria-label'] === '待处理作业',
+  )
+  const inline = byClass(queueNode, 'mem-action-result')
+  assert.equal(inline.length, 1, 'the outcome is drawn in the queue card')
+  assert.equal(inline[0].props.role, 'status')
   assert.ok(
-    byClass(tree, 'mem-action-status').some((node) =>
-      texts(node).some((text) => String(text).includes('已重新排队')),
-    ),
+    texts(inline[0]).some((text) => String(text).includes('已重新排队')),
     'the outcome is named in words',
   )
+  assert.ok(
+    texts(inline[0]).some((text) => String(text).includes('刚刚')),
+    'and carries the action time',
+  )
+  assert.equal(byClass(tree, 'mem-action-status').length, 0, 'no top-of-page notice for it')
 })
 
 test('Escape and cancel close the sheet without sending a request', async (t) => {
@@ -2933,7 +3547,7 @@ test('a replayed confirmation names the same outcome and says nothing was writte
   byText(tree, '确认执行')[0].props.onClick()
   await setImmediate()
   tree = render(props)
-  const status = byClass(tree, 'mem-action-status')
+  const status = byClass(tree, 'mem-action-result')
     .map((node) => texts(node).join(''))
     .join(' ')
   assert.ok(status.includes('已重新排队'), 'the outcome is still named')
@@ -2985,10 +3599,15 @@ test('compact-hot and refresh-digest open the same sheet with their own facts', 
   byText(tree, '确认执行')[0].props.onClick()
   await setImmediate()
   tree = render(props)
+  const hotNode = find(
+    tree,
+    (node) => node?.type === 'section' && node.props['aria-label'] === '热层',
+  )
   assert.ok(
-    byClass(tree, 'mem-action-status').some((node) =>
+    byClass(hotNode, 'mem-action-result').some((node) =>
       texts(node).some((text) => String(text).includes('搬出 3')),
     ),
+    'the outcome is drawn in the hot card',
   )
   byText(tree, '发布项目摘要')[0].props.onClick()
   await setImmediate()
@@ -3064,4 +3683,300 @@ test('an unavailable preview API hides the controls and leaves one clear notice'
     'the panel says it fell back to read-only',
   )
   assert.ok(byClass(tree, 'mem-stamp').length > 0, 'reading keeps working')
+})
+
+// ---------------------------------------------------------------------------
+// Round 5 — the startup race and the invisible mutation feedback.
+// ---------------------------------------------------------------------------
+
+test('a startup 404 retries fast as a status, never as a restart demand', async (t) => {
+  // The panel can mount before the plugin's route is registered. A bodyless 404 there
+  // is a boot race, so the poll retries once a second and the line is a pending status;
+  // mapping it to the fatal restart copy (the reported bug) makes a slow start look
+  // like a broken install.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let calls = 0
+  stubFetch(t, () => {
+    calls += 1
+    return calls < 3 ? plain404() : ok(healthValue())
+  })
+  const render = mount(t, 'HealthView')
+  const props = { sessionId: 'session-a', visible: true }
+  render(props)
+  await setImmediate()
+  let tree = render(props)
+  const pending = find(
+    tree,
+    (node) =>
+      node?.props?.role === 'status' &&
+      texts(node).some((text) => String(text).includes('记忆接口正在启动')),
+  )
+  assert.ok(pending, 'the route-not-ready state is a status')
+  assert.equal(pending.props['aria-live'], 'polite')
+  assert.equal(countText(tree, '重启 dsh'), 0, 'no restart demand during the retry window')
+  assert.equal(byClass(tree, 'mem-gauge').length, 0, 'no data yet')
+  // One second later the fast retry runs — not the 15s poll.
+  t.mock.timers.tick(1000)
+  await setImmediate()
+  tree = render(props)
+  assert.equal(calls, 2, 'the fast retry ran after 1s')
+  assert.equal(countText(tree, '记忆接口正在启动'), 1, 'still pending')
+  t.mock.timers.tick(1000)
+  await setImmediate()
+  tree = render(props)
+  assert.equal(calls, 3)
+  assert.equal(countText(tree, '记忆接口正在启动'), 0, 'the pending line clears')
+  assert.equal(byClass(tree, 'mem-gauge').length, 4, 'the health page arrives')
+})
+
+test('an old host coded 404 for a recovering session retries too', async (t) => {
+  // Version skew: an older route answered session-missing as a coded 404 envelope. The
+  // body must be parsed BEFORE the 404 is classified as the route being absent, or a
+  // host that only lacks the new 503 status still shows the restart copy.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let calls = 0
+  stubFetch(t, () => {
+    calls += 1
+    return calls < 3
+      ? failure(404, 'session-missing', 'the session is not live')
+      : ok(healthValue())
+  })
+  const render = mount(t, 'HealthView')
+  const props = { sessionId: 'session-a', visible: true }
+  render(props)
+  await setImmediate()
+  let tree = render(props)
+  assert.equal(countText(tree, '会话正在恢复'), 1, 'the session wait is named')
+  assert.equal(countText(tree, '记忆接口正在启动'), 0, 'a coded envelope is not the route race')
+  assert.equal(countText(tree, '重启 dsh'), 0, 'and not a restart demand')
+  t.mock.timers.tick(1000)
+  await setImmediate()
+  t.mock.timers.tick(1000)
+  await setImmediate()
+  tree = render(props)
+  assert.equal(calls, 3)
+  assert.equal(countText(tree, '会话正在恢复'), 0, 'the session recovers')
+  assert.equal(byClass(tree, 'mem-gauge').length, 4, 'the health page arrives')
+})
+
+test('the startup retry is bounded, and an exhausted plain 404 keeps the restart copy', async (t) => {
+  // A genuinely unregistered route must end somewhere actionable instead of spinning
+  // forever: 20 fast attempts, then the one restart sentence.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const sent = stubFetch(t, () => plain404())
+  const render = mount(t, 'HealthView')
+  const props = { sessionId: 'session-a', visible: true }
+  render(props)
+  await setImmediate()
+  let tree = render(props)
+  assert.equal(countText(tree, '记忆接口正在启动'), 1)
+  for (let index = 0; index < 20; index += 1) {
+    t.mock.timers.tick(1000)
+    await setImmediate()
+  }
+  tree = render(props)
+  assert.equal(sent.length, 21, 'one attempt plus the 20-retry cap')
+  assert.equal(
+    countText(tree, '记忆接口正在启动'),
+    0,
+    'the pending line is not a permanent spinner',
+  )
+  const alert = find(tree, (node) => node?.props?.role === 'alert')
+  assert.ok(alert, 'the exhausted race is an alert')
+  assert.ok(
+    texts(alert).some((text) => String(text).includes('重启 dsh')),
+    'and names the one action that fixes it',
+  )
+  assert.equal(byClass(tree, 'mem-gauge').length, 0)
+})
+
+test('the hot card states whether the trigger line has been crossed', async (t) => {
+  // Compact is a deliberate no-op below the trigger line, so the card says so BEFORE
+  // the click instead of explaining zero afterwards.
+  let reply = ok(healthValue())
+  stubFetch(t, () => reply)
+  const props = { sessionId: 'session-a', visible: true }
+  const above = mount(t, 'HealthView')
+  above(props)
+  await setImmediate()
+  let tree = above(props)
+  let hotNode = find(
+    tree,
+    (node) => node?.type === 'section' && node.props['aria-label'] === '热层',
+  )
+  let state = byClass(hotNode, 'mem-hot-state')
+  assert.equal(state.length, 1, 'the hot card carries one trigger state')
+  assert.equal(state[0].props.children[0], '已超过触发线（会归档条目）')
+  assert.ok(state[0].props.className.split(' ').includes('is-ok'))
+  assert.equal(byClass(hotNode, 'mem-hot-state is-warn').length, 0)
+
+  // The live case measured by the Lead: 5,728 used of 9,000, trigger 6,030.
+  reply = ok(
+    healthValue({ hot: { ...healthValue().hot, used: 5728, archivable: 14, compactable: 14 } }),
+  )
+  const below = mount(t, 'HealthView')
+  below(props)
+  await setImmediate()
+  tree = below(props)
+  hotNode = find(tree, (node) => node?.type === 'section' && node.props['aria-label'] === '热层')
+  state = byClass(hotNode, 'mem-hot-state')
+  assert.equal(state.length, 1)
+  assert.equal(state[0].props.children[0], '未到触发线（整理不会搬出条目）')
+  assert.ok(state[0].props.className.split(' ').includes('is-warn'))
+})
+
+test('整理热层 that moves nothing explains why inside the hot card', async (t) => {
+  // The live result was moved 0 / folded 0 / reclaimed 0 because 5,728 < the 6,030
+  // trigger. "已压缩热层：搬出 0，折叠 0，回收 0 字符" explained nothing; the outcome now
+  // names the hot usage, the trigger line and the rule, in the card the reader is on.
+  const hot = { ...healthValue().hot, used: 5728, archivable: 14, compactable: 14 }
+  stubFetch(t, (body) => {
+    if (body.action === 'preview') return ok(previewValue('compact-hot'))
+    if (body.action === 'confirm')
+      return ok({
+        mutation: 'compact-hot',
+        replayed: false,
+        result: {
+          status: 'compacted',
+          moved: 0,
+          folded: 0,
+          reclaimed: 0,
+          used: 5728,
+          capacity: 9000,
+          trigger: 6030,
+        },
+      })
+    return ok(healthValue({ hot }))
+  })
+  const { render, props } = await health(t)
+  let tree = render(props)
+  byText(tree, '整理热层')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  byText(tree, '确认执行')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  const hotNode = find(
+    tree,
+    (node) => node?.type === 'section' && node.props['aria-label'] === '热层',
+  )
+  const result = byClass(hotNode, 'mem-action-result')
+  assert.equal(result.length, 1, 'the outcome is drawn in the hot card')
+  assert.equal(result[0].props.role, 'status')
+  const text = texts(result[0]).join('')
+  assert.ok(text.includes('未搬出内容'), 'it says nothing moved: ' + text)
+  assert.ok(text.includes('5,728/9,000'), 'it states the hot usage: ' + text)
+  assert.ok(text.includes('未到触发线 6,030'), 'it names the trigger line: ' + text)
+  assert.ok(text.includes('刚刚'), 'and carries the action time')
+  assert.equal(byClass(tree, 'mem-action-status').length, 0, 'no top-of-page notice for a success')
+})
+
+test('发布项目摘要 reports the written file and its size in the digest card', async (t) => {
+  stubFetch(t, (body) => {
+    if (body.action === 'preview') return ok(previewValue('refresh-digest'))
+    if (body.action === 'confirm')
+      return ok({
+        mutation: 'refresh-digest',
+        replayed: false,
+        result: {
+          status: 'updated',
+          path: 'Projects/repo/_meta/digest.md',
+          id: 'doc-1',
+          charCount: 1625,
+          txId: 'tx-1',
+          window: { days: 1 },
+        },
+      })
+    return ok(healthValue())
+  })
+  const { render, props } = await health(t)
+  let tree = render(props)
+  byText(tree, '发布项目摘要')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  byText(tree, '确认执行')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  const digestNode = find(
+    tree,
+    (node) => node?.type === 'section' && node.props['aria-label'] === '今日摘要',
+  )
+  const result = byClass(digestNode, 'mem-action-result')
+  assert.equal(result.length, 1, 'the outcome is drawn in the digest card')
+  const text = texts(result[0]).join('')
+  assert.ok(text.includes('摘要已更新'), 'the write is named: ' + text)
+  assert.ok(text.includes('Projects/repo/_meta/digest.md'), 'the path is named: ' + text)
+  assert.ok(text.includes('1,625 字符'), 'the written size is named: ' + text)
+  assert.ok(text.includes('刚刚'))
+})
+
+test('an unchanged digest says it wrote nothing', async (t) => {
+  stubFetch(t, (body) => {
+    if (body.action === 'preview') return ok(previewValue('refresh-digest'))
+    if (body.action === 'confirm')
+      return ok({ mutation: 'refresh-digest', replayed: false, result: { status: 'unchanged' } })
+    return ok(healthValue())
+  })
+  const { render, props } = await health(t)
+  let tree = render(props)
+  byText(tree, '发布项目摘要')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  byText(tree, '确认执行')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  const digestNode = find(
+    tree,
+    (node) => node?.type === 'section' && node.props['aria-label'] === '今日摘要',
+  )
+  const text = texts(byClass(digestNode, 'mem-action-result')[0]).join('')
+  assert.ok(text.includes('摘要无变化'), 'a no-op is stated as one: ' + text)
+  assert.ok(text.includes('未写入文件'), 'and the file untouched: ' + text)
+})
+
+test('each action shows its own busy label while its preview is in flight', async (t) => {
+  // The buttons were disabled globally but every label stayed static, so a click read
+  // as "nothing happened" even while the request was running.
+  const gates = {
+    'compact-hot': deferred(),
+    'refresh-digest': deferred(),
+    'retry-job': deferred(),
+  }
+  stubFetch(t, (body) =>
+    body.action === 'preview' ? gates[body.mutation].promise : ok(healthValue()),
+  )
+  const { render, props } = await health(t)
+  let tree = render(props)
+  byText(tree, '整理热层')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  assert.equal(byText(tree, '整理中…').length, 1, 'the hot action says what it is doing')
+  assert.equal(byText(tree, '整理热层').length, 0)
+  gates['compact-hot'].resolve(ok(previewValue('compact-hot')))
+  await setImmediate()
+  tree = render(props)
+  byText(tree, '取消')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  assert.equal(byText(tree, '整理热层').length, 1, 'the label returns after the preview')
+
+  byText(tree, '发布项目摘要')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  assert.equal(byText(tree, '发布中…').length, 1, 'the digest action says what it is doing')
+  gates['refresh-digest'].resolve(ok(previewValue('refresh-digest')))
+  await setImmediate()
+  tree = render(props)
+  byText(tree, '取消')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+
+  byText(tree, '重新排队')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  assert.equal(byText(tree, '重试中…').length, 1, 'the job action says what it is doing')
+  gates['retry-job'].resolve(ok(previewValue('retry-job')))
+  await setImmediate()
+  tree = render(props)
+  byText(tree, '取消')[0].props.onClick()
 })

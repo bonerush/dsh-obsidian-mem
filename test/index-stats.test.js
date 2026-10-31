@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import { IndexError, MAX_STATUS_PATHS, openIndex } from '../lib/index-db.js'
-import { activityWindow, bucketActivity } from '../lib/index-stats.js'
+import { MAX_ACTIVITY_DAYS, activityWindow, bucketActivity } from '../lib/index-stats.js'
 
 const ALPHA = '11111111-1111-4111-8111-111111111111'
 const BETA = '22222222-2222-4222-8222-222222222222'
@@ -169,8 +169,17 @@ for (const [backend, label] of BACKENDS) {
     )
     assert.deepEqual(Object.keys(rows[0]).sort(), ['path', 'status', 'title', 'type', 'updated'])
     assert.equal(rows[0].status, 'active')
+    // The panel's day-diverse 最近变化 feed asks for one wide internal page (500
+    // rows) so it can pick a two-per-day sample; the raised bound must still answer
+    // newest-first, and one past it is refused.
+    const wide = await index.recent({ limit: 500 })
+    assert.deepEqual(
+      wide.slice(0, 3).map((row) => row.path),
+      rows.map((row) => row.path),
+      'a wide page keeps the same mtime order',
+    )
     await assert.rejects(index.recent({ limit: 0 }), RangeError)
-    await assert.rejects(index.recent({ limit: 51 }), RangeError)
+    await assert.rejects(index.recent({ limit: 501 }), RangeError)
   })
 
   test(`statusesForPaths answers one map and nulls what it does not hold (${label})`, async (t) => {
@@ -408,6 +417,14 @@ async function activityHarness(t, backend) {
   return index
 }
 
+test('the widest activity window is 53 whole weeks', () => {
+  // The panel's heat map is a fixed 371-day calendar (53 columns, Sunday-first).
+  // lib/panel-route.js ACTIVITY_DAYS_MAX mirrors this bound; if one moves without
+  // the other, a real host either clips the calendar or rejects every overview read.
+  assert.equal(MAX_ACTIVITY_DAYS, 371)
+  assert.equal(activityWindow(371).days.length, 371)
+})
+
 for (const [backend, label] of BACKENDS) {
   test(`activity buckets created and updated by local day (${label})`, async (t) => {
     const index = await activityHarness(t, backend)
@@ -483,7 +500,13 @@ for (const [backend, label] of BACKENDS) {
 
   test(`activity refuses a bad window instead of guessing (${label})`, async (t) => {
     const index = await activityHarness(t, backend)
-    for (const days of [6, 366, 2.5, 0, -7, '30'])
+    // 371 = 53 whole Sunday-first weeks is the panel heat map's fixed window and
+    // the widest ask index.activity must serve whole, not clip.
+    const widest = await index.activity({ scope: 'project', days: 371 })
+    assert.equal(widest.days.length, 371, 'the full year is served, not clipped')
+    assert.equal(widest.created.length, 371)
+    assert.equal(widest.updated.length, 371)
+    for (const days of [6, 372, 2.5, 0, -7, '30'])
       await assert.rejects(index.activity({ scope: 'project', days }), RangeError, String(days))
     await assert.rejects(index.activity({ scope: 'nope' }), RangeError)
   })
