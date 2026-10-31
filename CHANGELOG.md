@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 1.0.4 — 2026-10-31
+
 ### Changed
 
 - **语言切换按钮改用翻译图标，不再印 `EN`/`ZH`。** 两字母徽标读起来像「当前是什么
