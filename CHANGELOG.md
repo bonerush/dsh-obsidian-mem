@@ -11,6 +11,15 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Fixed
+
+- **CI 的浮动 `node` 平台不再被 npm 12 的 `npm pack --json` 输出形状打红。** 该平台实际装的是 Node `27.0.0-alpha.0.0.0` + npm `12.1.0`；npm 12 把这个输出从数组 `[{…}]` 改成按包名索引的对象 `{"dsh-obsidian-mem": {…}}`，而 `scripts/verify-tarball.mjs` 原有的 `const [packed] = JSON.parse(run.stdout)` 对对象解构会抛 `object is not iterable`，于是 `the archive this checkout really produces satisfies the contract` 断言 `2 !== 0`、job 退出 1（run 41176291759）。这不是 1.0.0 引入的：0.4.4 的推送在同一平台上已因同一原因红（run 41093967549）。现在 `parsePackReport(stdout)` 同时接受数组与按包名索引的对象两种信封，并且只接受**恰好一个**归档记录：0 个或多个都抛出带数量的错误，不再静默挑一个；真实打包与归档检查路径不变。
+  - 证据：在隔离目录安装 npm `12.1.0`、用假 `node` 布局实测本仓库 `npm pack --json` 返回 `isArray false`、`keys ["dsh-obsidian-mem"]`、`files 87`；同一布局下 `scripts/verify-tarball.mjs` 输出 `87 entries, 77 lib modules, every required asset present`，`node --test --test-name-pattern='archive this checkout' test/pack.test.js` 通过；npm 11（本机默认）的同一命令与完整 `npm run check` 也通过。`test/pack.test.js` 新增两条纯函数测试：两种信封得到同一记录；0 个、2 个、缺 `filename` 的记录全部被拒绝。
+
+### Changed
+
+- **README 的 DSH 支持范围改为实际支持的范围。** 需求表此前只列 `0.1.5-rc.2` 与 `0.1.7-rc.2` 两个"已验证"版本，读起来像其余版本未获支持；现在写明下限 `>= 0.1.5-rc.2`、当前版本 `0.2.1-rc.5`，以及两者之间的每个版本都受支持（每个中间版本都对照插件实际使用的行内 `config:` 与 Cordis 接缝核查过，没有发现不兼容）。面板段落的环境同步为当前实测组合：DSH `0.2.1-rc.5` + `dsh-better-sidebar` `0.28.1`。中英两半同改，`README.i18n.yaml` 的 blob hash 一并重记。
+
 ## 1.0.0 — 2026-10-31
 
 **第一个稳定版本。** 从 1.0.0 起，六个 `mem_*` 工具的名字与参数、vault 协议（指针文件、

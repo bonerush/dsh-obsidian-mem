@@ -101,7 +101,7 @@ the DSH sidebar shell.
 | | Version | Why |
 |---|---|---|
 | Node | `>= 22.22.2` | The floor is a *measurement*. `node:sqlite` imports on Node 22.13.0, but that build has no FTS5; 22.22.2 and 25.9.0 do. Versions 22.14–22.21 were not tested, so the floor is the lowest version actually proven to work. |
-| DSH | `0.1.5-rc.2`, `0.1.7-rc.2` | The two versions this plugin has been verified against. The plugin uses only row `config:` and documented Cordis seams, so other versions are likely fine — but "likely" is not "tested", so only measured versions are listed. |
+| DSH | `>= 0.1.5-rc.2` | The floor declared as `engines.dsh`. Supported on the current release (`0.2.1-rc.5`) and on every version between it and the floor: each intermediate release has been surveyed against the row `config:` and the documented Cordis seams this plugin actually uses, and none was found incompatible. |
 | Obsidian | any recent version | Optional. Only needed to *read* the vault comfortably. |
 | OS | Windows, macOS, Linux | All three are supported. The plugin is portable Node code, the sidebar panel is a web view, and there is no native module to compile. CI runs the same `npm run check` gate on Linux and Windows; macOS has no separate CI leg, but it takes the same portable path. One named constraint is part of the support level: curation review relies on `O_NOFOLLOW`, so it remains a macOS/Linux workflow on Windows — the exact refusal is under **Failure recovery** below, and reads, writes and scans are unaffected. |
 
@@ -217,7 +217,7 @@ Start a session in any Git repository and ask, or just check the tools are there
 
 ### Memory panel in the DSH sidebar
 
-On DSH `0.1.7-rc.2` with `dsh-better-sidebar` `0.21.1`, open the native
+On DSH `0.2.1-rc.5` with `dsh-better-sidebar` `0.28.1`, open the native
 sidebar and choose **+ → 记忆 (Memory)**. The tab is one project's memory. The tab
 strip is the top bar — a Chrome-style row of **概览 / 图谱 / 健康**: 36px-tall leaves
 with a 2px gap between them (the old folded-folder 8px overlap is gone), roomier

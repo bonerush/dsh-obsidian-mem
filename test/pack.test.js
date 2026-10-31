@@ -17,7 +17,12 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { Range, parse, satisfies } from 'semver'
 
-import { REQUIRED_ENTRIES, listArchive, verifyTarballEntries } from '../scripts/verify-tarball.mjs'
+import {
+  REQUIRED_ENTRIES,
+  listArchive,
+  parsePackReport,
+  verifyTarballEntries,
+} from '../scripts/verify-tarball.mjs'
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const VERIFIER = resolve(REPO_ROOT, 'scripts/verify-pack.mjs')
@@ -432,6 +437,39 @@ test('a packed development tree or vault artefact fails', () => {
     assert.equal(problems.length, 1, `${entry} should be refused`)
     assert.match(problems[0], pattern)
   }
+})
+
+test('npm 11 reports an array and npm 12 an object keyed by package name', () => {
+  // Measured on the two npm majors the CI matrix really runs: npm 11 prints
+  // `[{…}]`, and npm 12.1.0 — what the floating `node` leg installs — prints
+  // `{"dsh-obsidian-mem": {…}}`. Destructuring the second envelope threw
+  // "object is not iterable" (2026-10-31, run 41176291759) and took that leg red,
+  // so both envelopes have to read as the same record.
+  const record = { filename: 'dsh-obsidian-mem-1.0.0.tgz', files: [{ path: 'package.json' }] }
+  assert.deepEqual(parsePackReport(JSON.stringify([record])), record)
+  assert.deepEqual(parsePackReport(JSON.stringify({ 'dsh-obsidian-mem': record })), record)
+})
+
+test('a pack report with no archive, or more than one, is refused', () => {
+  // The verifier joins the reported filename onto the pack destination and then
+  // checks that file, so picking one out of an ambiguous report would check an
+  // archive npm did not describe. Say the tooling answered something unknown.
+  assert.throws(() => parsePackReport(JSON.stringify([])), /reported 0 archive records/)
+  assert.throws(() => parsePackReport(JSON.stringify({})), /reported 0 archive records/)
+  assert.throws(
+    () =>
+      parsePackReport(
+        JSON.stringify({ a: { filename: 'a-1.0.0.tgz' }, b: { filename: 'b-1.0.0.tgz' } }),
+      ),
+    /reported 2 archive records/,
+  )
+  // A record without a filename is not an archive record: the caller would join
+  // `undefined` onto the directory and fail as "not on disk", which names the
+  // wrong problem.
+  assert.throws(
+    () => parsePackReport(JSON.stringify([{ files: [] }])),
+    /reported 0 archive records/,
+  )
 })
 
 /**

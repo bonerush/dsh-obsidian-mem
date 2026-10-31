@@ -165,6 +165,41 @@ function npmCommand() {
   return { command: 'npm', args: [] }
 }
 
+/**
+ * The one archive `npm pack --json` reported, from either envelope npm has used.
+ *
+ * npm 11 prints a one-element array; npm 12.1.0 — the version the floating
+ * `node` CI leg installs — prints one object keyed by package name. Both carry
+ * the same record, and `const [packed] = JSON.parse(…)` threw
+ * "object is not iterable" on the second envelope, which failed
+ * `the archive this checkout really produces satisfies the contract` on that leg
+ * (run 41176291759) while every other leg stayed green. The contract here is
+ * "exactly one archive": a report with none, or with several, is tooling output
+ * this verifier cannot name, so it refuses instead of checking a file npm did
+ * not describe. Pure on purpose — both envelopes and the refusals are unit-tested
+ * without packing anything.
+ *
+ * @param {string} stdout - `npm pack --json` standard output.
+ * @returns {{filename: string, files?: Array<{path: string}>}} npm's record of the archive.
+ */
+export function parsePackReport(stdout) {
+  const parsed = JSON.parse(stdout)
+  const values = Array.isArray(parsed)
+    ? parsed
+    : parsed !== null && typeof parsed === 'object'
+      ? Object.values(parsed)
+      : []
+  const records = values.filter(
+    (value) => value !== null && typeof value === 'object' && typeof value.filename === 'string',
+  )
+  if (records.length !== 1) {
+    throw new Error(
+      'npm pack --json reported ' + records.length + ' archive records; expected exactly one',
+    )
+  }
+  return records[0]
+}
+
 /** Pack once into `destination` and return npm's own account of the archive. */
 function pack(root, destination) {
   const npm = npmCommand()
@@ -180,9 +215,7 @@ function pack(root, destination) {
     const detail = (run.stderr || run.stdout || '').trim() || run.error?.message || 'no output'
     throw new Error('npm pack failed: ' + detail)
   }
-  const [packed] = JSON.parse(run.stdout)
-  if (packed === undefined) throw new Error('npm pack reported no archive')
-  return packed
+  return parsePackReport(run.stdout)
 }
 
 /**
