@@ -354,7 +354,10 @@ test('the view index is exactly three folder tabs in the reviewed order, without
   assert.equal(script.includes("{ id: 'search'"), false, 'the 检索 view is gone')
   assert.equal(script.includes('ordinal'), false, 'the 01-04 ordinals retired')
   for (const name of ['overview', 'graph', 'search', 'health', 'refresh'])
-    assert.ok(script.includes(name + ": '"), 'icon() defines the ' + name + ' glyph')
+    assert.ok(
+      new RegExp(name + ": (?:'|\\[)").test(script),
+      'icon() defines the ' + name + ' glyph',
+    )
   for (const marker of ["className: 'mem-tab-icon'", "'aria-hidden': true", 'icon(view.icon)'])
     assert.ok(script.includes(marker), 'each tab carries ' + marker)
   assert.ok(script.includes("className: 'mem-tab-label'"), 'each tab keeps a text label')
@@ -1747,6 +1750,66 @@ test('the English graph controls localize every control and the empty state', as
   ])
     assert.ok(text.includes(copy), 'English graph copy: ' + copy)
   assert.equal(hasHan(text), false, 'English graph chrome renders no Han characters')
+})
+
+test("the graph-control glyphs are Obsidian's own lucide icons", async () => {
+  const { shell, render } = await mountShell('session-graph-icons', enSandbox())
+  const panel = () => render()
+  const tabs = () => {
+    const element = component(panel(), 'MemoryTabs')
+    return shell.render(element.type, element.props)
+  }
+  nodes(tabs())
+    .find((node) => node.props?.id === 'obsidian-mem-tab-graph')
+    .props.onClick()
+  const element = component(panel(), 'GraphView')
+  const tree = shell.render(element.type, element.props)
+  const button = (cls) =>
+    byClass(tree, 'graph-controls-button').find((node) => node.props.className.includes(cls))
+  const glyph = (cls) => nodes(button(cls)).find((node) => node.type === 'svg')
+  const shapes = (svg) =>
+    nodes(svg).filter((node) => node.type === 'path' || node.type === 'circle')
+  for (const [cls, name] of [
+    ['mod-close', 'x'],
+    ['mod-open', 'settings'],
+    ['mod-animate', 'wand-2'],
+    ['mod-reset', 'rotate-ccw'],
+  ]) {
+    assert.ok(button(cls), 'the ' + name + ' control renders')
+    assert.equal(
+      glyph(cls).props.viewBox,
+      '0 0 24 24',
+      name + ' draws on the 24px grid, so every control shares one optical size',
+    )
+  }
+  const settings = shapes(glyph('mod-open'))
+  assert.deepEqual(
+    settings.map((node) => node.type),
+    ['path', 'circle'],
+    'the gear is one eight-lobed outline plus its hub',
+  )
+  assert.ok(settings[0].props.d.startsWith('M9.671 4.136'), 'the lucide settings outline')
+  assert.deepEqual(
+    [settings[1].props.cx, settings[1].props.cy, settings[1].props.r],
+    [12, 12, 3],
+    'the hub sits in the middle of the grid',
+  )
+  assert.deepEqual(
+    shapes(glyph('mod-close')).map((node) => node.props.d),
+    ['M18 6 6 18', 'm6 6 12 12'],
+    'the cross is two lucide stems from (18,6) to (6,18)',
+  )
+  const wand = shapes(glyph('mod-animate'))
+  assert.equal(wand.length, 8, 'wand-2 is the nib plus seven sparkle strokes')
+  assert.ok(
+    wand[0].props.d.startsWith('m21.64 3.64'),
+    'the wand body stays inside its viewBox instead of running off the top edge',
+  )
+  assert.deepEqual(
+    shapes(glyph('mod-reset')).map((node) => node.props.d),
+    ['M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8', 'M3 3v5h5'],
+    'the rotate-ccw arc plus its five-unit arrowhead',
+  )
 })
 
 test('the graph colours each memory type with a Morandi default group', async () => {

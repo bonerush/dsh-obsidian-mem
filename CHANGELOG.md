@@ -11,8 +11,6 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
-## Unreleased
-
 ### Added
 
 - **图谱默认按记忆类型上色，采用一组莫兰迪（灰调低饱和）配色。** 颜色组不再默认为空：
@@ -43,6 +41,24 @@ release artifact. The versioning policy is in the README, under Development.
   「删空色组保持删空」两例）。完整 `npm run check` 退出码 0：lint、格式与类型检查通过，
   1,480 项测试 1,479 通过 / 0 失败 / 1 跳过，`verify-pack` 与真实 tarball 校验通过
   （89 个条目 / 79 个 lib 模块）。
+
+### Fixed
+
+- **图谱四个控件图标改用 Obsidian 自带的 lucide 图形，不再是手绘近似版。** 18px 下四个
+  按钮原来互不成比例：齿轮是 12 齿折线多边形，且 `viewBox` 写成 `0 0 24 28`，实际只画
+  约 14.75×15px、位置偏下；魔杖路径的笔尖与左端压在 `viewBox` 边界上，描边被裁掉；复原
+  箭头的箭尾是 8 单位直角，lucide 原形是 5 单位（十字本来就与 lucide `x` 同形，随整组
+  重写、视觉不变）。现在 `lib/client.js` 的 `ICONS` 直接使用 Obsidian 桌面版图标表里的
+  `settings`/`x`/`wand-2`/`rotate-ccw` 四条 path/circle 数据，`icon()` 支持形状列表，
+  四个图标统一回到 24×24 网格；描边仍是面板既有的 1.7（与 DSH 自己的图标线宽一致，不改
+  成 Obsidian 的 2）。逐项问题、提取过程与代价见 `docs/obsidian-graph-source.md` 新增的
+  「2026-11-01 — 图谱控件图标改用 Obsidian 自带 lucide 图形」一节。
+- 证据：`node --test test/panel-client.test.js` 35/35 通过。新增一例从真实渲染的
+  `GraphView` 取四个 `graph-controls-button`，断言 viewBox 统一 24×24、齿轮为一个 path
+  加 `r=3` 圆、十字两条路径、魔杖八条路径、复原是弧线加 `M3 3v5h5` 箭头；该测试在改动前
+  失败（`settings draws on the 24px grid`），改动后通过。另用 headless Chrome 按面板
+  真实的 18px、Retina 2x、深色底渲染改动前后对照图 `/tmp/icon_compare.png`，4× 放大下
+  折角、裁切与箭头尺寸问题消失。
 
 ## 1.0.5 — 2026-10-31
 
