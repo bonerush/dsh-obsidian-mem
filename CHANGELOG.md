@@ -60,6 +60,23 @@ release artifact. The versioning policy is in the README, under Development.
   真实的 18px、Retina 2x、深色底渲染改动前后对照图 `/tmp/icon_compare.png`，4× 放大下
   折角、裁切与箭头尺寸问题消失。
 
+- **概览「活动热度」的日历年居中，不再在宽侧边栏里靠左。** 日历是固定宽度的画布（371 天
+  = 54 列 × 12px 列距 − 2px 间隙 + 14px 星期槽 = 660px），放在占满面板宽度的横向滚动框
+  里；框比画布宽时块级元素默认从左边排，右侧留出一大片空白，看起来像图表被钉在一边
+  （2026-11-01 用户截图）。现在 `lib/client.js` 的 `.mem-heat-canvas` 用
+  `margin-inline:auto` 让 CSS 分配剩余空间：宽面板左右各分一半，窄面板自动外边距归零、
+  保持原有的贴右可滚动行为，不引入 JS 测量。列宽/画布宽的计算同时收进
+  `lib/memory-panel.js` 的 `heatCalendar()`（`heatmap()` 与悬停提示共用），悬停提示的
+  锚点加上居中偏移，否则提示会偏到悬停格左侧。
+  - 证据：`node --test test/panel-ui.test.js test/panel-client.test.js` 121/121 通过。
+    新增一例以 800px 面板、660px 日历挂载真实 `OverviewView`，断言画布 `width:660px`、
+    悬停首日 tooltip `left:89px`（70px 居中偏移 + 14px 星期槽 + 5px 半格）；该测试在改
+    动前先失败（`'71px' !== '89px'`，测试替身的滚动框不 clamp `scrollLeft`，修复方式见
+    `docs/validation/heatmap-centering-2026-11-01.md`）。另用真实样式表在 headless
+    Chrome 里量：1368px 面板下画布 offsetLeft 由 0 变 354px（左右自动边距各 354px）；
+    348px 窄面板下仍为 0，且 `scrollWidth 660 > clientWidth 348` 保持可横向滚动；
+    对照图 `/tmp/heat_center.png`。
+
 ## 1.0.5 — 2026-10-31
 
 ### Fixed

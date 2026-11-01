@@ -612,6 +612,13 @@ test('the heat map is a fixed 10px GitHub-style calendar in its own scroll box',
   assert.ok(scrollRule.includes('overflow-x:auto'), 'the calendar scrolls inside its own box')
   assert.equal(scrollRule.includes('overflow-y:auto'), false, 'it is a horizontal scroll only')
   assert.ok(scrollRule.includes('scrollbar-width:thin'), 'a thin scrollbar for the calendar')
+  // A panel WIDER than the fixed calendar centres it: the canvas keeps its computed
+  // width and the auto inline margins split the leftover space. A narrower panel
+  // resolves those margins to zero, so the scroll still starts at the left edge.
+  const canvasStart = css.indexOf('.mem-panel .mem-heat-canvas{')
+  assert.ok(canvasStart >= 0, 'the canvas rule exists')
+  const canvasRule = css.slice(canvasStart, css.indexOf('}', canvasStart))
+  assert.ok(canvasRule.includes('margin-inline:auto'), 'the fixed calendar centres: ' + canvasRule)
   const gridStart = css.indexOf('.mem-panel .mem-heat-grid{')
   assert.ok(gridStart >= 0, 'the heat grid rule exists')
   const gridRule = css.slice(gridStart, css.indexOf('}', gridStart))

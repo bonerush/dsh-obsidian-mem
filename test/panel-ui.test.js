@@ -11,6 +11,11 @@ const MODULE = new URL('../lib/memory-panel.js', import.meta.url)
 // four-hook stand-in that preserves state across renders and runs effect
 // cleanup the way the host's mount does. Fetch is the browser boundary.
 function mount(t, name, options = {}) {
+  // The DOM-less runtime has no scroll box, so the heat map's one box-reading view
+  // gets its numbers from a stub. A test that mounts a panel WIDER than the fixed
+  // calendar passes its own box; the default is the narrow, scrolling case.
+  const { heatBox = { scrollLeft: 0, scrollWidth: 648, clientWidth: 292 }, ...viewOptions } =
+    options
   const values = []
   const effects = []
   let cursor = 0
@@ -47,7 +52,7 @@ function mount(t, name, options = {}) {
       })
     },
   }
-  const View = createMemoryViews({ React, ...options })[name]
+  const View = createMemoryViews({ React, ...viewOptions })[name]
   t.after(() => effects.forEach((effect) => effect?.cleanup?.()))
   const focused = []
   // React attaches a DOM node to an object ref after mounting. This stand-in
@@ -72,7 +77,7 @@ function mount(t, name, options = {}) {
         ...(String(node.props.className ?? '')
           .split(' ')
           .includes('mem-heat-scroll')
-          ? { scrollLeft: 0, scrollWidth: 648, clientWidth: 292 }
+          ? { ...heatBox }
           : {}),
         // The tooltip's layout effect reads its RENDERED width, which is what the edge
         // clamp needs; the stub makes the DOM-less runtime take the measured path too.
@@ -829,6 +834,51 @@ test('the heat map tooltip is the only hover reading, and scrolling hides it', a
     '66px',
     'and the left edge too, once the rendered width is measured',
   )
+})
+
+test('a panel wider than the fixed calendar centres the calendar and its tooltip', async (t) => {
+  // The fixed calendar is 660px for the 371-day fixture (14px gutter + 54 columns at
+  // the 12px pitch, minus the trailing 2px gap) and the panel's scroll box is 800px
+  // here, so the auto inline margins put the canvas' left edge (800-660)/2 = 70px from
+  // the scroll box's edge. The tooltip anchors from that same edge, so hovering the
+  // first served day must land at 70 + 14 + 5 = 89px, not at 19px — the defect the
+  // user reported as "热力图靠左" was the calendar starting at the scroll box edge with
+  // the rest of a wide panel empty.
+  stubFetch(t, () =>
+    ok(overviewValue({ activity: activityFixture(371), tags: { items: [], total: 0 } })),
+  )
+  const render = mount(t, 'OverviewView', {
+    heatBox: { scrollLeft: 0, scrollWidth: 660, clientWidth: 800 },
+  })
+  render(chartProps())
+  await setImmediate()
+  let tree = render(chartProps())
+  const canvas = byClass(tree, 'mem-heat-canvas')
+  assert.equal(canvas.length, 1)
+  assert.equal(canvas[0].props.style.width, '660px', 'the fixed calendar keeps its width')
+  const scroll = byClass(tree, 'mem-heat-scroll')[0]
+  const real = byClass(tree, 'mem-heat-cell').filter(
+    (cell) => !(cell.props.className ?? '').split(' ').includes('is-void'),
+  )
+  assert.equal(real.length, 371, 'every served day is a real cell')
+  // The mount effect pins the first draw to the right end by assigning scrollWidth;
+  // a real scroll box clamps that to 0 when the centred calendar fits, which is the
+  // state this test is about. The stub stores the raw number, so put it back at 0.
+  scroll.props.ref.current.scrollLeft = 0
+  real[0].props.onMouseEnter()
+  // Two frames: the first applies the hovered state with the glyph-estimate tip
+  // width, the second is the one whose measured width this test asserts.
+  render(chartProps())
+  tree = render(chartProps())
+  const tip = byClass(tree, 'mem-heat-tip')
+  assert.equal(tip.length, 1)
+  assert.equal(
+    tip[0].props.style.left,
+    '89px',
+    'the tooltip adds the centred gap before the column offset',
+  )
+  // The vertical anchor is the same calendar row as before: centring is horizontal.
+  assert.equal(tip[0].props.style.top, '88px', 'the top is unaffected by centring')
 })
 
 test('the flow bars share one zero line and normalise to the larger side', async (t) => {
