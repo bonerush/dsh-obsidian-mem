@@ -110,6 +110,10 @@ function shellReact() {
       cursor = 0
       return component(props)
     },
+    // The hook slots one component rendered with. GraphCanvas keeps the model it
+    // hands the renderer in a ref (`state.current.model`), which is the seam this
+    // suite can read without a browser; `values` is in hook-call order.
+    slots: (component) => slots.get(component),
   }
 }
 
@@ -1688,8 +1692,9 @@ test('the English graph controls localize every control and the empty state', as
     component(tree, 'GraphCanvas').props,
   )
   assert.equal(canvas.props['aria-label'], 'Zoomable memory graph')
-  // The per-group row copy only exists once a group does; an empty section
-  // renders just its add button.
+  // Five built-in type groups render their rows; the add button appends a sixth so
+  // the localized copy below is read for both a preset row and a new one.
+  assert.equal(byClass(tree, 'graph-color-group').length, 5, 'the built-in type groups render')
   const addGroup = nodes(tree).find(
     (node) =>
       node.props?.className === 'mod-cta' && node.props?.children?.includes('New color group'),
@@ -1697,6 +1702,11 @@ test('the English graph controls localize every control and the empty state', as
   assert.ok(addGroup, 'the color-group section offers its add button')
   addGroup.props.onClick()
   tree = graph()
+  assert.equal(
+    byClass(tree, 'graph-color-group').length,
+    6,
+    'the new group appends after the presets',
+  )
   const text = [...chromeText(tree), ...chromeText(canvas)]
   for (const copy of [
     'Close',
@@ -1737,6 +1747,94 @@ test('the English graph controls localize every control and the empty state', as
   ])
     assert.ok(text.includes(copy), 'English graph copy: ' + copy)
   assert.equal(hasHan(text), false, 'English graph chrome renders no Han characters')
+})
+
+test('the graph colours each memory type with a Morandi default group', async () => {
+  const { shell, render } = await mountShell('session-graph-types', enSandbox())
+  const panel = () => render()
+  const tabs = () => {
+    const element = component(panel(), 'MemoryTabs')
+    return shell.render(element.type, element.props)
+  }
+  const graphTab = nodes(tabs()).find((node) => node.props?.id === 'obsidian-mem-tab-graph')
+  assert.ok(graphTab, 'the graph tab is in the strip')
+  graphTab.props.onClick()
+  const graph = () => {
+    const element = component(panel(), 'GraphView')
+    assert.ok(element, 'the graph tab mounts GraphView')
+    return shell.render(element.type, element.props)
+  }
+  let tree = graph()
+  for (const header of byClass(tree, 'tree-item-self')) header.props.onClick()
+  tree = graph()
+
+  // The built-in groups are the five note types the vault protocol defines, in the
+  // panel's own type order, with the shipped Morandi swatches. Pinning the colour
+  // values here is deliberate: a palette change is a visible change to the product.
+  const preset = [
+    { query: '[type:decision]', color: '#7b8ea6' },
+    { query: '[type:convention]', color: '#8ba084' },
+    { query: '[type:gotcha]', color: '#ab817c' },
+    { query: '[type:doc]', color: '#b39b6f' },
+    { query: '[type:glossary]', color: '#9a8aa0' },
+  ]
+  const rows = byClass(tree, 'graph-color-group')
+  assert.deepEqual(
+    rows.map((row) => ({
+      query: row.props.children[0].props.value,
+      color: row.props.children[1].props.value,
+    })),
+    preset,
+    'five editable colour groups, one per memory type',
+  )
+
+  // The same list reaches the canvas: colour resolution is the shell→renderer seam,
+  // so the check renders GraphCanvas for real and reads the model it would hand over.
+  const canvasElement = component(tree, 'GraphCanvas')
+  assert.ok(canvasElement, 'GraphView mounts the canvas')
+  // Copied into host-realm objects first: the bundle's array comes from the vm.
+  assert.deepEqual(
+    [...canvasElement.props.groups].map((group) => ({ query: group.query, color: group.color })),
+    preset,
+    'the canvas is handed the groups',
+  )
+  const nodesOfType = (nodeType) => ({
+    id: 'n-' + nodeType,
+    path: nodeType + '/' + nodeType + '.md',
+    title: nodeType,
+    type: nodeType,
+  })
+  const rendered = shell.render(canvasElement.type, {
+    ...canvasElement.props,
+    graph: {
+      nodes: [
+        ...['decision', 'convention', 'gotcha', 'doc', 'glossary'].map(nodesOfType),
+        nodesOfType('hub'),
+        nodesOfType('untyped'),
+        nodesOfType('unresolved'),
+      ],
+      edges: [],
+      total: 8,
+    },
+  })
+  assert.equal(rendered.type, 'canvas')
+  // GraphCanvas's second useRef is the model/state ref; the first is the canvas.
+  const state = shell.slots(canvasElement.type).values[1]
+  const colors = state.current.model.colors
+  for (const group of preset) {
+    assert.equal(
+      colors.get('n-' + group.query.slice(6, -1)),
+      group.color,
+      'a ' + group.query + ' node takes its type colour',
+    )
+  }
+  for (const neutral of ['hub', 'untyped', 'unresolved']) {
+    assert.equal(
+      colors.get('n-' + neutral),
+      undefined,
+      'the ' + neutral + ' node keeps the theme node colour',
+    )
+  }
 })
 
 test('the English copy only a live graph can reach is still in the bundle', async () => {

@@ -9,11 +9,23 @@ import {
   writeGraphSettings,
 } from '../lib/graph-settings.js'
 
-/** The panel's built-in controls, as `lib/client.js` seeds them. */
+/**
+ * The panel's built-in controls, as `lib/client.js` seeds them. The colour groups
+ * are that bundle's `TYPE_GROUPS` defaults (pinned against the rendered panel in
+ * `test/panel-client.test.js`); this module never invents them, it only carries a
+ * caller's defaults through.
+ */
+const presetGroups = () => [
+  { query: '[type:decision]', color: '#7b8ea6' },
+  { query: '[type:convention]', color: '#8ba084' },
+  { query: '[type:gotcha]', color: '#ab817c' },
+  { query: '[type:doc]', color: '#b39b6f' },
+  { query: '[type:glossary]', color: '#9a8aa0' },
+]
 const defaults = () => ({
   scope: 'all',
   filter: { search: '', tags: false, attachments: false, existing: false, orphans: true },
-  groups: [],
+  groups: presetGroups(),
   display: { arrows: false, text: 0, size: 1, width: 1, label: 0.85 },
   forces: { center: 0.5, repel: 10, link: 1, distance: 250 },
 })
@@ -105,12 +117,16 @@ test('a hand-edited record falls back field by field, not as a whole', () => {
   assert.equal(read.forces.distance, 500)
   assert.equal(read.forces.center, 0)
   assert.equal(read.forces.repel, 10)
-  assert.deepEqual(read.groups, [], 'a record that is not a list of groups colours nothing')
+  assert.deepEqual(
+    read.groups,
+    presetGroups(),
+    'a record that is not a list of groups falls back to the built-in colours',
+  )
 })
 
 test('an unreadable or foreign record is a fresh panel', () => {
   const foreign = storage({
-    [GRAPH_SETTINGS_KEY]: JSON.stringify({ version: 2, scope: 'project' }),
+    [GRAPH_SETTINGS_KEY]: JSON.stringify({ version: GRAPH_SETTINGS_VERSION + 1, scope: 'project' }),
   })
   assert.deepEqual(readGraphSettings(defaults(), foreign), defaults())
   const broken = storage({ [GRAPH_SETTINGS_KEY]: '{not json' })
@@ -121,6 +137,35 @@ test('an unreadable or foreign record is a fresh panel', () => {
   // as a storage that is there and throws.
   assert.deepEqual(readGraphSettings(defaults(), null), defaults())
   assert.doesNotThrow(() => writeGraphSettings(defaults(), defaults(), null))
+})
+
+test('the previous record version is dropped so the new default groups appear', () => {
+  // Version 1 shipped before the graph coloured memory types: its own empty `groups`
+  // list would keep the new defaults hidden, and an empty list is also what a user
+  // who deleted every group leaves, so the two cannot be told apart. The whole old
+  // record is ignored once; the next write stores the current version.
+  const previous = storage({
+    [GRAPH_SETTINGS_KEY]: JSON.stringify({
+      version: GRAPH_SETTINGS_VERSION - 1,
+      scope: 'project',
+      groups: [],
+      display: { arrows: true },
+      forces: { repel: 2 },
+    }),
+  })
+  assert.deepEqual(readGraphSettings(defaults(), previous), defaults())
+  writeGraphSettings(readGraphSettings(defaults(), previous), defaults(), previous)
+  const saved = JSON.parse(previous.map.get(GRAPH_SETTINGS_KEY))
+  assert.equal(saved.version, GRAPH_SETTINGS_VERSION, 'the next write upgrades the record')
+  assert.deepEqual(saved.groups, presetGroups())
+})
+
+test('deleting every colour group stays deleted on the next read', () => {
+  // The mirror of the version test: an empty list under the current version is the
+  // user's answer, not a missing field, so it must not be replaced by the defaults.
+  const store = storage()
+  writeGraphSettings({ ...defaults(), groups: [] }, defaults(), store)
+  assert.deepEqual(readGraphSettings(defaults(), store).groups, [])
 })
 
 test('colour groups are bounded and a malformed one is dropped', () => {

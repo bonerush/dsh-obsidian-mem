@@ -11,6 +11,39 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## Unreleased
+
+### Added
+
+- **图谱默认按记忆类型上色，采用一组莫兰迪（灰调低饱和）配色。** 颜色组不再默认为空：
+  决策 `[type:decision]` `#7b8ea6`、约定 `[type:convention]` `#8ba084`、踩坑
+  `[type:gotcha]` `#ab817c`、文档 `[type:doc]` `#b39b6f`、术语表 `[type:glossary]`
+  `#9a8aa0`。这五组是普通颜色组，查询、色块、删除与「恢复默认设置」都按既有行为处理，
+  渲染器与 `matches()` 没有新分支；管理笔记（hub/hot/session-log/method）、未分类笔记
+  和未创建目标继续用主题中性色，悬停与记忆调用仍是强调色。填充对比度按主题节点底色
+  实测：深色 4.89–6.22:1、浅色 2.48–3.15:1——莫兰迪灰调在浅色下低于 WCAG 文本 4.5:1，
+  类型识别同时由颜色组查询与筛选保留。色值、取色过程与中性色清单见
+  `docs/obsidian-graph-source.md` 新增的「2026-11-01 — 按记忆类型的莫兰迪默认色组」
+  一节；README 双语图谱段落同步更新。
+
+### Changed
+
+- **图谱设置记录版本升到 2，v1 记录整条失效一次。** v1 的默认颜色组是空列表，而读取时
+  分不清「旧的空默认」与「用户把色组删光了」；不升版本，新的按类型预置会被旧记录盖住。
+  升版本后旧记录回落到新默认值一次，下一次写入起按 2 保存；此后在同一版本内删空色组
+  仍然是删空，刷新不会复活。
+- **`lib/client.js` 的尺寸预算由 1700 抬到 1750 行**（实测 1,711 行，按「实测 + 30 向上
+  取整」的既有规则），理由写在 `test/architecture.test.js` 的预算表注释里：新增的是五组
+  预置与其说明注释，渲染路径没有新增代码。
+
+- 证据：`node --test test/graph-settings.test.js test/panel-client.test.js` 44/44 通过
+  （新增一例真实渲染 `GraphCanvas`、读它交给渲染器的 `model.colors`，钉住五个类型各自的
+  颜色与 hub/untyped/unresolved 的 `undefined`；英文控件测试改为先断言五组预置、再断言
+  新增组排在其后；`graph-settings` 的默认值与版本断言同步到 v2，并补「v1 记录被丢弃」
+  「删空色组保持删空」两例）。完整 `npm run check` 退出码 0：lint、格式与类型检查通过，
+  1,480 项测试 1,479 通过 / 0 失败 / 1 跳过，`verify-pack` 与真实 tarball 校验通过
+  （89 个条目 / 79 个 lib 模块）。
+
 ## 1.0.5 — 2026-10-31
 
 ### Fixed

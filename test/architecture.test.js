@@ -984,7 +984,14 @@ const BUDGETS = {
   // token-only rules, the locale prop that rebuilds GraphCanvas' renderer and its
   // aria label, the search bar's 16px/8px padding that centres it in the gap, and the
   // Sankey scroller rules the view module's new wrapper needs.
-  'lib/client.js': 1700,
+  // Raised from 1700 by the memory-type colour round (1711 lines measured;
+  // measured-plus-30 is 1741, rounded up to 1750). What the 11 lines buy: the five
+  // type presets at their Obsidian query strings and Morandi swatches, plus the
+  // comment recording why they are ordinary editable colour groups rather than a
+  // renderer branch — the palette can be edited or deleted from the panel without
+  // touching the renderer, and the neutral fallback for admin, untyped and
+  // unresolved nodes is the existing theme colour, not new code.
+  'lib/client.js': 1750,
   // Raised from 700 by the whole-graph round (716 formatted lines measured;
   // measured-plus-30 is 746, rounded up to 750). What the 16 lines buy: the
   // `spiralSeed` helper and the cold-frame branch that uses it, plus the comment

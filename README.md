@@ -318,9 +318,14 @@ filename and relative-path rules. Scroll to zoom, drag the canvas or a node, and
 hover to reveal a label and its connected branch. Colour groups accept note-type
 queries such as `[type:decision]`; colours are resolved the way Obsidian resolves
 them — the eleven `.graph-view.color-*` slots are read from the host theme, so the
-graph follows the DSH light/dark theme exactly. The defaults are neutral nodes and
-lines with an accent highlight for hover and memory access, and colour groups start
-empty. Labels are rasterized at 85% of Obsidian's `14 + node size / 4` because this
+graph follows the DSH light/dark theme exactly. The defaults colour each memory type
+with a Morandi tone — decision `[type:decision]` `#7b8ea6`, convention
+`[type:convention]` `#8ba084`, gotcha `[type:gotcha]` `#ab817c`, doc `[type:doc]`
+`#b39b6f`, glossary `[type:glossary]` `#9a8aa0` — while administrative notes,
+untyped notes and unresolved targets keep the neutral node colour, and hover and
+memory access still use the accent highlight. Those five are ordinary colour groups:
+recolouring, retargeting or deleting one works as usual, and **恢复默认设置** puts
+them back. Labels are rasterized at 85% of Obsidian's `14 + node size / 4` because this
 graph lives in a narrow sidebar; **标题文字大小** moves that factor between 0.4 and
 1.6, while position, `sqrt(scale)` scaling and the pinned size of a hovered node
 stay unchanged.
@@ -347,7 +352,9 @@ display and forces live in `localStorage` under
 `dsh-obsidian-mem:graph-settings` and survive a page reload and a host restart. They
 belong to the browser profile and origin — `127.0.0.1:3080` and `localhost:3080` are
 two separate panels — and nothing about them leaves the browser. **恢复默认设置**
-writes the built-in values back. A record written by another version, or edited by
+writes the built-in values back. Records are versioned: one left by the previous
+version (whose default groups were empty) is dropped whole once so the new
+per-type defaults appear. A record written by another version, or edited by
 hand, is never trusted as it stands: every field is checked and falls back to its
 default, because a `NaN` force blanks the graph instead of merely looking wrong.
 
