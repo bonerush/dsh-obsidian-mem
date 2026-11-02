@@ -42,6 +42,7 @@ import {
   isIndexableRelativePath,
   openIndex,
   planQuery,
+  SUPERSEDED_STATUSES,
 } from '../lib/index-db.js'
 import {
   TITLE_TWIN_OVERLAP,
@@ -1592,4 +1593,56 @@ test('findTitleTwin stays inside the bound project and the same type', async (t)
   assert.notEqual(twin.path, N.betaDecision)
   assert.equal(await findTitleTwin(index, { title: '调度器后端选型', type: 'gotcha' }), null)
   assert.equal(await findTitleTwin(index, { title: '重试策略的退避上限', type: 'decision' }), null)
+})
+
+test('candidateNotes enumerates exactly the notes a scoped search can return', async (t) => {
+  const h = await harness(t)
+  const index = await h.open()
+  await ready(index)
+  const project = {
+    kind: 'project',
+    projectId: ALPHA,
+    projectId8: String(ALPHA).slice(0, 8),
+    excludeStatuses: [...SUPERSEDED_STATUSES],
+    type: null,
+  }
+  const rows = await index.candidateNotes(project)
+  const paths = new Set(rows.map((row) => row.path))
+  assert.ok(paths.has(N.alphaExactTitle), 'the current note is a candidate')
+  assert.ok(paths.has(N.alphaGotcha))
+  assert.ok(!paths.has(N.alphaDecisionSuperseded), 'history is excluded by default')
+  assert.ok(!paths.has(N.alphaArchived))
+  assert.ok(!paths.has(N.betaDecision), 'another project never leaks in')
+  assert.ok(!paths.has(N.method), 'global scope is not project scope')
+  const row = rows.find((candidate) => candidate.path === N.alphaExactTitle)
+  assert.equal(typeof row.hash, 'string')
+  assert.equal(typeof row.title, 'string')
+  assert.ok(row.body.length > 0, 'the body travels with the row: the store embeds title plus body')
+
+  const withHistory = await index.candidateNotes({ ...project, excludeStatuses: [] })
+  const history = new Set(withHistory.map((candidate) => candidate.path))
+  assert.ok(history.has(N.alphaDecisionSuperseded))
+  assert.ok(history.has(N.alphaArchived))
+
+  const decisions = await index.candidateNotes({
+    ...project,
+    excludeStatuses: [],
+    type: 'decision',
+  })
+  assert.ok(decisions.length > 0)
+  assert.ok(decisions.every((candidate) => candidate.type === 'decision'))
+  assert.ok(decisions.some((candidate) => candidate.path === N.alphaDecision))
+
+  const all = await index.candidateNotes({ kind: 'all', excludeStatuses: [] })
+  const allPaths = new Set(all.map((candidate) => candidate.path))
+  assert.ok(allPaths.has(N.alphaExactTitle))
+  assert.ok(allPaths.has(N.betaDecision))
+  assert.ok(allPaths.has(N.method))
+
+  // The scan backend must enumerate the same set, or the embedding store would
+  // silently miss notes when the SQLite backend is unavailable.
+  const scan = h.track(await h.open({ backend: 'scan' }))
+  await ready(scan)
+  const scanRows = await scan.candidateNotes(project)
+  assert.deepEqual(new Set(scanRows.map((candidate) => candidate.path)), paths)
 })

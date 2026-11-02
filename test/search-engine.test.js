@@ -133,7 +133,7 @@ test('the default lexical engine returns exactly the index result it returned be
 })
 
 test('the engine enum is closed and an unknown engine is refused before the index is touched', async () => {
-  assert.deepEqual(RETRIEVAL_ENGINES, ['lexical', 'sparse'])
+  assert.deepEqual(RETRIEVAL_ENGINES, ['lexical', 'sparse', 'hybrid'])
   const untouched = {
     waitReady() {
       throw new Error('the ready barrier must not run for a rejected engine')
@@ -142,7 +142,7 @@ test('the engine enum is closed and an unknown engine is refused before the inde
       throw new Error('the index must not run for a rejected engine')
     },
   }
-  for (const engine of ['semantic', 'hybrid', 'Lexical', '', true, null, 7]) {
+  for (const engine of ['semantic', 'Hybrid', 'hybrid2', 'Lexical', '', true, null, 7]) {
     await assert.rejects(searchNotes(untouched, { query: '缓存', engine }), (error) => {
       assert.ok(error instanceof RangeError, `expected RangeError for ${JSON.stringify(engine)}`)
       assert.match(error.message, /engine/)
@@ -672,9 +672,12 @@ function percentiles(durations) {
 
 test('measurement: lexical vs sparse grouped quality on the fixed local fixture', async (t) => {
   const { index } = await makeVault(t, MEASUREMENT_NOTES)
+  // Hybrid needs an injected runtime; this fixture measures the two engines that
+  // need none, so the comparison stays lexical versus sparse.
+  const engines = RETRIEVAL_ENGINES.filter((engine) => engine !== 'hybrid')
   const limit = 3
   const results = { lexical: new Map(), sparse: new Map() }
-  for (const engine of RETRIEVAL_ENGINES) {
+  for (const engine of engines) {
     for (const item of MEASUREMENT_QUERIES) {
       const hits = await searchNotes(index, { query: item.query, engine, limit })
       results[engine].set(item.query, hitPaths(hits))
@@ -699,7 +702,7 @@ test('measurement: lexical vs sparse grouped quality on the fixed local fixture'
 
   // Warm latency, 11 repetitions per query and engine (121 samples each).
   const durations = { lexical: [], sparse: [] }
-  for (const engine of RETRIEVAL_ENGINES) {
+  for (const engine of engines) {
     for (const item of MEASUREMENT_QUERIES) {
       for (let repetition = 0; repetition < 11; repetition += 1) {
         const started = performance.now()
@@ -718,7 +721,7 @@ test('measurement: lexical vs sparse grouped quality on the fixed local fixture'
     'group        engine   Recall@3  MRR@3   false-injection@3  (queries)',
   ]
   for (const groupName of ['development', 'paraphrase', 'distractor']) {
-    for (const engine of RETRIEVAL_ENGINES) {
+    for (const engine of engines) {
       const group = metrics[engine].get(groupName)
       const recall = group.targeted === 0 ? 'n/a' : (group.recall / group.targeted).toFixed(3)
       const mrr = group.targeted === 0 ? 'n/a' : (group.mrr / group.targeted).toFixed(3)
@@ -727,7 +730,7 @@ test('measurement: lexical vs sparse grouped quality on the fixed local fixture'
       )
     }
   }
-  for (const engine of RETRIEVAL_ENGINES) {
+  for (const engine of engines) {
     const latency = percentiles(durations[engine])
     lines.push(
       `latency      ${engine.padEnd(8)} p50=${latency.p50}ms p95=${latency.p95}ms (n=${durations[engine].length})`,

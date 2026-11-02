@@ -62,6 +62,17 @@ const DEFAULTS = {
   // locally and fuses the two orders. Lexical stays the default until the sparse
   // quality gate passes (v0.4 spec §5).
   retrievalEngine: 'lexical',
+  // The optional loopback retrieval provider: disabled by default so an
+  // unconfigured row makes no request at all. `hybrid` is the only engine that
+  // reads it; the values here are the shipped defaults, not a working provider.
+  retrievalProvider: {
+    enabled: false,
+    endpoint: '',
+    model: '',
+    dimensions: 0,
+    timeoutMs: 500,
+    rerank: false,
+  },
   ignoreGlobs: [],
 }
 
@@ -223,26 +234,96 @@ test('indexBackend accepts only auto, sqlite and scan', () => {
   assertRejected(/indexBackend/, { indexBackend: 'fts5' })
 })
 
-test('retrievalEngine is lexical by default and accepts only the two local engines', () => {
+test('retrievalEngine is lexical by default and accepts the three local engines', () => {
   // The default is the existing engine, so an unconfigured row reads exactly what
-  // it read before v0.4. `sparse` is the deterministic local reranker; `semantic`
-  // is deliberately NOT a schema value because no provider has been selected and
-  // the provider contract ships disabled by default (v0.4 spec §5).
+  // it read before v0.4. `sparse` is the deterministic local reranker; `hybrid`
+  // adds the loopback dense candidate channel and is therefore the one engine with
+  // a second config precondition (an enabled provider, asserted next). `semantic`
+  // remains absent: a bare word would promise a provider selection this schema
+  // cannot make.
   assert.equal(validateConfig({}).retrievalEngine, 'lexical')
   assert.equal(validateConfig({ retrievalEngine: 'lexical' }).retrievalEngine, 'lexical')
   assert.equal(validateConfig({ retrievalEngine: 'sparse' }).retrievalEngine, 'sparse')
+  const hybrid = {
+    retrievalEngine: 'hybrid',
+    retrievalProvider: {
+      enabled: true,
+      endpoint: 'http://127.0.0.1:8765',
+      model: 'multilingual-e5-small',
+      dimensions: 384,
+    },
+  }
+  assert.equal(validateConfig(hybrid).retrievalEngine, 'hybrid')
   // Idempotent on the host's own pre-validated object, like every other field.
   assert.equal(
     validateConfig(validateConfig({ retrievalEngine: 'sparse' })).retrievalEngine,
     'sparse',
   )
+  assert.equal(validateConfig(validateConfig(hybrid)).retrievalEngine, 'hybrid')
   // An explicit null reads as "absent" to schemastery and resolves to the default,
   // which is the same convention `indexBackend` follows; every other non-enum
   // value is a config error.
   assert.equal(validateConfig({ retrievalEngine: null }).retrievalEngine, 'lexical')
-  for (const bad of ['semantic', 'hybrid', 'Sparse', 'LEXICAL', '', true, false, 0, ['sparse']]) {
+  for (const bad of ['semantic', 'Sparse', 'LEXICAL', '', true, false, 0, ['sparse']]) {
     assertRejected(/retrievalEngine/, { retrievalEngine: bad })
   }
+})
+
+test('hybrid needs an enabled loopback provider and refuses a bad one eagerly', () => {
+  // The spec's F check, at the config seam rather than at first search: a row that
+  // asks for hybrid but cannot supply a provider would otherwise look configured
+  // and silently behave lexically, which is the exact class of "config that is not
+  // honoured" this file's unknown-key refusal exists to prevent.
+  assertRejected(/retrievalProvider\.enabled|retrievalProvider/, { retrievalEngine: 'hybrid' })
+  assertRejected(/retrievalProvider\.enabled|retrievalProvider/, {
+    retrievalEngine: 'hybrid',
+    retrievalProvider: { enabled: false, endpoint: 'http://127.0.0.1:8765' },
+  })
+  // Enabled with lexical is allowed (the provider exists but nothing calls it),
+  // but an enabled provider must still be usable: remote endpoints, a blank model
+  // and a non-integer width are refused even when the engine is lexical.
+  assert.equal(
+    validateConfig({
+      retrievalProvider: {
+        enabled: true,
+        endpoint: 'http://127.0.0.1:8765',
+        model: 'e5-small',
+        dimensions: 384,
+      },
+    }).retrievalEngine,
+    'lexical',
+  )
+  assertRejected(/loopback|provider-non-loopback/, {
+    retrievalProvider: { enabled: true, endpoint: 'http://example.com:8765' },
+  })
+  assertRejected(/model|provider-config/, {
+    retrievalProvider: {
+      enabled: true,
+      endpoint: 'http://127.0.0.1:8765',
+      model: ' ',
+      dimensions: 384,
+    },
+  })
+  assertRejected(/dimensions|provider-config/, {
+    retrievalProvider: {
+      enabled: true,
+      endpoint: 'http://127.0.0.1:8765',
+      model: 'e5-small',
+      dimensions: 0,
+    },
+  })
+  // defaults leave an unconfigured row with no provider and no request path
+  assert.deepEqual(validateConfig({}).retrievalProvider, {
+    enabled: false,
+    endpoint: '',
+    model: '',
+    dimensions: 0,
+    timeoutMs: 500,
+    rerank: false,
+  })
+  assertRejected(/retrievalProvider\.typo/, {
+    retrievalProvider: { enabled: false, typo: 1 },
+  })
 })
 
 test('a mistyped retrievalEngine key is refused instead of silently staying lexical', () => {

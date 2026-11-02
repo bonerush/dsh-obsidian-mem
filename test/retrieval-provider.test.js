@@ -304,3 +304,28 @@ test('the built-in loopback transport speaks HTTP and never follows a redirect',
   await assert.rejects(redirecting.embed({ texts: ['x'] }), failsWith('provider-redirect'))
   assert.equal(requests, 2, 'the redirect is reported after exactly one request, never followed')
 })
+
+test('embed sends the optional kind field only when asked and refuses unknown kinds', async () => {
+  // e5-family models need a different prefix for a query and a passage. The
+  // contract carries the distinction as a field rather than a text prefix, so the
+  // plugin never rewrites text and the provider keeps its own prefixing rule. The
+  // body assertion for the no-kind case above must keep passing unchanged, which
+  // is why the field is omitted rather than sent as null.
+  const { calls, transport } = fakeTransport(
+    jsonResponse({ model: CONFIG.model, dimensions: CONFIG.dimensions, vectors: [[1, 2]] }),
+  )
+  const provider = createRetrievalProvider(CONFIG, { transport })
+  await provider.embed({ texts: ['q'], kind: 'query' })
+  assert.deepEqual(JSON.parse(calls[0].body), {
+    model: CONFIG.model,
+    texts: ['q'],
+    kind: 'query',
+  })
+  await provider.embed({ texts: ['p'], kind: 'passage' })
+  assert.equal(JSON.parse(calls[1].body).kind, 'passage')
+  await assert.rejects(
+    provider.embed({ texts: ['x'], kind: 'document' }),
+    failsWith('provider-request'),
+  )
+  assert.equal(calls.length, 2, 'an invalid kind never reaches the transport')
+})
