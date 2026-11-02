@@ -775,6 +775,27 @@ test('a non-git directory stays unbound and read-only', async (t) => {
   assert.deepEqual(await readdir(vault), [])
 })
 
+test('a non-git directory with an existing pointer stays bound on the read path', async (t) => {
+  const { vault, scratch } = await fixture(t)
+  await mkdir(scratch, { recursive: true })
+
+  // The explicit bind mints the identity; the write path afterwards resolves
+  // with the default (read-only) mode and must reuse it, not refuse no-git-root.
+  const bound = await resolveBinding({ cwd: scratch, vaultRoot: vault, mode: 'local' })
+  assert.equal(bound.kind, 'bound')
+
+  const shown = await resolveBinding({ cwd: scratch, vaultRoot: vault })
+  assert.equal(shown.kind, 'bound')
+  assert.equal(shown.projectId, bound.projectId)
+  assert.equal(shown.pointerCreated, false)
+
+  // The same identity must survive an explicit re-bind rather than minting again.
+  const rebind = await resolveBinding({ cwd: scratch, vaultRoot: vault, mode: 'local' })
+  assert.equal(rebind.kind, 'bound')
+  assert.equal(rebind.projectId, bound.projectId)
+  assert.equal(rebind.pointerCreated, false)
+})
+
 test('a working directory inside the vault resolves to the vault context', async (t) => {
   const { vault, vaultReal } = await fixture(t)
   const inner = join(vault, PROJECTS_DIR, 'x')

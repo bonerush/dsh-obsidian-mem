@@ -11,6 +11,15 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Fixed
+
+- **非 git 目录 `bind local` 后跨会话写入不再报 `no-git-root`。** `resolveBinding` 原来在
+  读指针之前就按「没有 git 根」拒绝，而 `mem_write` 走只读探针（`mode: 'show'`）永远拿不到
+  `bind local` 已写出的 `.obsidian-mem`，已绑定的 scratch 目录于是在后续会话永久只读。
+  现在拒绝前先探测 `cwdReal/.obsidian-mem`：有既有指针就采纳、没有照旧拒绝；探测只采纳、
+  绝不铸新指针。`fork`/`retain` 保持原 git worktree 语义。新增回归测试
+  `test/binding.test.js`「a non-git directory with an existing pointer stays bound on the read path」。
+
 ## 1.0.6 — 2026-11-02
 
 ### Added
