@@ -157,6 +157,49 @@ test('the Phase 2 gate needs six token hits, more than the old capped floor', as
   assert.equal(strong.outcome, 'fired', 'six token hits clears the Phase 2 gate')
 })
 
+test('a top-three dense slot above the semantic threshold passes without token overlap', async () => {
+  // The hybrid ranker can place the right note in the top three while the
+  // lexical floor still rejects it; the dense score is the only evidence left.
+  const result = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    seenPaths: new Set(),
+    maxChars: RECALL_BUDGET,
+    search: async () => [
+      {
+        path,
+        title: 'FTS5 中文索引',
+        snippet: '语义分支接受的摘录',
+        scoreSignals: ['semantic-score:0.93', 'hybrid-rank:2', 'token-hits:1'],
+      },
+    ],
+  })
+  assert.equal(result.outcome, 'fired')
+  assert.equal(result.accepted, 1, 'the semantic branch accepted the slot')
+  assert.equal(result.injected, 1)
+  assert.deepEqual(result.paths, [path])
+  assert.ok(result.text.includes('语义分支接受的摘录'))
+})
+
+test('the semantic branch needs both the calibrated score and the fused shortlist', async () => {
+  // 0.90 is a better threshold for e5-base but worse for the calibrated e5-small
+  // model, and a slot the fusion ranked fourth is not a top-three decision.
+  const cases = [
+    ['semantic-score:0.91', 'hybrid-rank:1', 'token-hits:1'],
+    ['semantic-score:0.99', 'hybrid-rank:3', 'token-hits:1'],
+  ]
+  for (const signals of cases) {
+    const result = await promptRecall({
+      prompt: '记忆召回为什么对不上',
+      search: async () => [
+        { path, title: 'FTS5 中文索引', snippet: '不该注入的摘录', scoreSignals: signals },
+      ],
+    })
+    assert.equal(result.accepted, 0, signals.join(' '))
+    assert.equal(result.outcome, 'near-miss', signals.join(' '))
+    assert.ok(!result.text.includes('不该注入的摘录'))
+  }
+})
+
 test('the resident hot layer is never offered back as recall', async () => {
   const hot = 'Projects/demo--1c392abb/_meta/hot.md'
   const result = await promptRecall({

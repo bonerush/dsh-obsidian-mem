@@ -326,9 +326,12 @@ const BUDGETS = {
   'lib/diagnostic-journal.js': 300,
   // The embedding store's first version measured 310 lines: 13 tests pin its
   // incremental sync, corruption rebuild, batching and atomic write, and the
-  // module owns a local atomic copy because ./receipts.js is L2. 330 is measured
-  // plus 20, inside the usual measured-plus-30 rule.
-  'lib/embedding-store.js': 330,
+  // module owns a local atomic copy because ./receipts.js is L2. The slow-model
+  // warm then added batch bisection on provider timeouts (measured 340 lines;
+  // 370 is measured plus 30), which is the difference between an e5-base host
+  // failing warm after five seconds and warming the same store in batches that
+  // fit the same five-second ceiling.
+  'lib/embedding-store.js': 370,
   // measured 150 lines plus 30 for the guard/fusion branches the Phase 2 gate
   // work will add without reopening this budget.
   'lib/hybrid-search.js': 180,
@@ -1138,10 +1141,12 @@ const BUDGETS = {
   // measured, measured-plus-30 rounds to 330. What the 78 lines buy: the raised
   // token floor (one constant and one comparison), the near-miss candidate
   // selector that re-checks the same eligibility rules, the one-line hint copy,
-  // and the branch that reports the new outcome. Both changes are policy, so
-  // they stay beside the floor they replace rather than moving into a module
+  // and the branch that reports the new outcome. The semantic branch then added
+  // the calibrated score/rank ceiling, its header note and the two constants
+  // (334 formatted lines measured; 370 is measured plus 30). All of it is policy,
+  // so it stays beside the floor it replaces rather than moving into a module
   // that would have to re-import the eligibility rules.
-  'lib/prompt-recall.js': 330,
+  'lib/prompt-recall.js': 370,
   // Raised from 1950 when the diagnostics action's schema landed here. This file
   // is the one the split is for, so the raise is explicitly temporary: the next
   // structural change reduces it to a façade and lowers this number with it.
