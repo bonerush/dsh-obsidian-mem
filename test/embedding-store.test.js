@@ -208,6 +208,50 @@ test('the provider is called in batches of at most sixteen texts', async (t) => 
   )
 })
 
+test('a timed-out batch is bisected until each slice answers', async (t) => {
+  const { store } = await makeStore(t)
+  const notes = Array.from({ length: 4 }, (_, index) =>
+    note('Projects/p/' + index + '.md', 'h' + index, '标题' + index, '正文' + index),
+  )
+  const base = fakeEmbed()
+  const calls = []
+  const embed = async (request) => {
+    calls.push(request.texts.length)
+    if (request.texts.length > 2) {
+      const error = new Error('deadline')
+      error.code = 'provider-timeout'
+      throw error
+    }
+    return base(request)
+  }
+  const result = await store.sync(notes, embed)
+  assert.deepEqual(result, { embedded: 4, reused: 0, pruned: 0, total: 4, batches: 2 })
+  assert.deepEqual(calls, [4, 2, 2], 'the timeout costs one probe, then two halves answer')
+  const snapshot = await store.snapshot()
+  assert.equal(snapshot.size, 4, 'every note is stored even though the first batch timed out')
+})
+
+test('a timeout on a single text is reported, not retried forever', async (t) => {
+  const { store } = await makeStore(t)
+  const calls = []
+  const failing = async (request) => {
+    calls.push(request.texts.length)
+    const error = new Error('deadline')
+    error.code = 'provider-timeout'
+    throw error
+  }
+  const notes = [
+    note('Projects/p/A.md', 'h1', '甲', '一'),
+    note('Projects/p/B.md', 'h2', '乙', '二'),
+  ]
+  await assert.rejects(
+    store.sync(notes, failing),
+    (error) => error instanceof EmbeddingStoreError && error.code === 'provider-timeout',
+  )
+  assert.deepEqual(calls, [2, 1], 'one probe, then the first single text fails')
+  await assert.rejects(fs.readFile(store.path, 'utf8'))
+})
+
 test('a finished sync leaves no temporary files behind', async (t) => {
   const { store, embed } = await makeStore(t)
   await store.sync([note('Projects/p/A.md', 'h1', '甲', '一')], embed)
