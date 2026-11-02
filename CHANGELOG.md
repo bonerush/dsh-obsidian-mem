@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 1.0.7 — 2026-11-02
+
 ### Fixed
 
 - **非 git 目录 `bind local` 后跨会话写入不再报 `no-git-root`。** `resolveBinding` 原来在
