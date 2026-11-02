@@ -292,3 +292,51 @@ Q2. Does the deictic context need more than one previous turn? Measure with
     context lengths 1 and 2 on the 40 deictic queries before Phase 2.
 Q3. Is a rerank call worth adding once the candidate channel exists? Deferred
     to Phase 2; the provider already exposes rerank.
+
+## 11. Post-acceptance amendments (2026-11-03)
+
+The design above was frozen before the measurements below and sections 4-9 are
+left as they stand. These amendments record what changed after acceptance and
+where the acceptance criteria stand afterwards. Evidence lives in
+docs/validation/retrieval-latency-and-semantic-gate-2026-11-03.md.
+
+11.1 Latency criterion. B froze the p50 ceiling as <= 1.5x the lexical
+baseline, which was 233.4 ms at the time (350 ms absolute). The token-query
+plan fix (11.2) cut lexical to 22.3 ms, so the ratio clause no longer holds
+even though hybrid itself improved from 444.6 ms to 121.2 ms on the same
+corpus. B is met on quality and on the absolute ceiling; the relative claim is
+withdrawn, and the residual ~99 ms is one loopback embedding round trip per
+query.
+
+11.2 Query plan. The filtered FTS query was planned as MULTI-INDEX OR followed
+by a full SCAN of notes_fts to compute bm25 (202.5 ms, against 1.82 ms with no
+filter). applySqlFilters now emits unary + prefixes and the token statement
+pins bm25 weights (10, 1, 4); a test asserts the plan. 200 token queries return
+the same paths before and after, and corpus quality is bit-identical; lex8 p50
+went from 233.7 ms to 24.3 ms. Source verification now overlaps reads with
+VERIFY_CONCURRENCY = 16 and fills the window in the same order as before.
+
+11.3 Slow models. embedding-store bisects a provider-timeout batch recursively
+until each slice answers. e5-base/768 first warm needs 423 s over 171 batches
+instead of failing at the 5 s timeout; it reaches pooled P@3 62.5%, in-gate
+40.0%, FPR 2.5% and p50 138.7 ms. That is a small gain over e5-small at a
+1.1 GB model and a much slower first warm, so e5-small stays the documented
+default.
+
+11.4 Semantic gate. useful() accepts a top-three fused slot whose dense score
+is >= 0.92 even without token overlap (SEMANTIC_GATE_SCORE / RANK in
+lib/prompt-recall.js). On the frozen corpus: gate pass 24.6% -> 27.9%, in-gate
+precision 39.8% -> 41.8%, no-answer FPR unchanged at 5.0%, pooled P@3 unchanged
+at 61.25%; 16 extra slots are accepted and 9 of them are relevant. The
+threshold is calibrated on e5-small and near-neutral on e5-base.
+
+11.5 What was swept and rejected. Fusion weights, candidate counts, the
+adaptive guard threshold, dense-context length (400 vs 1000 characters) and
+cosine-weighted fusion all stayed within 1 pp or lost recall, so the recipe is
+unchanged.
+
+11.6 Still unmeasured. Live-session hybrid trigger rate, the 900-character
+injection budget, near-miss production frequency, and any gain beyond the
+current cross-lingual 21.9% / deictic 43.8% P@3, which the candidate oracle
+shows is bounded by candidate recall (gold absent from the lexical union for
+44% of cross-lingual and 37.5% of deictic queries), not by fusion or the gate.

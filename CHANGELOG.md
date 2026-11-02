@@ -10,7 +10,18 @@ baseline that was never tagged, and every version from `0.1.1` on is a tagged
 release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
-### Added
+- **recall 闸门增加校准过的语义分支：hybrid 融合排名前三的候选，只要 dense 分数 ≥ 0.92，
+  即使 token 命中数只有 1 也可通过闸门并注入摘录。** 词法闸门只认字面重叠，会把融合与
+  向量都判为高信的候选拒掉；新分支只对带 semantic-score/hybrid-rank 信号的 hybrid 命中
+  生效，token 分支与 lexical 默认路径完全不变。阈值按 e5-small 校准，换模型需重标。
+  - 证据：同一冻结 200 条语料，接受面 +16 个 top-3 槽位、其中 9 条相关；gate pass
+    24.6%→27.9%、in-gate precision 39.8%→41.8%、no-answer FPR 5.0% 不变、P@3 61.25%
+    不变；指代类第一次拿到注入（8 条、5 条相关，类内精度 62.5%）。阈值敏感性：
+    0.90 在 e5-small 上 gate pass 40.0% 但精度降到 36.5%，0.88 时 FPR 升到 62.5%，
+    0.94 只剩 40.3% 精度且指代无新增。`node --test test/prompt-recall.test.js` 15/15；
+    相关 8 个测试文件 156/156 通过。
+  - 未验证：真实会话里这条分支的触发频次；dense-only 命中注入的摘录是正文前 160 字、
+    不是查询居中的 ±60 字符窗口，生产注入文案未做 A/B。
 
 - **可选的 hybrid 检索引擎：FTS5 词法候选 + 本机回环 embedding 语义候选，按加权 RRF
   融合；默认关闭，关闭时读路径逐字节保持原样。** `retrievalEngine: hybrid` 必须同时
@@ -45,7 +56,17 @@ release artifact. The versioning policy is in the README, under Development.
   - 证据：`test/hooks.test.js` 的 “a short follow-up carries the previous prompt as
     dense context” 通过。
 
-### Changed
+- **token 查询不再整表扫描 `notes_fts`：过滤列加一元 `+` 前缀、显式 bm25 列权重
+  `(10, 1, 4)`，让 SQLite 走 FTS 索引计划。** 旧的带项目/状态过滤的 FTS 查询被规划成
+  MULTI-INDEX OR，随后对整个虚拟表 SCAN 计算 bm25（同一条 SQL p50 202.5ms；无过滤时
+  1.82ms），是召回延迟的主因。源码校验同时按 `VERIFY_CONCURRENCY = 16` 分批并发，窗口
+  填充集合与串行逐条一致。
+  - 证据：40 条查询 lex8 p50 233.7ms→24.3ms、p95 268.9→57.5；冻结语料 lexical
+    p50 22.3ms / hybrid 121.2ms；质量指标逐位不变（lexical P@3 44.375%、hybrid
+    P@3 61.25%）；200 条 token 查询新旧 statement 的路径列表 0 差异；`test/search.test.js`
+    新增 EXPLAIN QUERY PLAN 断言（不含 MULTI-INDEX OR、含 notes_fts 虚拟表索引），
+    改动前失败、改动后 39/39 通过。并发校验只把 lex8 p50 压到 19.0ms（n=40，单机单次）。
+  - 未验证：其它 SQLite 版本的查询计划未逐个测量；并发校验在慢盘/网络盘上的收益未测。
 
 - **recall 闸门的 token 分支从至多 4 个 token 命中提高到 6 个；标题/短语分支不变。**
   旧闸门在 hybrid 候选上通过 47.1% 的 top-3 而只有 27.9% 精确率、no-answer 控制项
@@ -55,9 +76,11 @@ release artifact. The versioning policy is in the README, under Development.
     32.5%→5.0%`；lexical `20.1%→33.8%`、`50.0%→2.5%`；两份报告的 P@1/P@3/
     recall@8/MRR 与各自旧闸门版本逐位相同。`node --test
     test/prompt-recall.test.js test/architecture.test.js` 全绿。
-  - 未验证：hybrid p50 延迟超过 Phase 1 验收的 1.5× 门禁（444.6ms vs 350ms），
-    成本是每次查询一次回环 embedding 往返；该失败已记录在
-    `research/litreview/eval/baseline-2026-11-02-phase1-2-validation.md`，不宣称达标。
+  - 延迟（2026-11-03 复测）：冻结语料上 hybrid p50 从 444.6ms 降到 121.2ms，Phase 1
+    验收的 350ms 绝对上限已满足；但同一轮修复把 lexical 自身从 233.4ms 降到 22.3ms，
+    于是「≤ 1.5× lexical」的相对说法不再成立（hybrid 约 5.4×，差的 ~99ms 是每次查询一次
+    回环 embedding 往返）。两项都记录在
+    `docs/validation/retrieval-latency-and-semantic-gate-2026-11-03.md`；不宣称相对达标。
 
 
 - **诊断窗口补齐召回漏斗：新增 `search` 事件，`recall` 带 `accepted`/`injected`，`brief` 的 injected 事件带 `chars`。**
@@ -82,10 +105,18 @@ release artifact. The versioning policy is in the README, under Development.
   - 证据：`node --test test/architecture.test.js` 8/8 通过。
 
 - 证据（整套门禁）：`npm run check` 退出码 0——lint、`format:check`、`types` 通过，测试套件
-  1,543 项 1,542 通过 / 0 失败 / 1 跳过（176.7 s），`verify-pack` 与真实 tarball 校验通过
+  1,549 项 1,548 通过 / 0 失败 / 1 跳过（161.3 s），`verify-pack` 与真实 tarball 校验通过
   （92 个条目 / 82 个 lib 模块）。
 
-### Fixed
+- **慢模型（如 e5-base/768）首次 embedding 预热不再必然超时：超过 provider 时限的批次会
+  递归二分到能在时限内返回的切片。** 默认批大小 16，1200 码点正文在 CPU 上约 5.4s/批，
+  超过 `timeoutMs` 允许的 5000ms 上限，e5-base 因此永远 warm 不出来。
+  `lib/embedding-store.js` 只在 `provider-timeout` 且切片大于 1 时二分，单条仍超时就如实
+  报错，`batches` 只统计成功请求。
+  - 证据：`node --test test/embedding-store.test.js` 15/15；新增「timed-out batch is
+    bisected」与「timeout on a single text is reported」两条；e5-base 预嵌入 1361 条
+    笔记 171 批、423s 完成，同一 harness 上 P@3 62.5%、in-gate 40.0%、FPR 2.5%。
+  - 未验证：其它慢模型的实际批大小与收益未逐个测。
 
 - **链接目标本身引用行内代码的活链接不再被误报为 `dead-wikilink`。** `noteLinkAudit` 原来先用
   `proseWithoutCode` 把行内代码整段抹成空格、再从抹过的行里抽 wikilink，于是目标里带代码的

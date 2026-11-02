@@ -846,11 +846,13 @@ Obsidian 里冲突。要补上这个缺口，要么在仓库侧读 `types.json`�
   的：它只用 TF-IDF/余弦对至多 24 条源码已验证候选重排，找不到索引从未匹配过的
   同义词。`hybrid` 通过显式配置的回环 provider 增加一条真正的语义候选通道；在冻结的
   200 条语料上，它把 pooled P@3 从 44.4% 提到 61.25%，五类无一回退，随后的校准闸门
-  再把 in-gate precision 从 27.9% 提到 39.8%、no-answer 假阳性从 32.5% 降到 5.0%。
-  它仍然要 opt-in：需要本地模型服务，每次查询多一次 embedding 往返（串行语料上的
-  p50 是 444.6ms，lexical 为 233.4ms），而且 900 字符注入路径还没有在真实会话里量过。
-  provider 关闭时，发布路径与 lexical 逐字节相同。见
-  `docs/validation/retrieval-hybrid-2026-11-02.md`。
+  （token 命中，或前三名 dense 槽位 cosine ≥ 0.92）再把 in-gate precision 从 27.9%
+  提到 41.8%、no-answer 假阳性从 32.5% 降到 5.0%。它仍然要 opt-in：需要本地模型服务，
+  每次查询多一次 embedding 往返（查询计划修复后语料 p50 为 121.2ms，lexical 为
+  22.3ms；350ms 绝对上限满足，但「不超过 lexical 1.5 倍」的相对说法不成立），而且
+  900 字符注入路径还没有在真实会话里量过。provider 关闭时，发布路径与 lexical 逐字节
+  相同。见 `docs/validation/retrieval-hybrid-2026-11-02.md` 与
+  `docs/validation/retrieval-latency-and-semantic-gate-2026-11-03.md`。
 - **投递回执是观测，不是「模型已经注意」的证明。** DSH 确认的是承载最终消息的、
   生产者所有的已提交事件；Codex 的 stdout 只是待定回执，要等之后某个可信 hook 拿它
   自己的 transcript 对账（上限 8 MiB），读不到或超限的证据会让该条目保持未确认、

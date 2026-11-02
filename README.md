@@ -1045,12 +1045,15 @@ sandbox.
   TF-IDF/cosine and cannot find a synonym the index never matched. `hybrid` adds a
   real semantic candidate channel through an explicitly configured loopback provider;
   on a frozen 200-query corpus it moved pooled P@3 from 44.4% to 61.25% with no class
-  regression, and the calibrated gate then took in-gate precision from 27.9% to 39.8%
-  and no-answer false positives from 32.5% to 5.0%. It is still opt-in: it needs a
-  local model service, costs one embedding round trip per query (serial-corpus p50
-  444.6 ms against 233.4 ms for lexical), and its 900-character injection path has not
-  been measured in live sessions. With the provider disabled the shipped path is
-  byte-for-byte the lexical one. See `docs/validation/retrieval-hybrid-2026-11-02.md`.
+  regression, and the calibrated gate (token hits or a top-three dense slot at cosine
+  0.92) then took in-gate precision from 27.9% to 41.8% and no-answer false positives
+  from 32.5% to 5.0%. It is still opt-in: it needs a local model service and costs one
+  embedding round trip per query (corpus p50 121.2 ms against 22.3 ms for lexical
+  after the query-plan fix, so the absolute 350 ms ceiling holds while the
+  1.5x-lexical ratio does not), and its 900-character injection path has not been
+  measured in live sessions. With the provider disabled the shipped path is
+  byte-for-byte the lexical one. See `docs/validation/retrieval-hybrid-2026-11-02.md`
+  and `docs/validation/retrieval-latency-and-semantic-gate-2026-11-03.md`.
 - **Delivery receipts are observations, not proof of attention.** DSH acknowledges
   the committed producer-owned event that carried the final message; Codex stdout is
   only a pending receipt until a later trusted hook reconciles it against its own
