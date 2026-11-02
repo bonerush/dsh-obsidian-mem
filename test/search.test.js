@@ -43,11 +43,13 @@ import {
   openIndex,
   planQuery,
   SUPERSEDED_STATUSES,
+  tokenSourceStatement,
 } from '../lib/index-db.js'
 import {
   TITLE_TWIN_OVERLAP,
   findTitleTwin,
   readNote,
+  resolveScope,
   searchNotes,
   titleOverlap,
 } from '../lib/search.js'
@@ -212,7 +214,7 @@ const WINDOW_EXACT = `${WINDOW_DIR}/Docs/n39.md`
  * Build a vault with 40 in-scope notes containing `器`, where the path-last note
  * carries `器` as its exact title and therefore wins as soon as it is scored.
  */
-async function windowHarness(t) {
+async function windowHarness(t, indexOptions = {}) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-mem-t9-window-'))
   const vault = join(root, 'vault')
   const dataRoot = join(root, 'data')
@@ -226,7 +228,14 @@ async function windowHarness(t) {
     )
   }
   const open = (options = {}) =>
-    openIndex({ vaultRoot: vault, dataRoot, backend: 'sqlite', projectId: WINDOW_ID, ...options })
+    openIndex({
+      vaultRoot: vault,
+      dataRoot,
+      backend: 'sqlite',
+      projectId: WINDOW_ID,
+      ...indexOptions,
+      ...options,
+    })
   const index = await open()
   const onCleanup = registerTreeCleanup(t, root)
   onCleanup(async () => index.close().catch(() => {}))
@@ -1646,3 +1655,93 @@ test('candidateNotes enumerates exactly the notes a scoped search can return', a
   const scanRows = await scan.candidateNotes(project)
   assert.deepEqual(new Set(scanRows.map((candidate) => candidate.path)), paths)
 })
+
+test('source verification overlaps reads without changing the candidate window', async (t) => {
+  // The window is 32 candidates for limit 8, and each candidate is stat-ed and
+  // hashed. Sequential verification makes that 32 serial round trips; the
+  // search may overlap them, bounded, without changing which candidates are
+  // verified or what the hits are.
+  let current = 0
+  let peak = 0
+  const inflight = async (...args) => {
+    current += 1
+    peak = Math.max(peak, current)
+    try {
+      return await readFile(...args)
+    } finally {
+      current -= 1
+    }
+  }
+  const h = await windowHarness(t, {
+    io: { readdir, stat, readFile: inflight },
+  })
+  await ready(h.index)
+  current = 0
+  peak = 0
+
+  const hits = await searchNotes(h.index, {
+    query: Q.singleCharCjk,
+    scope: 'project',
+    projectId: WINDOW_ID,
+    limit: 8,
+  })
+  assert.equal(hits.candidateWindow, 32)
+  assert.equal(hits.candidatesScored, 32)
+  assert.equal(hits.length, 8)
+  assert.equal(paths(hits).includes(WINDOW_EXACT), false)
+  assert.ok(peak > 1, `verification stayed sequential (peak in-flight ${peak})`)
+  assert.ok(peak <= 16, `verification exceeded its concurrency bound (peak ${peak})`)
+})
+
+test(
+  'the token branch lets the FTS match drive the plan, not MULTI-INDEX OR',
+  { skip: HAS_SQLITE ? false : 'node:sqlite is unavailable on this host' },
+  async (t) => {
+    // The scope predicate is OR-shaped, and SQLite answers it from the
+    // `notes_project` index when the filter columns are bare. That plan prints
+    // `VIRTUAL TABLE INDEX 0:=M3`: it scans the whole FTS table and computes
+    // bm25 for every row instead of ranking only the matches. The wrong plan is
+    // invisible in the results - only in latency (202.5 ms vs 1.5 ms per query
+    // on this repository's 1,361-note vault, measured 2026-11-03) - so this
+    // case pins the plan itself.
+    const h = await harness(t)
+    const index = await h.open()
+    await ready(index)
+    const statement = tokenSourceStatement(
+      resolveScope({ scope: 'project', boundProjectId: ALPHA }),
+    )
+    const match = buildMatchQuery(planQuery(Q.threeCharCjk).tokens)
+    assert.notEqual(match, null)
+
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(index.status().dbPath)
+    try {
+      const plan = db
+        .prepare('EXPLAIN QUERY PLAN ' + statement.sql)
+        .all(match, ...statement.params, 33)
+        .map((row) => row.detail)
+        .join(' | ')
+      assert.equal(
+        plan.includes('MULTI-INDEX OR'),
+        false,
+        'the planner must not route the scope filter through MULTI-INDEX OR: ' + plan,
+      )
+      assert.equal(
+        plan.includes('VIRTUAL TABLE INDEX 0:=M3'),
+        false,
+        'the FTS match must constrain the scan, not the other way around: ' + plan,
+      )
+      assert.ok(plan.includes('notes_fts VIRTUAL TABLE INDEX'), plan)
+    } finally {
+      db.close()
+    }
+
+    // The plan is fixed, not the results: the same search still answers.
+    const hits = await searchNotes(index, {
+      query: Q.threeCharCjk,
+      scope: 'project',
+      projectId: ALPHA,
+    })
+    assert.ok(hits.length > 0)
+  },
+)
