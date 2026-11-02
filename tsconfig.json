@@ -11,6 +11,9 @@
     "skipLibCheck": true
   },
   "files": [
+    "lib/embedding-store.js",
+    "lib/hybrid-search.js",
+    "lib/hybrid-recall.js",
     "lib/curation-cli.js",
     "lib/curation-proposals.js",
     "lib/failure-streak.js",

@@ -56,7 +56,12 @@ const LAYERS = {
   // it sits above the host entry rather than becoming an import of that entry.
   'diagnostic-report': 11,
   'diagnose-cli': 12,
-  config: 0,
+  // Raised from 0 by the hybrid recall config (2026-11-02): the provider block is
+  // judged by ./retrieval-provider.js's own contract rather than a second copy of
+  // the loopback/dimension rules, so config gains one downward edge to that leaf.
+  // Every importer of config (lint L5, curation-scan L6, index L10) is above it, so
+  // the raise moves the module to the first layer that can see the provider.
+  config: 1,
   // Browser-only code and the bounded activity/HTTP helpers do not import
   // another repository module; the host entry composes them at L10.
   client: 1,
@@ -128,6 +133,24 @@ const LAYERS = {
   // with no repository import, so `retrieval-rank` (L1) can use it without the
   // lateral edge into `index-db` (L2) that a same-file tokenizer would create.
   'index-text': 0,
+  // The hybrid recall store (2026-11-02): one JSON file per vault+model, read at
+  // query time and rebuilt from hashes. L1 because it imports only the atomic
+  // primitives in ./fs-atomic.js (L0); its writer is local rather than
+  // ./receipts.js's because that module is L2 and a sideways edge would be
+  // refused by this very table. Nothing above it changes layer: ./search.js (L3)
+  // will read the store through an injected interface, not the other way round.
+  'embedding-store': 1,
+  // The hybrid shortlist: a lexical guard, weighted reciprocal-rank fusion and a
+  // cosine shortlist over an injected vector map. L2, not L3: it imports the RRF
+  // constant from retrieval-rank (L1) and nothing from search (L3) - search calls
+  // it, so the edge runs downward and the module stays pure (no index, no I/O).
+  'hybrid-search': 2,
+  // The hybrid runtime: warming, provider calls and the scope filter around the
+  // pure fusion. L3 because it composes the store (L1), the provider contract
+  // (L0) and the shortlist (L2), and calls the already-open index through its
+  // method rather than importing index-db (L2) - no lateral edge, no cycle with
+  // search (L3), which never imports this module.
+  'hybrid-recall': 3,
   'index-db': 2,
   // The pure halves of the 概览 aggregates: day arithmetic, the activity window
   // and bucketing, the project-scope predicate and the tag ranking. Extracted from
@@ -301,6 +324,17 @@ const BUDGETS = {
   // without them the journal wrote `other` where the ring had the token.
   'lib/diagnostic-codec.js': 300,
   'lib/diagnostic-journal.js': 300,
+  // The embedding store's first version measured 310 lines: 13 tests pin its
+  // incremental sync, corruption rebuild, batching and atomic write, and the
+  // module owns a local atomic copy because ./receipts.js is L2. 330 is measured
+  // plus 20, inside the usual measured-plus-30 rule.
+  'lib/embedding-store.js': 330,
+  // measured 150 lines plus 30 for the guard/fusion branches the Phase 2 gate
+  // work will add without reopening this budget.
+  'lib/hybrid-search.js': 180,
+  // measured 276 lines plus 30: the streaming warm, the scope filter and the
+  // fallback branches are why it is larger than the pure half.
+  'lib/hybrid-recall.js': 320,
   'lib/diagnostic-report.js': 350,
   'lib/diagnose-cli.js': 100,
   'lib/assets.js': 600,
@@ -623,7 +657,11 @@ const BUDGETS = {
   // the final message carried, the continuation planner with its two-per-generation
   // cap, discard-on-rejected-plan, and the epoch bump on clear/compact. Measured
   // 1841 formatted lines; measured-plus-30 is 1871, rounded to 1900.
-  'lib/hooks.js': 1900,
+  // Raised from 1900 by the dense half's previous-prompt context: the state field,
+  // the capture before the search and the one argument passed through. The lexical
+  // branch's query is unchanged; only a fused retriever reads it. Measured 1909
+  // formatted lines; measured-plus-30 is 1939, rounded to 1940.
+  'lib/hooks.js': 1940,
   // Raised from 600 by the hot-zone deadlock fix (1069 formatted lines measured;
   // measured-plus-30 is 1099, which rounds up to 1100). What the 469 lines buy:
   // archival that can tell a pointer line from an entry — the reported bug, since
@@ -1080,11 +1118,12 @@ const BUDGETS = {
   // tokenizer and the same project-scoped search as `mem_search`, and putting it
   // anywhere else would either duplicate the tokenizer or point a layer upward.
   // Raised from 250 by the v0.4 sparse engine: measured 595 formatted lines;
-  // measured-plus-30 is 625, rounded to 650. The engine lives here because Task 3
-  // has no new module for it: chunking, source verification, the bounded candidate
-  // set, the RRF fusion and the lexical fallback are one policy that the caller
-  // must not be able to half-apply.
-  'lib/search.js': 650,
+  // measured-plus-30 is 625, rounded to 650; the hybrid branch then added 90 for
+  // its dispatch, its lexical shortlist and the two fact-attachers, measured 692
+  // formatted lines, so the budget moves to 730. The engine lives here because
+  // chunking, source verification, the bounded candidate set, the RRF fusion and
+  // the lexical fallback are one policy the caller must not be able to half-apply.
+  'lib/search.js': 730,
   // The v0.4 sparse baseline: 302 and 607 formatted lines measured; measured-plus-30
   // is 332 and 637, rounded to 350 and 650. The ranker reuses `index-db`'s
   // tokenizer rather than copying it; the provider contract validates an explicitly
@@ -1095,7 +1134,14 @@ const BUDGETS = {
   // now answers *why* it was silent (`RECALL_OUTCOMES`), which is what makes the
   // firing rate readable from `mem_admin(action="diagnostics")` instead of from
   // parsed session transcripts, and it carries the floor cap the replay chose.
-  'lib/prompt-recall.js': 220,
+  // Raised from 220 by Phase 2's gate and near-miss tier: 298 formatted lines
+  // measured, measured-plus-30 rounds to 330. What the 78 lines buy: the raised
+  // token floor (one constant and one comparison), the near-miss candidate
+  // selector that re-checks the same eligibility rules, the one-line hint copy,
+  // and the branch that reports the new outcome. Both changes are policy, so
+  // they stay beside the floor they replace rather than moving into a module
+  // that would have to re-import the eligibility rules.
+  'lib/prompt-recall.js': 330,
   // Raised from 1950 when the diagnostics action's schema landed here. This file
   // is the one the split is for, so the raise is explicitly temporary: the next
   // structural change reduces it to a façade and lowers this number with it.
@@ -1130,7 +1176,10 @@ const BUDGETS = {
   // measured-plus-30 is 1172, rounded to 1200.
   // Raised from 1200 by the digest action/operation/days and its closed result
   // arm: measured 1275 formatted lines; measured-plus-30 is 1305, rounded to 1350.
-  'lib/tool-schema.js': 1350,
+  // Raised from 1350 by the hybrid recall diagnostic fields (`engine`,
+  // `denseCandidates`, `embedMs`, `fallback`). Measured 1356 formatted lines;
+  // measured-plus-30 is 1386, rounded to 1400.
+  'lib/tool-schema.js': 1400,
   'lib/tool-registry.js': 250,
   // Raised from 1100 when the explicit-retry wake-up landed here: `kickQueueWorker`
   // is threaded through the option record and the one action that owns retrying, so
@@ -1215,7 +1264,10 @@ const BUDGETS = {
   // the query. That counter is what the frozen baseline and the Phase 1
   // comparison are scored from; the alternatives were production telemetry with
   // no query-free counter, or a judge that reads note bodies.
-  'lib/services.js': 2000,
+  // The hybrid wiring (lazy handle + search facts) added 53 measured lines, and
+  // measured-plus-30 rounds up to 2100; the orchestration itself stays in
+  // hybrid-recall, so this is the growth the service layer was expected to take.
+  'lib/services.js': 2100,
   // Raised from 2200 by Task 7 (2229 formatted lines measured; measured-plus-30
   // rounds up to 2300, which is this number — the entry above the old one had no
   // note of its own, so this number states the rule it follows). What the 29 lines
