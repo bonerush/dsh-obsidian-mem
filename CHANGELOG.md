@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 1.0.6 — 2026-11-02
+
 ### Added
 
 - **图谱默认按记忆类型上色，采用一组莫兰迪（灰调低饱和）配色。** 颜色组不再默认为空：
