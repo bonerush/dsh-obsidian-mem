@@ -159,6 +159,28 @@ test('the recall event records a decision and counts, never the query or a path'
   }
 })
 
+test('the search event records result counts and duration, never the query', () => {
+  // A retrieval change cannot be judged from inside the plugin today: the ring has
+  // no search event at all, and the one query that would explain a miss is exactly
+  // the content the ring is forbidden to keep. This event keeps the decision and
+  // the cost, not the question.
+  const diagnostics = createDiagnostics({ now: fixedClock })
+  diagnostics.event('search', { outcome: 'ok', hits: 2, ms: 7, query: 'SENTINEL-QUERY' })
+  diagnostics.event('recall', { outcome: 'fired', hits: 5, accepted: 2, injected: 1, chars: 12 })
+  diagnostics.event('recall', { outcome: 'fired', accepted: -1, injected: 1.5 })
+  const { events } = diagnostics.snapshot()
+  assert.equal(events.length, 3, 'search and recall are both allowlisted categories')
+  assert.equal(events[0].event, 'search')
+  assert.equal(events[0].outcome, 'ok')
+  assert.equal(events[0].hits, 2)
+  assert.equal(events[0].ms, 7)
+  assert.equal(events[1].accepted, 2)
+  assert.equal(events[1].injected, 1)
+  assert.equal(events[2].accepted, undefined, 'a negative count is dropped')
+  assert.equal(events[2].injected, undefined, 'a fractional count is dropped')
+  assert.equal(JSON.stringify(events).includes('SENTINEL-QUERY'), false)
+})
+
 test('a sentinel body cannot survive the round trip through a real write path', () => {
   const sentinel = 'SENTINEL-BODY-' + randomUUID()
   const diagnostics = createDiagnostics({ now: fixedClock })

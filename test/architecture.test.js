@@ -1207,7 +1207,15 @@ const BUDGETS = {
   // deadline together: measured 1920 formatted lines after rebasing. The clock
   // keeps the owned digest deterministic across UTC days; the deadline bounds
   // slow-disk reads. Measured-plus-30 is 1950; the existing 1950 budget holds.
-  'lib/services.js': 1950,
+  // Raised from 1950 by the Phase 0 measurement work (1968 lines measured after
+  // the change; measured-plus-30 is 1998, which rounds up to 2000). What the 48
+  // lines buy: the `search` diagnostics event — one timing record around the one
+  // retrieval seam both the prompt path and `mem_search` go through, so the ring
+  // can answer "did retrieval run, how many hits, how long" without ever storing
+  // the query. That counter is what the frozen baseline and the Phase 1
+  // comparison are scored from; the alternatives were production telemetry with
+  // no query-free counter, or a judge that reads note bodies.
+  'lib/services.js': 2000,
   // Raised from 2200 by Task 7 (2229 formatted lines measured; measured-plus-30
   // rounds up to 2300, which is this number — the entry above the old one had no
   // note of its own, so this number states the rule it follows). What the 29 lines

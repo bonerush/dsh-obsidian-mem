@@ -101,6 +101,8 @@ test('a recall decision reports why it was silent, and how much it saw', async (
   assert.equal(below.text, null)
   assert.equal(below.hits, 2)
   assert.equal(below.chars, 0)
+  assert.equal(below.accepted, 0, 'nothing passed the gate')
+  assert.equal(below.injected, 0, 'nothing was offered')
   assert.deepEqual(below.paths, [])
 
   const tooShort = await promptRecall({ prompt: '好', search: async () => [] })
@@ -119,6 +121,8 @@ test('a recall decision reports why it was silent, and how much it saw', async (
   assert.equal(fired.outcome, 'fired')
   assert.equal(fired.hits, 1)
   assert.equal(fired.chars, [...fired.text].length)
+  assert.equal(fired.accepted, 1, 'the gate accepted the one candidate')
+  assert.equal(fired.injected, 1, 'and the map carried it')
   assert.deepEqual(fired.paths, [path])
 })
 

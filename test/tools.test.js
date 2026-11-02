@@ -834,6 +834,23 @@ test('mem_admin(action="diagnostics") answers through the real seam without a va
   assert.match(refused.error.message, /does not accept/)
 })
 
+test('mem_search records one search event with counts and duration, never the query', async (t) => {
+  // The diagnostics side of the retrieval measurement: the ring must be able to
+  // answer "did the service run, how many results, how long" without holding the
+  // one thing a reader would most like to see, the query text.
+  const { services, diagnostics } = await curationServices(t, { notes: 2 })
+  const ctx = await toolbed(t)
+  registerTools(ctx, services)
+  const result = await call(ctx, 'mem_search', { query: '记忆条' })
+  assert.equal(result.isError, false, result.error?.message)
+  const events = diagnostics.snapshot().events.filter((event) => event.event === 'search')
+  assert.equal(events.length, 1)
+  assert.equal(events[0].outcome, 'ok')
+  assert.ok(Number.isInteger(events[0].hits) && events[0].hits > 0)
+  assert.ok(Number.isInteger(events[0].ms) && events[0].ms >= 0)
+  assert.equal(JSON.stringify(events).includes('记忆条'), false, 'the query never enters the ring')
+})
+
 test('mem_admin(action="digest") validates through the real tool runtime', async (t) => {
   const world = await makeCurationWorld(t)
   const agent = { session: { header: { id: 'sess-digest', cwd: world.repo } } }

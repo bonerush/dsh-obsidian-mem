@@ -107,6 +107,20 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Changed
 
+- **诊断窗口补齐召回漏斗：新增 `search` 事件，`recall` 带 `accepted`/`injected`，`brief` 的 injected 事件带 `chars`。**
+  过去只能看到召回的结果状态，无法区分「闸门接受了几条」「最终注入了几条」「简报注入多少字符」；
+  `mem_search` 更不产生任何事件，评估时读不到工具侧检索。现在 `lib/debug.js` 的事件白名单加
+  `search`（落在 skill 与 recall 之间）、FIELDS 加两个非负整数字段；`lib/services.js` 的
+  `services.search` 计时并记录 `ok`/`failed` 后原样返回或重抛；`lib/prompt-recall.js` 的每个
+  决策携带 accepted/injected；`lib/hooks.js` 落库两个计数与简报字符数。事件仍然内容无涉：
+  不记录 query、路径或标题。
+  - 证据：`node --test test/debug.test.js test/prompt-recall.test.js test/diagnostic-codec.test.js`
+    35/35 通过；`test/tools.test.js` 41/41；`test/hooks.test.js` 64 通过、唯一失败是
+    `lib/services.js` 架构预算（1,920→1,968 行），预算 1,950→2,000 并注明换来的行为；
+    `test/architecture.test.js` 8/8；完整套件 `npm test`：1,505 项、1,504 通过、0 失败、1 跳过（197 s）。
+  - 未测：新增事件与字段尚未在真实会话的诊断窗口里采到样本（本轮改动未提交，诊断环仍是
+    33 run / 3,219 events 的旧窗口）；等 Phase 1 在真实会话上复核。
+
 - **三个模块的尺寸预算按实测抬升：`lib/note-health.js` 300→400、`lib/vault.js` 1800→1850、
   `lib/curation-scan.js` 1350→1450。** 分别由行内代码链接审计（344 行实测）、非 git 祖先指针
   （1,809 行实测）、deadline 先于 manifest 遍历（1,392 行实测）带来，沿用「实测 +30 向上取整
