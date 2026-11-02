@@ -37,6 +37,7 @@ import { validateConfig } from '../lib/config.js'
 import { createDiagnostics } from '../lib/debug.js'
 import { openDiagnosticJournal } from '../lib/diagnostic-journal.js'
 import { resolveDataRoot } from '../lib/paths.js'
+import { searchEnvelope } from '../lib/tool-schema.js'
 import { TOOL_NAMES, TOOL_PARAMETERS, createMemoryServices } from '../lib/tools.js'
 
 /** The MCP revision this server implements; `initialize` echoes the client's when it sends one. */
@@ -173,7 +174,11 @@ export async function callMemoryTool(memory, name, args = {}) {
     throw new RangeError(
       `unknown tool ${JSON.stringify(name)}; this server exposes ${TOOL_NAMES.join(', ')}`,
     )
-  return memory.services[service](args)
+  const result = await memory.services[service](args)
+  // mem_search's facts are non-enumerable on the service's hits array; MCP sends
+  // JSON, which would drop them silently. Build the same envelope the DSH tool
+  // returns so a Codex caller can tell a window-cut answer from a complete one.
+  return service === 'search' ? searchEnvelope(result) : result
 }
 
 /** ISO-8601 with milliseconds, for stderr diagnostics only. */

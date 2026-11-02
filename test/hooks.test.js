@@ -2271,7 +2271,7 @@ test('failures retrieve in the same turn after its initial prompt lookup', async
   const claimed = [
     { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '修复编译问题' }] },
   ]
-  await h.preStep(agent, undefined, undefined, { turn: 1, messages: claimed })
+  const first = await h.preStep(agent, undefined, undefined, { turn: 1, messages: claimed })
   events.push(
     ...failingPair('a', 'bash', 1, 1),
     ...failingPair('b', 'bash', 3, 2),
@@ -2284,7 +2284,126 @@ test('failures retrieve in the same turn after its initial prompt lookup', async
     'a turn can have many tool steps; its prompt lookup must not block a failure lookup',
   )
   assert.equal(promptMaps(decision).length, 1)
-  assert.ok([...promptMaps(decision)[0].content[0].text].length <= RECALL_BUDGET)
+  // The two sites share one per-turn allowance. The first lookup found nothing, so
+  // the whole budget was still there for the failure map; what matters is that the
+  // turn as a whole never goes over it.
+  const maps = [first, decision].flatMap(promptMaps)
+  const spent = maps.reduce((total, message) => total + [...message.content[0].text].length, 0)
+  assert.ok(spent <= RECALL_BUDGET, `one turn spent ${spent} cp of recall, over ${RECALL_BUDGET}`)
+})
+
+test('the two recall sites of one turn share one recallBudgetChars ceiling', async (t) => {
+  const diagnostics = createDiagnostics()
+  const calls = []
+  const hit = (name, fill) => ({
+    path: `${RELATIVE_DIR}/Pitfalls/${name}.md`,
+    title: '',
+    snippet: fill.repeat(200),
+    scoreSignals: ['title-contains', 'token-hits:5'],
+  })
+  const h = bed(t, {
+    diagnostics,
+    search: async (args) => {
+      calls.push(args.query)
+      // The prompt lookup spends about a third of the allowance. The failure lookup
+      // then asks for a map that would overflow the turn if it spent a fresh 900.
+      return calls.length === 1
+        ? [hit('a', 'a'), hit('b', 'b')].map((entry) => ({
+            ...entry,
+            snippet: entry.snippet.slice(0, 100),
+          }))
+        : [hit('c', 'c'), hit('d', 'd'), hit('e', 'e')]
+    },
+  })
+  const events = []
+  const agent = agentWithEvents(events)
+  const claimed = [
+    { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '修复编译问题' }] },
+  ]
+  const first = await h.preStep(agent, undefined, undefined, {
+    turn: 1,
+    step: 1,
+    messages: claimed,
+  })
+  events.push(
+    ...failingPair('a', 'bash', 1, 1),
+    ...failingPair('b', 'bash', 3, 2),
+    ...failingPair('c', 'bash', 5, 3),
+  )
+  const decision = await h.preStep(agent, undefined, undefined, { turn: 1, step: 2 })
+  assert.equal(calls.length, 2, 'both triggers really searched inside this one turn')
+  assert.equal(promptMaps(first).length, 1, 'the prompt lookup injected its map')
+  const second = promptMaps(decision)
+  assert.equal(second.length, 1, 'the failure lookup still injects what the remainder allows')
+  assert.equal(
+    decision.messages.filter((message) => message.source.trigger === 'failure').length,
+    1,
+  )
+  const lengths = [first, decision]
+    .flatMap(promptMaps)
+    .map((map) => [...map.content[0].text].length)
+  const spent = lengths.reduce((total, chars) => total + chars, 0)
+  assert.ok(
+    spent <= RECALL_BUDGET,
+    `the turn injected ${spent} cp, over the ${RECALL_BUDGET} ceiling`,
+  )
+  // The second site spent the remainder rather than a fresh budget.
+  assert.ok(
+    lengths[1] <= RECALL_BUDGET - lengths[0],
+    `the second map (${lengths[1]}) outgrew the ${RECALL_BUDGET - lengths[0]} cp left by the first`,
+  )
+  // Diagnostics keep reporting what was actually injected, not the nominal budget.
+  const recallEvents = diagnostics
+    .snapshot()
+    .events.filter((event) => event.event === 'recall' && event.outcome === 'fired')
+  assert.deepEqual(
+    recallEvents.map((event) => event.chars),
+    lengths,
+  )
+})
+
+test('a new turn resets the shared recall budget', async (t) => {
+  const calls = []
+  const h = bed(t, {
+    search: async () => {
+      calls.push(1)
+      return ['a', 'b', 'c'].map((suffix) => ({
+        path: `${RELATIVE_DIR}/Pitfalls/turn${calls.length}${suffix}.md`,
+        title: '',
+        snippet: 'x'.repeat(200),
+        scoreSignals: ['title-contains', 'token-hits:5'],
+      }))
+    },
+  })
+  const agent = agentFor()
+  h.start(agent)
+  const first = await h.preStep(agent, undefined, undefined, {
+    turn: 1,
+    messages: [
+      {
+        role: 'user',
+        source: { kind: 'user' },
+        content: [{ type: 'text', text: '修复编译问题甲' }],
+      },
+    ],
+  })
+  const second = await h.preStep(agent, undefined, undefined, {
+    turn: 2,
+    messages: [
+      {
+        role: 'user',
+        source: { kind: 'user' },
+        content: [{ type: 'text', text: '修复编译问题乙' }],
+      },
+    ],
+  })
+  const lengths = [first, second].map(
+    (decision) => [...promptMaps(decision)[0].content[0].text].length,
+  )
+  // The first turn nearly exhausted the allowance; the second still gets a full map,
+  // which it could only do if the ledger was reset with the turn.
+  assert.ok(lengths[1] > RECALL_BUDGET - lengths[0], 'the next turn must not inherit the spend')
+  assert.ok(lengths[1] <= RECALL_BUDGET)
 })
 
 test('failureRecall: false disables the path without disabling the brief', async (t) => {

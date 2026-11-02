@@ -107,8 +107,8 @@ async function bindingOf(world) {
  * machine load. Measured with the suite under eight concurrent fsync loaders (3.2x),
  * four of those cases failed with `time-budget` against a fixture of a handful of
  * notes. The two cases that are *about* the deadline keep it honest by passing their
- * own clock (`maxMs: 0` still truncates before the first read, and the stepped
- * 100-ms clock still reaches a 250-ms budget after two notes); a case that wants the
+ * own clock (`maxMs: 0` still truncates before the walk reads a directory, and a
+ * stepped clock reaches its budget inside the walk); a case that wants the
  * real clock can pass one and override this default.
  */
 function scan(world, binding, options = {}) {
@@ -863,6 +863,31 @@ test('inspectCurationNote reports a dead link only when it is given a resolver',
   assert.deepEqual(alive.findings, [])
 })
 
+test('a live link whose target quotes inline code is not read as dead', () => {
+  // Obsidian resolves the text between [[ and ]], backticks and all, so a
+  // convention title that quotes a path in inline code is a live target. The
+  // old mask collapsed the code span before the link was read, which turned
+  // that live link into a dead one whose reported target no longer existed.
+  const coded = '[[Projects/p/Conventions/含 `$DSH_HOME/配置.yml` 的约定|别名]]'
+  const path = 'Projects/p/Conventions/index.md'
+  assert.deepEqual(
+    noteLinkFindings(coded, path, () => true),
+    [],
+  )
+  assert.deepEqual(
+    noteLinkFindings(coded, path, () => false).map((finding) => finding.target),
+    ['Projects/p/Conventions/含 `$DSH_HOME/配置.yml` 的约定'],
+  )
+  // Masking still hides what sits inside code: a fenced block's links are not
+  // links, it is only the code inside a target that must survive the mask.
+  assert.deepEqual(
+    noteLinkFindings('```\n[[甲]]\n```\n[[乙]]', 'a/b.md', () => false).map(
+      (finding) => finding.target,
+    ),
+    ['乙'],
+  )
+})
+
 test('the shared note-health helpers keep the linter vocabulary', () => {
   // `today` is the linter's local date; a date equal to it is not yet due, and a
   // history note is never due however old its `review_after` is.
@@ -1000,7 +1025,10 @@ test('maxMs: 0 reports a time budget without reading a note', async (t) => {
   assert.deepEqual(result.examinedPaths, [])
   assert.deepEqual(result.entries, [])
   assert.deepEqual(result.findings, [])
-  assert.equal(result.cursor.afterPath, null)
+  // The walk never ran, so no cursor may be published over the manifest it could
+  // not walk: a pass that never saw the tree leaves the stored cursor alone instead
+  // of moving it onto a count it knows is only a floor.
+  assert.equal(result.cursor, null)
   // Nothing was inspected, so nothing was recorded.
   await assert.rejects(stat(curationRecordDir(world.dataRoot, binding.projectId)), {
     code: 'ENOENT',
@@ -1008,17 +1036,82 @@ test('maxMs: 0 reports a time budget without reading a note', async (t) => {
   assert.deepEqual(await hashTree(world.vault), before)
 
   // A deadline reached mid-pass stops before the *next* read rather than at the
-  // end of the manifest: two notes fit in 250 ms of this stepped clock, the third
-  // does not start.
+  // end of the manifest. The stepped clock is also charged for the manifest walk
+  // (one check before it, one per directory), so the budget is set to outlast the
+  // walk plus two notes: the third note's check is the first to reach it.
   let ticks = 0
   const stepped = await scan(world, binding, {
-    maxMs: 250,
+    maxMs: 1150,
     maxNotes: 100,
     clock: () => (ticks += 100),
   })
   assert.equal(stepped.truncatedReason, 'time-budget')
   assert.equal(stepped.complete, false)
   assert.equal(stepped.examined, 2)
+})
+
+test('an expired deadline stops before the manifest walk, so the count is a floor', async (t) => {
+  const { world, binding } = await worldWithNotes(t, 3)
+  const fullManifest = await manifestOf(world, binding)
+
+  // Zero is already expired when the pass starts: not one directory may be read,
+  // so the only honest manifest is the empty one and the report must say its count
+  // is a floor rather than the project's size.
+  const starved = await scan(world, binding, { maxMs: 0, maxNotes: 10 })
+  assert.equal(starved.truncatedReason, 'time-budget')
+  assert.equal(starved.complete, false)
+  assert.equal(starved.examined, 0)
+  assert.equal(starved.manifest.count, 0)
+  assert.equal(starved.manifest.truncated, true)
+  assert.equal(starved.cursor, null)
+  assert.deepEqual(starved.findings, [])
+
+  // A later pass with a real budget walks the whole tree, so the floor above was a
+  // stop and not a permanent state: the next pass repairs `complete` and the count.
+  const recovered = await scan(world, binding, { maxMs: NO_TRUNCATION_MS })
+  assert.equal(recovered.complete, true)
+  assert.equal(recovered.manifest.count, fullManifest.length)
+  assert.equal(recovered.manifest.truncated, false)
+  assert.ok(recovered.cursor.afterPath)
+})
+
+test('a deadline reached during the walk stops it before the whole manifest', async (t) => {
+  const { world, binding } = await worldWithNotes(t, 1)
+  // Enough directories that the walk cannot reach its end before the budget does.
+  // Written straight into the vault: this case is about the walk's own clock checks,
+  // not about what a note contains or how the service layer writes it.
+  for (let index = 0; index < 12; index += 1) {
+    const suffix = String(index).padStart(12, '0')
+    await writeRaw(
+      world,
+      `${binding.relativeDir}/Walk ${String(index).padStart(2, '0')}/note.md`,
+      handNote({ id: `doc-00000000-0000-4000-8000-${suffix}`, title: `走 ${index}` }),
+    )
+  }
+  const fullManifest = await manifestOf(world, binding)
+  const whole = await scan(world, binding, { maxMs: NO_TRUNCATION_MS })
+  assert.equal(whole.complete, true)
+  assert.equal(whole.manifest.count, fullManifest.length)
+
+  // 100 ms per consultation: the walk's own checks must exhaust 700 ms before the
+  // last directories are read, and no note may be inspected once the walk stopped.
+  let ticks = 0
+  const stepped = await scan(world, binding, {
+    maxMs: 700,
+    maxNotes: 100,
+    clock: () => (ticks += 100),
+  })
+  assert.equal(stepped.truncatedReason, 'time-budget')
+  assert.equal(stepped.complete, false)
+  assert.equal(stepped.examined, 0)
+  assert.ok(stepped.manifest.count > 0, 'the walk must have started before the deadline')
+  assert.ok(
+    stepped.manifest.count < fullManifest.length,
+    'the walk must stop short of the whole manifest',
+  )
+  assert.equal(stepped.manifest.truncated, true)
+  // The stored cursor is left where the last completed pass put it.
+  assert.deepEqual(stepped.cursor, whole.cursor)
 })
 
 test('a truncated pass is never complete, even when the backfill behind it is', async (t) => {

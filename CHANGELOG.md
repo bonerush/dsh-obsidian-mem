@@ -11,6 +11,113 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Fixed
+
+- **链接目标本身引用行内代码的活链接不再被误报为 `dead-wikilink`。** `noteLinkAudit` 原来先用
+  `proseWithoutCode` 把行内代码整段抹成空格、再从抹过的行里抽 wikilink，于是目标里带代码的
+  链接会被打残成不存在的路径：真实 vault 中 `Conventions/index.md:87` 指向
+  `` …/绝不替用户修改配置文件（含 `$DSH_HOME cordis.patch.yml`）.md `` 的链接（文件存在）、
+  `Inbox/index.md:36` 与 `Decisions/index.md:40` 的同形提案都是这样产生的，curation 会把它们
+  当成待处理的断链。现在 `lib/note-health.js` 增加 `proseLines()`、`inlineCodeSpans()` 与
+  `insideSpans()`，审计逐行扫原文、只跳过开口 `[[` 落在代码 span 内的匹配，目标取原文；
+  `proseWithoutCode` 仍只服务语言检查，输出不变。
+  - 证据：`node --test test/curation-scan.test.js test/lint.test.js` 54/54 通过。新增用例
+    「a live link whose target quotes inline code is not read as dead」在改动前失败
+    （actual `['Projects/p/Conventions/含   的约定']`）、改动后通过。
+
+- **非 git 目录树的子目录会话复用祖先指针，不再静默分裂成第二个项目。** `resolveBinding`
+  过去只在 `cwdReal` 精确位置读 `.obsidian-mem`：在 `root` 做过 `bind local` 之后，从
+  `root/src` 开的会话拿到 `no-git-root` 并提示再绑一次，照做会铸出第二个 projectId
+  （实测 root `7bbe7fa3-…` 与 src `19ada2c8-…` 两个 id），同一目录树的记忆被拆成两半。
+  现在 `lib/vault.js` 新增 `findPointerRoot()`，镜像 `findGitRoot()` 从 cwd 向上找最近的
+  指针：最近祖先优先、不跟随 symlink、损坏的指针也采纳（目录本身就是绑定证据）；无 git 根时
+  `resolveBinding` 改用它，`fork`/`retain` 也作用于持指针的 root，损坏祖先指针报精确的
+  `pointer-*` 而不是被吞成 `no-git-root`。探测只做 lstat，读路径绝不铸新指针，真正未绑定的
+  目录仍照旧拒绝。
+  - 证据：`node --test test/binding.test.js` 73/73 通过（66 条基线 + 7 条新增，新增用例中
+    6 条在改动前失败）；`test/lint.test.js` 33/33 通过。git worktree 的绑定语义未变，
+    1.0.7 的两条回归保持通过。
+
+- **索引就地修复一条过期候选后重新应用检索过滤，被编辑出范围的来源不会再泄漏一次。**
+  `verifyCandidate` 会重新解析一条源文件已变的候选并回写，但它只重查 `status`，没有重放
+  `matchesFilters`：一条被改成 superseded 的约定会在重新索引的那次搜索里仍被返回、下一次
+  搜索才消失——一次性泄漏。现在候选把 `plan.filters` 带进校验，回写后若不匹配即返回 null；
+  候选窗口本来就是用旧缓存事实选出的，这个重查补的正是那段时间差。
+  - 证据：新增 `test/search-source-eligibility.test.js` 3 条（默认搜索不再返回改为 superseded
+    的笔记、`includeHistory` 仍可见；type 改变后旧 type 下消失、新 type 下可见；项目移动后
+    旧 scope 下消失、`scope='all'` 可见），改动前 3/3 失败（actual
+    `['Projects/elig--5f1b2d3c/Pitfalls/race.md']`），改动后通过；配套检索套件 36/36 通过，
+    加 `test/search-engine.test.js` 47/47 通过。
+
+- **搜索的截断事实穿过 service 与工具边界，`mem_search` 现在返回 `truncated`、
+  `truncationReason`、`candidateWindow`、`rowsExamined`、`candidatesScored`。** 索引层早就把
+  这五个 non-enumerable 事实挂在命中数组上，但 `lib/services.js` 的 `hits.map(toHitView)` 与
+  `lib/tool-registry.js` 的 `{ hits }` 把它们丢光：被候选窗口截断的搜索看起来和完整成功一样。
+  现在 `lib/tool-schema.js` 导出 `SEARCH_FACTS` 与 `searchEnvelope()`（以 `Array.from` 复制出
+  干净数组，再把存在的字段放进信封——带 non-enumerable 属性的数组不是宿主 lossless-JSON
+  快照接受的“未装饰”数组，直接透传会被判 `returned invalid output`）；`services.search` 用
+  `projectHits()` 让 service 边界保留这些事实，`mem_search` 返回信封，Codex MCP 适配器同样
+  改用 `searchEnvelope()`，否则 JSON 序列化会静默丢弃。schema 把这五个字段列为可选，因为
+  测试替身仍可能只返回 `{ hits }`。
+  - 证据：新增 `test/retrieval-envelope.test.js` 3 条（`limit:1` 触发窗口：`truncated:true`、
+    `candidate-window:24`、24/25/24；无匹配查询：`truncated:false`、
+    `truncationReason:null`、`candidatesScored:0`；service 边界的事实存在且 non-enumerable），
+    改动前 3/3 失败（undefined），改动后 3/3 通过；`test/tools.test.js`、
+    `tools-facade`、`codex-mcp`、`export-surface` 共 61/61 通过，Codex 的 round-trip 断言
+    信封字段而不是裸数组。
+
+- **同一用户回合里的 prompt recall 与 failure recall 共用一份 `recallBudgetChars`，一步最多
+  注入一份检索结果、一回合合计不超过 900 码点。** 两个触发点原来各自用满 900：prompt 查找
+  每轮一次，failure 查找在同一回合的后一个 step 还能再花 900，实测一轮注入 1,135 cp。现在
+  `lib/hooks.js` 在换回合时重置 `recallTurn`/`recallSpentChars`，两处都先读剩余额度、按实际
+  注入扣减；failure 触发在余量不足 90 码点时不再计算查询（不消费这条 run，留到后续回合），
+  “一步最多一次检索”的既有约束不变。
+  - 证据：`node --test test/hooks.test.js` 57/57 通过。新增用例在改动前失败
+    （`the turn injected 1135 cp, over the 900 ceiling`），改动后断言两次注入合计 ≤900、
+    第二次 ≤900−第一次、诊断 `chars` 等于实际注入长度；另加一条「新回合重置预算」。
+    prompt-recall、recall-eligibility、retrieval-*、delivery-integration 回归 44/44 通过。
+
+- **curation 的墙钟截止时间在遍历 manifest 之前生效，超时的 pass 不再先读完整棵树再宣称
+  覆盖。** `maxMs` 原来在 `walkManifest` 返回之后才第一次检查，一次 pass 可以先付掉整个目录树
+  的 readdir，`maxMs:0` 的测试甚至还能拿到游标。现在 `lib/curation-scan.js` 的 deadline 谓词在
+  进入 walk 前和每读一个目录前各查一次（只读时钟，不新增 I/O）；被截止的 walk 报
+  `time-budget`、`manifest.truncated:true`（其 `count` 是下界）、不发布游标、也不再枚举 vault
+  根目录，部分指纹不会与游标比较出一次假的“manifest 已移动”。
+  - 证据：`test/curation-scan.test.js` 新增两条（`maxMs:0` → count 0、truncated、cursor
+    null；12 个目录的步进时钟在树中途停下 → 0 < count < 全体、`time-budget`、游标保持
+    不变），与 `test/curation-proposals.test.js` 共 38/38 通过，全部 9 个 curation 测试文件
+    134/134 通过；改动前 4 条 deadline 用例有 3 条失败（cursor 对象、count 11≠0、
+    「未在整树前停下」）。
+
+- **被预算截断的 hot 增量简报给出回到被省略条目的真实路由，不再只剩一个 `omitted N`。**
+  delta 模式没有自己的可翻页 section key，因此一直关掉 coverage note，截断时只打印短计数，
+  被省略的变更条目要等 hot 下一次变化才可能重试。现在 `lib/brief-coverage.js` 的
+  `composeBrief` 增加可选 `omissionNotice(coverage)`，注释链变成 coverage note → caller
+  route → 短计数，预算不够时先退掉 route 也绝不拒绝简报；`lib/brief.js` 的 delta 分支用
+  `mem_brief(section="hot", offset=N, limit=20)` 指向首个被丢弃变更条目的 hot 页位置
+  （`pageBrief` 的 hot 页顺序就是 `hot.items` 过滤可注入 section，同一个事实源，没有第二份
+  清单；定位不到时退回 `mem_read(path=hot 文件)`）。代价明确：route 与正文抢同一个预算，
+  700 cp 的紧预算下 route 优先、0 条变更正文进入简报（此前是 1 条正文、0 条路由）——一个能
+  翻页的省略，比一条露出来、其余看不见的正文更接近可恢复。
+  - 证据：`node --test test/brief.test.js test/brief-page.test.js test/hot-delivery.test.js`
+    共 66/66 通过。新增 `assertHotRoute` 助手解析简报里的路由、用真实 `pageBrief` 翻到该页，
+    并断言首个被丢弃条目的稳定 id 在页上；独立探针（全新 vault、3 条 455 cp 变更条目）在
+    budget 700 得到 offset=1、页返回 A/B/C、首个 id 可解析，budget 900 得到 offset=2、页从 B
+    起且不含已展示的 A；完整 delta 不带路由、截断的 delta 带路由，两者都被钉住。
+
+### Changed
+
+- **三个模块的尺寸预算按实测抬升：`lib/note-health.js` 300→400、`lib/vault.js` 1800→1850、
+  `lib/curation-scan.js` 1350→1450。** 分别由行内代码链接审计（344 行实测）、非 git 祖先指针
+  （1,809 行实测）、deadline 先于 manifest 遍历（1,392 行实测）带来，沿用「实测 +30 向上取整
+  到 50」的既有规则；理由写在 `test/architecture.test.js` 的预算表注释里，包括每条增长换来的
+  行为，而没有新增模块或层。
+  - 证据：`node --test test/architecture.test.js` 8/8 通过。
+
+- 证据（整套门禁）：`npm run check` 退出码 0——lint、`format:check`、`types` 通过，测试套件
+  1,503 项 1,502 通过 / 0 失败 / 1 跳过（198.4 s），`verify-pack` 与真实 tarball 校验通过
+  （89 个条目 / 79 个 lib 模块）。
+
 ## 1.0.7 — 2026-11-02
 
 ### Fixed

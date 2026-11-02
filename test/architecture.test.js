@@ -389,7 +389,13 @@ const BUDGETS = {
   // the coverage rules a bounded pass has to keep honest, the state module carries
   // the permission, size and version checks for three documents, and note-health
   // carries the linter's own wording so the two cannot drift.
-  'lib/note-health.js': 300,
+  // Raised from 300 by the link audit's inline-code handling (344 formatted lines
+  // measured; measured-plus-30 is 374, rounded up to 400). What the lines buy:
+  // `proseLines`, `inlineCodeSpans` and `insideSpans` let the audit skip a
+  // wikilink whose opening `[[` sits inside a code span instead of masking the
+  // span first — the mask blanked code inside a *target* and invented dead links
+  // for live notes such as a convention that quotes `$DSH_HOME cordis.patch.yml`.
+  'lib/note-health.js': 400,
   // Raised from 800 by Task 4 (890 formatted lines measured). The view document's
   // bytes moved in here rather than into `lib/curation-view.js`, which is what the
   // plan's file map asks for ("view-file IO with size/version checks"): the path, the
@@ -475,7 +481,17 @@ const BUDGETS = {
   // records, distinguish operational write failures from programming defects,
   // and reject a stale cursor publication against another pass's snapshot.
   // No module or layer is added; the local date formatter is shared at L0.
-  'lib/curation-scan.js': 1350,
+  // Raised from 1350 by the deadline-before-walk fix (1392 formatted lines measured;
+  // measured-plus-30 is 1422, rounded up to 1450). What the 68 lines buy: the walk is
+  // charged against the same wall clock as everything else, so an expired pass stops
+  // before the manifest readdir instead of after it and reports the count as a floor
+  // (`manifest.truncated`, reason `time-budget`) rather than claiming coverage it
+  // never walked. That needs one clock read per directory in `enumerateProjectTree`,
+  // the same predicate threaded through `walkManifest`, a partial-tree shape whose
+  // `files` is null because a half-enumerated universe cannot judge links, and cursor
+  // and restart guards that treat a deadline-stopped pass as incomplete. Splitting any
+  // of it out would let one caller keep the old after-the-walk check.
+  'lib/curation-scan.js': 1450,
   // The Task 3 module, on the same measured-plus-30 rule (1113 formatted lines,
   // 1115 with the two-line comment that makes the listing order intentional).
   // What the size buys: two proposal kinds with different operations, four
@@ -1207,7 +1223,14 @@ const BUDGETS = {
   // `realpath` — the diagnosis that turned "no memory" into a silent, per-step retry
   // in every session whose recorded directory had moved — and `userTemplate` became
   // the habits questionnaire with its five sections and commented examples.
-  'lib/vault.js': 1800,
+  // Raised from 1800 by the non-git ancestor pointer walk (1809 formatted lines
+  // measured; measured-plus-30 is 1839, rounded up to 1850). What the lines buy:
+  // `findPointerRoot` mirrors `findGitRoot` so a bound non-git root is recognised
+  // from a subdirectory instead of every session there being told to bind again —
+  // the silent two-project split the old exact-cwd probe produced — and a corrupt
+  // ancestor pointer is reported as a pointer refusal rather than masked as
+  // `no-git-root`; `fork`/`retain` now act on the root that holds the pointer.
+  'lib/vault.js': 1850,
   // The unbound-session notice, raised from 175 to 250 when the short form landed (207
   // formatted lines measured; measured-plus-30 is 237, which rounds up to 250). What the
   // 60 lines buy: a per-reason one-line notice — the message whose whole job is to ask

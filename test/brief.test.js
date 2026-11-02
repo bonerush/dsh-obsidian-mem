@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { BRIEF_DATA_NOTICE, buildBrief } from '../lib/brief.js'
+import { BRIEF_DATA_NOTICE, buildBrief, pageBrief } from '../lib/brief.js'
 import { VIEW_SCHEMA } from '../lib/curation-view.js'
 import { compactHot, updateHot } from '../lib/hot.js'
 import { openIndex } from '../lib/index-db.js'
@@ -151,6 +151,42 @@ function occurrences(text, needle) {
 function omittedOf(text) {
   const match = /omitted (\d+)/.exec(text)
   return match === null ? 0 : Number(match[1])
+}
+
+/**
+ * Prove a truncated delta carries a working route back to its first dropped unit.
+ *
+ * The delta mode has no pageable section key of its own, so the route must name
+ * the hot page and the offset of the first changed unit the budget dropped. This
+ * parses that exact call, pages to it through the shipped reader, and asserts the
+ * dropped unit's stable id is on the page — the difference between a count and a
+ * route is whether the fact can still be read.
+ *
+ * @param {object} env - the fixture.
+ * @param {object} built - the delta brief under test.
+ * @param {string[]} changed - every changed unit's text, in current order.
+ * @param {number} shown - how many of them the brief actually injected.
+ * @returns {Promise<object>} the resolved hot page.
+ */
+async function assertHotRoute(env, built, changed, shown) {
+  const route = /mem_brief\(section="hot", offset=(\d+), limit=20\)/.exec(built.text)
+  assert.ok(route !== null, 'a truncated delta hands back the exact hot page to resume from')
+  assert.match(built.text, /hot 增量超出预算，省略 \d+ 条/, 'the route names what it dropped')
+  const firstDropped = changed[shown]
+  assert.ok(firstDropped !== undefined, 'a route is only claimed when something was dropped')
+  const dropped = built.hotItems.find((item) => item.text === firstDropped)
+  assert.ok(dropped !== undefined, 'the first dropped item still has a stable hot id')
+  const page = await pageBrief(env.binding, {
+    section: 'hot',
+    offset: Number(route[1]),
+    limit: 20,
+    index: await env.open(),
+  })
+  assert.ok(
+    page.lines.some((line) => line.includes(dropped.id)),
+    'the route starts exactly at the first dropped changed unit',
+  )
+  return page
 }
 
 const idsOf = (items) => items.map((item) => item.id)
@@ -1080,16 +1116,36 @@ test('the truncation signal is truthful in delta mode, so a snapshot is never ad
   const changed = ['A', 'B', 'C'].map((label) => `截断-变更-${label}-${'内容'.repeat(200)}`)
   for (const text of changed) await addHot(env, '进行中', text)
 
-  // Over budget: the delta drops whole items, and says so.
+  // Over budget: the delta drops whole items, and it must hand back a route to
+  // them — a count with no way back is the coverage illusion this suite rejects.
+  // At 700 cp the route is worth more than the first changed line (400+ cp), so
+  // the route wins: every changed item stays pageable instead of one being
+  // visible and the rest invisible.
   const cut = await brief(env, { mode: 'delta', previousHotItems: baseline.hotItems, budget: 700 })
   const present = changed.filter((text) => cut.text.includes(text))
-  assert.ok(present.length > 0, 'at least the first changed item is injected')
   assert.ok(present.length < changed.length, 'the fixture really overflows the delta budget')
   assert.equal(cut.truncated, true)
   assert.equal(cut.omitted, changed.length - present.length, 'every dropped delta item is counted')
   assert.equal(cut.omitted, omittedOf(cut.text), 'the structured count agrees with the footer')
   assert.equal(cut.hotItems.length, 4, 'hotItems still reports the complete current list')
   assert.ok(codePoints(cut.text) <= 700)
+  await assertHotRoute(env, cut, changed, present.length)
+
+  // A less tight budget keeps one changed line and still routes to the first
+  // dropped one, so the route offset is that unit's page position, not 0 — and
+  // the page must start after the units already shown.
+  const wide = await brief(env, { mode: 'delta', previousHotItems: baseline.hotItems, budget: 900 })
+  const widePresent = changed.filter((text) => wide.text.includes(text))
+  assert.ok(widePresent.length >= 1, 'the wider delta keeps at least one changed item')
+  assert.ok(widePresent.length < changed.length, 'the wider delta still truncates')
+  assert.equal(wide.truncated, true)
+  assert.equal(wide.omitted, changed.length - widePresent.length)
+  assert.ok(codePoints(wide.text) <= 900)
+  const widePage = await assertHotRoute(env, wide, changed, widePresent.length)
+  assert.ok(
+    !widePage.lines.some((line) => line.includes(changed[0])),
+    'the route skips the changed units the delta already showed',
+  )
 
   // The same delta inside the budget carries every changed item, and clears the
   // snapshot: `truncated === false` is what Task 12 keys on.
@@ -1099,6 +1155,7 @@ test('the truncation signal is truthful in delta mode, so a snapshot is never ad
   for (const text of changed)
     assert.ok(fits.text.includes(text), 'every changed item is injected when it fits')
   assert.ok(!fits.text.includes('省略'))
+  assert.ok(!/mem_brief\(section="hot"/.test(fits.text), 'a complete delta adds no route')
 
   // A delta with nothing to inject is also complete.
   const quiet = await brief(env, { mode: 'delta', previousHotItems: fits.hotItems })

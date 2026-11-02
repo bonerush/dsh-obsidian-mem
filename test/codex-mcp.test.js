@@ -24,7 +24,7 @@ import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { jsonSchemaFor, listTools, openMemory } from '../codex/server.mjs'
+import { callMemoryTool, jsonSchemaFor, listTools, openMemory } from '../codex/server.mjs'
 import { readDiagnosticJournal } from '../lib/diagnostic-journal.js'
 import { mcpConfig, problems } from '../codex/prepare.mjs'
 import { TOOL_NAMES, TOOL_PARAMETERS } from '../lib/tools.js'
@@ -50,6 +50,33 @@ test('the Codex adapter persists its content-free diagnostic decisions', async (
     true,
   )
   assert.equal(JSON.stringify(report).includes('SENTINEL-CODEX-BODY'), false)
+})
+
+test('mem_search returns the shared envelope, facts included, not a decorated array', async () => {
+  const hits = [
+    {
+      path: 'Projects/demo/Conventions/x.md',
+      title: 'x',
+      type: 'convention',
+      status: 'active',
+      source: '',
+      snippet: 'x',
+      scoreSignals: [],
+    },
+  ]
+  Object.defineProperty(hits, 'truncated', { value: true, enumerable: false })
+  Object.defineProperty(hits, 'truncationReason', {
+    value: 'candidate-window:24',
+    enumerable: false,
+  })
+  const memory = { services: { search: async () => hits } }
+
+  const envelope = await callMemoryTool(memory, 'mem_search', { query: 'x' })
+
+  assert.deepEqual(envelope.hits, hits)
+  assert.equal(Object.keys(envelope.hits).length, 1, 'the hits array carries no decorations')
+  assert.equal(envelope.truncated, true)
+  assert.equal(envelope.truncationReason, 'candidate-window:24')
 })
 
 /**
@@ -249,9 +276,13 @@ test(
       name: 'mem_search',
       arguments: { query: '适配层', limit: 5 },
     })
-    const hits = JSON.parse(found.result.content[0].text)
-    assert.equal(hits.length, 1)
-    assert.equal(hits[0].path, receipt.path)
+    const search = JSON.parse(found.result.content[0].text)
+    assert.equal(search.hits.length, 1)
+    assert.equal(search.hits[0].path, receipt.path)
+    // The truncation facts must survive the MCP boundary too: a bare array would
+    // let a window-cut answer read as a complete one.
+    assert.equal(search.truncated, false)
+    assert.equal(search.truncationReason, null)
 
     // The vault tree the DSH plugin expects, written by the Codex side: the same
     // ASCII protocol directories, plus the plugin's own root .gitignore.

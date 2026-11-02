@@ -796,6 +796,155 @@ test('a non-git directory with an existing pointer stays bound on the read path'
   assert.equal(rebind.pointerCreated, false)
 })
 
+test('a subdirectory of a bound non-git directory resolves to the same project', async (t) => {
+  const { vault, scratch } = await fixture(t)
+  await mkdir(scratch, { recursive: true })
+  const nested = join(scratch, 'src', 'deep')
+  await mkdir(nested, { recursive: true })
+
+  const bound = await resolveBinding({ cwd: scratch, vaultRoot: vault, mode: 'local' })
+  assert.equal(bound.kind, 'bound')
+  const before = await readFile(join(scratch, POINTER_FILENAME))
+
+  // The pointer walked up to here is the root's only identity; every read mode
+  // must report it instead of treating the subdirectory as unbound and read-only.
+  for (const [cwd, label] of [
+    [scratch, 'root'],
+    [nested, 'subdirectory'],
+  ]) {
+    for (const mode of [undefined, 'show']) {
+      const why = label + ' ' + (mode ?? 'default')
+      const shown = await resolveBinding({ cwd, vaultRoot: vault, mode })
+      assert.equal(shown.kind, 'bound', why)
+      assert.equal(shown.projectId, bound.projectId, why)
+      assert.equal(shown.repoRoot, bound.repoRoot, why)
+      assert.equal(shown.pointerPath, bound.pointerPath, why)
+      assert.equal(shown.pointerCreated, false, why)
+    }
+  }
+  assert.deepEqual(await readFile(join(scratch, POINTER_FILENAME)), before)
+})
+
+test('an explicit local bind in a subdirectory adopts the ancestor identity', async (t) => {
+  const { vault, scratch } = await fixture(t)
+  await mkdir(scratch, { recursive: true })
+  const nested = join(scratch, 'src')
+  await mkdir(nested)
+
+  const bound = await resolveBinding({ cwd: scratch, vaultRoot: vault, mode: 'local' })
+  assert.equal(bound.kind, 'bound')
+  const before = await readFile(join(scratch, POINTER_FILENAME))
+
+  // Binding the subdirectory must not mint a second project for the same plain
+  // tree: the nearest pointer ancestor already carries the identity.
+  const rebound = await resolveBinding({ cwd: nested, vaultRoot: vault, mode: 'local' })
+  assert.equal(rebound.kind, 'bound')
+  assert.equal(rebound.projectId, bound.projectId)
+  assert.equal(rebound.repoRoot, bound.repoRoot)
+  assert.equal(rebound.pointerCreated, false)
+  await assert.rejects(readFile(join(nested, POINTER_FILENAME)), { code: 'ENOENT' })
+  assert.deepEqual(await readFile(join(scratch, POINTER_FILENAME)), before)
+})
+
+test('a corrupt pointer found from a subdirectory reports the pointer refusal', async (t) => {
+  const { vault, scratch } = await fixture(t)
+  await mkdir(scratch, { recursive: true })
+  const nested = join(scratch, 'src')
+  await mkdir(nested)
+  await writeFile(join(scratch, POINTER_FILENAME), '{ not a pointer')
+
+  // A pointer that cannot be parsed is still evidence of an earlier bind, so the
+  // walk must adopt its directory and let `readPointer` name the real corruption
+  // instead of answering "not in a git repository".
+  for (const cwd of [scratch, nested]) {
+    const shown = await resolveBinding({ cwd, vaultRoot: vault })
+    assert.equal(shown.kind, 'conflict', cwd)
+    assert.equal(shown.reason, 'pointer-corrupt', cwd)
+    assert.equal(shown.repoRoot, await realpath(scratch), cwd)
+  }
+})
+
+test('fork from a bound non-git directory replaces the pointer at its root', async (t) => {
+  const { vault, scratch } = await fixture(t)
+  await mkdir(scratch, { recursive: true })
+  const nested = join(scratch, 'fork-here')
+  await mkdir(nested)
+
+  const bound = await resolveBinding({ cwd: scratch, vaultRoot: vault, mode: 'local' })
+  assert.equal(bound.kind, 'bound')
+
+  // `fork` is an identity swap, not a git operation: a bound plain directory has
+  // an identity to fork away from and the swap belongs at the root that holds it.
+  const forked = await resolveBinding({ cwd: nested, vaultRoot: vault, mode: 'fork' })
+  assert.equal(forked.kind, 'bound')
+  assert.notEqual(forked.projectId, bound.projectId)
+  assert.equal(forked.previousProjectId, bound.projectId)
+  assert.equal(forked.pointerReplaced, true)
+  assert.equal(forked.repoRoot, bound.repoRoot)
+  assert.equal(forked.pointerPath, bound.pointerPath)
+  assert.equal((await readPointerOf(scratch)).projectId, forked.projectId)
+  await assert.rejects(readFile(join(nested, POINTER_FILENAME)), { code: 'ENOENT' })
+
+  const shown = await resolveBinding({ cwd: nested, vaultRoot: vault, mode: 'show' })
+  assert.equal(shown.kind, 'bound')
+  assert.equal(shown.projectId, forked.projectId)
+})
+
+test('retain from a subdirectory of a bound non-git directory reaches its own refusal', async (t) => {
+  const { root, vault, scratch } = await fixture(t)
+  await mkdir(scratch, { recursive: true })
+  const nested = join(scratch, 'src')
+  await mkdir(nested)
+
+  const bound = await resolveBinding({ cwd: scratch, vaultRoot: vault, mode: 'local' })
+  assert.equal(bound.kind, 'bound')
+
+  // A plain directory has no origin remote, which is the refusal `retain` owes
+  // it; claiming it was never bound would send the user to bind it a second time.
+  const retained = await resolveBinding({
+    cwd: nested,
+    vaultRoot: vault,
+    mode: 'retain',
+    dataRoot: join(root, 'data'),
+  })
+  assert.equal(retained.kind, 'conflict')
+  assert.equal(retained.reason, 'no-remote')
+  assert.equal(retained.repoRoot, bound.repoRoot)
+})
+
+test('a scratch subdirectory with no ancestor pointer still refuses no-git-root', async (t) => {
+  const { root, vault } = await fixture(t)
+  const scratch = join(root, 'unbound', 'deep')
+  await mkdir(scratch, { recursive: true })
+
+  for (const mode of [undefined, 'show', 'fork', 'retain']) {
+    const refused = await resolveBinding({ cwd: scratch, vaultRoot: vault, mode })
+    assert.equal(refused.kind, 'unbound', mode ?? 'default')
+    assert.equal(refused.reason, 'no-git-root', mode ?? 'default')
+  }
+  // The walk is a read. It must not leave a pointer anywhere on the way up.
+  await assert.rejects(readFile(join(scratch, POINTER_FILENAME)), { code: 'ENOENT' })
+  await assert.rejects(readFile(join(root, 'unbound', POINTER_FILENAME)), { code: 'ENOENT' })
+  assert.deepEqual(await readdir(vault), [])
+})
+
+test('the nearest ancestor pointer wins over an outer one', async (t) => {
+  const { vault, scratch } = await fixture(t)
+  await mkdir(scratch, { recursive: true })
+  const inner = join(scratch, 'inner')
+  const deep = join(inner, 'deep')
+  await mkdir(deep, { recursive: true })
+  await writePointer(scratch, pointerFor(ID1, { slug: 'outer', displayName: 'Outer' }))
+  await writePointer(inner, pointerFor(ID2, { slug: 'inner', displayName: 'Inner' }))
+
+  // Closest pointer to the working directory is the one a session must see: an
+  // outer bind must not override a more specific one nested inside it.
+  const shown = await resolveBinding({ cwd: deep, vaultRoot: vault, mode: 'show' })
+  assert.equal(shown.kind, 'bound')
+  assert.equal(shown.projectId, ID2)
+  assert.equal(shown.repoRoot, await realpath(inner))
+})
+
 test('a working directory inside the vault resolves to the vault context', async (t) => {
   const { vault, vaultReal } = await fixture(t)
   const inner = join(vault, PROJECTS_DIR, 'x')
