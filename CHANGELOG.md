@@ -10,6 +10,80 @@ baseline that was never tagged, and every version from `0.1.1` on is a tagged
 release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
+### Added
+
+- **可选的 hybrid 检索引擎：FTS5 词法候选 + 本机回环 embedding 语义候选，按加权 RRF
+  融合；默认关闭，关闭时读路径逐字节保持原样。** `retrievalEngine: hybrid` 必须同时
+  `retrievalProvider.enabled: true`，endpoint 只接受回环地址，`model`/`dimensions`
+  决定向量文件，`timeoutMs` 限 50–5000，`rerank` 键仍保留但 hybrid 排序当前不使用
+  重排。向量存 `<dataRoot>/index/embeddings-<vaultHash16>-<modelHash16>-<dim>.json`：
+  按笔记内容哈希增量同步，损坏、维度不符或换模型时整份重建，写入原子化、无临时文件
+  残留；provider 失败时回退 lexical，并在 diagnostics 的 search 事件记录 fallback。
+  `lib/hybrid-search.js` 的 adaptive guard 在标题/短语命中或 token-hits ≥ 8 时保留
+  lexical 顺序。
+  - 证据：冻结 200 条语料 + 1361 条笔记快照，`P@3 44.4%→61.25%`、`P@1
+    32.5%→43.1%`、`recall@8 53.6%→68.6%`、`MRR 39.2%→52.3%`；五类 P@3 全部
+    持平或上升（exact 96.9 持平、paraphrase 53.1→84.4、concept 37.5→59.4、
+    cross-lingual 15.6→21.9、deictic 18.8→43.8）；`node --test test/config.test.js
+    test/retrieval-provider.test.js test/embedding-store.test.js test/hybrid-search.test.js
+    test/hybrid-recall.test.js test/services-hybrid.test.js` 全绿。
+  - 未验证：真实会话里的触发率与 900 字符注入预算；e5-base/768 没有任何报告；
+    rerank 路径未接入 hybrid，`rerank: true` 不改变混合排序。
+
+- **recall 增加第三态 `near-miss`：语义接近但没有过闸门的候选只注入一行弱提示，
+  不带正文摘录。** 条件是 dense-only 候选的 semantic score ≥ 0.88 且 hybrid rank
+  ≤ 3，且通过与 `useful()` 相同的路径/索引/热层/状态资格检查；提示恒为一颗标题行
+  加一句“需要时用 mem_read 核实全文”。diagnostics 的 recall outcome 新增
+  `near-miss`。
+  - 证据：`node --test test/prompt-recall.test.js test/diagnostic-codec.test.js`
+    24/24 通过（含“恰好一行、不含 snippet”与“0.87 或 rank 4 不注入”两条）。
+  - 未验证：真实会话里 near-miss 的出现频次；语料评测只复算闸门，不回放注入文案。
+
+- **短追问把上一轮用户提示词作为 dense query 的上下文。** `lib/hooks.js` 只在会话
+  状态里记住最近一次提示词（2000 码点，dense 侧再截 400），不写盘、不进日志；
+  lexical 分支完全忽略它，因此关闭 provider 时行为不变。
+  - 证据：`test/hooks.test.js` 的 “a short follow-up carries the previous prompt as
+    dense context” 通过。
+
+### Changed
+
+- **recall 闸门的 token 分支从至多 4 个 token 命中提高到 6 个；标题/短语分支不变。**
+  旧闸门在 hybrid 候选上通过 47.1% 的 top-3 而只有 27.9% 精确率、no-answer 控制项
+  32.5% 被放行；新阈值（6 个命中，floor 仍为 3–4、取二者较大）把接受面收窄到真正有
+  字面证据的候选。Phase 2 只改接受/拒绝，不改排序。
+  - 证据：同一语料 hybrid `in-gate precision 27.9%→39.8%`、`no-answer FPR
+    32.5%→5.0%`；lexical `20.1%→33.8%`、`50.0%→2.5%`；两份报告的 P@1/P@3/
+    recall@8/MRR 与各自旧闸门版本逐位相同。`node --test
+    test/prompt-recall.test.js test/architecture.test.js` 全绿。
+  - 未验证：hybrid p50 延迟超过 Phase 1 验收的 1.5× 门禁（444.6ms vs 350ms），
+    成本是每次查询一次回环 embedding 往返；该失败已记录在
+    `research/litreview/eval/baseline-2026-11-02-phase1-2-validation.md`，不宣称达标。
+
+
+- **诊断窗口补齐召回漏斗：新增 `search` 事件，`recall` 带 `accepted`/`injected`，`brief` 的 injected 事件带 `chars`。**
+  过去只能看到召回的结果状态，无法区分「闸门接受了几条」「最终注入了几条」「简报注入多少字符」；
+  `mem_search` 更不产生任何事件，评估时读不到工具侧检索。现在 `lib/debug.js` 的事件白名单加
+  `search`（落在 skill 与 recall 之间）、FIELDS 加两个非负整数字段；`lib/services.js` 的
+  `services.search` 计时并记录 `ok`/`failed` 后原样返回或重抛；`lib/prompt-recall.js` 的每个
+  决策携带 accepted/injected；`lib/hooks.js` 落库两个计数与简报字符数。事件仍然内容无涉：
+  不记录 query、路径或标题。
+  - 证据：`node --test test/debug.test.js test/prompt-recall.test.js test/diagnostic-codec.test.js`
+    35/35 通过；`test/tools.test.js` 41/41；`test/hooks.test.js` 64 通过、唯一失败是
+    `lib/services.js` 架构预算（1,920→1,968 行），预算 1,950→2,000 并注明换来的行为；
+    `test/architecture.test.js` 8/8；完整套件 `npm test`：1,505 项、1,504 通过、0 失败、1 跳过（197 s）。
+  - 未测：新增事件与字段尚未在真实会话的诊断窗口里采到样本（本轮改动未提交，诊断环仍是
+    33 run / 3,219 events 的旧窗口）；等 Phase 1 在真实会话上复核。
+
+- **三个模块的尺寸预算按实测抬升：`lib/note-health.js` 300→400、`lib/vault.js` 1800→1850、
+  `lib/curation-scan.js` 1350→1450。** 分别由行内代码链接审计（344 行实测）、非 git 祖先指针
+  （1,809 行实测）、deadline 先于 manifest 遍历（1,392 行实测）带来，沿用「实测 +30 向上取整
+  到 50」的既有规则；理由写在 `test/architecture.test.js` 的预算表注释里，包括每条增长换来的
+  行为，而没有新增模块或层。
+  - 证据：`node --test test/architecture.test.js` 8/8 通过。
+
+- 证据（整套门禁）：`npm run check` 退出码 0——lint、`format:check`、`types` 通过，测试套件
+  1,543 项 1,542 通过 / 0 失败 / 1 跳过（176.7 s），`verify-pack` 与真实 tarball 校验通过
+  （92 个条目 / 82 个 lib 模块）。
 
 ### Fixed
 
@@ -104,33 +178,6 @@ release artifact. The versioning policy is in the README, under Development.
     并断言首个被丢弃条目的稳定 id 在页上；独立探针（全新 vault、3 条 455 cp 变更条目）在
     budget 700 得到 offset=1、页返回 A/B/C、首个 id 可解析，budget 900 得到 offset=2、页从 B
     起且不含已展示的 A；完整 delta 不带路由、截断的 delta 带路由，两者都被钉住。
-
-### Changed
-
-- **诊断窗口补齐召回漏斗：新增 `search` 事件，`recall` 带 `accepted`/`injected`，`brief` 的 injected 事件带 `chars`。**
-  过去只能看到召回的结果状态，无法区分「闸门接受了几条」「最终注入了几条」「简报注入多少字符」；
-  `mem_search` 更不产生任何事件，评估时读不到工具侧检索。现在 `lib/debug.js` 的事件白名单加
-  `search`（落在 skill 与 recall 之间）、FIELDS 加两个非负整数字段；`lib/services.js` 的
-  `services.search` 计时并记录 `ok`/`failed` 后原样返回或重抛；`lib/prompt-recall.js` 的每个
-  决策携带 accepted/injected；`lib/hooks.js` 落库两个计数与简报字符数。事件仍然内容无涉：
-  不记录 query、路径或标题。
-  - 证据：`node --test test/debug.test.js test/prompt-recall.test.js test/diagnostic-codec.test.js`
-    35/35 通过；`test/tools.test.js` 41/41；`test/hooks.test.js` 64 通过、唯一失败是
-    `lib/services.js` 架构预算（1,920→1,968 行），预算 1,950→2,000 并注明换来的行为；
-    `test/architecture.test.js` 8/8；完整套件 `npm test`：1,505 项、1,504 通过、0 失败、1 跳过（197 s）。
-  - 未测：新增事件与字段尚未在真实会话的诊断窗口里采到样本（本轮改动未提交，诊断环仍是
-    33 run / 3,219 events 的旧窗口）；等 Phase 1 在真实会话上复核。
-
-- **三个模块的尺寸预算按实测抬升：`lib/note-health.js` 300→400、`lib/vault.js` 1800→1850、
-  `lib/curation-scan.js` 1350→1450。** 分别由行内代码链接审计（344 行实测）、非 git 祖先指针
-  （1,809 行实测）、deadline 先于 manifest 遍历（1,392 行实测）带来，沿用「实测 +30 向上取整
-  到 50」的既有规则；理由写在 `test/architecture.test.js` 的预算表注释里，包括每条增长换来的
-  行为，而没有新增模块或层。
-  - 证据：`node --test test/architecture.test.js` 8/8 通过。
-
-- 证据（整套门禁）：`npm run check` 退出码 0——lint、`format:check`、`types` 通过，测试套件
-  1,503 项 1,502 通过 / 0 失败 / 1 跳过（198.4 s），`verify-pack` 与真实 tarball 校验通过
-  （89 个条目 / 79 个 lib 模块）。
 
 ## 1.0.7 — 2026-11-02
 
