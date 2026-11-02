@@ -136,24 +136,25 @@ test('every acceptable note already shown is all-seen, not below-floor', async (
   assert.equal(result.text, null)
 })
 
-test('a long prompt does not raise the floor above four token hits', async () => {
-  // Measured over the 148 real prompts that produce a query: the ratio term tops
-  // out at a floor of 5 for a 16-token query, and that bucket rejected hits at
-  // four token hits that a reader judges relevant — 22.3% of prompts fired,
-  // against 58.1% with the floor capped at four. The floor still never drops
-  // below three, so a weak match stays silent.
+test('the Phase 2 gate needs six token hits, more than the old capped floor', async () => {
+  // Phase 2 raises the automatic gate to title/phrase OR token-hits >=
+  // max(6, floor). The measured reason: at four hits the corpus gate passes
+  // 61.0% of top-3 slots at 20.1% precision; at six the offline replay gives
+  // 39.8% precision with 5.0% no-answer false positives.
   const long = '甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉'
-  const weak = await promptRecall({
-    prompt: long,
-    search: async () => [{ path, title: '弱命中', scoreSignals: ['token-hits:3'] }],
-  })
-  assert.equal(weak.outcome, 'below-floor', 'three token hits is still not enough')
+  for (const count of [3, 4, 5]) {
+    const weak = await promptRecall({
+      prompt: long,
+      search: async () => [{ path, title: '弱命中', scoreSignals: ['token-hits:' + count] }],
+    })
+    assert.equal(weak.outcome, 'below-floor', count + ' token hits is still not enough')
+  }
 
   const strong = await promptRecall({
     prompt: long,
-    search: async () => [{ path, title: '强命中', scoreSignals: ['token-hits:4'] }],
+    search: async () => [{ path, title: '强命中', scoreSignals: ['token-hits:6'] }],
   })
-  assert.equal(strong.outcome, 'fired', 'four token hits clears the capped floor')
+  assert.equal(strong.outcome, 'fired', 'six token hits clears the Phase 2 gate')
 })
 
 test('the resident hot layer is never offered back as recall', async () => {
@@ -251,4 +252,47 @@ test('only producer-owned user messages become the DSH query', () => {
     promptFromMessages([{ role: 'user', content: [{ type: 'text', text: 'no source' }] }]),
     null,
   )
+})
+
+test('a semantic near miss becomes one weak hint line, never the body', async () => {
+  const result = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    seenPaths: new Set(),
+    maxChars: RECALL_BUDGET,
+    search: async () => [
+      {
+        path,
+        title: 'FTS5 中文索引',
+        snippet: '这段摘录绝不能被注入为弱提示',
+        scoreSignals: ['semantic-score:0.914', 'hybrid-rank:1', 'token-hits:2'],
+      },
+    ],
+  })
+  assert.equal(result.outcome, 'near-miss')
+  assert.equal(result.accepted, 0, 'the gate accepted nothing')
+  assert.equal(result.injected, 1, 'the single hint line was offered')
+  assert.deepEqual(result.paths, [path], 'the session dedupe records the hint')
+  assert.match(result.text, /弱匹配/)
+  assert.match(result.text, /FTS5 中文索引/)
+  assert.ok(!result.text.includes('这段摘录'), 'the excerpt is not injected on a near miss')
+  assert.equal(result.text.split('\n').filter((line) => line.startsWith('- ')).length, 1)
+})
+
+test('a near miss below the semantic threshold, or outside the shortlist, stays silent', async () => {
+  const cases = [
+    ['semantic-score:0.87', 'hybrid-rank:1'],
+    ['semantic-score:0.95', 'hybrid-rank:4'],
+    ['token-hits:2'],
+  ]
+  for (const signals of cases) {
+    const result = await promptRecall({
+      prompt: '记忆召回为什么对不上',
+      search: async () => [
+        { path, title: 'FTS5 中文索引', snippet: '摘录', scoreSignals: signals },
+      ],
+    })
+    assert.equal(result.outcome, 'below-floor', signals.join(' '))
+    assert.equal(result.text, null)
+    assert.deepEqual(result.paths, [])
+  }
 })

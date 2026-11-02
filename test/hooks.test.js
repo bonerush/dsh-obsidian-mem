@@ -366,6 +366,42 @@ test('a real user turn receives one relevant project map and never repeats its p
   assert.equal(calls.length, 2, 'new turns search, but a shown path is suppressed')
 })
 
+test('a short follow-up carries the previous prompt as dense context', async (t) => {
+  // The user complaint in one test: a three-character follow-up is not a lexical
+  // query. The lexical branch still sees only the follow-up — unchanged this
+  // round — but the hybrid branch needs the turn before it, and this seam is
+  // where it is handed over.
+  const calls = []
+  const path = RELATIVE_DIR + '/Decisions/FTS5-中文索引.md'
+  const h = bed(t, {
+    search: async (args) => {
+      calls.push(args)
+      return [{ path, title: 'FTS5 中文索引', scoreSignals: ['title-contains', 'token-hits:5'] }]
+    },
+  })
+  const agent = h.start()
+  const first = {
+    id: 'human-1',
+    role: 'user',
+    content: [{ type: 'text', text: '如何修复 FTS5 中文索引？' }],
+    source: { kind: 'user' },
+  }
+  await h.preStep(agent, undefined, undefined, { messages: [first], turn: 1 })
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].context, undefined, 'the first prompt has no predecessor')
+
+  const second = {
+    id: 'human-2',
+    role: 'user',
+    content: [{ type: 'text', text: '刚才那个问题该怎么继续修？' }],
+    source: { kind: 'user' },
+  }
+  await h.preStep(agent, undefined, undefined, { messages: [second], turn: 2 })
+  assert.equal(calls.length, 2)
+  assert.equal(calls[1].context, '如何修复 FTS5 中文索引？')
+  assert.ok(calls[1].query.length > 0)
+})
+
 test('a full-size brief does not starve the per-turn recall on the first turn', async (t) => {
   // The production shape this pins down: the one-shot brief spends essentially
   // the whole session budget (measured 5,896 of 6,000 code points), and the

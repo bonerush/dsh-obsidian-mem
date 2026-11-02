@@ -476,3 +476,21 @@ test('config projection includes only approved fields', () => {
   assert.deepEqual(decodeDiagnosticConfig(config), config)
   assert.equal(decodeDiagnosticConfig({ ...config, vaultPath: 'SENTINEL' }), null)
 })
+
+test('the near-miss recall outcome survives the disk round trip', () => {
+  // Phase 2 adds a third decision between firing and silence. The ring carries any
+  // token, but the journal's closed vocabulary is what coarsens an unregistered one
+  // to `other`, which would make the new tier unmeasurable after a restart.
+  const aliases = createAliases()
+  const emitted = ['fired', 'near-miss', 'below-floor', 'all-seen', 'budget']
+  for (const outcome of emitted) {
+    const encoded = encodeDiagnosticEvent({ seq: 1, at, event: 'recall', outcome }, aliases)
+    assert.equal(encoded.outcome, outcome, outcome + ' is not coarsened')
+    assert.equal(decodeDiagnosticEvent(encoded).outcome, outcome, outcome + ' decodes back')
+  }
+  const unknown = encodeDiagnosticEvent(
+    { seq: 1, at, event: 'recall', outcome: 'invented' },
+    createAliases(),
+  )
+  assert.equal(unknown.outcome, 'other')
+})
