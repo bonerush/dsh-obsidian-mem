@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 2.0.0 — 2026-11-03
+
 - **破坏性变更：`retrievalEngine` 的默认值从 `lexical` 改为 `hybrid`。** 语义检索通道
   现在默认在引擎上开启。`retrievalProvider` 仍然默认关闭且为空——每个字段描述的是运维
   自己的本地服务，插件不会替你凭空造一个——所以**没有任何 provider 配置的默认行，读的
