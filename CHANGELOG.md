@@ -11,6 +11,58 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+- **面板图谱新增「语义布局」与召回回放。** `lib/semantic-map.js` 把 embedding store
+  的向量用确定性 PCA 投到 2D：对中心化向量直接做 24 次协方差算子幂迭代 +
+  Gram–Schmidt deflation，不物化 d×d 矩阵；同一批向量在不同 Map 插入顺序下坐标逐字节
+  一致。`lib/recall-trace.js` 是进程内 ring（每会话 20 次、最多 64 个会话，query 文本
+  截 200 码点），`lib/hybrid-recall.js` 在 recall 缝上挂不可枚举的结构化 trace，
+  `lib/services.js` 暴露 semanticMap / recallSince / explainSearch / semanticNeighbors 四个
+  只读通道，`lib/graph-route.js` 把它们接到既有的 `POST /obsidian-mem/graph` 上；
+  前端以 `lib/graph-semantic.js` 画 overlay 与解释卡，布局本身是图谱的第二个模式而非新页签。
+- **语义布局的文档、预算与打包记录（Task 10）。** 中英 README 同步补上「链接 / 语义」
+  布局说明（确定性 PCA 坐标、查询点与命中解释卡、回放只存进程内存）；`README.i18n.yaml`
+  的两个 blob hash 已按 `git hash-object` 重记。`test/architecture.test.js` 为三个新模块登记
+  LAYERS（`semantic-map` 0、`recall-trace` 0、`graph-semantic` 1）与预算，并按实测抬高
+  `graph-renderer` 900、`services` 2300、`client` 1960（注释记录实测行数与抬升原因）。
+  `verify-tarball` 实测 **95 entries / 85 lib modules**（新增 `semantic-map`、`recall-trace`、
+  `graph-semantic`），AGENTS.md 的计数段同步重测（该文件被 .gitignore 忽略，不进提交）。
+  - 证据：`npm run check` 通过（1,583 个测试、1,582 pass、1 skipped；`verify-tarball: OK …
+    95 entries, 85 lib modules, every required asset present`）；`git hash-object
+    README.md README.zh.md` 与 `README.i18n.yaml` 一致。
+- **真实 vault 验收（Task 11）。** 在真实 vault（1,422 条向量 / 1,024 维、约 1,417 个
+  Markdown）与本机 Qwen3-Embedding-0.6B 上测：semantic 首次调用 1,315 ms、缓存后 11 ms，
+  payload 174,915 B，`state: ready`、`count == total == 1,422`、`explained` 0.0913；
+  paraphrase 复现「为什么发布总是卡住」出现 **1 个 dense-only**（lexical 从未提出）与
+  **7 个融合提升**（如 lexical rank 23 → fused rank 1）；exact title 复现得到 `guard: true`
+  且无 dense 名次；provider 指向关闭端口时 map 仍 `ready`，explain 以
+  `fallback: provider-error` 回退词法序且 `denseTop: 0`。vault 的 8 个修改文件 mtime 均早于
+  探测（22:26–23:49 vs 00:13），探测未写 vault；data root 未新增文件名。完整命令与输出见
+  `docs/validation/semantic-map-2026-11-03.md`。
+  - 未达成而如实记录：首次调用 1,315 ms（>300 ms 设计预算，含 index 打开与 14 MB store
+    解析）、payload 174,915 B（>48 KB 设计预算，路径字符串占主导）、单次 embedMs 520 ms /
+    tookMs 696 ms（>~99 ms / ≤350 ms 的 loopback 参考值，只是一次读数而非 p50）。
+  - 未验证：浏览器面板的布局切换、overlay 与解释卡（活实例仍挂 2.0.2，未安装本分支）；
+    真正 disabled provider 的卡片态（只测了不可达端点）；复现查询的 p50。
+- **语义 overlay 模块落地（Task 8）。** `lib/graph-semantic.js` 作为 served 模块
+  提供给浏览器：`decodeMapPoints` 把 0..4095 量化坐标换成 0..1000 world；`createOverlayModel`
+  分出词法命中、仅语义新增与融合名次，语义线最多 12 条；`createSemanticPainter` 画
+  语义线、查询点双环、词法方框与 top-3 徽章；`cardView` 给出各降级态文案与三计数；
+  `createSemanticController` 只拉一次 semantic map、按 cursor 去重 recall、replay 走
+  explain；`mountCard` 是纯 DOM 解释卡。`lib/graph-route.js` 的默认资产列表加入
+  `./graph-semantic.js`，并补上资产可达断言。
+  - 证据：`node --test test/graph-semantic.test.js test/graph-route.test.js
+    test/panel-assets.test.js test/repo-hygiene.test.js test/architecture.test.js
+    test/graph-renderer.test.js test/graph-client.test.js` 58/58 通过；`npm run types` 通过。
+- **面板图谱可在「链接 / 语义」布局间切换（Task 9）。** 设置面板外观区新增布局开关，
+  选择持久化到既有的 `dsh-obsidian-mem:graph-settings` 记录（version 仍 2）；语义模式
+  下按需拉取一次语义地图（15s 重试），并按 1.5s 轮询召回回放；`GraphView` 把布局与
+  painter 交给 `GraphCanvas`，`graph-renderer` 按 static 坐标绘制并在标签之后调用
+  overlay painter；画布下方挂载 served 的纯 DOM 解释卡。链接布局的 700ms 活动 cue
+  管线未改动。
+  - 证据：`node --test test/panel-client.test.js test/panel-ui.test.js
+    test/graph-client.test.js test/architecture.test.js test/panel-assets.test.js
+    test/graph-route.test.js` 144/144 通过；`npm run types` 通过。
+
 ## 2.0.2 — 2026-11-03
 
 - **面板 UI 两处修复：刷新图标改用 lucide rotate-cw；热力图末尾月份标签不再被裁掉。**

@@ -76,6 +76,7 @@ const LAYERS = {
   // import at all, so it sits at the bottom with the other leaves.
   'graph-settings': 0,
   'graph-renderer': 1,
+  'graph-semantic': 1,
   'graph-worker': 0,
   // Server-side locale vocabulary (English panel UI): the panel's dialogs and the
   // route resolve zh/en here. The two browser assets cannot import it — each is
@@ -133,6 +134,12 @@ const LAYERS = {
   // with no repository import, so `retrieval-rank` (L1) can use it without the
   // lateral edge into `index-db` (L2) that a same-file tokenizer would create.
   'index-text': 0,
+  // The deterministic 2D embedding projection: a pure leaf that imports nothing
+  // from lib/, so the services layer and the route can point down at it.
+  'semantic-map': 0,
+  // The replay ring is another pure leaf: it keeps trace rows in process memory
+  // only, so it has no filesystem, vault or diagnostics import to point down at.
+  'recall-trace': 0,
   // The hybrid recall store (2026-11-02): one JSON file per vault+model, read at
   // query time and rebuilt from hashes. L1 because it imports only the atomic
   // primitives in ./fs-atomic.js (L0); its writer is local rather than
@@ -335,12 +342,23 @@ const BUDGETS = {
   // plus 30, rounded up), so an interrupted first warm keeps its progress
   // instead of losing the whole vault-scale embedding pass.
   'lib/embedding-store.js': 500,
+  // Measured 174 lines; 300 is measured plus 30 for the state machine the task
+  // adds (warming, degenerate, unavailable) and the fixed-iteration PCA loop it
+  // documents, with room for the cache identity fields.
+  'lib/semantic-map.js': 300,
+  // Measured 202 lines; 220 is the hard cap (18 lines of headroom) so the ring
+  // stays small: the wire-fit loop and the recordFromHits seam added the rest.
+  'lib/recall-trace.js': 220,
   // measured 150 lines plus 30 for the guard/fusion branches the Phase 2 gate
   // work will add without reopening this budget.
   'lib/hybrid-search.js': 180,
   // measured 276 lines plus 30: the streaming warm, the scope filter and the
   // fallback branches are why it is larger than the pure half.
-  'lib/hybrid-recall.js': 320,
+  // Raised from 320 to 350 by the semantic-map trace (322 formatted lines after
+  // `fusionTrace`/`withHybridTrace` landed; the trace is attached non-enumerably so
+  // no existing hit-array contract changes). The extra headroom covers the one
+  // helper the service channel will read.
+  'lib/hybrid-recall.js': 350,
   'lib/diagnostic-report.js': 350,
   'lib/diagnose-cli.js': 100,
   'lib/assets.js': 600,
@@ -1056,7 +1074,12 @@ const BUDGETS = {
   // renderer branch — the palette can be edited or deleted from the panel without
   // touching the renderer, and the neutral fallback for admin, untyped and
   // unresolved nodes is the existing theme colour, not new code.
-  'lib/client.js': 1750,
+  // The graph tab gained the layout switch, the semantic map fetch, the recall
+  // poll and the card host: 1742 measured lines before the semantic layout,
+  // 1916 after. The text stays in this one client bundle because the host mounts
+  // it as a single component; the overlay/card logic itself lives in the served
+  // graph-semantic.js module.
+  'lib/client.js': 1960,
   // Raised from 700 by the whole-graph round (716 formatted lines measured;
   // measured-plus-30 is 746, rounded up to 750). What the 16 lines buy: the
   // `spiralSeed` helper and the cold-frame branch that uses it, plus the comment
@@ -1064,7 +1087,10 @@ const BUDGETS = {
   // the frame that carries the whole projection at once. The raise buys a first
   // frame that is already a graph instead of a random cloud, not new surface — the
   // culling that keeps a large graph cheap was already in the renderer.
-  'lib/graph-renderer.js': 750,
+  // The semantic layout (fixed coordinates, 600 ms transition, overlay hook and
+  // locate) added 139 measured lines; measured-plus-30 rounds up to 900. The
+  // layout policy stays in semantic-map / graph-semantic; this file only draws.
+  'lib/graph-renderer.js': 900,
   // The eleven-slot table, its two CSS forms and the probe read, split out of the
   // renderer when the label-size work pushed that file past its budget.
   'lib/graph-palette.js': 160,
@@ -1077,6 +1103,9 @@ const BUDGETS = {
   // The graph panel's remembered controls: the record shape, the per-field fallback
   // and the bounds that keep an edited `localStorage` entry from blanking the graph.
   'lib/graph-settings.js': 200,
+  // The served overlay module: copy, trace geometry, painter, card and controller
+  // in one file so the browser loads it without a bundler.
+  'lib/graph-semantic.js': 520,
   // Upstream minified D3 plus the reviewed source in client/graph-worker.js, which is
   // a 1:1 port of Obsidian sim.js's d3 fallback. The parity port removed the locally
   // tuned size policy and grid force, so the adapter measures 113 lines and the
@@ -1280,7 +1309,11 @@ const BUDGETS = {
   // The hybrid wiring (lazy handle + search facts) added 53 measured lines, and
   // measured-plus-30 rounds up to 2100; the orchestration itself stays in
   // hybrid-recall, so this is the growth the service layer was expected to take.
-  'lib/services.js': 2100,
+  // The semantic data channel (store snapshot, projection cache, replay views and
+  // the shared explain pipeline) added 208 measured lines on top; measured-plus-30
+  // rounds up to 2300. The projection math stays in semantic-map and the ring in
+  // recall-trace, so this file only routes.
+  'lib/services.js': 2300,
   // Raised from 2200 by Task 7 (2229 formatted lines measured; measured-plus-30
   // rounds up to 2300, which is this number — the entry above the old one had no
   // note of its own, so this number states the rule it follows). What the 29 lines
