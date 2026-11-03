@@ -76,6 +76,7 @@ const LAYERS = {
   // import at all, so it sits at the bottom with the other leaves.
   'graph-settings': 0,
   'graph-renderer': 1,
+  'graph-semantic': 1,
   'graph-worker': 0,
   // Server-side locale vocabulary (English panel UI): the panel's dialogs and the
   // route resolve zh/en here. The two browser assets cannot import it — each is
@@ -1096,6 +1097,9 @@ const BUDGETS = {
   // The graph panel's remembered controls: the record shape, the per-field fallback
   // and the bounds that keep an edited `localStorage` entry from blanking the graph.
   'lib/graph-settings.js': 200,
+  // The served overlay module: copy, trace geometry, painter, card and controller
+  // in one file so the browser loads it without a bundler.
+  'lib/graph-semantic.js': 520,
   // Upstream minified D3 plus the reviewed source in client/graph-worker.js, which is
   // a 1:1 port of Obsidian sim.js's d3 fallback. The parity port removed the locally
   // tuned size policy and grid force, so the adapter measures 113 lines and the

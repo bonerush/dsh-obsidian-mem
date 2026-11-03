@@ -33,6 +33,7 @@
     "lib/search.js",
     "lib/semantic-map.js",
     "lib/recall-trace.js",
+    "lib/graph-semantic.js",
     "scripts/run-tests.mjs",
     "scripts/verify-pack.mjs",
     "codex/server.mjs",

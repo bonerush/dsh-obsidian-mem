@@ -30,6 +30,7 @@ test('every module imported by the renderer is served by the registered routes',
   )
   t.after(disposePanel)
   t.after(dispose)
+  assert.ok(routes.has('/obsidian-mem/graph-semantic.js'), 'the served module is advertised')
   const server = createServer((request, response) => {
     const route = routes.get(request.url)
     if (route) return route.handler(request, response)

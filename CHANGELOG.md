@@ -19,6 +19,16 @@ release artifact. The versioning policy is in the README, under Development.
   - 证据：`node --test test/semantic-map.test.js` 5/5 通过；`npm run check:fast` 通过。
   - 未验证：真实 vault（约 1404 条笔记、1024 维）的首次投影耗时、explained variance
     与 48KB 载荷上限尚未测量（由 Task 11 的真实 vault 验收补齐）。
+- **语义 overlay 模块落地（Task 8）。** `lib/graph-semantic.js` 作为 served 模块
+  提供给浏览器：`decodeMapPoints` 把 0..4095 量化坐标换成 0..1000 world；`createOverlayModel`
+  分出词法命中、仅语义新增与融合名次，语义线最多 12 条；`createSemanticPainter` 画
+  语义线、查询点双环、词法方框与 top-3 徽章；`cardView` 给出各降级态文案与三计数；
+  `createSemanticController` 只拉一次 semantic map、按 cursor 去重 recall、replay 走
+  explain；`mountCard` 是纯 DOM 解释卡。`lib/graph-route.js` 的默认资产列表加入
+  `./graph-semantic.js`，并补上资产可达断言。
+  - 证据：`node --test test/graph-semantic.test.js test/graph-route.test.js
+    test/panel-assets.test.js test/repo-hygiene.test.js test/architecture.test.js
+    test/graph-renderer.test.js test/graph-client.test.js` 58/58 通过；`npm run types` 通过。
 
 ## 2.0.2 — 2026-11-03
 
