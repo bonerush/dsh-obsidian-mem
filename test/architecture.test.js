@@ -136,6 +136,9 @@ const LAYERS = {
   // The deterministic 2D embedding projection: a pure leaf that imports nothing
   // from lib/, so the services layer and the route can point down at it.
   'semantic-map': 0,
+  // The replay ring is another pure leaf: it keeps trace rows in process memory
+  // only, so it has no filesystem, vault or diagnostics import to point down at.
+  'recall-trace': 0,
   // The hybrid recall store (2026-11-02): one JSON file per vault+model, read at
   // query time and rebuilt from hashes. L1 because it imports only the atomic
   // primitives in ./fs-atomic.js (L0); its writer is local rather than
@@ -341,6 +344,9 @@ const BUDGETS = {
   // Measured 176 lines plus 30 for the state machine the task adds (warming,
   // degenerate, unavailable) and the fixed-iteration PCA loop it documents.
   'lib/semantic-map.js': 300,
+  // Measured 190 lines plus 30 for the wire-fit loop and the recordFromHits seam
+  // that the hybrid-recall task will consume.
+  'lib/recall-trace.js': 220,
   // measured 150 lines plus 30 for the guard/fusion branches the Phase 2 gate
   // work will add without reopening this budget.
   'lib/hybrid-search.js': 180,
