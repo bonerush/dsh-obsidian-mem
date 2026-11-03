@@ -17,7 +17,7 @@
 // scan, so the whole file stays a couple of seconds rather than dozens of writes.
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
 import { Context } from '@deepseek-ai/cordis'
@@ -75,7 +75,10 @@ async function seedConventions(world, count) {
   })
   const absolute = join(world.vault, ...first.path.split('/'))
   const template = await readFile(absolute, 'utf8')
-  const directory = absolute.slice(0, absolute.lastIndexOf('/'))
+  // `dirname` rather than slicing at the last `/`: on Windows the joined path is
+  // backslash-separated, so `lastIndexOf('/')` is -1 and `slice(0, -1)` would cut
+  // the template's own file name, aiming the writes at the parent of the folder.
+  const directory = dirname(absolute)
   const written = [first.path]
   for (let i = 0; i < count; i += 1) {
     const id = `con-00000000-0000-4000-8000-${String(i).padStart(12, '0')}`
@@ -85,6 +88,8 @@ async function seedConventions(world, count) {
       .replace('调度器种子。', `第 ${i} 条：调度器可插拔直接写。`)
     const name = `直接写 ${i}.md`
     await writeFile(join(directory, name), content)
+    // The reported path is vault-relative and always uses `/` on every platform,
+    // which is why this one stays a slice of the protocol path, not of a disk path.
     written.push(`${first.path.slice(0, first.path.lastIndexOf('/'))}/${name}`)
   }
   return written
