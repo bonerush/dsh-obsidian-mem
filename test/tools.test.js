@@ -267,7 +267,13 @@ async function curationServices(
     diagnostics,
     curationBounds,
   })
-  t.after(() => services.close())
+  // Released ahead of the world's own `rm`: the world's cleanup hook is registered
+  // before this instance exists, and `t.after` hooks run in registration order, so
+  // a hook added here would run *after* the tree was already being deleted. On
+  // Windows removing a directory that still holds this instance's SQLite handle
+  // blocks instead of failing fast — it hung this file until the runner's timeout.
+  // `releaseBeforeCleanup` puts the close inside the world's hook first.
+  world.releaseBeforeCleanup(() => services.close())
   // The first write is what binds the repository and bootstraps the vault, exactly
   // as a real session's first `mem_write` does. `bind: false` is the pointerless
   // world a session that has only ever read sees.
@@ -1063,7 +1069,7 @@ test('an unusable curation bound is refused at the factory, never ignored', asyn
     )
   }
   const accepted = createMemoryServices({ ...base, curationBounds: CURATION_TEST_BOUNDS })
-  t.after(() => accepted.close())
+  world.releaseBeforeCleanup(() => accepted.close())
   assert.equal(typeof accepted.admin, 'function')
 })
 
@@ -1271,7 +1277,7 @@ test('a hint callback that throws never retracts a committed write', async (t) =
       throw new Error('the trigger is broken')
     },
   })
-  t.after(() => services.close())
+  world.releaseBeforeCleanup(() => services.close())
 
   const written = await services.write({
     type: 'convention',

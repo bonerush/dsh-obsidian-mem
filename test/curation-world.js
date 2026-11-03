@@ -38,16 +38,28 @@ function gitEnvironment() {
  *
  * @param {object} t - the `node:test` context whose `after` removes the tree.
  * @param {{config?: object, cwd?: string}} [options] - extra config keys to validate, or a different working directory.
- * @returns {Promise<{root: string, vault: string, repo: string, home: string, dshHome: string, dataRoot: string, config: object, services: object}>} the world.
+ * @returns {Promise<{root: string, vault: string, repo: string, home: string, dshHome: string, dataRoot: string, config: object, services: object, releaseBeforeCleanup: (close: () => Promise<void>|void) => void}>} the world.
  */
 export async function makeCurationWorld(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), 'obsidian-curation-'))
   let services = null
+  // A test that builds its own `createMemoryServices` on this world's data root
+  // (the tool-level suites do) must release it before the tree goes away. `t.after`
+  // hooks run in registration order, and this cleanup is registered before the
+  // test's own instance exists, so the test cannot close first by registration.
+  // Handing the closer in here puts it ahead of `rm`: on Windows removing a
+  // directory that still holds an open SQLite file does not fail fast, it blocks,
+  // and a suite that should take 25 s hangs until the runner's timeout.
+  const closers = []
   t.after(async () => {
     try {
-      await services?.close()
+      for (const close of closers) await close()
     } finally {
-      await rm(root, { recursive: true, force: true, maxRetries: 4 })
+      try {
+        await services?.close()
+      } finally {
+        await rm(root, { recursive: true, force: true, maxRetries: 4 })
+      }
     }
   })
   const vault = join(root, 'vault')
@@ -66,7 +78,26 @@ export async function makeCurationWorld(t, options = {}) {
     cwd: options.cwd ?? repo,
     home,
   })
-  return { root, vault, repo, home, dshHome, dataRoot, config, services }
+  return {
+    root,
+    vault,
+    repo,
+    home,
+    dshHome,
+    dataRoot,
+    config,
+    services,
+    /**
+     * Register a closer for a services instance the *test* built on this world's
+     * data root, so it is released before `rm`.
+     *
+     * @param {() => Promise<void>|void} close - the instance's own closer.
+     * @returns {void}
+     */
+    releaseBeforeCleanup: (close) => {
+      closers.push(close)
+    },
+  }
 }
 
 /**
