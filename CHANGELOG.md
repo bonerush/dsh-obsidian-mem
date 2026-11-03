@@ -11,6 +11,40 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+- **embedding warm 现在可中断、可恢复，并按请求耗时自适应批大小。**
+  `lib/embedding-store.js` 的 `sync` 每完成 8 个顶层批或距上次写盘 30s 就增量
+  checkpoint，只序列化已有向量的笔记；失败时先把已嵌入的进度写盘再抛错，重跑按内容
+  hash 复用，因此一次中断不再丢掉整次 warm。`rank()` 每次读 `snapshot()`，所以 warm
+  进行中即可用上部分向量。新增导出纯函数 `nextBatchSize(current, elapsedMs)`
+  （收缩到目标 2800ms、增长 +1，钳制 4–16）；任何 `provider-timeout` 都会先把下一批
+  减半再二分，避免继续硬碰 5s 上限。1404 条真实 vault 的 warm 实测超时率
+  17.8%（24/135）→5.7%（18/318）、请求放大 1.22×→1.06×。
+  - 证据：`node --test test/embedding-store.test.js test/architecture.test.js
+    test/hybrid-recall.test.js test/retrieval-provider.test.js` 48/48；
+    `npm run check` exit 0（pack 契约 92 entries / 82 lib modules）。
+    `test/architecture.test.js` 的 embedding-store 预算从 370 提到 500（实测 434 行 +
+    30 行注释空间）。测试覆盖超时收缩与恢复增长、checkpoint 后重跑跳过已嵌入项、首个
+    checkpoint 之前中断也能保存进度、显式 `batchSize` 不漂移。
+  - 未验证：warm 总墙钟不可与基线 489.7s 直接比较——度量时宿主 MPS 有效算力从
+    ~1.5 降到 ~0.6 TFLOPS，所以只报告结构性指标；不同 Apple 芯片与内存压力下的绝对
+    耗时没有测。
+
+- **新增本地 Qwen3-Embedding 参考服务工具包 `tools/embed-server/`（不随 npm 包发布）。**
+  用标准库 HTTP 服务实现 2.0.0 的回环 provider 契约：官方 query 指令前缀、last-token
+  pooling、按文本长度排序分块、SDPA 注意力、客户端断开后中止剩余分块（修复「客户端
+  5s 超时放弃的请求仍在服务端占锁与算力，导致重试级联超时」）、`/health` 上报
+  `attention`/`queryInstruction`。含幂等的 `setup.sh`（uv venv、模型下载、LaunchAgent
+  安装）与记录实测数字的 README。
+  - 证据：分块按长度排序使代表性 16 文本载荷的 forward token 数从 6388 降到 5136
+    （−19.6%，向量逐条一致）；chunk 2/4/8/16 扫描决定 4；`--attn` 交错 A/B 中位数
+    mixed16 eager 12.155s vs sdpa 11.076s、单长文本 1.144s vs 0.937s；前缀 A/B 在
+    22 条 paraphrase 上 MRR 0.828（开）vs 0.773（关），30 条标题自检索 0.950 vs
+    0.961，故默认开启并保留 `--no-query-instruction` 开关；`kill -9` 后 launchd
+    0.27s 重新拉起、`/health` 5.74s 就绪，`bootout` 后搜索降级为
+    `fallback: "provider-error"`，`bootstrap` 后 2.7s 恢复且无需重新 warm。
+  - 未验证：绝对耗时随宿主负载漂移较大，README 只承诺相对收益；前缀结论来自单个
+    vault 的 22+30 条小样本，换 vault 需重新 A/B。
+
 ## 2.0.0 — 2026-11-03
 
 - **破坏性变更：`retrievalEngine` 的默认值从 `lexical` 改为 `hybrid`。** 语义检索通道

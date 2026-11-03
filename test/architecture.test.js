@@ -328,10 +328,13 @@ const BUDGETS = {
   // incremental sync, corruption rebuild, batching and atomic write, and the
   // module owns a local atomic copy because ./receipts.js is L2. The slow-model
   // warm then added batch bisection on provider timeouts (measured 340 lines;
-  // 370 is measured plus 30), which is the difference between an e5-base host
+  // 370 was measured plus 30), which is the difference between an e5-base host
   // failing warm after five seconds and warming the same store in batches that
-  // fit the same five-second ceiling.
-  'lib/embedding-store.js': 370,
+  // fit the same five-second ceiling. The durability pass then added resumable
+  // checkpoints and adaptive batch sizing (measured 434 lines; 500 is measured
+  // plus 30, rounded up), so an interrupted first warm keeps its progress
+  // instead of losing the whole vault-scale embedding pass.
+  'lib/embedding-store.js': 500,
   // measured 150 lines plus 30 for the guard/fusion branches the Phase 2 gate
   // work will add without reopening this budget.
   'lib/hybrid-search.js': 180,

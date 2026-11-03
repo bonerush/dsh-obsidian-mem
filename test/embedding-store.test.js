@@ -7,6 +7,7 @@ import test from 'node:test'
 import {
   EmbeddingStoreError,
   embeddingStorePath,
+  nextBatchSize,
   openEmbeddingStore,
 } from '../lib/embedding-store.js'
 
@@ -289,6 +290,141 @@ test('snapshot exposes vectors by path and reloads after an external write', asy
   )
   const refreshed = await store.snapshot()
   assert.equal(refreshed.size, 2)
+})
+
+test('nextBatchSize scales with wall time and stays within the provider bound', () => {
+  // Slow requests scale the next batch toward the 2800 ms target: 16 * 2800 / 4500.
+  assert.equal(nextBatchSize(16, 4500), 9)
+  assert.equal(nextBatchSize(16, 10000), 4, 'the floor is four, not one')
+  // Fast requests grow by one text; a fast full batch cannot grow further.
+  assert.equal(nextBatchSize(8, 600), 9)
+  assert.equal(nextBatchSize(16, 600), 16)
+  // Between fast and slow the size is left alone, and unknown timing keeps it.
+  assert.equal(nextBatchSize(16, 2800), 16)
+  assert.equal(nextBatchSize(16, 0), 16)
+  assert.equal(nextBatchSize(16, Number.NaN), 16)
+  // Out-of-range input is clamped to the provider's window.
+  assert.equal(nextBatchSize(3, 2800), 4)
+  assert.equal(nextBatchSize(99, 500), 16)
+})
+
+test('the adaptive sizer shrinks after a slow batch and grows back after fast ones', async (t) => {
+  const { store } = await makeStore(t)
+  // A fake clock makes the sizing rule deterministic: the first batch is slow
+  // (4 s for sixteen texts) and everything after it is fast.
+  let clock = 0
+  const calls = []
+  const embed = async ({ texts }) => {
+    calls.push(texts.length)
+    clock += texts.length >= 16 ? 4000 : 1000
+    return { model: 'fake-model', dimensions: 4, vectors: texts.map(() => [1, 2, 3, 4]) }
+  }
+  const notes = Array.from({ length: 34 }, (_, index) =>
+    note('Projects/p/N' + index + '.md', 'h' + index, '题', '文' + index),
+  )
+  const result = await store.sync(notes, embed, { now: () => clock })
+  // 16 slow -> next 11; 11 fast -> next 12; 7 left.
+  assert.deepEqual(calls, [16, 11, 7])
+  assert.equal(result.embedded, 34)
+  assert.equal(result.batches, 3)
+})
+
+test('an explicit batchSize keeps the slices fixed and skips the adaptive sizer', async (t) => {
+  const { store } = await makeStore(t)
+  let clock = 0
+  const calls = []
+  const embed = async ({ texts }) => {
+    calls.push(texts.length)
+    clock += 4000
+    return { model: 'fake-model', dimensions: 4, vectors: texts.map(() => [1, 2, 3, 4]) }
+  }
+  const notes = Array.from({ length: 20 }, (_, index) =>
+    note('Projects/p/N' + index + '.md', 'h' + index, '题', '文' + index),
+  )
+  await store.sync(notes, embed, { batchSize: 8, now: () => clock })
+  assert.deepEqual(calls, [8, 8, 4])
+})
+
+test('a timed-out request shrinks the next top-level batch, then permits growth', async (t) => {
+  const { store } = await makeStore(t)
+  // A fake clock: the timed-out request costs 5 s, every success costs 500 ms
+  // (fast enough to grow the batch by one text).
+  let clock = 0
+  const calls = []
+  const embed = async ({ texts }) => {
+    calls.push(texts.length)
+    if (texts.length >= 16) {
+      clock += 5000
+      const error = new Error('provider-timeout')
+      error.code = 'provider-timeout'
+      throw error
+    }
+    clock += 500
+    return { model: 'fake-model', dimensions: 4, vectors: texts.map(() => [1, 2, 3, 4]) }
+  }
+  const notes = Array.from({ length: 44 }, (_, index) =>
+    note('Projects/p/N' + index + '.md', 'h' + index, '题', '文' + index),
+  )
+  const result = await store.sync(notes, embed, { now: () => clock })
+  // The sixteen-text request times out, its two eight-text halves succeed, and
+  // the shrink applies to the next top-level batch; fast batches then grow by one.
+  assert.deepEqual(calls, [16, 8, 8, 8, 9, 10, 1])
+  assert.equal(result.embedded, 44)
+  assert.equal(result.batches, 6)
+})
+
+test('a failed sync checkpoints the vectors it already embedded, and resume skips them', async (t) => {
+  const { store } = await makeStore(t)
+  let calls = 0
+  const flaky = async ({ texts }) => {
+    calls += 1
+    if (calls > 2) {
+      const error = new Error('provider-unreachable')
+      error.code = 'provider-unreachable'
+      throw error
+    }
+    return { model: 'fake-model', dimensions: 4, vectors: texts.map(() => [0.1, 0.2, 0.3, 0.4]) }
+  }
+  const notes = Array.from({ length: 35 }, (_, index) =>
+    note('Projects/p/N' + index + '.md', 'h' + index, '题', '文' + index),
+  )
+  await assert.rejects(
+    store.sync(notes, flaky, { batchSize: 16, checkpointBatches: 2 }),
+    (error) => error instanceof EmbeddingStoreError && error.code === 'provider-unreachable',
+  )
+  const checkpoint = JSON.parse(await fs.readFile(store.path, 'utf8'))
+  assert.equal(Object.keys(checkpoint.vectors).length, 32, 'two batches were checkpointed')
+  assert.equal(Object.keys(checkpoint.hashes).length, 32)
+
+  const healthy = fakeEmbed()
+  const result = await store.sync(notes, healthy, { batchSize: 16 })
+  assert.deepEqual(result, { embedded: 3, reused: 32, pruned: 0, total: 35, batches: 1 })
+  assert.equal(healthy.calls[0].texts.length, 3, 'only the missing three are re-embedded')
+})
+
+test('an interrupted sync saves progress even before the first checkpoint', async (t) => {
+  const { store } = await makeStore(t)
+  let calls = 0
+  const flaky = async ({ texts }) => {
+    calls += 1
+    if (calls > 1) {
+      const error = new Error('provider-unreachable')
+      error.code = 'provider-unreachable'
+      throw error
+    }
+    return { model: 'fake-model', dimensions: 4, vectors: texts.map(() => [0.1, 0.2, 0.3, 0.4]) }
+  }
+  const notes = Array.from({ length: 20 }, (_, index) =>
+    note('Projects/p/N' + index + '.md', 'h' + index, '题', '文' + index),
+  )
+  await assert.rejects(
+    store.sync(notes, flaky, { batchSize: 8, checkpointBatches: 8 }),
+    (error) => error instanceof EmbeddingStoreError,
+  )
+  const saved = JSON.parse(await fs.readFile(store.path, 'utf8'))
+  assert.equal(Object.keys(saved.vectors).length, 8, 'the catch path saved one batch')
+  const result = await store.sync(notes, fakeEmbed(), { batchSize: 8 })
+  assert.deepEqual(result, { embedded: 12, reused: 8, pruned: 0, total: 20, batches: 2 })
 })
 
 test('embeddingStorePath is deterministic and vault-scoped', async (t) => {

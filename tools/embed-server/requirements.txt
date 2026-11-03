@@ -1,0 +1,5 @@
+# Pinned to the model card's reference implementation and to the versions every
+# number in README.md was measured with. A torch/transformers upgrade can change
+# both speed and the pooling contract; bump these together with the README.
+torch==2.15.0
+transformers==4.57.6
