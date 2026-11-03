@@ -1080,7 +1080,10 @@ const BUDGETS = {
   // the frame that carries the whole projection at once. The raise buys a first
   // frame that is already a graph instead of a random cloud, not new surface — the
   // culling that keeps a large graph cheap was already in the renderer.
-  'lib/graph-renderer.js': 750,
+  // The semantic layout (fixed coordinates, 600 ms transition, overlay hook and
+  // locate) added 139 measured lines; measured-plus-30 rounds up to 900. The
+  // layout policy stays in semantic-map / graph-semantic; this file only draws.
+  'lib/graph-renderer.js': 900,
   // The eleven-slot table, its two CSS forms and the probe read, split out of the
   // renderer when the label-size work pushed that file past its budget.
   'lib/graph-palette.js': 160,
