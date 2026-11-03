@@ -352,7 +352,11 @@ const BUDGETS = {
   'lib/hybrid-search.js': 180,
   // measured 276 lines plus 30: the streaming warm, the scope filter and the
   // fallback branches are why it is larger than the pure half.
-  'lib/hybrid-recall.js': 320,
+  // Raised from 320 to 350 by the semantic-map trace (322 formatted lines after
+  // `fusionTrace`/`withHybridTrace` landed; the trace is attached non-enumerably so
+  // no existing hit-array contract changes). The extra headroom covers the one
+  // helper the service channel will read.
+  'lib/hybrid-recall.js': 350,
   'lib/diagnostic-report.js': 350,
   'lib/diagnose-cli.js': 100,
   'lib/assets.js': 600,
