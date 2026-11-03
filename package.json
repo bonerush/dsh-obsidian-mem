@@ -1,6 +1,6 @@
 {
   "name": "dsh-obsidian-mem",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "DeepSeek Harness host plugin that keeps project documents and long-term memory as plain Markdown in a dedicated Obsidian vault.",
   "keywords": [
     "dsh",

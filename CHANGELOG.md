@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 2.0.1 — 2026-11-03
+
 - **embedding warm 现在可中断、可恢复，并按请求耗时自适应批大小。**
   `lib/embedding-store.js` 的 `sync` 每完成 8 个顶层批或距上次写盘 30s 就增量
   checkpoint，只序列化已有向量的笔记；失败时先把已嵌入的进度写盘再抛错，重跑按内容
