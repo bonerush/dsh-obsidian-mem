@@ -11,6 +11,15 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+- **面板图谱新增「语义布局」与召回回放（实现中）。** `lib/semantic-map.js` 把
+  embedding store 的向量用确定性 PCA 投到 2D：对中心化向量直接做 24 次协方差算子
+  幂迭代 + Gram–Schmidt deflation，不物化 d×d 矩阵；同一批向量在不同 Map 插入顺序
+  下坐标逐字节一致。后续任务将加入进程内召回 ring、服务通道、graph route 的四个只读
+  action 与前端 overlay；本条在全部任务落地后补上完整证据与验收数字。
+  - 证据：`node --test test/semantic-map.test.js` 5/5 通过；`npm run check:fast` 通过。
+  - 未验证：真实 vault（约 1404 条笔记、1024 维）的首次投影耗时、explained variance
+    与 48KB 载荷上限尚未测量（由 Task 11 的真实 vault 验收补齐）。
+
 ## 2.0.2 — 2026-11-03
 
 - **面板 UI 两处修复：刷新图标改用 lucide rotate-cw；热力图末尾月份标签不再被裁掉。**

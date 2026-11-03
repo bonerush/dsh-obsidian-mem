@@ -133,6 +133,9 @@ const LAYERS = {
   // with no repository import, so `retrieval-rank` (L1) can use it without the
   // lateral edge into `index-db` (L2) that a same-file tokenizer would create.
   'index-text': 0,
+  // The deterministic 2D embedding projection: a pure leaf that imports nothing
+  // from lib/, so the services layer and the route can point down at it.
+  'semantic-map': 0,
   // The hybrid recall store (2026-11-02): one JSON file per vault+model, read at
   // query time and rebuilt from hashes. L1 because it imports only the atomic
   // primitives in ./fs-atomic.js (L0); its writer is local rather than
@@ -335,6 +338,9 @@ const BUDGETS = {
   // plus 30, rounded up), so an interrupted first warm keeps its progress
   // instead of losing the whole vault-scale embedding pass.
   'lib/embedding-store.js': 500,
+  // Measured 176 lines plus 30 for the state machine the task adds (warming,
+  // degenerate, unavailable) and the fixed-iteration PCA loop it documents.
+  'lib/semantic-map.js': 300,
   // measured 150 lines plus 30 for the guard/fusion branches the Phase 2 gate
   // work will add without reopening this budget.
   'lib/hybrid-search.js': 180,

@@ -31,6 +31,7 @@
     "lib/registry.js",
     "lib/routing.js",
     "lib/search.js",
+    "lib/semantic-map.js",
     "scripts/run-tests.mjs",
     "scripts/verify-pack.mjs",
     "codex/server.mjs",
