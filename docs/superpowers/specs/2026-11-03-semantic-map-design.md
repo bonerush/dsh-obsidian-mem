@@ -1,6 +1,7 @@
 # Semantic map design (embedding visualization in the memory panel)
 
-- Status: proposed 2026-11-03 (awaiting user review); frozen on approval; not implemented
+- Status: accepted 2026-11-03 (user approved the frozen design); implementation in
+  progress on `feat/semantic-map`; real-vault acceptance is Task 11
 - Owner: lead
 - Scope: the memory panel's graph tab (a layout switch), four new read-only actions on
   the existing `/obsidian-mem/graph` route, and one process-local capture channel for

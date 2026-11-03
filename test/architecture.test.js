@@ -342,11 +342,12 @@ const BUDGETS = {
   // plus 30, rounded up), so an interrupted first warm keeps its progress
   // instead of losing the whole vault-scale embedding pass.
   'lib/embedding-store.js': 500,
-  // Measured 176 lines plus 30 for the state machine the task adds (warming,
-  // degenerate, unavailable) and the fixed-iteration PCA loop it documents.
+  // Measured 174 lines; 300 is measured plus 30 for the state machine the task
+  // adds (warming, degenerate, unavailable) and the fixed-iteration PCA loop it
+  // documents, with room for the cache identity fields.
   'lib/semantic-map.js': 300,
-  // Measured 190 lines plus 30 for the wire-fit loop and the recordFromHits seam
-  // that the hybrid-recall task will consume.
+  // Measured 202 lines; 220 is the hard cap (18 lines of headroom) so the ring
+  // stays small: the wire-fit loop and the recordFromHits seam added the rest.
   'lib/recall-trace.js': 220,
   // measured 150 lines plus 30 for the guard/fusion branches the Phase 2 gate
   // work will add without reopening this budget.

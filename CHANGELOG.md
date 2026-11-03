@@ -16,6 +16,18 @@ release artifact. The versioning policy is in the README, under Development.
   幂迭代 + Gram–Schmidt deflation，不物化 d×d 矩阵；同一批向量在不同 Map 插入顺序
   下坐标逐字节一致。后续任务将加入进程内召回 ring、服务通道、graph route 的四个只读
   action 与前端 overlay；本条在全部任务落地后补上完整证据与验收数字。
+- **语义布局的文档、预算与打包记录（Task 10）。** 中英 README 同步补上「链接 / 语义」
+  布局说明（确定性 PCA 坐标、查询点与命中解释卡、回放只存进程内存）；`README.i18n.yaml`
+  的两个 blob hash 已按 `git hash-object` 重记。`test/architecture.test.js` 为三个新模块登记
+  LAYERS（`semantic-map` 0、`recall-trace` 0、`graph-semantic` 1）与预算，并按实测抬高
+  `graph-renderer` 900、`services` 2300、`client` 1960（注释记录实测行数与抬升原因）。
+  `verify-tarball` 实测 **95 entries / 85 lib modules**（新增 `semantic-map`、`recall-trace`、
+  `graph-semantic`），AGENTS.md 的计数段同步重测（该文件被 .gitignore 忽略，不进提交）。
+  - 证据：`npm run pack:check` → `verify-tarball: OK … 95 entries, 85 lib modules, every
+    required asset present`；`node --test test/architecture.test.js` 8/8 通过；
+    `git hash-object README.md README.zh.md` 与 `README.i18n.yaml` 一致。
+  - 未验证：真实 vault（~1404 条笔记、本机 1024 维 Qwen3-Embedding）上的首次投影耗时、
+    切换手感与解释卡实际内容 —— Task 11 完成后在此补上。
   - 证据：`node --test test/semantic-map.test.js` 5/5 通过；`npm run check:fast` 通过。
   - 未验证：真实 vault（约 1404 条笔记、1024 维）的首次投影耗时、explained variance
     与 48KB 载荷上限尚未测量（由 Task 11 的真实 vault 验收补齐）。

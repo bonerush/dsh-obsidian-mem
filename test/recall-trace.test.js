@@ -21,7 +21,10 @@ test('a trace is capped, text is clipped and the vector is kept off the wire', (
     queryVector: Float32Array.from([1, 0]),
     engine: 'hybrid',
     lexicalTop: Array.from({ length: 80 }, (_, index) => entry('n' + index + '.md', index)),
-    denseTop: Array.from({ length: 80 }, (_, index) => ({ ...entry('d' + index + '.md', index), score: 1 })),
+    denseTop: Array.from({ length: 80 }, (_, index) => ({
+      ...entry('d' + index + '.md', index),
+      score: 1,
+    })),
     fusedTop: Array.from({ length: 80 }, (_, index) => ({
       path: 'f' + index + '.md',
       source: 'lexical',
