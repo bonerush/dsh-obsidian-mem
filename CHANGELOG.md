@@ -29,6 +29,15 @@ release artifact. The versioning policy is in the README, under Development.
   - 证据：`node --test test/graph-semantic.test.js test/graph-route.test.js
     test/panel-assets.test.js test/repo-hygiene.test.js test/architecture.test.js
     test/graph-renderer.test.js test/graph-client.test.js` 58/58 通过；`npm run types` 通过。
+- **面板图谱可在「链接 / 语义」布局间切换（Task 9）。** 设置面板外观区新增布局开关，
+  选择持久化到既有的 `dsh-obsidian-mem:graph-settings` 记录（version 仍 2）；语义模式
+  下按需拉取一次语义地图（15s 重试），并按 1.5s 轮询召回回放；`GraphView` 把布局与
+  painter 交给 `GraphCanvas`，`graph-renderer` 按 static 坐标绘制并在标签之后调用
+  overlay painter；画布下方挂载 served 的纯 DOM 解释卡。链接布局的 700ms 活动 cue
+  管线未改动。
+  - 证据：`node --test test/panel-client.test.js test/panel-ui.test.js
+    test/graph-client.test.js test/architecture.test.js test/panel-assets.test.js
+    test/graph-route.test.js` 144/144 通过；`npm run types` 通过。
 
 ## 2.0.2 — 2026-11-03
 

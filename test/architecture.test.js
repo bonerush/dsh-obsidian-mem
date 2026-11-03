@@ -1073,7 +1073,12 @@ const BUDGETS = {
   // renderer branch — the palette can be edited or deleted from the panel without
   // touching the renderer, and the neutral fallback for admin, untyped and
   // unresolved nodes is the existing theme colour, not new code.
-  'lib/client.js': 1750,
+  // The graph tab gained the layout switch, the semantic map fetch, the recall
+  // poll and the card host: 1742 measured lines before the semantic layout,
+  // 1916 after. The text stays in this one client bundle because the host mounts
+  // it as a single component; the overlay/card logic itself lives in the served
+  // graph-semantic.js module.
+  'lib/client.js': 1960,
   // Raised from 700 by the whole-graph round (716 formatted lines measured;
   // measured-plus-30 is 746, rounded up to 750). What the 16 lines buy: the
   // `spiralSeed` helper and the cold-frame branch that uses it, plus the comment
