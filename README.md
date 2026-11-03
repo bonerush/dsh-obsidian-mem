@@ -68,7 +68,7 @@ Two layers, on purpose:
 | 🧠 **Plain-Markdown memory** | One project gets one stable `projectId`, one committed pointer file and one directory in the vault. Obsidian only displays the result; the vault outlives DSH and stays readable with the plugin uninstalled. |
 | 🔌 **Protocol plus adapters** | Vault layout, pointer and note frontmatter are a protocol: `skills/obsidian-mem/SKILL.md` ships it for any Agent-Skills harness, and `codex/` installs the same six operations into Codex CLI through an MCP server that imports `lib/` instead of copying it. |
 | ✍️ **Six memory tools** | `mem_search`, `mem_read`, `mem_write`, `mem_log`, `mem_brief`, `mem_admin` — transactional writes, a rebuildable SQLite/FTS5 cache, and a session brief that stays inside a fixed character budget. |
-| 🔎 **Retrieval with an optional semantic engine** | FTS5/BM25 by default; a local TF-IDF/cosine reranker (`sparse`) or an opt-in loopback-embedding engine (`hybrid`), same-day create/update accounting, per-turn relevant-note recall, and a brief that is navigation rather than a content dump. |
+| 🔎 **Retrieval with a default semantic engine** | FTS5/BM25 baseline; the `hybrid` engine is the default and adds a loopback-embedding semantic channel once you point `retrievalProvider` at a local model service (no provider configured means the lexical path, unchanged), plus a local TF-IDF/cosine reranker (`sparse`), same-day create/update accounting, per-turn relevant-note recall, and a brief that is navigation rather than a content dump. |
 | 🗂️ **Distillation and curation** | Completed turns distill into typed notes in the background; near-duplicates and risky rewrites are parked as proposals that only a person can approve — with `dsh-obsidian-mem-review`, in a terminal. |
 | 📊 **Live memory panel** | A GitHub-style 53-week activity calendar with fixed 10 px cells, month and weekday labels, a hover tooltip and in-figure horizontal scrolling; new-versus-updated flow bars, a tag treemap, a type→status composition Sankey, a KPI sparkline, a day-grouped activity timeline, and a 健康 dashboard whose three maintenance actions report their outcome in the card that owns the button. Background polls re-scan the index silently, so memory written by another process appears without a DSH restart. |
 | 🕸️ **Knowledge graph** | Every node in scope is drawn — no top-N truncation — with a 1:1 port of Obsidian's D3 fallback forces, alpha schedule and seeding/drag protocol. Filters, colour groups, display and forces persist per browser origin; read/write/search/reinjection cues light up the nodes a turn touched. |
@@ -400,7 +400,7 @@ every field, `distill` included. Put it in the home-level patch layer,
     bindHint: true
     briefBudgetChars: 6000
     recallBudgetChars: 900
-    retrievalEngine: lexical
+    retrievalEngine: hybrid
     retrievalProvider:
       enabled: false
       endpoint: ""
@@ -450,9 +450,9 @@ explanation instead of doing nothing.
 | `bindHint` | `true` | boolean | Whether a session whose directory resolves to no usable project is told so, once. That notice is how the user is asked whether to bind the project, and how a session whose recorded directory has moved or been deleted says so instead of losing memory in silence. `false` removes that injection and nothing else. The Codex adapter has the same switch as `OBSIDIAN_MEM_BIND_HINT`. |
 | `briefBudgetChars` | `6000` | integer 256–20000 | Hard ceiling for the session brief and the weekly hint, in Unicode code points. |
 | `briefConventionMode` | `summary` | `summary` or `flat` | How a long conventions index is rendered. `summary` shows five MOC lines and leaves the rest addressable through `mem_brief(section="conventions", offset=5)`; `flat` is the pre-0.3 list where the budget alone decides. Rendering only: paging always sees every entry. In summary mode the five lines rotate across acknowledged sessions, so a long MOC is not the same five forever. |
-| `retrievalEngine` | `lexical` | `lexical`, `sparse` or `hybrid` | Retrieval engine. `lexical` is the FTS path unchanged. `sparse` re-ranks at most 24 source-verified lexical candidates with local TF-IDF/cosine and fuses them by RRF k=60; no model, network or dependency. `hybrid` adds a semantic candidate list from an explicitly configured loopback provider and fuses it with the lexical list by weighted RRF (k=60, dense weight 2); it needs `retrievalProvider.enabled: true`, is off by default, and a `hybrid` row without an enabled provider fails to load rather than falling back silently. |
-| `retrievalProvider` | `{enabled: false, endpoint: "", model: "", dimensions: 0, timeoutMs: 500, rerank: false}` | object; unknown keys are refused | Loopback embedding service for `hybrid`. It is never a cloud call: the endpoint must be a loopback address. When `enabled` is false the provider is never constructed and every other field is inert. |
-| `retrievalProvider.enabled` | `false` | boolean | Turns the provider on. `retrievalEngine: hybrid` requires it. |
+| `retrievalEngine` | `hybrid` | `lexical`, `sparse` or `hybrid` | Retrieval engine. `lexical` is the FTS path unchanged. `sparse` re-ranks at most 24 source-verified lexical candidates with local TF-IDF/cosine and fuses them by RRF k=60; no model, network or dependency. `hybrid` — the default since 2.0.0 — adds a semantic candidate list from the loopback provider configured under `retrievalProvider` and fuses it with the lexical list by weighted RRF (k=60, dense weight 2). The provider still ships disabled, so the default row with no provider reads through the lexical path unchanged and records `provider-disabled` on the search diagnostic; nothing falls back silently. |
+| `retrievalProvider` | `{enabled: false, endpoint: "", model: "", dimensions: 0, timeoutMs: 500, rerank: false}` | object; unknown keys are refused | Loopback embedding service for `hybrid`. It is never a cloud call: the endpoint must be a loopback address. When `enabled` is false the provider is never constructed, every other field is inert and `hybrid` behaves like `lexical`. |
+| `retrievalProvider.enabled` | `false` | boolean | Turns the provider on. Optional even with `retrievalEngine: hybrid`, which is the default: without it the engine resolves to the lexical path and the search diagnostic states `provider-disabled`. |
 | `retrievalProvider.endpoint` | `""` | URL on 127.0.0.1/localhost | Where `/embed` is served. Any non-loopback host is refused at config load. |
 | `retrievalProvider.model` | `""` | non-blank string when enabled | Model name sent in the request body; also part of the vector-store filename, so changing it triggers a full local rebuild. |
 | `retrievalProvider.dimensions` | `0` | positive integer when enabled | Expected vector size. A provider response of another size invalidates the stored vectors and forces a rebuild. |
@@ -1040,20 +1040,24 @@ sandbox.
 
 ### Other boundaries worth knowing
 
-- **Semantic retrieval is opt-in and its cost is measured.** `retrievalEngine:
-  "sparse"` remains lexical: it re-ranks at most 24 source-verified candidates with
-  TF-IDF/cosine and cannot find a synonym the index never matched. `hybrid` adds a
-  real semantic candidate channel through an explicitly configured loopback provider;
-  on a frozen 200-query corpus it moved pooled P@3 from 44.4% to 61.25% with no class
+- **Semantic retrieval is on by default in engine, off in effect until you supply a
+  provider, and its cost is measured.** `retrievalEngine: "sparse"` remains lexical:
+  it re-ranks at most 24 source-verified candidates with
+  TF-IDF/cosine and cannot find a synonym the index never matched. `hybrid` — the
+  default engine since 2.0.0 — adds a real semantic candidate channel through the
+  loopback provider configured under `retrievalProvider`. That provider still ships
+  disabled, so an unconfigured row reads byte-for-byte the lexical path and says
+  `provider-disabled` on the search diagnostic: the default asks for the channel, it
+  does not spend anything until you point it at a local model service. On a frozen
+  200-query corpus it moved pooled P@3 from 44.4% to 61.25% with no class
   regression, and the calibrated gate (token hits or a top-three dense slot at cosine
   0.92) then took in-gate precision from 27.9% to 41.8% and no-answer false positives
-  from 32.5% to 5.0%. It is still opt-in: it needs a local model service and costs one
-  embedding round trip per query (corpus p50 121.2 ms against 22.3 ms for lexical
-  after the query-plan fix, so the absolute 350 ms ceiling holds while the
-  1.5x-lexical ratio does not), and its 900-character injection path has not been
-  measured in live sessions. With the provider disabled the shipped path is
-  byte-for-byte the lexical one. See `docs/validation/retrieval-hybrid-2026-11-02.md`
-  and `docs/validation/retrieval-latency-and-semantic-gate-2026-11-03.md`.
+  from 32.5% to 5.0%. Turning it on costs one embedding round trip per query (corpus
+  p50 121.2 ms against 22.3 ms for lexical after the query-plan fix, so the absolute
+  350 ms ceiling holds while the 1.5x-lexical ratio does not), and its 900-character
+  injection path has not been measured in live sessions. See
+  `docs/validation/retrieval-hybrid-2026-11-02.md` and
+  `docs/validation/retrieval-latency-and-semantic-gate-2026-11-03.md`.
 - **Delivery receipts are observations, not proof of attention.** DSH acknowledges
   the committed producer-owned event that carried the final message; Codex stdout is
   only a pending receipt until a later trusted hook reconciles it against its own

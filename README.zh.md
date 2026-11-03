@@ -60,7 +60,7 @@ repository                                vault (~/Documents/dsh-memory)
 | 🧠 **纯 Markdown 的项目记忆** | 一个项目对应一个稳定的 `projectId`、一个提交进版本库的指针文件、仓库里一个固定目录。Obsidian 只负责展示结果；仓库比 DSH 活得久，卸载插件后照样能读。 |
 | 🔌 **协议 + 适配器** | 仓库布局、指针和笔记 frontmatter 是一套协议：`skills/obsidian-mem/SKILL.md` 把它交给任何 Agent-Skills 宿主，`codex/` 则通过一个直接 import `lib/`（而不是复制）的 MCP server，把同样的六个操作装进 Codex CLI。 |
 | ✍️ **六个记忆工具** | `mem_search`、`mem_read`、`mem_write`、`mem_log`、`mem_brief`、`mem_admin`——事务化写入、可重建的 SQLite/FTS5 缓存，以及一份始终在固定字符预算内的会话简报。 |
-| 🔎 **可选语义引擎的检索** | 默认 FTS5/BM25；可切本地 TF-IDF/余弦重排（`sparse`），或 opt-in 的回环 embedding 引擎（`hybrid`），同日创建/更新的互斥口径，每轮相关笔记召回，简报是导航而不是正文倾倒。 |
+| 🔎 **默认带语义引擎的检索** | 基线是 FTS5/BM25；`hybrid` 引擎已是默认，只要把 `retrievalProvider` 指向本地模型服务就多一条回环 embedding 的语义通道（不配 provider 就是原样的 lexical 路径），另有本地 TF-IDF/余弦重排（`sparse`）、同日创建/更新的互斥口径、每轮相关笔记召回，以及一份是导航而不是正文倾倒的简报。 |
 | 🗂️ **蒸馏与整理** | 完成的回合在后台蒸馏成带类型的笔记；近似重复和危险的改写只停成提案，只能由人在终端里用 `dsh-obsidian-mem-review` 批准。 |
 | 📊 **实时记忆面板** | GitHub 形式的 53 周贡献日历（固定 10 px 方格、月份与星期标签、悬停 tooltip、窄侧栏里图内横向滚动）；新建/更新分流柱、标签树状图、类型→状态的构成桑基图、KPI 迷你折线、按天分组的活动时间线，以及一个把三个维护操作结果就地写在按钮所属卡片里的 **健康** 仪表盘。后台轮询静默重扫索引，别的进程写下的记忆无需重启 DSH 就能出现。 |
 | 🕸️ **知识图谱** | 作用域内的**每个节点**都画出来（没有 top-N 截断），力模型、alpha 衰减与播种/拖拽协议是 Obsidian D3 回退模拟器的 1:1 移植；筛选、颜色组、外观与力度按浏览器来源持久化；读/写/检索/注入召回会点亮这一轮真正碰到的节点。 |
@@ -342,7 +342,7 @@ Canvas 绘制、力模型与播种/拖拽协议都提取自本机 Obsidian 图�
     bindHint: true
     briefBudgetChars: 6000
     recallBudgetChars: 900
-    retrievalEngine: lexical
+    retrievalEngine: hybrid
     retrievalProvider:
       enabled: false
       endpoint: ""
@@ -389,9 +389,9 @@ Canvas 绘制、力模型与播种/拖拽协议都提取自本机 Obsidian 图�
 | `bindHint` | `true` | boolean | 当会话所在目录解析不出可用项目时，是否一次性告知该会话。这条通知既是「要不要为这个项目建记忆」的提问入口，也是「会话记录的目录已被移动或删除」的报错入口——否则记忆只会静默失效。`false` 只去掉这一条注入，别的都不变；Codex 侧同一个开关是 `OBSIDIAN_MEM_BIND_HINT`。 |
 | `briefBudgetChars` | `6000` | 整数 256–20000 | 会话简报与每周提醒的硬上限，单位是 Unicode 码点。 |
 | `briefConventionMode` | `summary` | `summary` 或 `flat` | 长约定索引的渲染方式。`summary` 只显示 5 行 MOC，其余通过 `mem_brief(section="conventions", offset=5)` 逐页取回；`flat` 是 0.3 之前的列表，完全由预算决定显示多少。只影响渲染：分页始终能读到全部条目。`summary` 模式下这五行会跨已确认的会话轮转，所以长 MOC 不会永远是同五条。 |
-| `retrievalEngine` | `lexical` | `lexical`、`sparse` 或 `hybrid` | 检索引擎。`lexical` 是原样的 FTS 路径。`sparse` 用本地 TF-IDF/余弦对至多 24 条源码已验证的 lexical 候选重排，再以 RRF k=60 融合；不需要模型、网络或依赖。`hybrid` 从显式配置的回环服务取一份语义候选，再与 lexical 列表按加权 RRF（k=60，语义权重 2）融合；它要求 `retrievalProvider.enabled: true`，默认关闭，而且 `hybrid` 配一个未启用的 provider 会在加载配置时失败，不会静默降级。 |
-| `retrievalProvider` | `{enabled: false, endpoint: "", model: "", dimensions: 0, timeoutMs: 500, rerank: false}` | 对象；未知键会被拒绝 | `hybrid` 使用的回环 embedding 服务。它永远不是云调用：endpoint 必须是回环地址。`enabled` 为 false 时不会构造 provider，其余字段全部无效。 |
-| `retrievalProvider.enabled` | `false` | boolean | 打开 provider。`retrievalEngine: hybrid` 要求它开启。 |
+| `retrievalEngine` | `hybrid` | `lexical`、`sparse` 或 `hybrid` | 检索引擎。`lexical` 是原样的 FTS 路径。`sparse` 用本地 TF-IDF/余弦对至多 24 条源码已验证的 lexical 候选重排，再以 RRF k=60 融合；不需要模型、网络或依赖。`hybrid`（2.0.0 起的默认）从 `retrievalProvider` 里配置的回环服务取一份语义候选，再与 lexical 列表按加权 RRF（k=60，语义权重 2）融合。provider 本身仍然默认关闭，所以没有任何 provider 的默认配置走的是原样的 lexical 路径，并在 search 诊断里记 `provider-disabled`；不会静默降级。 |
+| `retrievalProvider` | `{enabled: false, endpoint: "", model: "", dimensions: 0, timeoutMs: 500, rerank: false}` | 对象；未知键会被拒绝 | `hybrid` 使用的回环 embedding 服务。它永远不是云调用：endpoint 必须是回环地址。`enabled` 为 false 时不会构造 provider，其余字段全部无效，`hybrid` 等价于 `lexical`。 |
+| `retrievalProvider.enabled` | `false` | boolean | 打开 provider。即使 `retrievalEngine: hybrid`（现在的默认）它也是可选的：没有它，引擎解析成 lexical 路径，search 诊断里写明 `provider-disabled`。 |
 | `retrievalProvider.endpoint` | `""` | 127.0.0.1/localhost 上的 URL | `/embed` 的地址。任何非回环主机都会在加载配置时被拒绝。 |
 | `retrievalProvider.model` | `""` | 启用时非空字符串 | 请求体里的模型名；它也是向量文件名字的一部分，改了会触发本地整份重建。 |
 | `retrievalProvider.dimensions` | `0` | 启用时正整数 | 期望的向量维度。provider 返回其它维度会让已存向量失效并强制重建。 |
@@ -842,16 +842,19 @@ Obsidian 里冲突。要补上这个缺口，要么在仓库侧读 `types.json`�
 
 ### 其他值得知道的边界
 
-- **语义检索是 opt-in 的，代价也已经量过。** `retrievalEngine: "sparse"` 仍是词法
-  的：它只用 TF-IDF/余弦对至多 24 条源码已验证候选重排，找不到索引从未匹配过的
-  同义词。`hybrid` 通过显式配置的回环 provider 增加一条真正的语义候选通道；在冻结的
-  200 条语料上，它把 pooled P@3 从 44.4% 提到 61.25%，五类无一回退，随后的校准闸门
-  （token 命中，或前三名 dense 槽位 cosine ≥ 0.92）再把 in-gate precision 从 27.9%
-  提到 41.8%、no-answer 假阳性从 32.5% 降到 5.0%。它仍然要 opt-in：需要本地模型服务，
-  每次查询多一次 embedding 往返（查询计划修复后语料 p50 为 121.2ms，lexical 为
-  22.3ms；350ms 绝对上限满足，但「不超过 lexical 1.5 倍」的相对说法不成立），而且
-  900 字符注入路径还没有在真实会话里量过。provider 关闭时，发布路径与 lexical 逐字节
-  相同。见 `docs/validation/retrieval-hybrid-2026-11-02.md` 与
+- **语义检索默认在引擎上开启、在你配 provider 之前不产生任何效果，代价也已经量过。**
+  `retrievalEngine: "sparse"` 仍是词法的：它只用 TF-IDF/余弦对至多 24 条源码已验证候选
+  重排，找不到索引从未匹配过的同义词。`hybrid`（2.0.0 起的默认引擎）通过
+  `retrievalProvider` 里配置的回环 provider 增加一条真正的语义候选通道。provider 本身
+  仍然默认关闭，所以没有任何 provider 的配置读的是逐字节相同的 lexical 路径，并在
+  search 诊断里记 `provider-disabled`：默认值只是「要了这条通道」，你不把它指向本地模型
+  服务之前它不花任何代价。在冻结的 200 条语料上，它把 pooled P@3 从 44.4% 提到
+  61.25%，五类无一回退，随后的校准闸门（token 命中，或前三名 dense 槽位 cosine ≥ 0.92）
+  再把 in-gate precision 从 27.9% 提到 41.8%、no-answer 假阳性从 32.5% 降到 5.0%。
+  真正打开它的代价是每次查询多一次 embedding 往返（查询计划修复后语料 p50 为 121.2ms，
+  lexical 为 22.3ms；350ms 绝对上限满足，但「不超过 lexical 1.5 倍」的相对说法不成立），
+  而且 900 字符注入路径还没有在真实会话里量过。见
+  `docs/validation/retrieval-hybrid-2026-11-02.md` 与
   `docs/validation/retrieval-latency-and-semantic-gate-2026-11-03.md`。
 - **投递回执是观测，不是「模型已经注意」的证明。** DSH 确认的是承载最终消息的、
   生产者所有的已提交事件；Codex 的 stdout 只是待定回执，要等之后某个可信 hook 拿它

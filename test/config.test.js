@@ -59,9 +59,10 @@ const DEFAULTS = {
   indexBackend: 'auto',
   // The retrieval engine `mem_search` runs. `lexical` is the existing index
   // ranking and the measured baseline; `sparse` reranks its bounded candidate set
-  // locally and fuses the two orders. Lexical stays the default until the sparse
-  // quality gate passes (v0.4 spec §5).
-  retrievalEngine: 'lexical',
+  // locally and fuses the two orders. From 2.0.0 the default is `hybrid`, whose
+  // semantic channel is supplied by the provider block below — disabled by
+  // default, so the shipped row still reads through the lexical path unchanged.
+  retrievalEngine: 'hybrid',
   // The optional loopback retrieval provider: disabled by default so an
   // unconfigured row makes no request at all. `hybrid` is the only engine that
   // reads it; the values here are the shipped defaults, not a working provider.
@@ -234,14 +235,14 @@ test('indexBackend accepts only auto, sqlite and scan', () => {
   assertRejected(/indexBackend/, { indexBackend: 'fts5' })
 })
 
-test('retrievalEngine is lexical by default and accepts the three local engines', () => {
-  // The default is the existing engine, so an unconfigured row reads exactly what
-  // it read before v0.4. `sparse` is the deterministic local reranker; `hybrid`
-  // adds the loopback dense candidate channel and is therefore the one engine with
-  // a second config precondition (an enabled provider, asserted next). `semantic`
-  // remains absent: a bare word would promise a provider selection this schema
-  // cannot make.
-  assert.equal(validateConfig({}).retrievalEngine, 'lexical')
+test('retrievalEngine is hybrid by default and accepts the three local engines', () => {
+  // From 2.0.0 the default engine is `hybrid`, whose dense channel is optional:
+  // the provider block still ships disabled, so an unconfigured row answers from
+  // the lexical path and says `provider-disabled` on the search event (proved in
+  // test/services-hybrid.test.js). `sparse` is the deterministic local reranker
+  // and needs nothing. `semantic` remains absent: a bare word would promise a
+  // provider selection this schema cannot make.
+  assert.equal(validateConfig({}).retrievalEngine, 'hybrid')
   assert.equal(validateConfig({ retrievalEngine: 'lexical' }).retrievalEngine, 'lexical')
   assert.equal(validateConfig({ retrievalEngine: 'sparse' }).retrievalEngine, 'sparse')
   const hybrid = {
@@ -263,27 +264,44 @@ test('retrievalEngine is lexical by default and accepts the three local engines'
   // An explicit null reads as "absent" to schemastery and resolves to the default,
   // which is the same convention `indexBackend` follows; every other non-enum
   // value is a config error.
-  assert.equal(validateConfig({ retrievalEngine: null }).retrievalEngine, 'lexical')
+  assert.equal(validateConfig({ retrievalEngine: null }).retrievalEngine, 'hybrid')
   for (const bad of ['semantic', 'Sparse', 'LEXICAL', '', true, false, 0, ['sparse']]) {
     assertRejected(/retrievalEngine/, { retrievalEngine: bad })
   }
 })
 
-test('hybrid needs an enabled loopback provider and refuses a bad one eagerly', () => {
-  // The spec's F check, at the config seam rather than at first search: a row that
-  // asks for hybrid but cannot supply a provider would otherwise look configured
-  // and silently behave lexically, which is the exact class of "config that is not
-  // honoured" this file's unknown-key refusal exists to prevent.
-  assertRejected(/retrievalProvider\.enabled|retrievalProvider/, { retrievalEngine: 'hybrid' })
-  assertRejected(/retrievalProvider\.enabled|retrievalProvider/, {
-    retrievalEngine: 'hybrid',
-    retrievalProvider: { enabled: false, endpoint: 'http://127.0.0.1:8765' },
-  })
-  // Enabled with lexical is allowed (the provider exists but nothing calls it),
-  // but an enabled provider must still be usable: remote endpoints, a blank model
-  // and a non-integer width are refused even when the engine is lexical.
+test('a hybrid engine without an enabled provider loads, and a bad provider is refused', () => {
+  // `hybrid` is the default engine and the provider is disabled by default, so
+  // this pair IS the shipped row since 2.0.0: it must load. The dense channel is
+  // optional — `services.search` resolves the pair to the lexical path and records
+  // `provider-disabled`, covered in test/services-hybrid.test.js. What must still
+  // be refused is a provider that was switched ON and cannot be used.
+  assert.equal(validateConfig({}).retrievalEngine, 'hybrid')
+  assert.equal(validateConfig({}).retrievalProvider.enabled, false)
   assert.equal(
     validateConfig({
+      retrievalEngine: 'hybrid',
+      retrievalProvider: { enabled: false, endpoint: 'http://127.0.0.1:8765' },
+    }).retrievalEngine,
+    'hybrid',
+  )
+  // An enabled provider with the default engine is allowed (the default IS
+  // hybrid), but an enabled provider must still be usable: remote endpoints, a
+  // blank model and a non-integer width are refused whatever the engine.
+  assert.equal(
+    validateConfig({
+      retrievalProvider: {
+        enabled: true,
+        endpoint: 'http://127.0.0.1:8765',
+        model: 'e5-small',
+        dimensions: 384,
+      },
+    }).retrievalEngine,
+    'hybrid',
+  )
+  assert.equal(
+    validateConfig({
+      retrievalEngine: 'lexical',
       retrievalProvider: {
         enabled: true,
         endpoint: 'http://127.0.0.1:8765',

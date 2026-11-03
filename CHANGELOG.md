@@ -10,6 +10,36 @@ baseline that was never tagged, and every version from `0.1.1` on is a tagged
 release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
+
+- **破坏性变更：`retrievalEngine` 的默认值从 `lexical` 改为 `hybrid`。** 语义检索通道
+  现在默认在引擎上开启。`retrievalProvider` 仍然默认关闭且为空——每个字段描述的是运维
+  自己的本地服务，插件不会替你凭空造一个——所以**没有任何 provider 配置的默认行，读的
+  仍然是原样的 lexical 路径**：`services.search` 识别出「hybrid + provider 未启用」这一
+  对组合并直接走 lexical 的单次查询（不是 `searchHybrid` 配一个缺失的 runtime，那会白付
+  `HYBRID_LEXICAL_LIMIT` 的宽候选窗口并给数组挂上 hybrid 字段），返回值与 1.0.7 逐字节
+  相同。状态不静默：search 诊断事件报的是**配置要求的**引擎 `hybrid` 加
+  `fallback: provider-disabled`，所以运维能从诊断窗口看出「配置没有生效、为什么」。
+  - 兼容性分类：`retrievalEngine` 是 1.0.0 起承诺的配置键之一，默认值属于该承诺的一部分，
+    因此按 SemVer 走主版本号。六个 `mem_*` 工具名与参数、vault 协议（指针文件、frontmatter、
+    skill）都没有变化。
+  - 反过来，**AMD 前的旧配置显式写着 `retrievalEngine: lexical` 或 `sparse` 时行为完全不变**，
+    升级不会改动既有行的语义。
+  - 这一对默认值不再在配置加载时报错。1.0.7 里 `hybrid` 配未启用的 provider 会抛
+    `RangeError('retrievalProvider.enabled')`；既然它现在是出厂默认行，那个拒绝就必须撤掉，
+    否则插件装不上。仍然拒绝的是「provider 打开了但不能用」：非回环 endpoint、空白 model、
+    非正整数 dimensions，由 `validateProviderConfig` 在加载时就抛错。
+  - 证据：`node --test test/config.test.js test/services-hybrid.test.js
+    test/hybrid-recall.test.js test/hybrid-search.test.js test/search-engine.test.js`
+    69/69 通过。`test/services-hybrid.test.js` 新增一条「the shipped default row reads
+    lexically and says why」，钉住三件事：`validateConfig({}).retrievalEngine === 'hybrid'`、
+    `validateConfig({}).retrievalProvider.enabled === false`、以及默认行的命中数组
+    `retrievalEngine`/`hybridFallback` 都是 `undefined`（证明走的是纯 lexical 路径）、
+    而诊断是 `engine: 'hybrid'` + `fallback: 'provider-disabled'`。`test/config.test.js`
+    的默认值字面量与「hybrid 需要启用 provider」那条改成「默认这一对必须能加载」。
+  - 未验证：没有 provider 的真实升级路径（从 1.0.7 装好的现有 vault 升级到 2.0.0）只做了
+    离线验证，没有在真实会话里跑过一轮；「默认行逐字节等于 1.0.7」是对 `searchNotes` 的
+    调用参数与返回数组结构做的断言，不是对真实 vault 的逐字节比对。
+
 - **recall 闸门增加校准过的语义分支：hybrid 融合排名前三的候选，只要 dense 分数 ≥ 0.92，
   即使 token 命中数只有 1 也可通过闸门并注入摘录。** 词法闸门只认字面重叠，会把融合与
   向量都判为高信的候选拒掉；新分支只对带 semantic-score/hybrid-rank 信号的 hybrid 命中
