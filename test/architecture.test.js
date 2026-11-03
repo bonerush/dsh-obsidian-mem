@@ -1296,7 +1296,11 @@ const BUDGETS = {
   // The hybrid wiring (lazy handle + search facts) added 53 measured lines, and
   // measured-plus-30 rounds up to 2100; the orchestration itself stays in
   // hybrid-recall, so this is the growth the service layer was expected to take.
-  'lib/services.js': 2100,
+  // The semantic data channel (store snapshot, projection cache, replay views and
+  // the shared explain pipeline) added 208 measured lines on top; measured-plus-30
+  // rounds up to 2300. The projection math stays in semantic-map and the ring in
+  // recall-trace, so this file only routes.
+  'lib/services.js': 2300,
   // Raised from 2200 by Task 7 (2229 formatted lines measured; measured-plus-30
   // rounds up to 2300, which is this number — the entry above the old one had no
   // note of its own, so this number states the rule it follows). What the 29 lines
