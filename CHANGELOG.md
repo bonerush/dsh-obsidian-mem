@@ -11,6 +11,22 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+- **面板 UI 两处修复：刷新图标改用 lucide rotate-cw；热力图末尾月份标签不再被裁掉。**
+  `lib/client.js` 的 `ICONS.refresh` 是手绘弧线（9 单位半径 + 6 单位箭头），与相邻的
+  lucide rotate-ccw 不一致；现换成同表 rotate-cw（顺时针孪生，同 5 单位箭头）。
+  `lib/memory-panel.js` 新增 `HEAT_MONTH_TAIL = 24`：月份行 `.mem-heat-months` 原先
+  宽度恰为 `gridWidth` 且 `overflow:hidden`，当月份从最后一列开始时（窗口在月初结束，
+  例如 2026-11-03）标签 left = `gridWidth − 10`，只剩 10px，而中文 "11月" / 英文
+  "Nov" 约 22px，尾部被裁成 "11"；现在 canvas 与月份行各预留 24px，网格列与 tooltip
+  锚点几何不变（tooltip 的居中偏移由同一个 `canvasWidth` 推导）。
+  - 证据：先红后绿——回退 `lib/client.js`、`lib/memory-panel.js` 后
+    `node --test test/panel-ui.test.js test/panel-client.test.js` 5 项失败（新增回归
+    与 4 项宽度断言）；应用修复后同一命令 122/122 通过，六个 panel 测试文件
+    192/192 通过。新增断言覆盖：refresh svg 的两段 path 等于 rotate-cw、末列月份
+    标签 `left = gridWidth − 10`、月份行宽 `gridWidth + 24`、每个标签在行内至少留
+    24px，以及以 2025-11-02（周日）开始、止于 2026-11-07 的 371 天 fixture 让
+    "11月" 落在最后一列。
+
 ## 2.0.1 — 2026-11-03
 
 - **embedding warm 现在可中断、可恢复，并按请求耗时自适应批大小。**

@@ -915,7 +915,12 @@ const BUDGETS = {
   //   * the zone-heading translation (ZONE_LABELS/zoneLabel, the same words
   //     lib/panel-copy.js uses) and the onMeta gate that stops the composed 健康 tab
   //     from printing its own title under the shell's search box.
-  'lib/memory-panel.js': 4300,
+  // Raised from 4300 by the 2026-11-03 heat-map month-label fix (m01269; 4302
+  // formatted lines measured; measured-plus-30 is 4332, rounded up to 4350). The
+  // 2 real lines are HEAT_MONTH_TAIL = 24 and its explanatory comment, plus the
+  // months row's width change; the budget moves because the file was already at
+  // 4300 and the change cannot be expressed without naming the tail constant.
+  'lib/memory-panel.js': 4350,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})

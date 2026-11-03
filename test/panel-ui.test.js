@@ -660,6 +660,27 @@ test('the activity heat map is a fixed GitHub-style calendar of every served day
     assert.match(String(month.props.children[0]), /^\d{1,2}月$/u, 'the label is <month>月')
     assert.match(String(month.props.style.left), /^\d+px$/u, 'a label is positioned by its column')
   }
+  // The months row clips with overflow:hidden, so it must own the room its last
+  // label needs past the grid — a label on the final column starts only 10px
+  // before the grid's edge and is wider than that (the 2026-11-03 defect clipped
+  // "11月" to "11"). Segments: 10px cell + 2px gap, minus the trailing gap.
+  const heatGridWidth = (cells.length / 7) * 12 - 2
+  const monthsRow = byClass(tree, 'mem-heat-months')
+  assert.equal(monthsRow.length, 1, 'one months row')
+  assert.equal(
+    monthsRow[0].props.style.width,
+    heatGridWidth + 24 + 'px',
+    'the months row reserves a month width past the grid',
+  )
+  assert.equal(monthsRow[0].props.style.marginLeft, '14px', 'the row starts right of the gutter')
+  for (const month of months) {
+    const left = Number(String(month.props.style.left).replace('px', ''))
+    assert.ok(left >= 0 && left < heatGridWidth, 'a label starts inside the grid')
+    assert.ok(
+      heatGridWidth + 24 - left >= 24,
+      'every label keeps a full 11px-tier month inside the clipped row (left ' + left + 'px)',
+    )
+  }
   assert.deepEqual(
     byClass(tree, 'mem-heat-weekday').map((node) => node.props.children[0]),
     ['一', '三', '五'],
@@ -694,6 +715,52 @@ test('the activity heat map is a fixed GitHub-style calendar of every served day
   )
   // Both charts read the same series, so one window cannot produce two totals.
   assert.equal(byClass(tree, 'mem-flow').length, 1, 'the flow chart is drawn from it too')
+})
+
+test('a month that starts in the last column keeps its trailing 月', async (t) => {
+  // The 2026-11-03 defect: that window's last column began on Nov 1, so the "11月"
+  // label sat at the final column, 10px before the grid edge, and the months row
+  // (width = gridWidth, overflow:hidden) clipped it to "11". The row now reserves a
+  // full label width past the grid. This fixture ends on a month's first Sunday —
+  // 371 days from 2025-11-02 (Sunday) to 2026-11-07 — so the trailing label is Nov.
+  const start = new Date(2025, 10, 2)
+  const pad = (n) => String(n).padStart(2, '0')
+  const list = []
+  for (let i = 0; i < 371; i += 1) {
+    const date = new Date(start)
+    date.setDate(date.getDate() + i)
+    list.push(`${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`)
+  }
+  const activity = {
+    from: list[0],
+    to: list[list.length - 1],
+    days: list,
+    created: list.map((_d, index) => (index % 5 === 0 ? 1 : 0)),
+    updated: list.map(() => 0),
+  }
+  stubFetch(t, () => ok(overviewValue({ activity, tags: { items: [], total: 0 } })))
+  const render = mount(t, 'OverviewView')
+  render(chartProps())
+  await setImmediate()
+  const tree = render(chartProps())
+  const cells = byClass(tree, 'mem-heat-cell')
+  const gridWidth = (cells.length / 7) * 12 - 2 // 10px cell + 2px gap, minus the trailing gap
+  const months = byClass(tree, 'mem-heat-month')
+  const trailing = months[months.length - 1]
+  assert.equal(
+    String(trailing.props.children[0]),
+    '11月',
+    'the last column samples Nov 1, so it carries the trailing month label',
+  )
+  const left = Number(String(trailing.props.style.left).replace('px', ''))
+  assert.equal(left, gridWidth - 10, 'the label starts at the last column, 10px before the edge')
+  const row = byClass(tree, 'mem-heat-months')[0]
+  assert.equal(
+    row.props.style.width,
+    gridWidth + 24 + 'px',
+    'the row owns 24px past the grid, enough for an unmutilated 11月',
+  )
+  assert.ok(gridWidth + 24 - left >= 24, 'the trailing label has its full width inside the row')
 })
 
 test('the heat map requests the 371-day year once, at any panel width', async (t) => {
@@ -837,25 +904,26 @@ test('the heat map tooltip is the only hover reading, and scrolling hides it', a
 })
 
 test('a panel wider than the fixed calendar centres the calendar and its tooltip', async (t) => {
-  // The fixed calendar is 660px for the 371-day fixture (14px gutter + 54 columns at
-  // the 12px pitch, minus the trailing 2px gap) and the panel's scroll box is 800px
-  // here, so the auto inline margins put the canvas' left edge (800-660)/2 = 70px from
-  // the scroll box's edge. The tooltip anchors from that same edge, so hovering the
-  // first served day must land at 70 + 14 + 5 = 89px, not at 19px — the defect the
-  // user reported as "热力图靠左" was the calendar starting at the scroll box edge with
-  // the rest of a wide panel empty.
+  // The fixed calendar canvas is 684px for the 371-day fixture: 14px gutter + 54
+  // columns at the 12px pitch minus the trailing 2px gap = 646px grid, plus the
+  // 24px month tail that keeps a trailing label whole. The panel's scroll box is
+  // 800px here, so the auto inline margins put the canvas' left edge
+  // (800-684)/2 = 58px from the scroll box's edge. The tooltip anchors from that
+  // same edge, so hovering the first served day must land at 58 + 14 + 5 = 77px,
+  // not at 19px — the defect the user reported as "热力图靠左" was the calendar
+  // starting at the scroll box edge with the rest of a wide panel empty.
   stubFetch(t, () =>
     ok(overviewValue({ activity: activityFixture(371), tags: { items: [], total: 0 } })),
   )
   const render = mount(t, 'OverviewView', {
-    heatBox: { scrollLeft: 0, scrollWidth: 660, clientWidth: 800 },
+    heatBox: { scrollLeft: 0, scrollWidth: 684, clientWidth: 800 },
   })
   render(chartProps())
   await setImmediate()
   let tree = render(chartProps())
   const canvas = byClass(tree, 'mem-heat-canvas')
   assert.equal(canvas.length, 1)
-  assert.equal(canvas[0].props.style.width, '660px', 'the fixed calendar keeps its width')
+  assert.equal(canvas[0].props.style.width, '684px', 'the fixed calendar keeps its width')
   const scroll = byClass(tree, 'mem-heat-scroll')[0]
   const real = byClass(tree, 'mem-heat-cell').filter(
     (cell) => !(cell.props.className ?? '').split(' ').includes('is-void'),
@@ -874,7 +942,7 @@ test('a panel wider than the fixed calendar centres the calendar and its tooltip
   assert.equal(tip.length, 1)
   assert.equal(
     tip[0].props.style.left,
-    '89px',
+    '77px',
     'the tooltip adds the centred gap before the column offset',
   )
   // The vertical anchor is the same calendar row as before: centring is horizontal.
@@ -4412,12 +4480,16 @@ test('an en locale widens the heat map weekday gutter for its day names', async 
   assert.equal(canvas.length, 1)
   assert.equal(
     canvas[0].props.style.width,
-    32 + gridWidth + 'px',
-    'the 32px gutter is part of the canvas width',
+    32 + gridWidth + 24 + 'px',
+    'the 32px gutter and the 24px month tail are part of the canvas width',
   )
   const months = byClass(tree, 'mem-heat-months')
   assert.equal(months.length, 1)
-  assert.equal(months[0].props.style.width, gridWidth + 'px')
+  assert.equal(
+    months[0].props.style.width,
+    gridWidth + 24 + 'px',
+    'the months row ends 24px past the last column so a trailing label is not clipped',
+  )
   assert.equal(
     months[0].props.style.marginLeft,
     '32px',

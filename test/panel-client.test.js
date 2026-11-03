@@ -1652,6 +1652,22 @@ test('the English shell renders its tab strip, search box, clock and loading cop
   const refresh = byClass(meta, 'mem-refresh')[0]
   assert.equal(refresh.props.title, 'Refresh memory data')
   assert.equal(refresh.props['aria-label'], 'Refresh memory data')
+  // The refresh arrow is lucide rotate-cw — the clockwise twin of the graph's
+  // rotate-ccw reset glyph — not the hand-tuned arc it was before 2026-11-03.
+  const refreshIcon = nodes(refresh).find((node) => node.type === 'svg')
+  assert.ok(refreshIcon, 'the refresh control paints its icon')
+  assert.equal(
+    refreshIcon.props.viewBox,
+    '0 0 24 24',
+    'on the same 24px grid as the graph controls',
+  )
+  assert.deepEqual(
+    nodes(refreshIcon)
+      .filter((node) => node.type === 'path')
+      .map((node) => node.props.d),
+    ['M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8', 'M21 3v5h-5'],
+    'lucide rotate-cw: the same five-unit arrowhead as rotate-ccw',
+  )
   const box = renderChild('SearchBox')
   const input = byClass(box, 'mem-search-input')[0]
   assert.equal(input.props.placeholder, 'Search memories…')
