@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 2.0.2 — 2026-11-03
+
 - **面板 UI 两处修复：刷新图标改用 lucide rotate-cw；热力图末尾月份标签不再被裁掉。**
   `lib/client.js` 的 `ICONS.refresh` 是手绘弧线（9 单位半径 + 6 单位箭头），与相邻的
   lucide rotate-ccw 不一致；现换成同表 rotate-cw（顺时针孪生，同 5 单位箭头）。
