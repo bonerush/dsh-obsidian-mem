@@ -1090,7 +1090,12 @@ const BUDGETS = {
   // The semantic layout (fixed coordinates, 600 ms transition, overlay hook and
   // locate) added 139 measured lines; measured-plus-30 rounds up to 900. The
   // layout policy stays in semantic-map / graph-semantic; this file only draws.
-  'lib/graph-renderer.js': 900,
+  // The label-density round measured 919 lines (over the old 900): measured-plus-30
+  // rounds up to 950. It buys the per-frame label draw budget, the screen-space
+  // collision thinning for dense graphs, the focused-first pass, and the FIFO cap on
+  // cached label bitmaps — the four guards that keep a 1,400-node semantic cloud from
+  // painting every title as a white block and retaining hundreds of MB of bitmaps.
+  'lib/graph-renderer.js': 950,
   // The eleven-slot table, its two CSS forms and the probe read, split out of the
   // renderer when the label-size work pushed that file past its budget.
   'lib/graph-palette.js': 160,

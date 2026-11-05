@@ -457,6 +457,43 @@ test('labels stay visible when sharper replacements exceed one frame of work', (
   s.renderer.destroy()
 })
 
+test('a dense semantic cloud draws only a readable budget of labels', () => {
+  const s = surface()
+  const ids = Array.from({ length: 260 }, (_, i) => 'node-' + i)
+  s.renderer.update(s.model(ids.map((id) => s.node(id))))
+  s.emit(
+    ids,
+    ids.flatMap((_id, i) => [((i % 16) - 8) * 45, (Math.floor(i / 16) - 8) * 45]),
+  )
+  s.wheel(0)
+  const mark = s.contexts[0].calls.length
+  s.step()
+  const draws = s.contexts[0].calls
+    .slice(mark)
+    .filter((call) => call.name === 'drawImage' && call.args.length === 5)
+  assert.ok(draws.length <= 60, 'a dense graph never paints more than 60 labels in one frame')
+  assert.ok(draws.length > 5, 'the visible labels are still painted')
+  s.renderer.destroy()
+})
+
+test('overlapping labels in a dense graph collapse to one readable title', () => {
+  const s = surface()
+  const ids = Array.from({ length: 260 }, (_, i) => 'node-' + i)
+  s.renderer.update(s.model(ids.map((id) => s.node(id))))
+  s.emit(
+    ids,
+    ids.flatMap(() => [0, 0]),
+  )
+  s.wheel(0)
+  const mark = s.contexts[0].calls.length
+  s.step()
+  const draws = s.contexts[0].calls
+    .slice(mark)
+    .filter((call) => call.name === 'drawImage' && call.args.length === 5)
+  assert.equal(draws.length, 1, 'a pile of overlapping labels is thinned to one')
+  s.renderer.destroy()
+})
+
 test('a clicked label resumes Obsidian zoom scaling after the pointer leaves', () => {
   const s = surface()
   s.renderer.update(s.model([s.node('one')]))
