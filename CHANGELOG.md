@@ -76,6 +76,16 @@ release artifact. The versioning policy is in the README, under Development.
     返回上述 `bad-request`。
   - 未验证：重启后的浏览器 UI 仍未验收（需重装 file: 快照并 ⌘Q，本次修复后补做）。
 
+- **修复：切到语义布局后节点仍停在链接布局的坐标上。** 语义地图的 points 以 vault
+  path 为键，而 graph 节点把 frontmatter id 当 `id`；`lib/graph-renderer.js` 只用
+  `node.id` 查 `layoutPoints`，全部 miss 后回退到节点原坐标，看起来像「切换布局只重置
+  了视野」。现改为 `node.id` 未命中时再按 `node.path` 查表（transition 起点同样接受
+  path 键），边界契约写在 draw 的注释里。
+  - 证据：先红后绿——`test/graph-renderer.test.js` 新增
+    「semantic coordinates may be keyed by note path, not only by node id」修复前失败、
+    修复后 30/30 通过；`eslint`、`prettier --check`、`npm run types` 通过。
+  - 未验证：浏览器 UI 仍未验收（需重装 file: 快照并 ⌘Q，本次修复后补做）。
+
 ## 2.0.2 — 2026-11-03
 
 - **面板 UI 两处修复：刷新图标改用 lucide rotate-cw；热力图末尾月份标签不再被裁掉。**

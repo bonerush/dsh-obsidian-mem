@@ -943,6 +943,28 @@ test('semantic mode uses the supplied coordinates and ignores worker frames', ()
   assert.ok(xs.includes(300) && xs.includes(500))
 })
 
+test('semantic coordinates may be keyed by note path, not only by node id', () => {
+  const s = surface()
+  s.renderer.update(s.model([s.node('one'), s.node('two')]))
+  // The semantic map is keyed by vault path while graph nodes carry their note id
+  // as `id`; the renderer has to accept the path key too (2026-11-05).
+  s.emit(['one', 'two'], [-300, 0, 300, 0])
+  s.step()
+  s.renderer.setLayout({
+    mode: 'semantic',
+    points: new Map([
+      ['one.md', { x: -100, y: 0 }],
+      ['two.md', { x: 100, y: 0 }],
+    ]),
+  })
+  s.advance(1000)
+  s.step()
+  const xs = s.contexts[0].calls
+    .filter((call) => call.name === 'arc' && call.args[2] > 0)
+    .map((call) => Math.round(call.args[0]))
+  assert.ok(xs.includes(300) && xs.includes(500))
+})
+
 test('reduced motion applies the semantic layout immediately', () => {
   const s = surface()
   s.setReduced(true)
