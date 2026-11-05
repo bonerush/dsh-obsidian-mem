@@ -62,6 +62,19 @@ release artifact. The versioning policy is in the README, under Development.
   - 证据：`node --test test/panel-client.test.js test/panel-ui.test.js
     test/graph-client.test.js test/architecture.test.js test/panel-assets.test.js
     test/graph-route.test.js` 144/144 通过；`npm run types` 通过。
+- **修复：真实面板里语义布局始终显示「语义地图暂不可用」。** `lib/graph-semantic.js`
+  的 controller 调用 `{ action: 'semantic' }` 与 `{ action: 'neighbors', path }` 时没有带
+  `sessionId`，而 `POST /obsidian-mem/graph` 在分发任何 action 之前就校验会话
+  （`{"code":"bad-request","message":"sessionId required"}`）；浏览器把每次地图请求都
+  记成 `route-error`，解释卡因此永远落到 `map-unavailable`。现改为
+  `loadMap(sessionId)` / `neighbors(sessionId, path)` 携带会话 id，`lib/client.js` 的加载
+  effect 传入当前 sessionId；缺 id 时 controller 不再发请求，直接返回 unavailable。
+  - 证据：先红后绿——`test/graph-semantic.test.js` 修复前两条断言失败（semantic payload
+    无 sessionId、空 id 仍发请求），修复后与 `test/panel-client.test.js` 共 41/41 通过；
+    新增源码形状 pin：`loadMap(sessionId)` 存在、`loadMap()` 不再出现。真实路由验证
+    （带 Origin 的 curl）：`semantic` 返回 `state: ready, count: 1432`，缺 sessionId 时
+    返回上述 `bad-request`。
+  - 未验证：重启后的浏览器 UI 仍未验收（需重装 file: 快照并 ⌘Q，本次修复后补做）。
 
 ## 2.0.2 — 2026-11-03
 

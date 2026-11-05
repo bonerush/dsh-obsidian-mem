@@ -158,8 +158,9 @@ test('the controller keeps cursor, starts the map once and dedupes recall pollin
     },
   })
   assert.equal(RECALL_POLL_MS, 1500)
-  assert.equal((await controller.loadMap()).state, 'ready')
+  assert.equal((await controller.loadMap('s1')).state, 'ready')
   assert.equal(posted.filter((payload) => payload.action === 'semantic').length, 1)
+  assert.equal(posted.find((payload) => payload.action === 'semantic')?.sessionId, 's1')
   await controller.poll('s1')
   await controller.poll('s1')
   assert.deepEqual(
@@ -167,4 +168,25 @@ test('the controller keeps cursor, starts the map once and dedupes recall pollin
     [0, 2],
   )
   assert.equal((await controller.replay('s1', '退避')).source, 'tool')
+  await controller.neighbors('s1', 'a.md')
+  assert.deepEqual(
+    posted.find((payload) => payload.action === 'neighbors'),
+    {
+      sessionId: 's1',
+      action: 'neighbors',
+      path: 'a.md',
+    },
+  )
+})
+
+test('the controller refuses vault-wide views without a session id', async () => {
+  const posted = []
+  const controller = createSemanticController({
+    post: async (payload) => {
+      posted.push(payload)
+      return { state: 'ready', points: [] }
+    },
+  })
+  assert.equal((await controller.loadMap('')).state, 'unavailable')
+  assert.deepEqual(posted, [])
 })

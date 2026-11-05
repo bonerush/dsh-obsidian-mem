@@ -2193,6 +2193,10 @@ test('the Sankey scrolls inside its own horizontal box', async () => {
 test('the graph view names the semantic module, the layout control and the card classes', async () => {
   const script = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.ok(script.includes("'/obsidian-mem/graph-semantic.js'"))
+  // The graph route rejects a request without a session id before dispatch, so a
+  // bare loadMap() would make the card read route-error forever (2026-11-05).
+  assert.ok(script.includes('loadMap(sessionId)'))
+  assert.ok(!script.includes('loadMap()'))
   assert.ok(script.includes('mem-semantic-card'))
   assert.ok(script.includes('mem-semantic-layout'))
   // The tab list stays three tabs; the semantic map is a layout, not a page.
