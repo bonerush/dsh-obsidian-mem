@@ -188,6 +188,20 @@ test('search records a tool trace and explain replays through the same pipeline'
   })
   assert.equal(explained.source, 'panel')
   assert.equal(explained.fused[1].lexicalHit, false)
+  // The trace query is projected into the same 0..1000 world square the client
+  // decodes the map into; a unit-square 0..1 value would draw the query point at
+  // the origin while every note sits a thousand units away.
+  assert.ok(Number.isFinite(explained.query.x) && Number.isFinite(explained.query.y))
+  assert.ok(explained.query.x >= 0 && explained.query.x <= 1000)
+  assert.ok(explained.query.y >= 0 && explained.query.y <= 1000)
+  assert.ok(Math.max(explained.query.x, explained.query.y) > 1)
+  const map = await services.semanticMap()
+  const retryMapPoint = new Map(
+    map.points.map(([path, x, y]) => [path, { x: (x / 4095) * 1000, y: (y / 4095) * 1000 }]),
+  ).get(pathOf('retry.md'))
+  assert.ok(retryMapPoint !== undefined)
+  assert.ok(Math.abs(explained.query.x - retryMapPoint.x) <= 1)
+  assert.ok(Math.abs(explained.query.y - retryMapPoint.y) <= 1)
   const neighbors = await services.semanticNeighbors({ path: pathOf('retry.md') })
   assert.equal(neighbors.state, 'ready')
   assert.equal(neighbors.neighbors[0].path, pathOf('backoff.md'))

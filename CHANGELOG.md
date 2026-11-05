@@ -86,6 +86,16 @@ release artifact. The versioning policy is in the README, under Development.
     修复后 30/30 通过；`eslint`、`prettier --check`、`npm run types` 通过。
   - 未验证：浏览器 UI 仍未验收（需重装 file: 快照并 ⌘Q，本次修复后补做）。
 
+- **修复：语义布局的查询点落在原点、dense 连线从错误位置出发。** `lib/semantic-map.js`
+  的投影输出是 unit-square 0..1，而面板线上的地图量化成 0..4095、前端 `decodeMapPoints`
+  再换回 0..1000 world 单位；`recallSince` / `explainSearch` 把 0..1 直接塞进 traceView
+  的 `query.x/y`，painter 按 world 坐标绘制，于是查询点画在图幅角落的原点、连线横穿整张
+  图。现由 `lib/services.js` 的 `worldProjection()` 统一乘 1000，两个出口共用同一尺度。
+  - 证据：先红后绿——`test/semantic-service.test.js` 新增断言（query 坐标落在 0..1000、
+    且与 retry.md 的地图点相差 ≤1 world 单位）修复前失败，修复后 3/3 通过；
+    `eslint`、`prettier --check`、`npm run types` 通过。
+  - 未验证：浏览器 UI 仍未验收（需重装 file: 快照并 ⌘Q，本次修复后补做）。
+
 ## 2.0.2 — 2026-11-03
 
 - **面板 UI 两处修复：刷新图标改用 lucide rotate-cw；热力图末尾月份标签不再被裁掉。**
