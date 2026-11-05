@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 2.0.3 — 2026-11-05
+
 - **语义地图可视化实验已回退：图谱只保留链接布局。** 2026-11-03 的设计
   （`docs/superpowers/specs/2026-11-03-semantic-map-design.md`）在 `0bed9fd` 合并、
   经真实 vault 试用后，按 owner 决定移除：语义布局、召回回放与解释卡、
