@@ -30,7 +30,6 @@ test('every module imported by the renderer is served by the registered routes',
   )
   t.after(disposePanel)
   t.after(dispose)
-  assert.ok(routes.has('/obsidian-mem/graph-semantic.js'), 'the served module is advertised')
   const server = createServer((request, response) => {
     const route = routes.get(request.url)
     if (route) return route.handler(request, response)
@@ -232,71 +231,4 @@ test('a changed asset is served without re-registering the route', async (t) => 
   assert.equal(await (await fetch(url)).text(), 'export const build = 1\n')
   await writeFile(file, 'export const build = 2\n')
   assert.equal(await (await fetch(url)).text(), 'export const build = 2\n')
-})
-
-test('semantic actions pass through services and unknown actions stay a 400', async (t) => {
-  const routes = new Map()
-  const session = { header: { id: SESSION, cwd: '/work/demo' } }
-  const ctx = {
-    sessions: { get: (id) => (id === SESSION ? session : undefined) },
-    webServer: {
-      register: (route) => {
-        routes.set(route.path, route)
-        return () => routes.delete(route.path)
-      },
-    },
-  }
-  const seen = []
-  const services = {
-    semanticMap: async () => ({ state: 'ready', count: 1, total: 1, points: [['note.md', 1, 2]] }),
-    recallSince: async (sessionId, cursor) => {
-      seen.push(['recall', sessionId, cursor])
-      return { cursor: 3, events: [] }
-    },
-    explainSearch: async (input) => {
-      seen.push(['explain', input.sessionId, input.query, input.binding?.projectId])
-      return { cursor: 4, source: 'panel' }
-    },
-    semanticNeighbors: async (input) => {
-      seen.push(['neighbors', input.path])
-      return { path: input.path, state: 'ready', neighbors: [] }
-    },
-  }
-  registerGraphRoute(ctx, {
-    activity: createGraphActivity(),
-    resolveBinding: async (cwd) => ({ kind: 'bound', projectId: 'project-one', cwd }),
-    services,
-  })
-  const server = createServer((request, response) =>
-    routes.get(request.url).handler(request, response),
-  )
-  server.listen(0, '127.0.0.1')
-  await once(server, 'listening')
-  t.after(() => server.close())
-  const url = `http://127.0.0.1:${server.address().port}/obsidian-mem/graph`
-  const post = async (payload) => {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-    return { status: response.status, body: await response.json() }
-  }
-  assert.equal((await post({ sessionId: SESSION, action: 'semantic' })).body.value.state, 'ready')
-  assert.deepEqual((await post({ sessionId: SESSION, action: 'recall', cursor: 2 })).body.value, {
-    cursor: 3,
-    events: [],
-  })
-  assert.equal(seen[0][2], 2)
-  assert.equal(
-    (await post({ sessionId: SESSION, action: 'explain', query: '退避' })).body.value.source,
-    'panel',
-  )
-  assert.deepEqual(seen[1], ['explain', SESSION, '退避', 'project-one'])
-  assert.equal(
-    (await post({ sessionId: SESSION, action: 'neighbors', path: 'note.md' })).body.value.path,
-    'note.md',
-  )
-  assert.equal((await post({ sessionId: SESSION, action: 'nope' })).status, 400)
-  assert.equal((await post({ sessionId: SESSION, action: 'semantic' })).body.ok, true)
 })

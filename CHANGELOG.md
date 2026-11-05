@@ -11,101 +11,25 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
-- **修复：全量图谱（尤其语义布局的密集中心）把所有标题一次性画满画布。**
-  1,400+ 节点的图里，标签循环只限制「每帧新栅格化 50 个」，却对已缓存的标签
-  无上限地逐个 `drawImage`；语义布局的 PCA 点云又集中在画布中央，于是数百个
-  300px 宽的标题叠成白块，同时每个节点最多 8× DPR 的位图缓存被全部保留
-  （实测渲染进程 RSS 1.3 GB、持续 ~50% CPU）。现在普通标签每帧最多画 60 个；
-  密集图（>200 节点）按屏幕矩形碰撞只保留互不重叠的标题；悬停/召回中的
-  标签始终先画、不受预算影响；标签位图缓存以 240 条为上限做先进先出淘汰。
-  小图（≤200 节点）维持原有「全部标签可见」的行为。
-  - 证据：`node --test test/graph-renderer.test.js` 31/31 通过；新增两条回归：
-    260 节点密集图单帧标签绘制 ≤ 60；260 个完全重叠的标签只画 1 条。
-
-- **面板图谱新增「语义布局」与召回回放。** `lib/semantic-map.js` 把 embedding store
-  的向量用确定性 PCA 投到 2D：对中心化向量直接做 24 次协方差算子幂迭代 +
-  Gram–Schmidt deflation，不物化 d×d 矩阵；同一批向量在不同 Map 插入顺序下坐标逐字节
-  一致。`lib/recall-trace.js` 是进程内 ring（每会话 20 次、最多 64 个会话，query 文本
-  截 200 码点），`lib/hybrid-recall.js` 在 recall 缝上挂不可枚举的结构化 trace，
-  `lib/services.js` 暴露 semanticMap / recallSince / explainSearch / semanticNeighbors 四个
-  只读通道，`lib/graph-route.js` 把它们接到既有的 `POST /obsidian-mem/graph` 上；
-  前端以 `lib/graph-semantic.js` 画 overlay 与解释卡，布局本身是图谱的第二个模式而非新页签。
-- **语义布局的文档、预算与打包记录（Task 10）。** 中英 README 同步补上「链接 / 语义」
-  布局说明（确定性 PCA 坐标、查询点与命中解释卡、回放只存进程内存）；`README.i18n.yaml`
-  的两个 blob hash 已按 `git hash-object` 重记。`test/architecture.test.js` 为三个新模块登记
-  LAYERS（`semantic-map` 0、`recall-trace` 0、`graph-semantic` 1）与预算，并按实测抬高
-  `graph-renderer` 900、`services` 2300、`client` 1960（注释记录实测行数与抬升原因）。
-  `verify-tarball` 实测 **95 entries / 85 lib modules**（新增 `semantic-map`、`recall-trace`、
-  `graph-semantic`），AGENTS.md 的计数段同步重测（该文件被 .gitignore 忽略，不进提交）。
-  - 证据：`npm run check` 通过（1,583 个测试、1,582 pass、1 skipped；`verify-tarball: OK …
-    95 entries, 85 lib modules, every required asset present`）；`git hash-object
-    README.md README.zh.md` 与 `README.i18n.yaml` 一致。
-- **真实 vault 验收（Task 11）。** 在真实 vault（1,422 条向量 / 1,024 维、约 1,417 个
-  Markdown）与本机 Qwen3-Embedding-0.6B 上测：semantic 首次调用 1,315 ms、缓存后 11 ms，
-  payload 174,915 B，`state: ready`、`count == total == 1,422`、`explained` 0.0913；
-  paraphrase 复现「为什么发布总是卡住」出现 **1 个 dense-only**（lexical 从未提出）与
-  **7 个融合提升**（如 lexical rank 23 → fused rank 1）；exact title 复现得到 `guard: true`
-  且无 dense 名次；provider 指向关闭端口时 map 仍 `ready`，explain 以
-  `fallback: provider-error` 回退词法序且 `denseTop: 0`。vault 的 8 个修改文件 mtime 均早于
-  探测（22:26–23:49 vs 00:13），探测未写 vault；data root 未新增文件名。完整命令与输出见
-  `docs/validation/semantic-map-2026-11-03.md`。
-  - 未达成而如实记录：首次调用 1,315 ms（>300 ms 设计预算，含 index 打开与 14 MB store
-    解析）、payload 174,915 B（>48 KB 设计预算，路径字符串占主导）、单次 embedMs 520 ms /
-    tookMs 696 ms（>~99 ms / ≤350 ms 的 loopback 参考值，只是一次读数而非 p50）。
-  - 未验证：浏览器面板的布局切换、overlay 与解释卡（活实例仍挂 2.0.2，未安装本分支）；
-    真正 disabled provider 的卡片态（只测了不可达端点）；复现查询的 p50。
-- **语义 overlay 模块落地（Task 8）。** `lib/graph-semantic.js` 作为 served 模块
-  提供给浏览器：`decodeMapPoints` 把 0..4095 量化坐标换成 0..1000 world；`createOverlayModel`
-  分出词法命中、仅语义新增与融合名次，语义线最多 12 条；`createSemanticPainter` 画
-  语义线、查询点双环、词法方框与 top-3 徽章；`cardView` 给出各降级态文案与三计数；
-  `createSemanticController` 只拉一次 semantic map、按 cursor 去重 recall、replay 走
-  explain；`mountCard` 是纯 DOM 解释卡。`lib/graph-route.js` 的默认资产列表加入
-  `./graph-semantic.js`，并补上资产可达断言。
-  - 证据：`node --test test/graph-semantic.test.js test/graph-route.test.js
-    test/panel-assets.test.js test/repo-hygiene.test.js test/architecture.test.js
-    test/graph-renderer.test.js test/graph-client.test.js` 58/58 通过；`npm run types` 通过。
-- **面板图谱可在「链接 / 语义」布局间切换（Task 9）。** 设置面板外观区新增布局开关，
-  选择持久化到既有的 `dsh-obsidian-mem:graph-settings` 记录（version 仍 2）；语义模式
-  下按需拉取一次语义地图（15s 重试），并按 1.5s 轮询召回回放；`GraphView` 把布局与
-  painter 交给 `GraphCanvas`，`graph-renderer` 按 static 坐标绘制并在标签之后调用
-  overlay painter；画布下方挂载 served 的纯 DOM 解释卡。链接布局的 700ms 活动 cue
-  管线未改动。
-  - 证据：`node --test test/panel-client.test.js test/panel-ui.test.js
-    test/graph-client.test.js test/architecture.test.js test/panel-assets.test.js
-    test/graph-route.test.js` 144/144 通过；`npm run types` 通过。
-- **修复：真实面板里语义布局始终显示「语义地图暂不可用」。** `lib/graph-semantic.js`
-  的 controller 调用 `{ action: 'semantic' }` 与 `{ action: 'neighbors', path }` 时没有带
-  `sessionId`，而 `POST /obsidian-mem/graph` 在分发任何 action 之前就校验会话
-  （`{"code":"bad-request","message":"sessionId required"}`）；浏览器把每次地图请求都
-  记成 `route-error`，解释卡因此永远落到 `map-unavailable`。现改为
-  `loadMap(sessionId)` / `neighbors(sessionId, path)` 携带会话 id，`lib/client.js` 的加载
-  effect 传入当前 sessionId；缺 id 时 controller 不再发请求，直接返回 unavailable。
-  - 证据：先红后绿——`test/graph-semantic.test.js` 修复前两条断言失败（semantic payload
-    无 sessionId、空 id 仍发请求），修复后与 `test/panel-client.test.js` 共 41/41 通过；
-    新增源码形状 pin：`loadMap(sessionId)` 存在、`loadMap()` 不再出现。真实路由验证
-    （带 Origin 的 curl）：`semantic` 返回 `state: ready, count: 1432`，缺 sessionId 时
-    返回上述 `bad-request`。
-  - 未验证：重启后的浏览器 UI 仍未验收（需重装 file: 快照并 ⌘Q，本次修复后补做）。
-
-- **修复：切到语义布局后节点仍停在链接布局的坐标上。** 语义地图的 points 以 vault
-  path 为键，而 graph 节点把 frontmatter id 当 `id`；`lib/graph-renderer.js` 只用
-  `node.id` 查 `layoutPoints`，全部 miss 后回退到节点原坐标，看起来像「切换布局只重置
-  了视野」。现改为 `node.id` 未命中时再按 `node.path` 查表（transition 起点同样接受
-  path 键），边界契约写在 draw 的注释里。
-  - 证据：先红后绿——`test/graph-renderer.test.js` 新增
-    「semantic coordinates may be keyed by note path, not only by node id」修复前失败、
-    修复后 30/30 通过；`eslint`、`prettier --check`、`npm run types` 通过。
-  - 未验证：浏览器 UI 仍未验收（需重装 file: 快照并 ⌘Q，本次修复后补做）。
-
-- **修复：语义布局的查询点落在原点、dense 连线从错误位置出发。** `lib/semantic-map.js`
-  的投影输出是 unit-square 0..1，而面板线上的地图量化成 0..4095、前端 `decodeMapPoints`
-  再换回 0..1000 world 单位；`recallSince` / `explainSearch` 把 0..1 直接塞进 traceView
-  的 `query.x/y`，painter 按 world 坐标绘制，于是查询点画在图幅角落的原点、连线横穿整张
-  图。现由 `lib/services.js` 的 `worldProjection()` 统一乘 1000，两个出口共用同一尺度。
-  - 证据：先红后绿——`test/semantic-service.test.js` 新增断言（query 坐标落在 0..1000、
-    且与 retry.md 的地图点相差 ≤1 world 单位）修复前失败，修复后 3/3 通过；
-    `eslint`、`prettier --check`、`npm run types` 通过。
-  - 未验证：浏览器 UI 仍未验收（需重装 file: 快照并 ⌘Q，本次修复后补做）。
+- **语义地图可视化实验已回退：图谱只保留链接布局。** 2026-11-03 的设计
+  （`docs/superpowers/specs/2026-11-03-semantic-map-design.md`）在 `0bed9fd` 合并、
+  经真实 vault 试用后，按 owner 决定移除：语义布局、召回回放与解释卡、
+  `lib/semantic-map.js`、`lib/recall-trace.js`、`lib/graph-semantic.js`、graph 路由的
+  四个只读 action、hybrid seam 的 trace 捕获、settings 的 layout 字段，以及相应测试
+  与 README/docs 段落全部删除；spec/plan/validation 保留为历史记录并标注 reverted。
+  原因：1,400+ 节点的 PCA 二维投影 explained 仅 0.091，payload 约 175 KB，标签层实测
+  可达 1.3 GB RSS，owner 判断它对读懂检索帮助不大。embedding 检索本身不变——hybrid
+  排序、guard 与 provider 回退行为完全保留。
+  - 证据：回退后全量 `npm run check` 通过——1,559 tests / 1,558 pass / 1 skipped，
+    `verify-tarball` 回到 92 entries / 82 lib modules。
+- **渲染器标签层加四道护栏，避免满库图谱把标题堆成白块并常驻大内存。**
+  `lib/graph-renderer.js` 新增 `LABEL_DRAW_LIMIT = 60`（普通标签每帧最多画 60 个）、
+  `LABEL_DENSE_GRAPH = 200`（超过 200 节点按屏幕矩形碰撞只保留不重叠标题）、
+  `LABEL_CACHE_LIMIT = 240`（标签位图缓存 FIFO 淘汰），悬停/召回的标签始终先行绘制；
+  小图（≤200 节点）行为不变。此前每个节点最多 8×DPR 的位图常驻、已缓存标签无上限
+  逐帧 drawImage，满库时实测渲染进程 1.3 GB RSS / 约 50% CPU。
+  - 证据：`test/graph-renderer.test.js` 新增两条回归（260 节点密集云单帧 ≤60 个标签；
+    260 个重叠标签只画 1 条），修复前分别画 260 条。
 
 ## 2.0.2 — 2026-11-03
 

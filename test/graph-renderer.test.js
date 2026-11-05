@@ -457,7 +457,7 @@ test('labels stay visible when sharper replacements exceed one frame of work', (
   s.renderer.destroy()
 })
 
-test('a dense semantic cloud draws only a readable budget of labels', () => {
+test('a dense cloud draws only a readable budget of labels', () => {
   const s = surface()
   const ids = Array.from({ length: 260 }, (_, i) => 'node-' + i)
   s.renderer.update(s.model(ids.map((id) => s.node(id))))
@@ -955,88 +955,4 @@ test('a node drag speaks the app.js force protocol: alpha .3 with alphaTarget .3
   assert.deepEqual(releaseMessage.forceNode, { id: 'one', x: null, y: null })
   assert.equal(releaseMessage.alphaTarget, 0)
   s.renderer.destroy()
-})
-
-test('semantic mode uses the supplied coordinates and ignores worker frames', () => {
-  const s = surface()
-  s.renderer.update(s.model([s.node('one'), s.node('two')]))
-  s.emit(['one'], [0, 0])
-  s.step()
-  s.renderer.setLayout({
-    mode: 'semantic',
-    points: new Map([
-      ['one', { x: -100, y: 0 }],
-      ['two', { x: 100, y: 0 }],
-    ]),
-  })
-  s.advance(1000)
-  s.emit(['one'], [500, 500])
-  s.step()
-  const arcs = s.contexts[0].calls.filter((call) => call.name === 'arc')
-  assert.ok(arcs.length > 0)
-  // 1000ms after the switch the transition is over: the two nodes sit 200 world
-  // units apart, centred in the 800px viewport at scale 1.
-  const xs = arcs.filter((call) => call.args[2] > 0).map((call) => Math.round(call.args[0]))
-  assert.ok(xs.includes(300) && xs.includes(500))
-})
-
-test('semantic coordinates may be keyed by note path, not only by node id', () => {
-  const s = surface()
-  s.renderer.update(s.model([s.node('one'), s.node('two')]))
-  // The semantic map is keyed by vault path while graph nodes carry their note id
-  // as `id`; the renderer has to accept the path key too (2026-11-05).
-  s.emit(['one', 'two'], [-300, 0, 300, 0])
-  s.step()
-  s.renderer.setLayout({
-    mode: 'semantic',
-    points: new Map([
-      ['one.md', { x: -100, y: 0 }],
-      ['two.md', { x: 100, y: 0 }],
-    ]),
-  })
-  s.advance(1000)
-  s.step()
-  const xs = s.contexts[0].calls
-    .filter((call) => call.name === 'arc' && call.args[2] > 0)
-    .map((call) => Math.round(call.args[0]))
-  assert.ok(xs.includes(300) && xs.includes(500))
-})
-
-test('reduced motion applies the semantic layout immediately', () => {
-  const s = surface()
-  s.setReduced(true)
-  s.renderer.update(s.model([s.node('one'), s.node('two')]))
-  s.emit(['one', 'two'], [-10, 0, 10, 0])
-  s.step()
-  s.renderer.setLayout({
-    mode: 'semantic',
-    points: new Map([
-      ['one', { x: -100, y: 0 }],
-      ['two', { x: 100, y: 0 }],
-    ]),
-  })
-  s.step()
-  const xs = s.contexts[0].calls
-    .filter((call) => call.name === 'arc')
-    .map((call) => Math.round(call.args[0]))
-  assert.ok(xs.includes(300) && xs.includes(500))
-})
-
-test('the overlay painter receives screen points, the palette and locate works', () => {
-  const s = surface()
-  const frames = []
-  s.renderer.setOverlay((frame) => frames.push(frame))
-  s.renderer.update(s.model([s.node('one')]))
-  s.emit(['one'], [0, 0])
-  s.step()
-  s.step()
-  assert.ok(frames.length > 0)
-  const frame = frames.at(-1)
-  assert.ok(frame.points.get('one'))
-  assert.ok(Number.isFinite(frame.points.get('one').x))
-  assert.ok(frame.lookup.get('one'))
-  assert.equal(frame.reduced, false)
-  assert.equal(s.renderer.locate('one.md'), true)
-  assert.equal(s.renderer.locate('missing.md'), false)
-  assert.equal(s.renderer.locate({ x: 10, y: 10 }), true)
 })

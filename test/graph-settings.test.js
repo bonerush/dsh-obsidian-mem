@@ -28,8 +28,6 @@ const defaults = () => ({
   groups: presetGroups(),
   display: { arrows: false, text: 0, size: 1, width: 1, label: 0.85 },
   forces: { center: 0.5, repel: 10, link: 1, distance: 250 },
-  layout: 'link',
-  semanticEdges: false,
 })
 
 /** A `Storage`-like object that can be asked to misbehave like a real one. */
@@ -75,14 +73,12 @@ test('what the panel remembers comes back unchanged', () => {
     ],
     display: { arrows: true, text: -1.5, size: 2.4, width: 0.6, label: 1.2 },
     forces: { center: 0.9, repel: 3, link: 0.4, distance: 90 },
-    layout: 'semantic',
-    semanticEdges: true,
   }
   writeGraphSettings(settings, defaults(), store)
   assert.deepEqual(readGraphSettings(defaults(), store), settings)
 })
 
-test('one versioned key holds the seven control fields and nothing else', () => {
+test('one versioned key holds the five control fields and nothing else', () => {
   const store = storage()
   writeGraphSettings({ ...defaults(), scope: 'project', extra: 'dropped' }, defaults(), store)
   assert.deepEqual(
@@ -94,7 +90,7 @@ test('one versioned key holds the seven control fields and nothing else', () => 
   assert.equal(saved.version, GRAPH_SETTINGS_VERSION)
   assert.deepEqual(
     Object.keys(saved).sort(),
-    ['display', 'filter', 'forces', 'groups', 'layout', 'scope', 'semanticEdges', 'version'],
+    ['display', 'filter', 'forces', 'groups', 'scope', 'version'],
     'nothing outside the panel record is persisted',
   )
   assert.equal(saved.extra, undefined)
@@ -210,31 +206,4 @@ test('the bound store reads and writes through the same defaults', () => {
   assert.deepEqual(bound.read(), defaults())
   bound.write({ ...defaults(), display: { ...defaults().display, label: 1.4 } })
   assert.equal(bound.read().display.label, 1.4)
-})
-
-test('the layout choice round-trips and old records fall back to the link graph', () => {
-  const store = storage()
-  const settings = readGraphSettings(defaults(), store)
-  assert.equal(settings.layout, 'link')
-  assert.equal(settings.semanticEdges, false)
-  writeGraphSettings({ ...settings, layout: 'semantic', semanticEdges: true }, defaults(), store)
-  const saved = readGraphSettings(defaults(), store)
-  assert.equal(saved.layout, 'semantic')
-  assert.equal(saved.semanticEdges, true)
-  assert.equal(GRAPH_SETTINGS_VERSION, 2)
-})
-
-test('a corrupt layout value falls back without erasing the colour groups', () => {
-  const store = storage({
-    [GRAPH_SETTINGS_KEY]: JSON.stringify({
-      version: 2,
-      layout: 'starfield',
-      semanticEdges: 'yes',
-      groups: [{ query: '[type:decision]', color: '#7b8ea6' }],
-    }),
-  })
-  const saved = readGraphSettings(defaults(), store)
-  assert.equal(saved.layout, 'link')
-  assert.equal(saved.semanticEdges, false)
-  assert.equal(saved.groups.length, 1)
 })

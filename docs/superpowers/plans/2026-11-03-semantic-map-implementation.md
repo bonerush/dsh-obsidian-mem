@@ -2,6 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Reverted 2026-11-05:** this plan was executed and then the feature was removed on
+> the owner's decision (see the spec's Status line). Keep it as the historical record;
+> do not implement it again without a new decision.
+
 **Goal:** Add a second layout to the memory graph tab — a server-projected 2D embedding map — that replays a recall trace so the user can see, node by node, how dense retrieval changed the lexical answer.
 
 **Architecture:** A pure projection module (`lib/semantic-map.js`) turns the existing embedding-store snapshot into deterministic PCA coordinates; a process-local ring (`lib/recall-trace.js`) keeps the last 20 full recall traces per session, never on disk. `lib/hybrid-recall.js` attaches the trace non-enumerably to its hit array, `lib/services.js` records it and exposes four read-only methods, and `POST /obsidian-mem/graph` gains four actions. On the client a new served module (`lib/graph-semantic.js`) turns traces into overlay geometry/cards, `lib/graph-renderer.js` gains a static layout plus an overlay hook, and `lib/client.js` wires the layout switch. The original link graph, its filters, and `graph-recall` cues are untouched.

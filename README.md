@@ -71,7 +71,7 @@ Two layers, on purpose:
 | 🔎 **Retrieval with a default semantic engine** | FTS5/BM25 baseline; the `hybrid` engine is the default and adds a loopback-embedding semantic channel once you point `retrievalProvider` at a local model service (no provider configured means the lexical path, unchanged), plus a local TF-IDF/cosine reranker (`sparse`), same-day create/update accounting, per-turn relevant-note recall, and a brief that is navigation rather than a content dump. |
 | 🗂️ **Distillation and curation** | Completed turns distill into typed notes in the background; near-duplicates and risky rewrites are parked as proposals that only a person can approve — with `dsh-obsidian-mem-review`, in a terminal. |
 | 📊 **Live memory panel** | A GitHub-style 53-week activity calendar with fixed 10 px cells, month and weekday labels, a hover tooltip and in-figure horizontal scrolling; new-versus-updated flow bars, a tag treemap, a type→status composition Sankey, a KPI sparkline, a day-grouped activity timeline, and a 健康 dashboard whose three maintenance actions report their outcome in the card that owns the button. Background polls re-scan the index silently, so memory written by another process appears without a DSH restart. |
-| 🕸️ **Knowledge graph** | Every node in scope is drawn — no top-N truncation — with a 1:1 port of Obsidian's D3 fallback forces, alpha schedule and seeding/drag protocol. Filters, colour groups, display and forces persist per browser origin; read/write/search/reinjection cues light up the nodes a turn touched; and the same graph can switch between link and semantic layouts, the semantic one laying the notes out by a deterministic 2-D projection of their embeddings and overlaying the query point, hit lines and an explanation card on a replay. |
+| 🕸️ **Knowledge graph** | Every node in scope is drawn — no top-N truncation — with a 1:1 port of Obsidian's D3 fallback forces, alpha schedule and seeding/drag protocol. Filters, colour groups, display and forces persist per browser origin; read/write/search/reinjection cues light up the nodes a turn touched. |
 | 🔒 **Safe by default** | The panel is read-only; exactly three maintenance operations can write, each preview → confirm behind a single-use 60-second token. The web route keeps its loopback/same-origin fences even through the desktop shell's `dsh-app://` proxy. |
 | ✅ **Evidence before claims** | The changelog names what was measured, on which host, and what is still untested; the suite and the pack contract run in CI on every push. |
 
@@ -366,23 +366,6 @@ a **search** returned in the same colour lighter, and a **write** in the tag col
 a turn lights its notes too. These cues are per session and in memory only; reloading
 the host clears them. A cue moves a label's colour and opacity but never its size, so
 two notes touched in the same second cannot disagree.
-
-**Layout** switches between **link** and **semantic** at the top of the display section.
-Link is the wikilink force graph above and stays the default; semantic lays the same
-notes out as a 2-D point cloud: `lib/semantic-map.js` runs a fixed 24-iteration PCA
-on the centred embedding vectors (iterating the covariance operator directly — no
-d×d matrix, no new dependency), so the coordinates are deterministic for one
-embedding store and cached; `explained` reports the variance the first two
-components cover. Scope, filters, colour groups and recall highlights stay the same
-in both layouts; in semantic mode a selected node lists its cosine neighbours
-(marked linked/unlinked), a recall replay overlays the query point, dense-hit lines,
-lexical-hit boxes and fused-rank badges on the cloud, and a card at the bottom
-explains whether and how embedding took part in that turn (provider disabled,
-warming and provider error each get their own state and fall back to lexical order).
-Replay data lives in process memory only — the last 20 recalls per session, at most
-64 sessions — and is never written to disk, the vault or the diagnostic journal; it
-disappears when the process exits. The semantic endpoint is read-only and never
-triggers an embedding warm or a write.
 
 The graph endpoint is **read-only** and accepts same-origin requests from the local
 DSH web UI. Without Better Sidebar, the six memory tools continue to work. The

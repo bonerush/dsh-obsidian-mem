@@ -1,5 +1,9 @@
 # Semantic map — real-vault acceptance (2026-11-04)
 
+> **Feature reverted 2026-11-05.** The design was removed after a real-vault trial;
+> this record is kept because the run really happened. The numbers below are the
+> evidence for why the visualization was dropped.
+
 Record of the Task 11 acceptance run for the semantic-map design
 (`docs/superpowers/specs/2026-11-03-semantic-map-design.md`). It ran on the
 author's machine, against the real vault, at the code state of commit

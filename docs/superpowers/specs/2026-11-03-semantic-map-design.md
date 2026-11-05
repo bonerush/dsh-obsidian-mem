@@ -1,8 +1,10 @@
 # Semantic map design (embedding visualization in the memory panel)
 
-- Status: accepted 2026-11-03 (user approved the frozen design); implemented on
-  `feat/semantic-map` 2026-11-04; real-vault acceptance recorded in
-  `docs/validation/semantic-map-2026-11-03.md`, including the budgets it did not meet
+- Status: reverted 2026-11-05 — implemented (commits 0bed9fd..858b07a), shipped to the
+  desktop profile for a real-vault trial, then removed by the owner because the 2D
+  cloud did not help them read retrieval and cost too much memory. This spec and its
+  plan are kept as the historical record; the embedding search itself (hybrid recall)
+  stays untouched.
 - Owner: lead
 - Scope: the memory panel's graph tab (a layout switch), four new read-only actions on
   the existing `/obsidian-mem/graph` route, and one process-local capture channel for
