@@ -214,6 +214,9 @@ test('branch classifiers classify each role in the model', () => {
     'feat/under_score',
     'feat/-leading',
     'feat/x/y',
+    'feat/x-',
+    'feat/a--b',
+    'feat/-x',
     'fix/x',
     'feat/x ',
     '',
@@ -242,6 +245,10 @@ test('checkPullRequest accepts one topology and refuses everything else', () => 
   assert.equal(checkPullRequest({ base: 'V2', head: 'bug/fix-1' }).ok, true)
   assert.equal(checkPullRequest({ base: 'V2', head: 'V3' }).ok, false)
   assert.equal(checkPullRequest({ base: 'V2', head: 'main' }).ok, false)
+  // CI can compute the current Vx; a pull request into a frozen Vx is refused.
+  assert.equal(checkPullRequest({ base: 'V2', head: 'feat/x', currentVersion: 'V3' }).ok, false)
+  assert.equal(checkPullRequest({ base: 'V2', head: 'feat/x', currentVersion: 'V2' }).ok, true)
+  assert.equal(checkPullRequest({ base: 'V2', head: 'feat/x', currentVersion: null }).ok, true)
   assert.equal(checkPullRequest({ base: 'next', head: 'anything' }).ok, true)
   assert.equal(checkPullRequest({ base: 'next', head: 'V2' }).ok, true)
   assert.equal(checkPullRequest({ base: '', head: 'V2' }).ok, false)
@@ -284,6 +291,10 @@ test('evaluateMerge encodes the merge directions', () => {
     evaluateMerge({ target: 'main', sourceShas: [sha], containingBranches: { [sha]: ['V2'] } }).ok,
     true,
   )
+  // A release merge names exactly one version branch; octopus or mixed merges
+  // are refused, and the marker cannot authorize a non-typed source.
+  assert.equal(evaluateMerge({ target: 'main', sourceNames: ['V2', 'V3'] }).ok, false)
+  assert.equal(evaluateMerge({ target: 'main', sourceNames: ['V2', 'feat/x'] }).ok, false)
   // Unidentifiable source fails closed.
   assert.equal(evaluateMerge({ target: 'main' }).ok, false)
   assert.equal(evaluateMerge({ target: 'V2' }).ok, false)
@@ -293,6 +304,11 @@ test('evaluateMerge encodes the merge directions', () => {
   assert.equal(unapproved.ok, false)
   assert.match(unapproved.reason, /DSH_MERGE_APPROVED=1 git merge --no-ff feat\/x/u)
   assert.equal(evaluateMerge({ target: 'V2', sourceNames: ['feat/x'], approved: true }).ok, true)
+  // Exactly one typed branch: mixing main into the same merge is refused.
+  assert.equal(
+    evaluateMerge({ target: 'V2', sourceNames: ['feat/x', 'main'], approved: true }).ok,
+    false,
+  )
   // The marker alone does not authorize a non-typed source.
   assert.equal(evaluateMerge({ target: 'V2', sourceNames: ['V3'], approved: true }).ok, false)
   // A sync merge from main is exempt from the marker.
@@ -399,18 +415,30 @@ test('evaluatePush encodes the push rules', () => {
     remoteSha: 'a'.repeat(40),
     ...overrides,
   })
+  const releaseMerge = {
+    sha: 'b'.repeat(40),
+    parentCount: 2,
+    secondParentBranches: ['V2'],
+    subject: "Merge branch 'V2'",
+  }
   const mainFacts = {
     localKnown: true,
     remoteKnown: true,
     fastForward: true,
-    tipParentCount: 2,
-    secondParentBranches: ['V2'],
+    addedOnFirstParent: [releaseMerge],
   }
   const versionFacts = {
     localKnown: true,
     remoteKnown: true,
     fastForward: true,
-    addedOnFirstParent: [{ sha: 'b'.repeat(40), parentCount: 2 }],
+    addedOnFirstParent: [
+      {
+        sha: 'b'.repeat(40),
+        parentCount: 2,
+        secondParentBranches: ['feat/x'],
+        subject: "Merge branch 'feat/x'",
+      },
+    ],
   }
 
   // Tags and unknown namespaces are left alone.
@@ -425,6 +453,23 @@ test('evaluatePush encodes the push rules', () => {
   assert.equal(evaluatePush(update({ remoteRef: 'refs/heads/feat/new', remoteSha: ZERO })).ok, true)
   assert.equal(evaluatePush(update({ remoteRef: 'refs/heads/nope', remoteSha: ZERO })).ok, false)
   assert.equal(evaluatePush(update({ remoteRef: 'refs/heads/main', remoteSha: ZERO })).ok, false)
+  // Bootstrapping a new remote is allowed only from a --no-ff release merge.
+  assert.equal(
+    evaluatePush(update({ remoteRef: 'refs/heads/main', remoteSha: ZERO }), {
+      localKnown: true,
+      tipParentCount: 2,
+      secondParentBranches: ['V2'],
+    }).ok,
+    true,
+  )
+  assert.equal(
+    evaluatePush(update({ remoteRef: 'refs/heads/main', remoteSha: ZERO }), {
+      localKnown: true,
+      tipParentCount: 1,
+      secondParentBranches: null,
+    }).ok,
+    false,
+  )
 
   // Deletion: main and version branches are permanent, a typed branch is not.
   assert.equal(
@@ -441,14 +486,40 @@ test('evaluatePush encodes the push rules', () => {
     true,
   )
 
-  // main must fast-forward to a --no-ff merge of a local version branch.
+  // main must fast-forward, and every commit the push adds to its first-parent
+  // line must itself be a --no-ff merge from a local version branch.
   assert.equal(evaluatePush(update(), mainFacts).ok, true)
   assert.equal(evaluatePush(update(), { ...mainFacts, fastForward: false }).ok, false)
-  assert.equal(evaluatePush(update(), { ...mainFacts, tipParentCount: 1 }).ok, false)
-  assert.equal(evaluatePush(update(), { ...mainFacts, secondParentBranches: ['feat/x'] }).ok, false)
+  assert.equal(
+    evaluatePush(update(), {
+      ...mainFacts,
+      addedOnFirstParent: [{ ...releaseMerge, parentCount: 1 }],
+    }).ok,
+    false,
+  )
+  assert.equal(
+    evaluatePush(update(), {
+      ...mainFacts,
+      addedOnFirstParent: [{ ...releaseMerge, secondParentBranches: ['feat/x'] }],
+    }).ok,
+    false,
+  )
+  // A direct commit hidden behind a release merge refuses the whole push.
+  assert.equal(
+    evaluatePush(update(), {
+      ...mainFacts,
+      addedOnFirstParent: [
+        { ...releaseMerge, sha: 'c'.repeat(40) },
+        { ...releaseMerge, parentCount: 1 },
+      ],
+    }).ok,
+    false,
+  )
   assert.equal(evaluatePush(update(), {}).ok, false)
 
-  // A version branch must fast-forward through merge commits only.
+  // A version branch must fast-forward through two-parent merges of main or a
+  // typed branch; an arbitrary source is refused even when its message looks
+  // conventional.
   assert.equal(evaluatePush(update({ remoteRef: 'refs/heads/V2' }), versionFacts).ok, true)
   assert.equal(
     evaluatePush(update({ remoteRef: 'refs/heads/V2' }), {
@@ -456,6 +527,49 @@ test('evaluatePush encodes the push rules', () => {
       addedOnFirstParent: [{ sha: 'b'.repeat(40), parentCount: 1 }],
     }).ok,
     false,
+  )
+  assert.equal(
+    evaluatePush(update({ remoteRef: 'refs/heads/V2' }), {
+      ...versionFacts,
+      addedOnFirstParent: [
+        {
+          sha: 'b'.repeat(40),
+          parentCount: 2,
+          secondParentBranches: ['side'],
+          subject: "Merge branch 'side'",
+        },
+      ],
+    }).ok,
+    false,
+  )
+  assert.equal(
+    evaluatePush(update({ remoteRef: 'refs/heads/V2' }), {
+      ...versionFacts,
+      addedOnFirstParent: [
+        {
+          sha: 'b'.repeat(40),
+          parentCount: 2,
+          secondParentBranches: ['main'],
+          subject: "Merge branch 'main'",
+        },
+      ],
+    }).ok,
+    true,
+  )
+  // A typed branch deleted before the push falls back to the merge subject.
+  assert.equal(
+    evaluatePush(update({ remoteRef: 'refs/heads/V2' }), {
+      ...versionFacts,
+      addedOnFirstParent: [
+        {
+          sha: 'b'.repeat(40),
+          parentCount: 2,
+          secondParentBranches: [],
+          subject: "Merge branch 'feat/gone'",
+        },
+      ],
+    }).ok,
+    true,
   )
   assert.equal(
     evaluatePush(update({ remoteRef: 'refs/heads/V2' }), { ...versionFacts, fastForward: false })
@@ -511,6 +625,11 @@ test('the CLI prints usage and maps bad invocations to exit code 2', () => {
   assert.equal(runPolicy(REPO_ROOT, ['check-pr']).status, 2)
   assert.equal(runPolicy(REPO_ROOT, ['check-pr', '--base', 'main']).status, 2)
   assert.equal(runPolicy(REPO_ROOT, ['check-pr', '--base=']).status, 2)
+  assert.equal(
+    runPolicy(REPO_ROOT, ['check-pr', '--base', 'main', '--head', 'V2', '--current-version'])
+      .status,
+    2,
+  )
   assert.equal(runPolicy(REPO_ROOT, ['guard-commit', '--now']).status, 2)
 })
 
@@ -520,6 +639,21 @@ test('check-pr enforces the pull-request matrix', () => {
   assertRefused(runPolicy(REPO_ROOT, ['check-pr', '--base', 'main', '--head', 'feat/x']))
   assertAllowed(runPolicy(REPO_ROOT, ['check-pr', '--base', 'V2', '--head', 'feat/x']))
   assertRefused(runPolicy(REPO_ROOT, ['check-pr', '--base', 'V2', '--head', 'V3']))
+  assertRefused(
+    runPolicy(REPO_ROOT, [
+      'check-pr',
+      '--base',
+      'V2',
+      '--head',
+      'feat/x',
+      '--current-version',
+      'V3',
+    ]),
+    /frozen read-only history/u,
+  )
+  assertAllowed(
+    runPolicy(REPO_ROOT, ['check-pr', '--base=V2', '--head=feat/x', '--current-version=V2']),
+  )
   assertAllowed(runPolicy(REPO_ROOT, ['check-pr', '--base', 'next', '--head', 'anything']))
 })
 
@@ -662,8 +796,10 @@ test('guard-push enforces the push rules from the ref lines', (t) => {
     push('refs/heads/nope', featTip, 'refs/heads/nope', ZERO),
     /does not match the policy/u,
   )
+  // Bootstrapping a new remote from a release merge is the one allowed creation.
+  assertAllowed(push('refs/heads/main', mainRelease, 'refs/heads/main', ZERO))
   assertRefused(
-    push('refs/heads/main', mainRelease, 'refs/heads/main', ZERO),
+    push('refs/heads/main', mainDirect, 'refs/heads/main', ZERO),
     /creating remote main/u,
   )
 
@@ -683,7 +819,7 @@ test('guard-push enforces the push rules from the ref lines', (t) => {
     push('refs/heads/main', mainRelease, 'refs/heads/main', 'f'.repeat(40)),
     /cannot verify/u,
   )
-  assertAllowed(push('refs/heads/main', mainRelease, 'refs/heads/main', base))
+  assertAllowed(push('refs/heads/main', mainRelease, 'refs/heads/main', mainDirect))
 
   // V2: only fast-forward merge commits may be pushed.
   assertRefused(push('refs/heads/V2', v2Direct, 'refs/heads/V2', base), /not a merge commit/u)
@@ -700,6 +836,67 @@ test('guard-push enforces the push rules from the ref lines', (t) => {
   assertRefused(
     runPolicy(repo.root, ['guard-push'], { input: mixed }),
     /does not match the policy/u,
+  )
+})
+
+test('guard-push refuses a direct commit hidden behind a release merge', (t) => {
+  const repo = gitFixture(t)
+  const base = commitFile(repo, 'a.txt', 'base\n', 'base')
+  git(repo.root, ['checkout', '-q', '-b', 'V2'])
+  commitFile(repo, 'v2.txt', 'v2\n', 'v2 one')
+  git(repo.root, ['checkout', '-q', 'main'])
+  mergeNoFf(repo, 'V2')
+  // The bypass the tip-only rule missed: a direct commit on main, then a second
+  // release merge on top hides it from every later tip check.
+  commitFile(repo, 'hidden.txt', 'hidden\n', 'hidden direct commit')
+  git(repo.root, ['checkout', '-q', 'V2'])
+  commitFile(repo, 'v2b.txt', 'v2b\n', 'v2 more')
+  git(repo.root, ['checkout', '-q', 'main'])
+  const releaseTwo = mergeNoFf(repo, 'V2')
+
+  const push = (localSha, remoteSha) =>
+    runPolicy(repo.root, ['guard-push'], {
+      input: pushLine('refs/heads/main', localSha, 'refs/heads/main', remoteSha),
+    })
+  assertRefused(push(releaseTwo, base), /not a merge commit/u)
+})
+
+test('guard-push refuses a merge into V2 from an unapproved branch', (t) => {
+  const repo = gitFixture(t)
+  const base = commitFile(repo, 'a.txt', 'base\n', 'base')
+  git(repo.root, ['checkout', '-q', '-b', 'V2'])
+  const v2Direct = commitFile(repo, 'v2.txt', 'v2\n', 'v2 work')
+  git(repo.root, ['checkout', '-q', '-b', 'side', base])
+  commitFile(repo, 'side.txt', 'side\n', 'side work')
+  git(repo.root, ['checkout', '-q', 'V2'])
+  const v2Evil = mergeNoFf(repo, 'side')
+  assert.notEqual(v2Evil, v2Direct)
+
+  const result = runPolicy(repo.root, ['guard-push'], {
+    input: pushLine('refs/heads/V2', v2Evil, 'refs/heads/V2', v2Direct),
+  })
+  assertRefused(result, /neither main nor a typed small branch/u)
+})
+
+test('guard-merge accepts a main sync by origin/main and by pull', (t) => {
+  const repo = gitFixture(t)
+  commitFile(repo, 'a.txt', 'base\n', 'base')
+  const mainTip = git(repo.root, ['rev-parse', 'main'])
+  git(repo.root, ['checkout', '-q', '-b', 'V2'])
+  commitFile(repo, 'v2.txt', 'v2\n', 'v2 work')
+  // A fetched origin/main is how a stale local main reaches a version branch.
+  git(repo.root, ['update-ref', 'refs/remotes/origin/main', mainTip])
+
+  assertAllowed(
+    runPolicy(repo.root, ['guard-merge'], { env: { GIT_REFLOG_ACTION: 'merge origin/main' } }),
+  )
+  // `git pull --no-rebase origin main` names no ref in its reflog action, so the
+  // policy reads the fetched commit instead.
+  writeFileSync(join(repo.root, '.git', 'FETCH_HEAD'), `${mainTip}\t\tbranch 'main' of origin\n`)
+  assertAllowed(
+    runPolicy(repo.root, ['guard-merge'], {
+      env: { GIT_REFLOG_ACTION: 'pull --no-rebase origin main' },
+    }),
   )
 })
 
@@ -764,11 +961,21 @@ test('the branch-policy workflow checks the PR topology in CI', () => {
   ])
   assert.equal(workflow.permissions.contents, 'read')
   const steps = workflow.jobs.topology.steps
-  assert.ok(steps.some((step) => step.uses?.startsWith('actions/checkout@')))
+  const checkout = steps.find((step) => step.uses?.startsWith('actions/checkout@'))
+  // The base commit's copy of the script judges the pull request.
+  assert.equal(checkout.with.ref, '${{ github.event.pull_request.base.sha }}')
   const setup = steps.find((step) => step.uses?.startsWith('actions/setup-node@'))
   assert.equal(setup.with['node-version'], '22.22.2')
+  const fork = steps.find((step) => step.name === 'Refuse a pull request from a fork')
+  assert.equal(fork.env.REPOSITORY, '${{ github.repository }}')
+  assert.equal(fork.env.HEAD_REPOSITORY, '${{ github.event.pull_request.head.repo.full_name }}')
+  const currentVersion = steps.find((step) => step.name === 'Resolve the current version branch')
+  assert.match(currentVersion.run, /git ls-remote --heads origin 'refs\/heads\/V\*'/u)
+  assert.match(currentVersion.run, /sort -V \| tail -n 1/u)
   const runStep = steps.find((step) => step.name === 'Check the pull request branch pair')
   assert.equal(runStep.env.BASE, '${{ github.event.pull_request.base.ref }}')
   assert.equal(runStep.env.HEAD, '${{ github.event.pull_request.head.ref }}')
+  assert.equal(runStep.env.CURRENT_VERSION, '${{ steps.current-version.outputs.version }}')
   assert.match(runStep.run, /scripts\/branch-policy\.mjs check-pr --base "\$BASE" --head "\$HEAD"/u)
+  assert.match(runStep.run, /--current-version "\$CURRENT_VERSION"/u)
 })

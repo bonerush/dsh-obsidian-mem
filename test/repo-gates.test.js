@@ -24,7 +24,12 @@ import {
   parseChangelog,
 } from '../scripts/changelog-order.mjs'
 import { checkStagedSources } from '../scripts/check-staged.mjs'
-import { currentHooksPath, HOOKS_PATH, main as installHooks } from '../scripts/install-hooks.mjs'
+import {
+  currentHooksPath,
+  HOOKS_PATH,
+  main as installHooks,
+  REQUIRED_HOOKS,
+} from '../scripts/install-hooks.mjs'
 import { authHint, setTarball } from '../scripts/marketplace-entry.mjs'
 import { judge, main as verifyChangelog, unreleasedSection } from '../scripts/verify-changelog.mjs'
 
@@ -193,10 +198,20 @@ test('lint and format follow the index, not the working tree', (t) => {
 test('install-hooks sets core.hooksPath in the checkout it is pointed at', (t) => {
   const { root } = fixture(t)
   mkdirSync(join(root, HOOKS_PATH), { recursive: true })
-  writeFileSync(join(root, HOOKS_PATH, 'pre-commit'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+  for (const hook of REQUIRED_HOOKS) {
+    writeFileSync(join(root, HOOKS_PATH, hook), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+  }
   assert.equal(currentHooksPath(root), '')
   assert.equal(installHooks(root), 0)
-  assert.equal(currentHooksPath(root), HOOKS_PATH)
+  // Absolute, so a linked worktree at an older commit still runs these hooks.
+  assert.equal(currentHooksPath(root), join(root, HOOKS_PATH))
+  // A checkout missing one of the three hooks is refused, not half-installed.
+  const incomplete = fixture(t).root
+  mkdirSync(join(incomplete, HOOKS_PATH), { recursive: true })
+  writeFileSync(join(incomplete, HOOKS_PATH, 'pre-commit'), '#!/bin/sh\nexit 0\n', {
+    mode: 0o755,
+  })
+  assert.equal(installHooks(incomplete), 2)
   // A directory that is not a checkout is refused rather than half-changed.
   const plain = mkdtempSync(join(tmpdir(), 'obsidian-mem-nothooks-'))
   t.after(() => rmSync(plain, { recursive: true, force: true }))

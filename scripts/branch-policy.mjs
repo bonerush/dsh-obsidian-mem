@@ -29,7 +29,7 @@ const SMALL_BRANCH_TYPES = ['feat', 'bug', 'doc', 'chore', 'refactor', 'test', '
 
 /** Typed small branches: <type>/<lowercase-kebab-slug>. */
 export const SMALL_BRANCH_PATTERN = new RegExp(
-  `^(?:${SMALL_BRANCH_TYPES.join('|')})/[a-z0-9][a-z0-9-]*$`,
+  `^(?:${SMALL_BRANCH_TYPES.join('|')})/[a-z0-9]+(?:-[a-z0-9]+)*$`,
   'u',
 )
 
@@ -52,8 +52,9 @@ Usage:
       a typed branch into a version branch needs DSH_MERGE_APPROVED=1.
   node scripts/branch-policy.mjs guard-push
       pre-push guard; reads the ref lines git writes to stdin.
-  node scripts/branch-policy.mjs check-pr --base <ref> --head <ref>
-      pull-request topology check for the CI workflow.
+  node scripts/branch-policy.mjs check-pr --base <ref> --head <ref> [--current-version <Vn>]
+      pull-request topology check for the CI workflow; --current-version lets a
+      CI run refuse a pull request into a superseded (frozen) version branch.
   node scripts/branch-policy.mjs --help
 
 Exit 0 allows the operation, 1 refuses it with a message on stderr, 2 is a
@@ -162,10 +163,10 @@ export function isZeroSha(sha) {
 
 /**
  * Decide whether a pull request's base/head pair matches the model.
- * @param {{base: string, head: string}} pair the pull request's ref names.
+ * @param {{base: string, head: string, currentVersion?: string | null}} pair the pull request's ref names, plus the highest version branch CI can see.
  * @returns {{ok: boolean, reason: string}}
  */
-export function checkPullRequest({ base, head }) {
+export function checkPullRequest({ base, head, currentVersion }) {
   if (typeof base !== 'string' || base === '' || typeof head !== 'string' || head === '') {
     return refuse('both a base and a head branch are required')
   }
@@ -178,6 +179,16 @@ export function checkPullRequest({ base, head }) {
     )
   }
   if (isVersionBranch(base)) {
+    if (
+      typeof currentVersion === 'string' &&
+      currentVersion !== '' &&
+      isVersionBranch(currentVersion) &&
+      isSupersededVersion(base, currentVersion)
+    ) {
+      return refuse(
+        `a pull request into ${base} is refused: ${base} is frozen read-only history because ${currentVersion} is the current version branch; open the pull request against ${currentVersion} instead.`,
+      )
+    }
     if (isSmallBranch(head)) {
       return allow(`${base} accepts merges from typed small branches (${head})`)
     }
@@ -249,7 +260,7 @@ export function evaluateMerge(facts) {
   }
   if (kind === 'version' && isSupersededVersion(target, facts.currentVersion)) {
     return refuse(
-      `${target} is frozen read-only history: ${facts.currentVersion} is the current version branch. Version branches are cut from main when the user announces a new major version, so a superseded one only comes back by an explicit user decision; merge this work into ${facts.currentVersion} instead.`,
+      `${target} is frozen read-only history: ${facts.currentVersion} is the current version branch. Version branches are cut from main when the user announces a new major version, a superseded one is read-only history; merge this work into ${facts.currentVersion} instead.`,
     )
   }
   if (sourceNames.length === 0 && sourceShas.length === 0) {
@@ -270,20 +281,31 @@ export function evaluateMerge(facts) {
         `${describeSources(sourceNames, sourceShas)} main only receives --no-ff merges of a version branch (${VERSION_BRANCH_PATTERN.source}, e.g. V2) — put the work on a typed small branch, merge it into the version branch, and merge that with --no-ff.`,
       )
     }
+    if (versionSources.length > 1 || smallSources.length > 0) {
+      return refuse(
+        `a release merge into main must bring exactly one version branch (${VERSION_BRANCH_PATTERN.source}); this merge names ${[...versionSources, ...smallSources].join(', ')}. Merge the work into one version branch and release that.`,
+      )
+    }
     return allow(`main <- ${versionSources.join(', ')} (version-branch merge)`)
   }
-  if (facts.mainResolved === true && facts.allSourcesInMain === true && sourceShas.length > 0) {
+  if (facts.allSourcesInMain === true && sourceShas.length > 0) {
     return allow(`${target} <- sources already in main (sync merge; no confirmation needed)`)
   }
   const branchLabel = smallSources[0] ?? sourceNames[0] ?? '<branch>'
   if (facts.approved !== true) {
     return refuse(
-      `merging into ${target} needs the user's explicit confirmation; abort this merge with git merge --abort and re-run: DSH_MERGE_APPROVED=1 git merge --no-ff ${branchLabel}. A version branch only receives --no-ff merges of typed small branches that the user has confirmed; a main -> ${target} sync merge is the only exemption.`,
+      `merging into ${target} needs the user's explicit confirmation; abort this merge with git merge --abort and re-run: DSH_MERGE_APPROVED=1 git merge --no-ff ${branchLabel} (if the merge already conflicted, finish it in place with: DSH_MERGE_APPROVED=1 git commit). A version branch only receives --no-ff merges of typed small branches that the user has confirmed; a main -> ${target} sync merge is the only exemption.`,
     )
   }
-  if (smallSources.length === 0) {
+  if (smallSources.length !== 1) {
     return refuse(
-      `the merge into ${target} does not come from a typed small branch (<type>/<slug>: ${SMALL_BRANCH_TYPES.join(', ')}); a version branch only receives typed-branch merges or a sync merge from main.`,
+      `the merge into ${target} must come from exactly one typed small branch (<type>/<slug>: ${SMALL_BRANCH_TYPES.join(', ')}); a version branch only receives typed-branch merges or a sync merge from main.`,
+    )
+  }
+  const mixed = sourceNames.filter((source) => !isSmallBranch(source))
+  if (mixed.length > 0) {
+    return refuse(
+      `the merge into ${target} mixes the typed branch ${smallSources[0]} with ${mixed.join(', ')}; merge one typed branch at a time.`,
     )
   }
   return allow(`${target} <- ${smallSources.join(', ')} (user-approved typed-branch merge)`)
@@ -312,7 +334,7 @@ export function evaluateCommit(facts) {
   }
   if (kind === 'version' && isSupersededVersion(facts.branch, facts.currentVersion)) {
     return refuse(
-      `${facts.branch} is frozen read-only history: ${facts.currentVersion} is the current version branch. Version branches are cut from main when the user announces a new major version, and a superseded one only comes back by an explicit user decision; work on a typed branch cut from ${facts.currentVersion} instead.`,
+      `${facts.branch} is frozen read-only history: ${facts.currentVersion} is the current version branch. Version branches are cut from main when the user announces a new major version; a superseded one is read-only history, so work on a typed branch cut from ${facts.currentVersion} instead.`,
     )
   }
   if (facts.merging !== true) {
@@ -335,9 +357,9 @@ export function evaluateCommit(facts) {
  * @param {boolean | null} [facts.localKnown] whether the local sha is a commit here.
  * @param {boolean | null} [facts.remoteKnown] whether the remote sha is a commit here.
  * @param {boolean | null} [facts.fastForward] whether the remote sha is an ancestor of the local sha.
- * @param {number | null} [facts.tipParentCount] parent count of the new tip.
- * @param {string[] | null} [facts.secondParentBranches] local branches containing the new tip's second parent.
- * @param {Array<{sha: string, parentCount: number}> | null} [facts.addedOnFirstParent] commits added to the first-parent line.
+ * @param {number | null} [facts.tipParentCount] parent count of the new tip (used to bootstrap a new remote main).
+ * @param {string[] | null} [facts.secondParentBranches] local branches containing the tip's second parent.
+ * @param {Array<{sha: string, parentCount: number, secondParentBranches: string[] | null, subject: string}> | null} [facts.addedOnFirstParent] commits added to the first-parent line, with the merge provenance each one needs.
  * @param {boolean | null} [facts.frozen] whether the version branch has been superseded.
  * @returns {{ok: boolean, reason: string}}
  */
@@ -370,11 +392,7 @@ export function evaluatePush(update, facts = {}) {
     if (isSmallBranch(name)) {
       return allow(`creating remote ${name} is allowed`)
     }
-    if (isMainBranch(name)) {
-      return refuse(
-        'creating remote main is refused: main is release history and is never recreated; restore it with git reset --hard origin/main instead.',
-      )
-    }
+    if (isMainBranch(name)) return evaluateMainCreation(facts)
     return refuse(
       `the branch name "${name}" does not match the policy; push main, a version branch (V<number>) or a typed small branch (<type>/<slug>: ${SMALL_BRANCH_TYPES.join(', ')}).`,
     )
@@ -427,6 +445,34 @@ function unique(values) {
  * @param {object} facts pre-gathered push facts.
  * @returns {{ok: boolean, reason: string}}
  */
+function evaluateMainCreation(facts) {
+  if (facts.localKnown !== true) {
+    return refuse(
+      'cannot verify the initial main against the local repository; refusing (fail closed).',
+    )
+  }
+  if (
+    facts.tipParentCount === 2 &&
+    Array.isArray(facts.secondParentBranches) &&
+    facts.secondParentBranches.some(isVersionBranch)
+  ) {
+    return allow('creating remote main is allowed for a new remote (a --no-ff release merge)')
+  }
+  return refuse(
+    'creating remote main is allowed only for the first push to a new remote, and only when its tip is a --no-ff merge of a version branch (V<number>); merge the version branch into main with --no-ff first, or ask the user.',
+  )
+}
+
+/**
+ * Evaluate an update of remote main.
+ *
+ * Checking only the new tip is not enough: a direct commit can ride behind an
+ * otherwise valid release merge. Every commit the push adds to the first-parent
+ * line must itself be a two-parent merge whose second parent is in a version
+ * branch, so the range is what makes the gate durable.
+ * @param {object} facts pre-gathered push facts.
+ * @returns {{ok: boolean, reason: string}}
+ */
 function evaluateMainUpdate(facts) {
   if (facts.localKnown !== true || facts.remoteKnown !== true) {
     return refuse(
@@ -438,25 +484,27 @@ function evaluateMainUpdate(facts) {
       'refusing a non-fast-forward update of main: main only moves forward through a --no-ff merge from a version branch; fetch the remote first, and never force-push or rewind main.',
     )
   }
-  if (typeof facts.tipParentCount !== 'number') {
-    return refuse('cannot determine the parents of the new main tip; refusing (fail closed).')
+  if (!Array.isArray(facts.addedOnFirstParent)) {
+    return refuse('cannot determine which commits the push adds to main; refusing (fail closed).')
   }
-  if (facts.tipParentCount < 2) {
-    return refuse(
-      'the new tip of main is not a merge commit; main receives --no-ff merges from a version branch only, never direct commits.',
-    )
+  for (const commit of facts.addedOnFirstParent) {
+    if (commit.parentCount !== 2) {
+      return refuse(
+        `the push adds ${commit.sha} to main and it is not a merge commit with exactly two parents; main only ever receives --no-ff merges from a version branch.`,
+      )
+    }
+    if (!Array.isArray(commit.secondParentBranches)) {
+      return refuse(
+        `cannot determine which local branch ${commit.sha} merges into main; refusing (fail closed).`,
+      )
+    }
+    if (!commit.secondParentBranches.some(isVersionBranch)) {
+      return refuse(
+        `the push adds ${commit.sha} to main as a merge, but its second parent is not contained in a local version branch (V<number>); main must be a --no-ff merge of a version branch.`,
+      )
+    }
   }
-  if (!Array.isArray(facts.secondParentBranches)) {
-    return refuse(
-      'cannot determine which local branch contains the second parent of the new main tip; refusing (fail closed).',
-    )
-  }
-  if (!facts.secondParentBranches.some(isVersionBranch)) {
-    return refuse(
-      'the new tip of main is a merge, but its second parent is not contained in a local version branch (V<number>); main must be a --no-ff merge of a version branch.',
-    )
-  }
-  return allow('main advances to a --no-ff merge of a version branch')
+  return allow('main advances through --no-ff merges of a version branch only')
 }
 
 /**
@@ -468,7 +516,7 @@ function evaluateMainUpdate(facts) {
 function evaluateVersionUpdate(name, facts) {
   if (facts.frozen === true) {
     return refuse(
-      `${name} is frozen read-only history: a higher-numbered version branch is current, and a superseded version branch only comes back by an explicit user decision. Push this work to the current version branch instead.`,
+      `${name} is frozen read-only history: a higher-numbered version branch is current. Push this work to the current version branch instead.`,
     )
   }
   if (facts.localKnown !== true || facts.remoteKnown !== true) {
@@ -486,13 +534,27 @@ function evaluateVersionUpdate(name, facts) {
       `cannot determine which commits the push adds to ${name}; refusing (fail closed).`,
     )
   }
-  const direct = facts.addedOnFirstParent.find((commit) => commit.parentCount < 2)
-  if (direct !== undefined) {
+  for (const commit of facts.addedOnFirstParent) {
+    if (commit.parentCount !== 2) {
+      return refuse(
+        `the push adds ${commit.sha} to the first-parent line of ${name}, and it is not a merge commit with exactly two parents; a version branch only receives --no-ff merges of typed small branches or a sync merge from main.`,
+      )
+    }
+    if (!Array.isArray(commit.secondParentBranches)) {
+      return refuse(
+        `cannot determine which branch ${commit.sha} merged into ${name}; refusing (fail closed).`,
+      )
+    }
+    if (commit.secondParentBranches.some(isMainBranch)) continue
+    if (commit.secondParentBranches.some(isSmallBranch)) continue
+    const subject = typeof commit.subject === 'string' ? commit.subject : ''
+    const merged = /^Merge branch '([^']+)'/u.exec(subject)
+    if (merged !== null && isSmallBranch(merged[1])) continue
     return refuse(
-      `the push adds ${direct.sha} to the first-parent line of ${name}, and it is not a merge commit; a version branch only receives --no-ff merges of typed small branches.`,
+      `the push adds ${commit.sha} to ${name}, but its second parent is contained in neither main nor a typed small branch; ${name} only receives --no-ff merges of typed small branches or a sync merge from main.`,
     )
   }
-  return allow(`${name} advances through merge commits only`)
+  return allow(`${name} advances through --no-ff merges of typed small branches only`)
 }
 
 /**
@@ -568,6 +630,22 @@ function mergeHeadShas(dir) {
 }
 
 /**
+ * The commits a `git pull` left in FETCH_HEAD.
+ * @param {string} dir the absolute git directory.
+ * @returns {string[]}
+ */
+function fetchHeadShas(dir) {
+  const path = join(dir, 'FETCH_HEAD')
+  if (!existsSync(path)) return []
+  const shas = []
+  for (const line of readFileSync(path, 'utf8').split('\n')) {
+    const field = line.split(/\s+/u)[0]
+    if (typeof field === 'string' && OBJECT_ID_PATTERN.test(field)) shas.push(field)
+  }
+  return shas
+}
+
+/**
  * Resolve a ref to its commit id, or null when it does not exist.
  * @param {string} cwd the repository directory.
  * @param {string} name a branch, tag, remote ref or object id.
@@ -618,7 +696,13 @@ function branchesContaining(cwd, sha) {
  * @returns {string | null}
  */
 function currentVersionBranch(cwd) {
-  const result = runGit(['for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/remotes'], cwd)
+  // Only this repository's own heads and origin's tracking refs count: another
+  // remote is not this checkout's version line, and a stale tracking ref can be
+  // cleared with `git fetch --prune` (documented in WORKFLOW.md).
+  const result = runGit(
+    ['for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/remotes/origin'],
+    cwd,
+  )
   if (result.status !== 0) return null
   let current = null
   let currentNumber = -1
@@ -687,13 +771,16 @@ function parentShas(cwd, sha) {
 }
 
 /**
- * The commits a push adds on a branch's first-parent line.
+ * The commits a push adds on a branch's first-parent line, with the facts the
+ * push rules need about each one: its parent count, which local branches
+ * contain its second parent, and its subject (the fallback for a typed branch
+ * that was already deleted before the push).
  * @param {string} cwd the repository directory.
  * @param {string} from the old remote tip.
  * @param {string} to the new local tip.
- * @returns {Array<{sha: string, parentCount: number}> | null}
+ * @returns {Array<{sha: string, parentCount: number, secondParentBranches: string[] | null, subject: string}> | null}
  */
-function commitsAddedOnFirstParent(cwd, from, to) {
+function commitsAddedWithProvenance(cwd, from, to) {
   const result = runGit(['rev-list', '--first-parent', `${from}..${to}`], cwd)
   if (result.status !== 0) return null
   const shas = result.stdout
@@ -704,7 +791,14 @@ function commitsAddedOnFirstParent(cwd, from, to) {
   for (const sha of shas) {
     const parents = parentShas(cwd, sha)
     if (parents === null) return null
-    commits.push({ sha, parentCount: parents.length })
+    const subject = runGit(['log', '-1', '--format=%s', sha], cwd)
+    if (subject.status !== 0) return null
+    commits.push({
+      sha,
+      parentCount: parents.length,
+      secondParentBranches: parents.length === 2 ? branchesContaining(cwd, parents[1]) : null,
+      subject: subject.stdout.trim(),
+    })
   }
   return commits
 }
@@ -719,21 +813,31 @@ function commitsAddedOnFirstParent(cwd, from, to) {
  * @returns {object} merge facts.
  */
 function collectMergeFacts({ cwd, dir, env, target }) {
-  const sourceNames = mergeSourcesFromReflog(env.GIT_REFLOG_ACTION)
+  const action = env.GIT_REFLOG_ACTION
+  // `git pull` runs through the merge machinery with a "pull ..." reflog
+  // action and keeps its source commits in FETCH_HEAD rather than naming a
+  // ref, so the same sync rules apply once those commits are collected.
+  const pulled = typeof action === 'string' && action.startsWith('pull ')
+  const sourceNames = pulled ? [] : mergeSourcesFromReflog(action)
   const mergeHead = mergeHeadShas(dir)
+  const fetched = pulled ? fetchHeadShas(dir) : []
   const resolvedNames = sourceNames
     .map((name) => resolveRef(cwd, name))
     .filter((sha) => sha !== null)
-  const sourceShas = unique([...mergeHead, ...resolvedNames])
+  const sourceShas = unique([...mergeHead, ...fetched, ...resolvedNames])
   const containingBranches = {}
   for (const sha of sourceShas) {
     containingBranches[sha] = branchesContaining(cwd, sha)
   }
   const mainResolved = resolveRef(cwd, MAIN_BRANCH) !== null
+  const originMainResolved = resolveRef(cwd, 'refs/remotes/origin/main') !== null
+  const mainTips = []
+  if (mainResolved) mainTips.push(MAIN_BRANCH)
+  if (originMainResolved) mainTips.push('refs/remotes/origin/main')
   let allSourcesInMain = false
-  if (mainResolved && sourceShas.length > 0) {
-    allSourcesInMain = sourceShas.every(
-      (sha) => runGit(['merge-base', '--is-ancestor', sha, MAIN_BRANCH], cwd).status === 0,
+  if (mainTips.length > 0 && sourceShas.length > 0) {
+    allSourcesInMain = sourceShas.every((sha) =>
+      mainTips.some((tip) => runGit(['merge-base', '--is-ancestor', sha, tip], cwd).status === 0),
     )
   }
   return {
@@ -756,26 +860,28 @@ function collectMergeFacts({ cwd, dir, env, target }) {
  */
 function collectPushFacts(cwd, name, update) {
   const localKnown = resolveCommit(cwd, update.localSha) !== null
-  const remoteKnown = resolveCommit(cwd, update.remoteSha) !== null
   const facts = {
     localKnown,
-    remoteKnown,
+    remoteKnown: null,
     fastForward: null,
     tipParentCount: null,
     secondParentBranches: null,
     addedOnFirstParent: null,
   }
-  if (!localKnown || !remoteKnown) return facts
-  facts.fastForward = isAncestor(cwd, update.remoteSha, update.localSha)
+  if (!localKnown) return facts
   if (isMainBranch(name)) {
+    // The tip facts answer the creation question: a new remote main may only be
+    // published from a --no-ff release merge.
     const parents = parentShas(cwd, update.localSha)
     facts.tipParentCount = parents === null ? null : parents.length
-    const secondParent = parents === null ? undefined : parents[1]
     facts.secondParentBranches =
-      typeof secondParent === 'string' ? branchesContaining(cwd, secondParent) : null
-  } else {
-    facts.addedOnFirstParent = commitsAddedOnFirstParent(cwd, update.remoteSha, update.localSha)
+      parents === null || parents.length !== 2 ? null : branchesContaining(cwd, parents[1])
   }
+  if (isZeroSha(update.remoteSha)) return facts
+  facts.remoteKnown = resolveCommit(cwd, update.remoteSha) !== null
+  if (facts.remoteKnown !== true) return facts
+  facts.fastForward = isAncestor(cwd, update.remoteSha, update.localSha)
+  facts.addedOnFirstParent = commitsAddedWithProvenance(cwd, update.remoteSha, update.localSha)
   return facts
 }
 
@@ -830,8 +936,7 @@ function guardPush(cwd, stdinText) {
       name === null ||
       !isProtectedBranch(name) ||
       update.localRef === '(delete)' ||
-      isZeroSha(update.localSha) ||
-      isZeroSha(update.remoteSha)
+      isZeroSha(update.localSha)
     const facts = factless ? {} : collectPushFacts(cwd, name, update)
     if (frozen !== null) facts.frozen = frozen
     const verdict = evaluatePush(update, facts)
@@ -864,24 +969,25 @@ function usageError(message) {
 /**
  * Parse the check-pr arguments, accepting both "--base X" and "--base=X".
  * @param {string[]} args arguments after the subcommand.
- * @returns {{base: string, head: string} | null} null when the invocation is invalid.
+ * @returns {{base: string, head: string, currentVersion?: string} | null} null when the invocation is invalid.
  */
 function parseCheckPullRequestArguments(args) {
   const values = {}
+  const flags = { '--base': 'base', '--head': 'head', '--current-version': 'currentVersion' }
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
-    if (arg === '--base' || arg === '--head') {
-      const value = args[index + 1]
+    const equals = arg.indexOf('=')
+    const flag = equals === -1 ? arg : arg.slice(0, equals)
+    if (!(flag in flags)) return null
+    let value
+    if (equals === -1) {
+      value = args[index + 1]
       if (value === undefined || value.startsWith('--')) return null
-      values[arg.slice(2)] = value
       index += 1
-    } else if (arg.startsWith('--base=')) {
-      values.base = arg.slice('--base='.length)
-    } else if (arg.startsWith('--head=')) {
-      values.head = arg.slice('--head='.length)
     } else {
-      return null
+      value = arg.slice(equals + 1)
     }
+    values[flags[flag]] = value
   }
   if (!values.base || !values.head) return null
   return values
@@ -924,7 +1030,9 @@ export function main(argv = process.argv.slice(2)) {
   }
   if (command === 'check-pr') {
     const parsed = parseCheckPullRequestArguments(rest)
-    if (parsed === null) return usageError('check-pr needs --base <ref> and --head <ref>')
+    if (parsed === null) {
+      return usageError('check-pr needs --base <ref> and --head <ref> [--current-version <Vn>]')
+    }
     return report(checkPullRequest(parsed))
   }
   if (command === 'guard-commit' || command === 'guard-merge' || command === 'guard-push') {

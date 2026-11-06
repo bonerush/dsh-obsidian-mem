@@ -2,6 +2,12 @@
 # required check cannot; this is the second enforcement layer described in
 # WORKFLOW.md. The policy itself lives in scripts/branch-policy.mjs, so the job
 # only needs a checkout and a Node matching the repository's engine floor.
+#
+# Two details keep the gate honest. The checkout is the base commit, so the
+# script that judges a pull request is the base branch's script and a head
+# branch cannot edit its own judge. Fork heads are refused outright: this
+# mirror enforces the model for same-repository branches, and a fork branch
+# named V2 would otherwise pass the name check.
 name: branch-policy
 
 on:
@@ -16,11 +22,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
       - uses: actions/setup-node@v7
         with:
           node-version: '22.22.2'
+      - name: Refuse a pull request from a fork
+        env:
+          REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          if [ "$HEAD_REPOSITORY" != "$REPOSITORY" ]; then
+            echo "branch-policy: pull requests from forks are not accepted; open the branch in this repository instead." >&2
+            exit 1
+          fi
+      - name: Resolve the current version branch
+        id: current-version
+        run: |
+          version="$(git ls-remote --heads origin 'refs/heads/V*' | sed 's#.*refs/heads/##' | grep -E '^V[1-9][0-9]*$' | sort -V | tail -n 1)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Check the pull request branch pair
         env:
           BASE: ${{ github.event.pull_request.base.ref }}
           HEAD: ${{ github.event.pull_request.head.ref }}
-        run: node scripts/branch-policy.mjs check-pr --base "$BASE" --head "$HEAD"
+          CURRENT_VERSION: ${{ steps.current-version.outputs.version }}
+        run: |
+          if [ -n "$CURRENT_VERSION" ]; then
+            node scripts/branch-policy.mjs check-pr --base "$BASE" --head "$HEAD" --current-version "$CURRENT_VERSION"
+          else
+            node scripts/branch-policy.mjs check-pr --base "$BASE" --head "$HEAD"
+          fi
