@@ -1,0 +1,26 @@
+# The durable PR-topology gate. Local hooks can be bypassed (`--no-verify`), a
+# required check cannot; this is the second enforcement layer described in
+# WORKFLOW.md. The policy itself lives in scripts/branch-policy.mjs, so the job
+# only needs a checkout and a Node matching the repository's engine floor.
+name: branch-policy
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  topology:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.22.2'
+      - name: Check the pull request branch pair
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD: ${{ github.event.pull_request.head.ref }}
+        run: node scripts/branch-policy.mjs check-pr --base "$BASE" --head "$HEAD"

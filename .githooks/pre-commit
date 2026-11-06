@@ -2,4 +2,11 @@
 # Fast, staged-only gate. Installed by `npm run hooks:install`, which is the only
 # command that changes git config; see scripts/check-staged.mjs for what it checks
 # and why it reads the index rather than the working tree.
+#
+# The branch guard runs first: a commit directly on main or on a version branch
+# is the accident this hook can catch. Hooks are bypassable (`--no-verify`), so
+# the pre-push guard and the CI PR-topology check are the durable gates; see
+# scripts/branch-policy.mjs and the branch model in WORKFLOW.md.
+set -eu
+node scripts/branch-policy.mjs guard-commit
 exec npm run --silent check:fast

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Branch guard for pushes: main only moves forward through a --no-ff merge of a
+# version branch, a version branch only moves forward through merge commits, and
+# main/version branches cannot be deleted. Plain branches keep their existing
+# rules (a typed small branch is personal and may be force-pushed), and unknown
+# ref namespaces are left alone.
+#
+# This layer is local and skippable (`git push --no-verify`); the CI
+# PR-topology check is the durable one. Installed by `npm run hooks:install`,
+# which is opt-in.
+set -eu
+exec node scripts/branch-policy.mjs guard-push
