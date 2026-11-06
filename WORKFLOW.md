@@ -301,8 +301,10 @@ Minors are listed with a decision.
    the two blob hashes in `README.i18n.yaml` (`git hash-object`).
 5. If a `lib/` module was added or removed, re-run the tarball measurement
    from `AGENTS.md`; do not adjust the count by hand.
-6. Push the branch. Do not force-push a shared branch; do not merge without
-   the user's explicit instruction.
+6. Push the typed small branch (force-push is allowed only on your own typed
+   branch). Do not merge without the user's explicit instruction; merging back
+   into the current `Vx` is `DSH_MERGE_APPROVED=1 git merge --no-ff <branch>` —
+   see the branch model in §6. `main` and `Vx` are never force-pushed.
 
 **GATE 2:** present the diff summary and proposed messages; commit only after
 the Lead's own review (and the user's confirmation when the user asked for
@@ -493,6 +495,124 @@ completed work.
 - The architecture test's `LAYERS` and `BUDGETS` are reviewed decisions, not
   auto-derived numbers. A new module or a larger file edits them together and
   says why in the commit.
+- The branch model is enforced: work lands on a typed small branch, merges into
+  `Vx` after the user confirms, and reaches `main` only as a `--no-ff` merge.
+  Hooks are bypassable, so `pre-push` and the CI PR check are the durable gates
+  (§6, *Branch model*).
+
+### Branch model (enforced since 2026-11-06)
+
+`main` is release history, `Vx` is the version sub-main, and all work happens on
+a typed small branch. The three roles move in one direction only:
+
+| Role | Naming | Created from | Receives | Releases |
+|---|---|---|---|---|
+| **main** — release history | `main` | never created; only merges land here | `--no-ff` merge from one `Vx` | every push triggers `release.yml` |
+| **Vx** — version sub-main | `^V[1-9]\d*$` (`V2`, `V10`) | cut from `main` when the user announces a new major version | `--no-ff` merges from typed branches; `--no-ff` sync merges from `main` | when the user asks for a release |
+| **typed small branch** | `<type>/<slug>`, lowercase kebab slug (`feat/branch-model`) | the current `Vx` | direct commits and force-pushes (it is yours) | merged back into `Vx` with `--no-ff`, then deleted |
+
+The names are matched literally:
+
+```text
+main     ^main$
+Vx       ^V[1-9]\d*$
+small    ^(feat|bug|doc|chore|refactor|test|perf)/[a-z0-9]+(?:-[a-z0-9]+)*$
+```
+
+`main` and `Vx` never take a direct commit, are never force-pushed, rebased or
+deleted; older `Vx` branches are frozen read-only history and never become
+writable again. The current version is the highest-numbered `Vx` visible in the
+checkout under `refs/heads` or `refs/remotes/origin` (other remotes are not the
+version line), so cutting `V3` from `main` freezes `V2`: the policy then refuses
+commits, merges and pushes to the superseded branch, and the CI check receives
+the same current version so a pull request into a frozen `Vx` fails there too.
+Run `git fetch --prune` before you rely on "the highest visible `Vx`" — a stale
+remote-tracking ref would keep a frozen branch looking current. The
+implementation is `scripts/branch-policy.mjs`;
+`.githooks/{pre-commit,pre-merge-commit,pre-push}` are thin wrappers around it,
+and `.github/workflows/branch-policy.yml` runs its `check-pr` subcommand on
+every pull request.
+
+**Always `--no-ff`.** A fast-forward merge skips `pre-merge-commit` entirely, so
+`git merge V2` run directly on `main` looks like ordinary history; only the
+pre-push hook and the PR check can see it, and a direct push to `main` before
+those run is exactly the mistake this model exists to prevent. A `--no-ff` merge
+is the only shape the hooks can verify.
+
+**The user confirms every small-branch merge.** Merging a typed branch into its
+`Vx` needs the user's explicit go-ahead in the same session; the hooks cannot
+know the conversation, so the confirmation is an environment marker:
+
+```sh
+DSH_MERGE_APPROVED=1 git merge --no-ff feat/branch-model
+```
+
+Without the marker the merge is refused — both `pre-merge-commit` and a
+conflict-resolution `pre-commit` check it. If a clean merge is refused, run
+`git merge --abort` and retry; if the merge already conflicted, resolve the
+conflict and finish it with `DSH_MERGE_APPROVED=1 git commit` (the hook names
+that command when it refuses). A `main` → `Vx` sync merge is the only exemption;
+it is how a release bump on `main` comes back. A stale local `main` is not a
+reason to skip the sync: `git fetch origin` then
+`git merge --no-ff origin/main` is accepted, and a `git pull --no-rebase origin
+main` is accepted from the fetched commit it names. Do not merge `Vx` into
+`main` until the user confirms the release.
+
+**Release procedure.** Never commit a bump on `Vx` directly. Cut a typed
+branch from `Vx` (`chore/release-X.Y.Z`), bump `package.json` (plus
+`dsh.plugin.json` and `codex/server.mjs` when they carry the version), cut the
+`CHANGELOG.md` section with `node scripts/changelog-order.mjs --cut <next>
+<today>`, merge that branch back into `Vx` with the marker, then merge `Vx` into
+`main` with `--no-ff` and push `main`. Because the declared version has no tag
+yet, `release.yml` takes its **bootstrap** path: it tags the commit the release
+merge produced, creates the GitHub Release and moves the marketplace entry —
+without committing anything to `main`, so `main` stays exactly release history
+and the `Vx` merge is the only commit a `main` push adds. The bump path
+(`release.yml` cuts `chore(release): X` itself) only runs when the pushed tree
+already carries a tagged version; that commit is then on `main`, and the next
+`Vx` sync brings it back with `git merge --no-ff main` (exempt from the marker).
+
+**PR topology.** `main` ← `Vx` only (a release PR); `Vx` ← typed small branch
+only (a work PR). `check-pr` fails on any other pair, so a mistargeted PR fails
+in CI instead of at release time. The workflow checks out the base commit before
+it runs the policy, so a head branch cannot edit the check that judges it, and
+it refuses pull requests from forks outright: a fork head named `V2` would
+otherwise pass a name-only check.
+
+**Hooks are accident-prevention, not a wall.** `npm run hooks:install` points
+`core.hooksPath` at this checkout's absolute `.githooks` path (a relative value
+is resolved against every worktree and would silently lose the hooks in a
+linked worktree) and is opt-in per checkout. `git merge
+--no-verify` and `git push --no-verify` bypass the hooks, and a fast-forward
+merge never reaches `pre-merge-commit`; git 2.54 also never runs `pre-commit`
+for `git cherry-pick` or `git revert`, so do not land either directly on
+`main`/`Vx`. The durable gates are the `pre-push` hook — which walks every
+commit a push adds to `main`'s or `Vx`'s first-parent line and refuses a direct
+commit or a merge from an unapproved branch even when a valid release merge sits
+on top — plus the CI check, so install the hooks *and* let CI see every branch.
+The CI check judges names only; commit provenance is the local `pre-push` job.
+
+**Cleanup.** A typed branch is deleted once it is merged into its `Vx`; a
+branch fully merged into `main` is deleted locally and on the remote — stale
+branches are history you cannot read. Keep `backup/*` locally only: the policy
+refuses to push an untyped name, so it is a local archive, not a shared branch.
+Keep any branch with an open PR; do not rewrite what it points at.
+
+**Bootstrapping a new remote.** Pushing `main` to a repository that has no
+`main` yet is the only allowed creation of remote `main`, and only when its tip
+is a `--no-ff` merge of a version branch; every later `main` update must be a
+merge too. If you need to publish an existing `main` that is not in that shape,
+that is a user decision, not something a hook can approve.
+
+**Recovery.** A bad local `main` or `Vx` is reset, not repaired:
+`git reset --hard origin/main` or `git reset --hard origin/V2`. Never force-push
+a corrected history; if the remote is wrong too, that is a user decision
+recorded in the ledger.
+
+**Forbidden:** direct commits on `main`/`Vx`; force-push, rebase or deletion of
+`main`/`Vx`; merges without `--no-ff`; merging a typed branch without the
+user's confirmation; deleting a `Vx` branch; writing to a superseded `Vx`
+branch (it is frozen).
 
 ### Refactor-specific rules
 
@@ -737,6 +857,9 @@ saved patch are cheaper than a red commit.
 - [ ] pack check if `files`/manifest/module count changed
 
 **Before push**
-- [ ] branch is the intended one; no force-push
+- [ ] branch is the intended one; no force-push on `main`/`Vx` (a typed branch
+      may be force-pushed)
+- [ ] merging a typed branch into `Vx` carries the user's confirmation
+      (`DSH_MERGE_APPROVED=1`) and `--no-ff`; `main` only ever receives `--no-ff`
 - [ ] commit messages are conventional and scoped
 - [ ] remote is correct; push reported

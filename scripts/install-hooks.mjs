@@ -13,8 +13,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SELF_ROOT = resolve(HERE, '..')
-/** The value this repository wants, relative to the repository root. */
+/** The hook directory, relative to the repository root. */
 export const HOOKS_PATH = '.githooks'
+/** The hook files every installation must provide. */
+export const REQUIRED_HOOKS = ['pre-commit', 'pre-merge-commit', 'pre-push']
 
 /** Run git and return stdout, naming the failure when it fails. */
 function git(args, cwd) {
@@ -36,7 +38,12 @@ export function currentHooksPath(root) {
 }
 
 /**
- * Point `core.hooksPath` at `.githooks` for one checkout.
+ * Point `core.hooksPath` at this checkout's `.githooks` for one checkout.
+ *
+ * The value is absolute on purpose: a relative `core.hooksPath` is resolved
+ * against whichever worktree git is running in, so a linked worktree checked
+ * out at a commit that predates `.githooks/` would run no hooks at all and say
+ * nothing about it. An absolute path keeps the hooks this checkout installed.
  *
  * @param {string} [root] - repository root.
  * @returns {number} 0 on success, 2 when the checkout cannot host hooks.
@@ -49,18 +56,20 @@ export function main(root = SELF_ROOT) {
     process.stderr.write('install-hooks: ' + root + ' is not a git checkout\n')
     return 2
   }
-  if (!existsSync(join(hooks, 'pre-commit'))) {
-    process.stderr.write('install-hooks: ' + join(HOOKS_PATH, 'pre-commit') + ' is missing\n')
-    return 2
+  for (const hook of REQUIRED_HOOKS) {
+    if (!existsSync(join(hooks, hook))) {
+      process.stderr.write('install-hooks: ' + join(HOOKS_PATH, hook) + ' is missing\n')
+      return 2
+    }
   }
   const before = currentHooksPath(root)
   process.stdout.write(
     'install-hooks: core.hooksPath was ' + (before === '' ? '(unset)' : before) + '\n',
   )
-  git(['config', '--local', 'core.hooksPath', HOOKS_PATH], root)
+  git(['config', '--local', 'core.hooksPath', hooks], root)
   const after = currentHooksPath(root)
   process.stdout.write('install-hooks: core.hooksPath is now ' + after + '\n')
-  if (after !== HOOKS_PATH) {
+  if (after !== hooks) {
     process.stderr.write('install-hooks: the setting did not take\n')
     return 2
   }
