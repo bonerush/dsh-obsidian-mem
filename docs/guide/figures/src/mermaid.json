@@ -1,0 +1,49 @@
+{
+ "theme": "base",
+ "themeVariables": {
+  "fontFamily": "-apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif",
+  "fontSize": "14px",
+  "primaryColor": "#eef2ff",
+  "primaryBorderColor": "#4f46e5",
+  "primaryTextColor": "#1e293b",
+  "lineColor": "#64748b",
+  "secondaryColor": "#f8fafc",
+  "tertiaryColor": "#ffffff",
+  "edgeLabelBackground": "#ffffff",
+  "actorBkg": "#eef2ff",
+  "actorBorder": "#4f46e5",
+  "actorTextColor": "#1e293b",
+  "signalColor": "#475569",
+  "signalTextColor": "#1e293b",
+  "labelBoxBkgColor": "#eef2ff",
+  "labelBoxBorderColor": "#4f46e5",
+  "noteBkgColor": "#fff7ed",
+  "noteBorderColor": "#f59e0b",
+  "noteTextColor": "#1e293b"
+ },
+ "sequence": {
+  "diagramMarginX": 16,
+  "diagramMarginY": 8,
+  "actorMargin": 36,
+  "width": 110,
+  "height": 42,
+  "boxMargin": 4,
+  "boxTextMargin": 3,
+  "noteMargin": 3,
+  "messageMargin": 15,
+  "mirrorActors": false,
+  "bottomMarginAdj": 2,
+  "useMaxWidth": true,
+  "showSequenceNumbers": true
+ },
+ "flowchart": {
+  "curve": "basis",
+  "htmlLabels": true,
+  "nodeSpacing": 35,
+  "rankSpacing": 40,
+  "useMaxWidth": true
+ },
+ "state": {
+  "useMaxWidth": true
+ }
+}

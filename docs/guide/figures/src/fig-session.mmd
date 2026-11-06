@@ -1,0 +1,31 @@
+sequenceDiagram
+  autonumber
+  participant U as 你
+  participant H as DSH 宿主
+  participant P as obsidian-mem
+  participant M as 模型
+  participant V as vault
+
+  rect rgb(238, 242, 255)
+    Note over U,V: 回合内：注入与读写
+    U->>H: 新会话
+    H->>P: 首次 pre-step
+    P->>V: 读热层 / hub / 约定
+    P->>H: 简报（≤6000 码点）
+    H->>M: 首请求（含简报）
+    U->>H: 新提问
+    P->>V: 检索相关笔记
+    P->>H: 相关笔记（≤3 条）
+    M->>P: mem_write
+    P->>V: 事务写入
+  end
+
+  rect rgb(255, 247, 237)
+    Note over U,V: 回合后：捕获与蒸馏
+    H->>P: turn/end（completed）
+    P->>P: 写入 pending job
+    Note over P: 空闲 90 秒
+    P->>M: 蒸馏调用
+    M->>P: 候选笔记
+    P->>V: 校验后写入
+  end
