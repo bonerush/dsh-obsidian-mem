@@ -387,14 +387,28 @@ for you:
 - **A curation proposal is not a fact, and it is not an outcome.** A suspected
   near duplicate, a same-title claim with a different number or date, or a
   supersede a model proposed is *parked* under the plugin's own data root
-  (outside the vault) and changes nothing. Never tell the user such a change
-  happened, and never write it yourself to "finish the job".
-- **There is no model-callable approval.** No `mem_admin` action, parameter or
-  value applies or rejects a proposal, and you cannot approve one on the user's
-  behalf. The only route is the interactive command shipped with the package:
+  (outside the vault) and changes nothing. Until it is decided, never tell the
+  user such a change happened, and never write it yourself to "finish the job".
+  A record carrying `decidedBy: "auto"` is different: it is a real decision the
+  plugin's own reviewer made, the user can audit it in the 健康 card's recent
+  list, and the note (or its absence) already reflects it.
+- **There are three review routes, none of them a tool you can call.** A human
+  decides from the **健康** panel's **待审阅** card (open the memory panel from
+  the DSH sidebar, switch to 健康; **批准…** applies exactly that proposal,
+  **拒绝…** changes no note, and a review-only row offers only **忽略…**) or with
+  the unchanged command shipped with the package:
   `dsh-obsidian-mem-review --vault <absolute-path> <proposal-id>`, which needs a
-  real terminal and a byte-for-byte typed `apply <id>` or `reject <id>`. Point
-  the user at it; do not simulate it by editing the source notes.
+  real terminal and a byte-for-byte typed `apply <id>` or `reject <id>`. The
+  third route is the built-in automatic reviewer: with `autoReview: true` (the
+  default), `distill.provider` + `distill.model` configured and the DSH host
+  running an automatic curation pass, the plugin may ask the model to judge up to
+  three pending executable proposals, acting only on a `confidence ≥ 0.8` `apply`
+  or `reject` after re-checking every source hash; anything else stays pending.
+  An explicit `operation="scan"` and the Codex adapter's pass never start it. It
+  records `decidedBy: "auto"` and the model id. **No `mem_admin` action,
+  parameter or value approves or rejects a proposal, so you still cannot decide
+  one on the user's behalf** — point the user at the panel or the command; do not
+  simulate either by editing the source notes.
 - `mem_admin(action="curation", operation="status")` lists the queue and reads
   the private cursor and the committed view without inspecting anything;
   `operation="scan"` runs one bounded pass now and reports `complete` and any
@@ -405,7 +419,9 @@ for you:
   exactly `proposalId`, `kind`, `reason` and `reviewOnly`. Hand the user the
   `proposalId` of the row they want. A `reviewOnly: true` row is a finding with no
   operation — `apply` cannot repair it, so the fix is the source edit the finding
-  names followed by another `operation="scan"`. `proposals.truncated: true` means
+  names followed by another `operation="scan"`. A completed pass retires the row
+  deterministically when it inspected every source path and no longer reports the
+  finding; anything less leaves it pending. `proposals.truncated: true` means
   more pending rows exist than were returned; the user decides the listed ones and
   asks again. It says nothing about source notes having disappeared.
 - **A refusal is an answer to report, not a failure to retry blindly.**
@@ -417,9 +433,11 @@ for you:
   publishing a note, so the user approves with `apply` — which rolls that attempt
   back if it never committed and forward if it did, then publishes the candidate.
   That one is never a rejection, and never something you resolve by editing notes.
-- **A curation pass reads Markdown and makes no model call**, and it never merges,
-  archives, supersedes, promotes or deletes a note. An exact-duplicate group is one
-  displayed entry naming every path; no note is removed.
+- **A curation pass reads Markdown and makes no model call**; it never merges,
+  archives, supersedes, promotes or deletes a note. Only an approved decision
+  writes, through the reviewed-memory transaction; the automatic reviewer is a
+  separate bounded step after the pass, described above. An exact-duplicate
+  group is one displayed entry naming every path; no note is removed.
 - **The claim file beside the records is not scratch.** A running review holds a
   private claim file so two reviewers cannot both decide one proposal, and
   `proposals/` is durable review work no scan can recreate. Never delete either,

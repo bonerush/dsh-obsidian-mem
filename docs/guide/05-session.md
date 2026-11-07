@@ -122,8 +122,8 @@ worker 取出 job，发起一次不带工具的模型调用。
 | `gotcha` | `Pitfalls/` |
 | `convention` | `Conventions/` |
 | 低于 `minConfidence` | `Inbox/` |
-| 标题与已有笔记重复 | 停放，等人工评审 |
-| 提出取代某条笔记 | 停放，等人工评审 |
+| 标题与已有笔记重复 | 停放，等评审决定 |
+| 提出取代某条笔记 | 停放，等评审决定 |
 
 `doc` 和 `glossary` 只由 `mem_write` 创建。
 蒸馏不会自动生成这两类笔记。

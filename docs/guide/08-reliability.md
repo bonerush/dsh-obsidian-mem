@@ -136,14 +136,25 @@
 自动整理不会修改源笔记。
 疑似重复、需要取代的候选会停放在 `<data-root>/curation/proposals/`。
 
-批准只有一条路：
+决定一条提案有三条路：
 
-```sh
-dsh-obsidian-mem-review --vault /绝对路径/vault <提案 id>
-```
+1. **健康面板的待审阅队列**：预览渲染候选 Markdown，**批准…** 应用的正是这一条提案，
+   **拒绝…** 不改动笔记；只读 finding 只有 **忽略…**。
+2. **评审命令**（未改动，一次一条提案）：
 
-命令要求真实终端，并要求逐字输入 `apply <id>` 或 `reject <id>`。
-任何 `mem_admin` 动作都不能批准提案。
+   ```sh
+   dsh-obsidian-mem-review --vault /绝对路径/vault <提案 id>
+   ```
+
+   命令要求真实终端，并要求逐字输入 `apply <id>` 或 `reject <id>`。
+3. **自动审阅**：`autoReview: true`（默认）、`distill.provider` + `distill.model` 已
+   配置、且 DSH 宿主跑完自动整理回合时，插件最多判断 3 条待决定的可执行提案，判断前
+   先复核来源哈希；只有置信度 ≥ 0.8 的 `apply` / `reject` 生效，其余保持 pending。
+   手动扫描不触发这条路径；决定记录 `decidedBy: "auto"` 与模型 id，证据已变化的提案
+   会被 retire，而不是被应用。
+
+`autoReview: false` 只关掉第三条路径；面板与命令照常可用。任何 `mem_admin` 动作都不能
+批准提案。一趟完整整理还会确定性地 retire 它检查过、且不再复现的 review-only finding。
 
 ## 热层容量
 

@@ -40,7 +40,7 @@
 | 捕获 | capture | 把完成的回合写成 pending job |
 | 蒸馏 | distillation | 用模型把回合转成候选笔记 |
 | 整理 | curation | 只读 Markdown 的重复检查与记忆视图 |
-| 提案 | proposal | 停放中的候选，等待人工评审 |
+| 提案 | proposal | 停放中的候选，等待评审决定 |
 | 索引 | index | SQLite FTS5 搜索缓存，可重建 |
 | FTS5 | FTS5 | SQLite 的全文搜索模块 |
 | MOC | Map of Content | 内容地图，即项目 hub |
@@ -97,16 +97,20 @@ Obsidian 只提供阅读体验和双链导航。
 索引未刷新时，先运行 `mem_admin(action="index")` 查看状态。
 如果索引损坏，用 `rebuild=true` 重建。
 
-### 7. 为什么整理提案没有自动应用？
+### 7. 整理提案会自动应用吗？
 
-这是设计。
-合并、取代、归档都会改变事实，必须由人决定。
-批准入口只有 `dsh-obsidian-mem-review` 命令。
+整理本身不应用提案：合并、取代、归档都会改变事实。
+决定有三条路：面板 **健康 → 待审阅**、评审命令 `dsh-obsidian-mem-review`，以及插件内置
+的自动审阅器（`autoReview` 默认开启；需配置 `distill.provider` + `distill.model`，由
+DSH 宿主自动整理回合触发，只对置信度 ≥ 0.8 的可执行提案生效）。只读 finding 不会被
+应用，扫描在它不再复现时把它退场。
 
 ### 8. agent 能代替我批准提案吗？
 
 不能。
-没有任何 `mem_admin` 动作、参数或枚举值可以批准提案。
+没有任何工具，也没有任何 `mem_admin` 动作、参数或枚举值可以批准或拒绝提案。
+内置的自动审阅器是插件内部的、有界的，每个决定都记录 `decidedBy`（自动决定另记
+模型 id）；它不是 agent 可以调用的工具。
 评审命令要求真实终端和逐字输入。
 
 ### 9. 蒸馏会把什么发给模型？
