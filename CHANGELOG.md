@@ -11,6 +11,38 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Added
+
+- **自动召回新增「弱匹配」档。** 强档判定不变（标题/短语/≥6 token-hits，以及保留给
+  e5 标尺 operator 的 `semantic-score ≥ 0.92` 分支）；当且仅当没有任何强命中被接受、
+  且没有已展示的强命中时，向量通道可以在「第一名 + 对第二名的领先 ≥ 0.02 + 余弦
+  ≥ 0.55」时给出一条**无摘录**的 `[弱匹配·需核实]` 指针，outcome 仍是 `near-miss`，
+  并明确要求先 `mem_read` 核实全文。旧的固定 0.88 近邻阈值删除：线上
+  `Qwen/Qwen3-Embedding-0.6B` 的相关候选余弦只有 0.23–0.62，0.88/0.92 在该标尺上
+  不可达（见 `docs/superpowers/specs/2026-11-08-recall-invocation-design.md`）。
+  在冻结的 200 查询语料上用真实 `promptRecall` 重放：仅强档覆盖 70/200，弱档加入后
+  142/200（71%）；弱条目命中 gold 44/72（61%），40 条 no-answer 对照里弱档提示 5 条
+  （12.5%），强档 2 条（5%）。按类看 deictic 从强档 0/40 变为弱档 28/40（16 条命中
+  gold），cross-lingual 弱档 18 条中 14 条命中 gold。
+- **一次会话最多一条显式弃权提示。** 真实用户提示词确实检索过、但强/弱两档都没有
+  可展示内容、且本步没有 brief/lint 提示时，注入一行「未在项目记忆中检索到……；
+  若问题依赖项目历史，请先用 mem_search 再回答」；它让「沉默」不再同时意味着
+  「检索过但没有」和「根本没有检索」。
+- **`tool` 诊断事件。** 生产环境里始终存在的 `session/event` 工具监听器现在为每次
+  `mem_*` 调用写一条内容无关记录；`mem_read` 打开的路径若正是本会话自动召回展示过的
+  路径，则 `outcome: 'follow'`。这是「召回→跟随」闭环率第一次可测，也让
+  `mem_admin(action="diagnostics")` 能区分「没触发召回」与「触发但没被使用」。
+- **`mem_search` 新增可选 `context` 参数。** 指代性追问（"继续"、"那个改一下"）
+  可把上一轮请求交给语义通道；lexical 分支忽略它。
+
+### Changed
+
+- 六个 `mem_*` 工具的 description 改为携带调用策略：何时必须先搜、空结果必须明说、
+  摘要与弱提示只是指针、`mem_write` 只在用户陈述持久知识时使用。常驻 system prompt
+  同步增加一句「回答项目历史/既有决策前先 `mem_search`；没有记录就明说，不要猜」。
+- `skills/obsidian-mem/SKILL.md` 的召回规则补上同样的触发时机、`context` 用法和弱匹配
+  的核实要求。
+
 ## 2.1.1 — 2026-11-08
 
 ### Fixed

@@ -297,7 +297,7 @@ test('only producer-owned user messages become the DSH query', () => {
   )
 })
 
-test('a semantic near miss becomes one weak hint line, never the body', async () => {
+test('a ranked dense lead becomes one weak hint line, never the body', async () => {
   const result = await promptRecall({
     prompt: '记忆召回为什么对不上',
     seenPaths: new Set(),
@@ -309,33 +309,91 @@ test('a semantic near miss becomes one weak hint line, never the body', async ()
         snippet: '这段摘录绝不能被注入为弱提示',
         scoreSignals: ['semantic-score:0.914', 'hybrid-rank:1', 'token-hits:2'],
       },
+      {
+        path: path.replace('FTS5', 'FTS5-b'),
+        title: '次席候选',
+        snippet: '次席摘录也不该出现',
+        scoreSignals: ['semantic-score:0.60', 'hybrid-rank:3', 'token-hits:1'],
+      },
     ],
   })
   assert.equal(result.outcome, 'near-miss')
-  assert.equal(result.accepted, 0, 'the gate accepted nothing')
+  assert.equal(result.accepted, 0, 'the strong gate accepted nothing')
   assert.equal(result.injected, 1, 'the single hint line was offered')
   assert.deepEqual(result.paths, [path], 'the session dedupe records the hint')
   assert.match(result.text, /弱匹配/)
+  assert.match(result.text, /需核实/)
   assert.match(result.text, /FTS5 中文索引/)
-  assert.ok(!result.text.includes('这段摘录'), 'the excerpt is not injected on a near miss')
+  assert.ok(!result.text.includes('这段摘录'), 'no excerpt on a weak hint')
+  assert.ok(!result.text.includes('次席'), 'only the dense lead is named')
   assert.equal(result.text.split('\n').filter((line) => line.startsWith('- ')).length, 1)
 })
 
-test('a near miss below the semantic threshold, or outside the shortlist, stays silent', async () => {
-  const cases = [
-    ['semantic-score:0.87', 'hybrid-rank:1'],
-    ['semantic-score:0.95', 'hybrid-rank:4'],
-    ['token-hits:2'],
+test('the weak tier needs a dense lead, a margin, and a low absolute floor', async () => {
+  const caseOf =
+    ([first, second]) =>
+    async () => [
+      { path, title: '候选', scoreSignals: [first] },
+      { path: path.replace('FTS5', 'FTS5-b'), title: '次席', scoreSignals: [second] },
+    ]
+  // Below the weak floor: the score cannot be a lead at all.
+  let result = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    search: caseOf(['semantic-score:0.54', 'semantic-score:0.50']),
+  })
+  assert.equal(result.outcome, 'below-floor', 'below the weak floor')
+  assert.equal(result.text, null)
+  // Two dense candidates too close to call: no margin, no lead.
+  result = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    search: caseOf(['semantic-score:0.62', 'semantic-score:0.61']),
+  })
+  assert.equal(result.outcome, 'below-floor', 'margin below 0.02')
+  assert.equal(result.text, null)
+  // Lexical-only evidence never becomes a weak hint: the measured no-answer
+  // false-positive rate was 50-60% for a token-hits>=3 weak tier.
+  result = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    search: async () => [{ path, title: '候选', scoreSignals: ['token-hits:2'] }],
+  })
+  assert.equal(result.outcome, 'below-floor', 'lexical-only')
+  // A clear dense lead just above the floor is offered, without an excerpt.
+  result = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    search: caseOf(['semantic-score:0.56', 'semantic-score:0.40']),
+  })
+  assert.equal(result.outcome, 'near-miss')
+  assert.deepEqual(result.paths, [path])
+})
+
+test('a weak hint already offered this session is all-seen, not repeated', async () => {
+  const search = async () => [
+    { path, title: '候选', scoreSignals: ['semantic-score:0.80', 'hybrid-rank:1'] },
   ]
-  for (const signals of cases) {
-    const result = await promptRecall({
-      prompt: '记忆召回为什么对不上',
-      search: async () => [
-        { path, title: 'FTS5 中文索引', snippet: '摘录', scoreSignals: signals },
-      ],
-    })
-    assert.equal(result.outcome, 'below-floor', signals.join(' '))
-    assert.equal(result.text, null)
-    assert.deepEqual(result.paths, [])
-  }
+  const first = await promptRecall({ prompt: '记忆召回为什么对不上', search })
+  assert.equal(first.outcome, 'near-miss')
+  const second = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    search,
+    seenPaths: new Set(first.paths),
+  })
+  assert.equal(second.outcome, 'all-seen')
+  assert.equal(second.text, null)
+})
+
+test('a strong hit this session suppresses the weak line', async () => {
+  const result = await promptRecall({
+    prompt: '如何修复 FTS5 中文索引？',
+    search: async () => [
+      { path, title: 'FTS5 中文索引', snippet: '直接命中', scoreSignals: ['title-contains'] },
+      {
+        path: path.replace('FTS5', 'FTS5-b'),
+        title: '弱候选',
+        scoreSignals: ['semantic-score:0.9', 'hybrid-rank:1'],
+      },
+    ],
+  })
+  assert.equal(result.outcome, 'fired')
+  assert.ok(!result.text.includes('弱匹配'))
+  assert.equal(result.paths.length, 1)
 })

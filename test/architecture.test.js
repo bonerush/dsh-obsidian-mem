@@ -317,7 +317,11 @@ const LAYERS = {
 const BUDGETS = {
   // The optional support sink adds one failure-isolated observer to the existing
   // ring. It stays here so every call site still passes only one diagnostics seam.
-  'lib/debug.js': 250,
+  // Raised from 250 by the `tool` event and its underscore-tolerant field validator:
+  // the ring had no way to record explicit memory-tool calls or recall→read
+  // follow-through, and the closed name/field lists must grow together. Measured 249
+  // formatted lines; measured-plus-30 is 279, rounded to 300.
+  'lib/debug.js': 300,
   // Raised from 200 by the Task 5 fix round (210 formatted lines measured; the
   // file's rule is measured plus 30 rounded to the next 50, so 250 is the rule's
   // number). What the 10 lines buy: the closed `code` vocabulary the curation call
@@ -732,7 +736,11 @@ const BUDGETS = {
   // the capture before the search and the one argument passed through. The lexical
   // branch's query is unchanged; only a fused retriever reads it. Measured 1909
   // formatted lines; measured-plus-30 is 1939, rounded to 1940.
-  'lib/hooks.js': 1940,
+  // Raised from 1940 by the recall-invocation work: the miss notice's copy, field
+  // and one-shot flag; the injected-path set that lets `mem_read` be reported as
+  // follow-through; and the listener that now also feeds the `tool` diagnostics
+  // event. Measured 2000 formatted lines; measured-plus-30 is 2030, rounded to 2050.
+  'lib/hooks.js': 2050,
   // Raised from 600 by the hot-zone deadlock fix (1069 formatted lines measured;
   // measured-plus-30 is 1099, which rounds up to 1100). What the 469 lines buy:
   // archival that can tell a pointer line from an entry — the reported bug, since
@@ -1301,7 +1309,13 @@ const BUDGETS = {
   // (334 formatted lines measured; 370 is measured plus 30). All of it is policy,
   // so it stays beside the floor it replaces rather than moving into a module
   // that would have to re-import the eligibility rules.
-  'lib/prompt-recall.js': 370,
+  // Raised from 370 by the rank-relative weak tier and the explicit abstention
+  // path: the shared note-eligibility helper, the dense-lead/margin selector, the
+  // one-line `[弱匹配·需核实]` renderer, and the branch that reports `near-miss`.
+  // The old fixed 0.88 threshold is deleted, so the raise buys a policy that can
+  // actually fire on the installed model's cosine scale. Measured 377 formatted
+  // lines; measured-plus-30 is 407, rounded to 450.
+  'lib/prompt-recall.js': 450,
   // Raised from 1950 when the diagnostics action's schema landed here. This file
   // is the one the split is for, so the raise is explicitly temporary: the next
   // structural change reduces it to a façade and lowers this number with it.
