@@ -1410,6 +1410,9 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     'mem-review-recent-row',
     'mem-review-state',
     'mem-review-by',
+    // The row itself is the way into the sheet now, so its full-row open control is
+    // a guarded hook like every other view class.
+    'mem-review-open',
     'mem-sheet-markdown',
     'mem-md',
     'mem-md-h',
@@ -1452,12 +1455,13 @@ test('every class the redesigned views consume is styled in the one stylesheet',
   // activity rail add. Round 5 adds the inline outcome line, the hot trigger state and
   // the sampled-day hint on the activity rail; round 2 adds the composition Sankey's
   // scroll box and canvas pair; the curation review adds the 13 review-card hooks plus
-  // the 11 rendered-Markdown hooks (24, hence 177). The count is what makes a deleted
+  // the 11 rendered-Markdown hooks (24, hence 177), plus the 待审阅 row-open control
+  // (178). The count is what makes a deleted
   // producer fail even when the list happens to still cover the rest — the subset check
   // alone would pass on a shrunken view.
   assert.equal(
     emitted.length,
-    177,
+    178,
     'the views scan still sees every emitted class (re-derive the count with the list)',
   )
   for (const hook of hooks)

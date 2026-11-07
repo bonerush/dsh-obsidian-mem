@@ -39,6 +39,9 @@ release artifact. The versioning policy is in the README, under Development.
     实测全量 `npm run check` 通过：1670 tests / 1669 pass / 1 skipped；`verify-pack`
     16 required assets、6 tools；`verify-tarball` 93 entries / 83 lib modules（基线
     1577 tests / 82 lib modules）。
+  - 面板可用性修正：「待审阅」卡片整行现在可以点开查看候选正文（真实按钮、键盘可达、aria-label）；
+    静态按钮去掉 U+2026 后缀（旧后缀只表示"会先打开抽屉"，容易被读成待处理）；抽屉里确认前不写入。
+    验证：`npm run check` 1672 tests / 1671 pass / 1 skipped；面板相关测试 160/160。
 
 ## 2.0.3 — 2026-11-05
 

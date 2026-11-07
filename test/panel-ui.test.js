@@ -4760,12 +4760,22 @@ test('the health page lists the review queue: executable rows first, read-only w
     'the stamp prints the pending count',
   )
 
+  assert.ok(
+    texts(card).map(String).includes('点任意一行查看完整内容；抽屉里确认前不会写入。'),
+    'the card explains the row gesture and that nothing is written before the confirm',
+  )
   const rows = reviewRows(tree)
   assert.equal(rows.length, 2, 'both groups render their rows')
-  assert.equal(byText(rows[0], '批准…').length, 1, 'an executable row offers 批准')
-  assert.equal(byText(rows[0], '拒绝…').length, 1, 'and 拒绝')
-  assert.equal(byText(rows[1], '批准…').length, 0, 'a read-only finding offers no apply control')
-  assert.equal(byText(rows[1], '忽略…').length, 1, 'it offers one 忽略 control instead')
+  const opens = byClass(card, 'mem-review-open')
+  assert.equal(opens.length, 2, 'every row carries one full-row open control')
+  assert.ok(
+    opens.every((node) => node.type === 'button'),
+    'an available capability makes the row a real button',
+  )
+  assert.equal(byText(rows[0], '批准').length, 1, 'an executable row offers 批准')
+  assert.equal(byText(rows[0], '拒绝').length, 1, 'and 拒绝')
+  assert.equal(byText(rows[1], '批准').length, 0, 'a read-only finding offers no apply control')
+  assert.equal(byText(rows[1], '忽略').length, 1, 'it offers one 忽略 control instead')
   const first = texts(rows[0]).map(String).join(' ')
   assert.ok(first.includes('取代'), 'the supersede kind is labelled')
   assert.ok(first.includes('把两条重复的约定合并为一条'), 'the reason is printed')
@@ -4799,7 +4809,7 @@ test('a read-only finding can only be ignored, and ignoring previews reject-prop
   )
   const { render, props } = await health(t)
   const tree = render(props)
-  byText(reviewRows(tree)[1], '忽略…')[0].props.onClick()
+  byText(reviewRows(tree)[1], '忽略')[0].props.onClick()
   await setImmediate()
   const after = render(props)
   assert.ok(
@@ -4823,7 +4833,7 @@ test('approving a proposal previews it by id, renders the body and confirms one 
   })
   const { render, props } = await health(t)
   let tree = render(props)
-  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  byText(reviewRows(tree)[0], '批准')[0].props.onClick()
   await setImmediate()
   tree = render(props)
   assert.equal(
@@ -4867,7 +4877,7 @@ test('the sheet renders the candidate as Markdown elements and keeps raw HTML as
   stubFetch(t, (body) => (body.action === 'preview' ? ok(reviewPreview()) : ok(reviewHealth())))
   const { render, props } = await health(t)
   let tree = render(props)
-  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  byText(reviewRows(tree)[0], '批准')[0].props.onClick()
   await setImmediate()
   tree = render(props)
 
@@ -4979,7 +4989,7 @@ test('the Markdown renderer caps an oversized candidate defensively', async (t) 
   )
   const { render, props } = await health(t)
   let tree = render(props)
-  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  byText(reviewRows(tree)[0], '批准')[0].props.onClick()
   await setImmediate()
   tree = render(props)
   const root = find(tree, (node) => node?.props?.className === 'mem-md')
@@ -5000,7 +5010,12 @@ test('an empty review queue says nothing is waiting and still lists recent decis
     stamps[0].props.className.includes('is-warn'),
     'an empty queue is a warn stamp, not an error: ' + stamps[0].props.className,
   )
-  assert.equal(byText(tree, '批准…').length, 0, 'nothing to approve')
+  assert.equal(byText(tree, '批准').length, 0, 'nothing to approve')
+  assert.equal(
+    texts(card).map(String).includes('点任意一行查看完整内容；抽屉里确认前不会写入。'),
+    false,
+    'no row hint when there is no row to open',
+  )
   assert.equal(byClass(card, 'mem-review-recent-row').length, 1, 'the recent list stays visible')
 })
 
@@ -5053,7 +5068,7 @@ test('a stale apply preview closes the sheet, refreshes 健康 and says so', asy
   })
   const { render, props } = await health(t)
   let tree = render(props)
-  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  byText(reviewRows(tree)[0], '批准')[0].props.onClick()
   await setImmediate()
   tree = render(props)
   byText(tree, '确认执行')[0].props.onClick()
@@ -5094,7 +5109,7 @@ test('a non-executable operation refusal maps to its own copy, not the generic l
   })
   const { render, props } = await health(t)
   let tree = render(props)
-  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  byText(reviewRows(tree)[0], '批准')[0].props.onClick()
   await setImmediate()
   tree = render(props)
   byText(tree, '确认执行')[0].props.onClick()
@@ -5124,7 +5139,7 @@ test('a decision refusal names the review code in the panel copy', async (t) => 
   })
   const { render, props } = await health(t)
   let tree = render(props)
-  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  byText(reviewRows(tree)[0], '批准')[0].props.onClick()
   await setImmediate()
   tree = render(props)
   byText(tree, '确认执行')[0].props.onClick()
@@ -5154,11 +5169,12 @@ test('an explicit en locale renders the review card in English', async (t) => {
   const strings = rendered(tree)
   for (const copy of [
     'Review queue',
-    'Approve…',
-    'Reject…',
+    'Approve',
+    'Reject',
     'Read-only findings',
-    'Ignore…',
+    'Ignore',
     'Recently decided',
+    'Open any row to read the full candidate; nothing is written until you confirm in the sheet.',
     'Replace',
     'Near duplicate',
     'Applied',
@@ -5192,7 +5208,7 @@ test('the narrow review result names the written path without the full receipt',
   })
   const { render, props } = await health(t)
   let tree = render(props)
-  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  byText(reviewRows(tree)[0], '批准')[0].props.onClick()
   await setImmediate()
   tree = render(props)
   byText(tree, '确认执行')[0].props.onClick()
@@ -5225,7 +5241,7 @@ test('the narrow review result says a read-only dismissal changed no note', asyn
   })
   const { render, props } = await health(t)
   let tree = render(props)
-  byText(reviewRows(tree)[1], '忽略…')[0].props.onClick()
+  byText(reviewRows(tree)[1], '忽略')[0].props.onClick()
   await setImmediate()
   tree = render(props)
   byText(tree, '确认执行')[0].props.onClick()
@@ -5297,7 +5313,7 @@ test('the defensive Markdown cap never splits a surrogate pair', async (t) => {
   )
   const { render, props } = await health(t)
   let tree = render(props)
-  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  byText(reviewRows(tree)[0], '批准')[0].props.onClick()
   await setImmediate()
   tree = render(props)
   const root = find(tree, (node) => node?.props?.className === 'mem-md')
@@ -5333,7 +5349,7 @@ test('an unclosed fence closes at EOF, and a balanced body keeps its framing', a
     render(props)
     await setImmediate()
     let tree = render(props)
-    byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+    byText(reviewRows(tree)[0], '批准')[0].props.onClick()
     await setImmediate()
     tree = render(props)
     return find(tree, (node) => node?.props?.className === 'mem-md')
@@ -5364,4 +5380,88 @@ test('an unclosed fence closes at EOF, and a balanced body keeps its framing', a
     order.indexOf(balancedPre) < order.indexOf(balancedHead),
     'the framing follows the code',
   )
+})
+
+test('a click anywhere on a review row opens that row’s own decision preview', async (t) => {
+  const sent = stubFetch(t, (body) => {
+    if (body.action !== 'preview') return ok(reviewHealth())
+    return ok(
+      body.mutation === 'apply-proposal' ? reviewPreview() : previewValue('reject-proposal'),
+    )
+  })
+  const { render, props } = await health(t)
+  let tree = render(props)
+  const opens = byClass(reviewSectionNode(tree), 'mem-review-open')
+  assert.equal(opens.length, 2)
+  const executable = opens[0]
+  assert.equal(executable.type, 'button', 'the row reading is wrapped in a real button')
+  assert.equal(executable.props.type, 'button', 'so it is keyboard reachable')
+  assert.ok(
+    String(executable.props['aria-label'] ?? '').includes('查看'),
+    'its aria-label names what the click does',
+  )
+  // The whole row reading lives INSIDE the control, so a click on any line opens it.
+  for (const copy of ['取代', '把两条重复的约定合并为一条', 'Conventions/a.md'])
+    assert.ok(
+      texts(executable).map(String).join(' ').includes(copy),
+      'the row button contains ' + copy,
+    )
+  executable.props.onClick()
+  await setImmediate()
+  tree = render(props)
+  assert.ok(
+    find(tree, (node) => node?.props?.role === 'alertdialog'),
+    'the executable row opens the confirm sheet',
+  )
+  let preview = sent.filter((entry) => entry.body.action === 'preview').at(-1)
+  assert.deepEqual(preview.body, {
+    sessionId: 'session-a',
+    action: 'preview',
+    mutation: 'apply-proposal',
+    args: { proposalId: REVIEW_APPLY_ID },
+    locale: 'zh',
+  })
+
+  byText(tree, '取消')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  const reviewOnly = byClass(reviewSectionNode(tree), 'mem-review-open')[1]
+  assert.equal(reviewOnly.type, 'button')
+  assert.ok(String(reviewOnly.props['aria-label'] ?? '').includes('查看'))
+  reviewOnly.props.onClick()
+  await setImmediate()
+  tree = render(props)
+  assert.ok(find(tree, (node) => node?.props?.role === 'alertdialog'))
+  preview = sent.filter((entry) => entry.body.action === 'preview').at(-1)
+  assert.deepEqual(preview.body.args, { proposalId: REVIEW_ONLY_ID })
+  assert.equal(preview.body.mutation, 'reject-proposal', 'a read-only row opens its dismissal')
+})
+
+test('the static decision labels carry no stray ellipsis, and no row opens without a capability', async (t) => {
+  stubFetch(t, () => ok(reviewHealth()))
+  const { tree } = await health(t)
+  const card = reviewSectionNode(tree)
+  // Exactly the three decision verbs, once each, with no U+2026: the row button is
+  // now the "opens a sheet" affordance the ellipsis used to hint at.
+  for (const label of ['批准', '拒绝', '忽略']) {
+    assert.equal(byText(card, label).length, 1, 'the static label is ' + label)
+    assert.equal(byText(card, label + '…').length, 0, label + ' has no ellipsis suffix')
+  }
+  // A capability-less host still renders the same reading, but as text: the row
+  // must not become a button that would post a mutation the host never offered.
+  stubFetch(t, () => ok(healthValue({ review: reviewCard() })))
+  const readOnlyRender = mount(t, 'HealthView')
+  const props = { sessionId: 'session-b', visible: true }
+  readOnlyRender(props)
+  await setImmediate()
+  const readOnlyTree = readOnlyRender(props)
+  const readOnlyCard = reviewSectionNode(readOnlyTree)
+  const opens = byClass(readOnlyCard, 'mem-review-open')
+  assert.equal(opens.length, 2, 'the rows keep their reading')
+  assert.ok(
+    opens.every((node) => node.type !== 'button'),
+    'with no capability a row is a no-op, not a button',
+  )
+  assert.equal(byText(readOnlyCard, '批准').length, 0, 'and no decision control appears')
+  assert.equal(byText(readOnlyCard, '忽略').length, 0)
 })
