@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 
 import { resolveBase } from '../scripts/ci-base.mjs'
+import { isReleasePush, main as ciRelease, versionAt } from '../scripts/ci-release.mjs'
 import {
   compareVersions,
   cutRelease,
@@ -268,33 +269,41 @@ test('the workflow runs npm run check across the supported Node versions', () =>
   // A release push CONSUMES the Unreleased entry instead of adding one: the body
   // moves under the new version heading, so the base and HEAD can both have an
   // empty Unreleased while lib/ changed, and verify-changelog would fail the very
-  // release it is shipping. release.yml already exempts `chore(release):`
-  // commits; the checks workflow has to agree or main cannot go green for that
-  // release. The exemption is one step, not a skipped gate: every other step stays
-  // unconditional, and pull requests (head_commit null) still run it.
+  // release it is shipping. The exemption has to be decided from repository state
+  // (`ci-release.mjs`: the declared version changed and CHANGELOG carries the
+  // section for it), not from the commit message: the branch model's release is a
+  // `--no-ff` merge of `Vx` into `main` with git's default merge message, so
+  // keying on `chore(release):` left the 2.1.0 release red on every leg.
+  const detector = steps.find((step) => String(step.run ?? '').includes('ci-release.mjs --base'))
+  assert.ok(detector, 'CI must decide release pushes with the repository-state detector')
+  assert.equal(
+    detector.if,
+    undefined,
+    'the detector has to run on every event; only the gate may read its verdict',
+  )
+  assert.equal(detector.id, 'release')
   const unreleasedGate = steps.find((step) =>
     String(step.run ?? '').includes('verify-changelog.mjs --base'),
   )
   assert.ok(unreleasedGate, 'CI must carry the Unreleased gate step')
-  const exemption = String(unreleasedGate.if ?? '')
   assert.match(
-    exemption,
-    /startsWith\(\s*github\.event\.head_commit\.message\s*,\s*'chore\(release\):'\s*\)/u,
-    'the exemption has to name the same commit prefix release.yml exempts',
+    String(unreleasedGate.if ?? ''),
+    /\$\{\{\s*steps\.release\.outputs\.release != 'true'\s*\}\}/u,
+    'the gate must run unless the detector says this push IS the release',
   )
-  assert.match(
-    exemption,
-    /\$\{\{\s*!\s*startsWith\(\s*github\.event\.head_commit\.message\s*,\s*'chore\(release\):'\s*\)\s*\}\}/u,
-    'the guard must negate the release-commit prefix: the gate runs when the commit is NOT a release commit',
+  assert.ok(
+    steps.indexOf(detector) < steps.indexOf(unreleasedGate),
+    'the gate reads the detector output, so the detector has to run first',
   )
   assert.equal(
     steps.filter((step) => step.if !== undefined).length,
     1,
-    'only the Unreleased gate may be conditional; a release commit still runs every other check',
+    'only the Unreleased gate may be conditional; a release push still runs every other check',
   )
-  // Both workflows have to agree, so the exemption cannot be deleted from one
-  // side: release.yml classifies `chore(release):` commits and its gate reads
-  // that verdict.
+  // release.yml still classifies the `chore(release):` commit its own bump path
+  // writes and skips its gate for it; the checks workflow no longer depends on
+  // that text, but both sides stay pinned: dropping release.yml's guard would
+  // double-release, and dropping the detector would turn the next release red.
   const release = YAML.parse(
     readFileSync(join(REPO_ROOT, '.github', 'workflows', 'release.yml'), 'utf8'),
   )
@@ -389,6 +398,130 @@ test('ci-base refuses a base that equals HEAD', (t) => {
   const verdict = resolveBase({ DEFAULT_BRANCH: 'main' }, root)
   assert.equal(verdict.sha, null)
   assert.match(verdict.reason, /nothing to compare|no event base/)
+})
+
+// ---------------------------------------------------------------------------
+// Release-push detection for the Unreleased gate
+// ---------------------------------------------------------------------------
+
+/** A disposable repository whose base declares version 1.0.0. */
+function releaseFixture(t) {
+  const root = mkdtempSync(join(tmpdir(), 'obsidian-mem-release-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  mkdirSync(join(root, 'lib'), { recursive: true })
+  writeFileSync(join(root, 'lib', 'x.js'), 'export const x = 1\n')
+  writeFileSync(join(root, 'package.json'), '{ "name": "fixture", "version": "1.0.0" }\n')
+  writeFileSync(
+    join(root, 'CHANGELOG.md'),
+    [
+      '# Changelog',
+      '',
+      '## Unreleased',
+      '',
+      '### Added',
+      '',
+      '- the next thing',
+      '',
+      '## 1.0.0 — 2026-01-01',
+      '',
+      '### Added',
+      '',
+      '- the shipped thing',
+      '',
+    ].join('\n'),
+  )
+  git(root, ['init', '-q', '-b', 'main'])
+  git(root, ['config', 'user.name', 'Fixture'])
+  git(root, ['config', 'user.email', 'fixture@example.invalid'])
+  git(root, ['config', 'commit.gpgsign', 'false'])
+  git(root, ['add', '-A'])
+  git(root, ['commit', '-q', '-m', 'base'])
+  return root
+}
+
+test('ci-release recognises a release push and only a release push', (t) => {
+  const root = releaseFixture(t)
+  const base = git(root, ['rev-parse', 'HEAD']).trim()
+  assert.equal(versionAt(base, root), '1.0.0')
+  // Neither side moved: every ordinary push must keep running the gate.
+  assert.equal(isReleasePush(base, root).release, false)
+  // A version bump alone is exactly the changelog-forgetting shape the gate exists
+  // for; the detector must not exempt it.
+  writeFileSync(join(root, 'package.json'), '{ "name": "fixture", "version": "1.1.0" }\n')
+  git(root, ['add', 'package.json'])
+  git(root, ['commit', '-q', '-m', 'bump only'])
+  const bumpOnly = isReleasePush(base, root)
+  assert.equal(bumpOnly.release, false)
+  assert.match(bumpOnly.reason, /no section for it/u)
+  // The release push moves Unreleased under the new heading and bumps together.
+  writeFileSync(
+    join(root, 'CHANGELOG.md'),
+    [
+      '# Changelog',
+      '',
+      '## Unreleased',
+      '',
+      '## 1.1.0 — 2026-11-07',
+      '',
+      '### Fixed',
+      '',
+      '- the shipped fix',
+      '',
+      '## 1.0.0 — 2026-01-01',
+      '',
+      '### Added',
+      '',
+      '- the shipped thing',
+      '',
+    ].join('\n'),
+  )
+  git(root, ['add', 'CHANGELOG.md'])
+  git(root, ['commit', '-q', '-m', 'release 1.1.0'])
+  const release = isReleasePush(base, root)
+  assert.equal(release.release, true)
+  assert.match(release.reason, /1\.0\.0 -> 1\.1\.0/u)
+  // The CLI is the workflow's contract: a bare boolean on stdout, 0 on a verdict,
+  // 2 on a command that cannot answer. 'Cannot answer' must never read as 'not a
+  // release' and silently exempt the gate.
+  assert.equal(ciRelease(['--base', base], root), 0)
+  assert.equal(ciRelease(['--base=' + base], root), 0)
+  assert.equal(ciRelease([], root), 2)
+  assert.equal(ciRelease(['--base', 'no-such-ref'], root), 2)
+  assert.equal(ciRelease(['--bogus'], root), 2)
+})
+
+test('ci-release compares a root base like any other', (t) => {
+  const root = releaseFixture(t)
+  const first = git(root, ['rev-list', '--max-parents=0', 'HEAD']).trim()
+  // GitHub's 'before' is all zeros for a brand-new branch, so ci-base falls
+  // through to the merge base; that can be a root commit, which must still read.
+  assert.equal(versionAt(first, root), '1.0.0')
+  assert.equal(isReleasePush(first, root).release, false)
+  writeFileSync(
+    join(root, 'CHANGELOG.md'),
+    [
+      '# Changelog',
+      '',
+      '## Unreleased',
+      '',
+      '## 1.0.1 — 2026-11-07',
+      '',
+      '### Fixed',
+      '',
+      '- nothing',
+      '',
+      '## 1.0.0 — 2026-01-01',
+      '',
+      '### Added',
+      '',
+      '- the shipped thing',
+      '',
+    ].join('\n'),
+  )
+  writeFileSync(join(root, 'package.json'), '{ "name": "fixture", "version": "1.0.1" }\n')
+  git(root, ['add', '-A'])
+  git(root, ['commit', '-q', '-m', 'release 1.0.1'])
+  assert.equal(isReleasePush(first, root).release, true)
 })
 
 // ---------------------------------------------------------------------------
