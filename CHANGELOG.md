@@ -11,6 +11,58 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+- **整理提案现在有三条决定路径：健康面板的待审阅队列、未改动的评审命令、以及插件内置的
+  自动审阅；新增顶层配置 `autoReview`（默认 `true`）。** 此前评审命令是唯一路径，它要求
+  真实终端和逐字节输入的 `apply <id>` / `reject <id>`，不开终端的项目会让可执行提案一直
+  停在 pending；而 review-only finding 只要不再复现反而会永远停在队列里。现在：
+  - 面板：健康页新增「待审阅」卡片，每行给出种类、原因、来源和等待时长；抽屉把候选渲染成
+    Markdown（取代类候选还会显示将被取代的笔记和这次写入会改动的状态）。**批准…** 应用的
+    正是这一条提案，**拒绝…** 不改动任何笔记；只读 finding 只提供 **忽略…**。面板与命令
+    走同一条写入路径：claim、来源哈希复核、reviewed-memory 事务。
+  - 评审命令：`dsh-obsidian-mem-review` 的命令行契约未改动，仍是逐字节 `apply <id>` /
+    `reject <id>`、一次一条提案，没有 `--all` 和默认答案。
+  - 自动审阅：`autoReview: true`、`distill.provider` + `distill.model` 已配置、且 DSH
+    宿主完成一次自动整理回合之后，插件最多判断 3 条待决定的可执行提案，判断前先复核
+    每个来源的哈希；只有 `confidence ≥ 0.8` 的 `apply` / `reject` 生效，`defer`、低
+    置信度、回答不合契约或没有路由都保持 pending。证据已变化的提案会被 retire 而不是
+    应用——它已不可能被任何决定使用，下一次蒸馏会产出新候选。`autoReview: false` 只
+    关掉自动审阅；`autoCurate`、面板与命令的行为都不变，也没有新增任何 `mem_*` 工具或
+    `mem_admin` 动作/参数/枚举值。
+  - 来源与留痕：每个决定记录 `decidedBy: "human"` 或 `"auto"`、`decidedByModel`（自动决定
+    为模型 id，人工决定为 `null`）和 `decisionNote`；健康卡片的最近列表显示最近的决定，
+    可据此审计。旧记录没有这些字段也能读，提案记录 schema 不变。
+  - 确定性退场：一趟完整整理会 retire 它检查过、且不再复现的 review-only finding
+    （`missing-provenance`、`expired-review`、`dead-wikilink`、`near-duplicate`），修好的
+    笔记不再在队列里留下永不消失的行；`dead-wikilink` 只在链接全集完整时、`near-duplicate`
+    只在整趟完整未截断时才退场，其他情况保持 pending。
+  - 验证：全量 `npm run check` 的门禁记录见 `docs/curation-review-panel-validation.md`。
+    实测全量 `npm run check` 通过：1670 tests / 1669 pass / 1 skipped；`verify-pack`
+    16 required assets、6 tools；`verify-tarball` 93 entries / 83 lib modules（基线
+    1577 tests / 82 lib modules）。
+  - 面板可用性修正：「待审阅」卡片整行现在可以点开查看候选正文（真实按钮、键盘可达、aria-label）；
+    静态按钮去掉 U+2026 后缀（旧后缀只表示"会先打开抽屉"，容易被读成待处理）；抽屉里确认前不写入。
+    验证：`npm run check` 1672 tests / 1671 pass / 1 skipped；面板相关测试 160/160。
+
+- **DSH 插件页现在有图形化的「配置」表单：不用再手改 profile YAML 就能调整本插件的
+  配置字段。** 在 DSH 的插件页打开 dsh-obsidian-mem 这个 bundle，配置区按 基础 /
+  采集与整理 / 上下文预算 / 模型蒸馏 / 检索 / 其他 分组列出每个字段的当前值、schema
+  默认值和就地校验。保存经宿主的 config editor 写进**当前 profile 的** patch 层
+  （`$DSH_HOME/profiles/<profile>/cordis.patch.yml`），插件随之重新加载（约 1–2 秒）；
+  `enabled` 归页面自己的开关管，不在表单里。schema 拒绝的取值会在保存时被拒绝并显示
+  宿主自己的报错，落不了盘的保存照实报错、不会假装成功。宿主没有 config editor、插件行
+  不是经 Loader 安装、或已存储的配置无法被 schema 读取时，配置区是只读的并写明原因
+  （无法读取时附上宿主的报错）。页面**从不**编辑 home 层的
+  `$DSH_HOME/cordis.patch.yml`：那是优先级更高的用户层，它还在时页面以只读方式打开并
+  显示实际生效的取值，保存不会落地；要迁移到页面，先记下自定义过的值，再删掉该文件里
+  `- id: obsidian-mem` 行的 `config:`（或整行），**重启 DSH** 后即可在表单里重新填入并
+  保存——宿主不监视 patch 文件，刷新页面不够。手改 patch 文件的路线仍然可用，表单没
+  暴露的取值以它为准。布尔字段用手机式拨块开关（`role="switch"`、内联 token 配色）而不是
+  勾选框，点击即改草稿、只读时同样禁用——2026-11-07 按主人反馈替换。没有新增任何配置键，
+  配置表与默认值保持不变。
+  - 验证：全量 `npm run check` 通过：1715 tests / 1714 pass / 1 skipped；`verify-pack`
+    16 required assets、6 tools（4 names published）；`verify-tarball` 94 entries / 84 lib
+    modules；`test/panel-client.test.js` 53/53（新增拨块开关用例）。
+
 ## 2.0.3 — 2026-11-05
 
 - **语义地图可视化实验已回退：图谱只保留链接布局。** 2026-11-03 的设计

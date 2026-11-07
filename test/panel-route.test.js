@@ -832,6 +832,7 @@ test('an unbound project keeps its pre-chart shape', async (t) => {
     'project',
     'queue',
     'recent',
+    'review',
   ])
   assert.equal('activity' in result.body.value, false, 'the unbound value gains no chart field')
   assert.equal('tags' in result.body.value, false)
@@ -2080,7 +2081,7 @@ test('overview and health carry capabilities and the bounded failed-job list', a
   }
   const h = await harness(t, { services })
   const expected = {
-    mutations: ['retry-job', 'compact-hot', 'refresh-digest'],
+    mutations: ['retry-job', 'compact-hot', 'refresh-digest', 'apply-proposal', 'reject-proposal'],
     confirm: true,
   }
   const overview = await h.post({ sessionId: SESSION, action: 'overview' })
@@ -2507,4 +2508,552 @@ test('mutation preconditions keep their coded status over the wire', async (t) =
   )
   assert.equal(notBound.status, 409)
   assert.equal(notBound.body.error.code, 'unbound')
+})
+
+// ---------------------------------------------------------------------------
+// Task 2 (review panel): the bounded 健康 review card and the review mutations
+// ---------------------------------------------------------------------------
+
+/** The proposal id shape the transport accepts (64 lowercase hex characters). */
+const REVIEW_PROPOSAL_ID = 'a'.repeat(64)
+
+/** One pending row as `services.reviewQueue()` projects it. */
+function reviewRow(overrides = {}) {
+  return {
+    proposalId: REVIEW_PROPOSAL_ID,
+    kind: 'supersede',
+    reason: 'a newer note covers this decision',
+    reviewOnly: false,
+    paths: ['Projects/alpha--11111111/Decisions/a.md'],
+    createdAt: '2026-11-06T10:00:00.000Z',
+    ...overrides,
+  }
+}
+
+/** One decided row as the queue's `recent` projection answers it. */
+function reviewRecentRow(overrides = {}) {
+  return {
+    proposalId: REVIEW_PROPOSAL_ID,
+    kind: 'supersede',
+    state: 'applied',
+    decidedBy: 'human',
+    decidedAt: '2026-11-06T11:00:00.000Z',
+    reason: 'a human reviewed this candidate and applied it',
+    ...overrides,
+  }
+}
+
+/** The empty card every old host, unbound project and failed queue answers. */
+const EMPTY_REVIEW_CARD = {
+  pending: 0,
+  total: 0,
+  truncated: false,
+  items: [],
+  recent: [],
+  auto: { enabled: false, routeConfigured: false },
+}
+
+/** A read service set that also answers `reviewQueue(binding)`. */
+function reviewServices(queue = {}) {
+  const base = stubServices()
+  const reviewCalls = []
+  const services = {
+    ...base.services,
+    async reviewQueue(binding) {
+      reviewCalls.push(binding)
+      return {
+        total: 1,
+        pending: 1,
+        truncated: false,
+        items: [reviewRow()],
+        recent: [],
+        ...queue,
+      }
+    },
+  }
+  return { services, calls: base.calls, reviewCalls }
+}
+
+test('health carries the bounded review queue card', async (t) => {
+  const items = Array.from({ length: 25 }, (_, index) =>
+    reviewRow({
+      proposalId: index.toString(16).padStart(64, '0'),
+      kind: index % 2 === 0 ? 'supersede' : 'dead-wikilink',
+      reviewOnly: index % 2 === 1,
+      reason: 'r'.repeat(400),
+      paths: Array.from(
+        { length: 8 },
+        (_, path) => 'Projects/alpha--11111111/Decisions/' + index + '-' + path + '.md',
+      ),
+    }),
+  )
+  // A corrupt or hand-edited record can carry an absolute / Windows-native path; the
+  // card must mask it exactly like every other wire path (`projectOf`, `displayPath`).
+  items[0] = {
+    ...items[0],
+    paths: [
+      homedir() + '/Documents/knowledge/Projects/alpha--11111111/Decisions/abs.md',
+      'Projects\\alpha--11111111\\Decisions\\win.md',
+      ...items[0].paths.slice(2, 7),
+    ],
+  }
+  const recent = Array.from({ length: 8 }, (_, index) =>
+    reviewRecentRow({ proposalId: index.toString(16).padStart(64, '0') }),
+  )
+  const review = reviewServices({ total: 25, pending: 17, truncated: true, items, recent })
+  const h = await harness(t, { services: review.services })
+  const health = await h.post({ sessionId: SESSION, action: 'health' })
+  assert.equal(health.status, 200)
+  const card = health.body.value.review
+  assert.deepEqual(Object.keys(card).sort(), [
+    'auto',
+    'items',
+    'pending',
+    'recent',
+    'total',
+    'truncated',
+  ])
+  assert.equal(card.pending, 17)
+  assert.equal(card.total, 25)
+  assert.equal(card.truncated, true)
+  assert.equal(card.items.length, 20, 'at most 20 pending rows ride the card')
+  for (const row of card.items) {
+    assert.deepEqual(Object.keys(row).sort(), [
+      'createdAt',
+      'kind',
+      'paths',
+      'proposalId',
+      'reason',
+      'reviewOnly',
+    ])
+    assert.ok(row.paths.length <= 5, 'a row carries at most five paths')
+    assert.ok(row.reason.length <= 200, 'the reason is clipped to 200 characters')
+    for (const path of row.paths) assert.ok(path.length <= 240, 'each path is clipped to 240')
+  }
+  assert.equal(card.items[0].proposalId, '0'.repeat(64), 'the service order (newest first) is kept')
+  assert.equal(
+    card.items[0].paths[0],
+    '~/Documents/knowledge/Projects/alpha--11111111/Decisions/abs.md',
+    'an absolute path is masked to the home prefix',
+  )
+  assert.equal(
+    card.items[0].paths[1],
+    'Projects/alpha--11111111/Decisions/win.md',
+    'a Windows-native path is normalized to POSIX separators',
+  )
+  assert.equal(
+    JSON.stringify(card).includes(homedir()),
+    false,
+    'no absolute home path rides the review card',
+  )
+  assert.equal(card.recent.length, 6, 'at most six decided rows ride the card')
+  for (const row of card.recent)
+    assert.deepEqual(Object.keys(row).sort(), [
+      'decidedAt',
+      'decidedBy',
+      'kind',
+      'proposalId',
+      'reason',
+      'state',
+    ])
+  assert.deepEqual(card.auto, { enabled: false, routeConfigured: false })
+  assert.deepEqual(
+    review.reviewCalls,
+    [BOUND],
+    'reviewQueue is called binding-first, exactly as the frozen contract says',
+  )
+  // 概览 keeps its shape: only 健康 carries the review card.
+  const overview = await h.post({ sessionId: SESSION, action: 'overview' })
+  assert.equal('review' in overview.body.value, false)
+})
+
+test('the review card forwards the host auto-review answer, defaulting a partial one to false', async (t) => {
+  const full = await harness(t, {
+    services: reviewServices({ auto: { enabled: true, routeConfigured: true } }).services,
+  })
+  const fullHealth = await full.post({ sessionId: SESSION, action: 'health' })
+  assert.deepEqual(fullHealth.body.value.review.auto, { enabled: true, routeConfigured: true })
+
+  const partial = await harness(t, {
+    services: reviewServices({ auto: { enabled: true } }).services,
+  })
+  const partialHealth = await partial.post({ sessionId: SESSION, action: 'health' })
+  assert.deepEqual(partialHealth.body.value.review.auto, {
+    enabled: true,
+    routeConfigured: false,
+  })
+})
+
+test('an older host, a failed queue and an unbound project all answer one empty card', async (t) => {
+  // An older host has no reviewQueue method at all: feature-detected, not assumed.
+  const older = await harness(t, { services: stubServices().services })
+  const olderHealth = await older.post({ sessionId: SESSION, action: 'health' })
+  assert.equal(olderHealth.status, 200)
+  assert.deepEqual(olderHealth.body.value.review, EMPTY_REVIEW_CARD)
+
+  // A queue read that throws must not cost the whole 健康 read.
+  const broken = {
+    ...stubServices().services,
+    async reviewQueue() {
+      throw new Error('the proposal store is unavailable')
+    },
+  }
+  const brokenHarness = await harness(t, { services: broken })
+  const brokenHealth = await brokenHarness.post({ sessionId: SESSION, action: 'health' })
+  assert.equal(brokenHealth.status, 200)
+  assert.deepEqual(brokenHealth.body.value.review, EMPTY_REVIEW_CARD)
+
+  // Unbound: the same empty card, so the client has exactly one shape to read.
+  const unbound = await harness(t, {
+    services: stubServices().services,
+    resolveBinding: async () => ({ kind: 'unbound', reason: 'no-pointer' }),
+  })
+  const unboundHealth = await unbound.post({ sessionId: SESSION, action: 'health' })
+  assert.equal(unboundHealth.status, 200)
+  assert.deepEqual(unboundHealth.body.value.review, EMPTY_REVIEW_CARD)
+})
+
+test('an oversized review queue still fits the health ceiling and gives up recent first', async (t) => {
+  const longReason = '审'.repeat(2_000)
+  const longPath = '记/'.repeat(400) + '.md'
+  const items = Array.from({ length: 20 }, (_, index) =>
+    reviewRow({
+      proposalId: index.toString(16).padStart(64, '0'),
+      reason: longReason,
+      paths: Array.from({ length: 5 }, (_, path) => longPath + path),
+    }),
+  )
+  const recent = Array.from({ length: 6 }, (_, index) =>
+    reviewRecentRow({
+      proposalId: index.toString(16).padStart(64, '0'),
+      reason: longReason,
+    }),
+  )
+  const h = await harness(t, {
+    services: reviewServices({ total: 20, pending: 20, truncated: false, items, recent }).services,
+  })
+  const health = await h.post({ sessionId: SESSION, action: 'health' })
+  assert.equal(health.status, 200)
+  assert.ok(health.bytes <= 32 * 1024, 'the health ceiling is a promise: ' + health.bytes)
+  const card = health.body.value.review
+  assert.equal(card.pending, 20)
+  assert.equal(card.total, 20)
+  assert.equal(card.recent.length, 0, 'recent rows are given up before a pending row')
+  assert.ok(card.items.length < 20, 'the row list is halved: ' + card.items.length)
+  assert.ok(card.items.length >= 1, 'the card still shows what is waiting')
+})
+
+// --- the two review mutations over the wire ---------------------------------
+
+/** The detail shape `services.reviewDetail` answers (frozen in the task brief). */
+function reviewDetailView(overrides = {}) {
+  return {
+    proposalId: REVIEW_PROPOSAL_ID,
+    kind: 'supersede',
+    state: 'pending',
+    reason: 'a newer note covers this decision',
+    reviewOnly: false,
+    itemKey: 'session-1:2:0',
+    createdAt: '2026-11-06T10:00:00.000Z',
+    sources: [
+      {
+        path: 'Projects/alpha--11111111/Decisions/a.md',
+        hash: '1'.repeat(64),
+        currentHash: '1'.repeat(64),
+        matched: true,
+        missing: false,
+      },
+    ],
+    operation: {
+      kind: 'supersede',
+      title: 'Panel review candidate',
+      body: 'The candidate body.',
+      bodyTruncated: false,
+      supersedesId: 'dec-1234',
+      target: {
+        path: 'Projects/alpha--11111111/Decisions/a.md',
+        title: 'a',
+        status: 'active',
+        body: 'The old body.',
+        bodyTruncated: false,
+      },
+    },
+    ...overrides,
+  }
+}
+
+/**
+ * A read-only service set plus the three frozen review methods.
+ *
+ * `decisionResult` lets a case answer a refusal without a store; the default path
+ * moves the stored record like the real service does.
+ */
+function reviewTransportServices({ detail = reviewDetailView(), decisionResult = null } = {}) {
+  const base = stubServices()
+  const calls = { details: [], decisions: [] }
+  let current = detail
+  const services = {
+    ...base.services,
+    async reviewDetail(binding, proposalId) {
+      calls.details.push({ binding, proposalId })
+      if (current === null) {
+        const missing = new Error('no proposal ' + proposalId + ' exists for this project')
+        missing.code = 'proposal-missing'
+        missing.status = 404
+        throw missing
+      }
+      return current
+    },
+    async reviewDecision(binding, proposalId, decision, reviewer) {
+      calls.decisions.push({ binding, proposalId, decision, reviewer })
+      if (decisionResult !== null) {
+        if (decisionResult.status === 'refused') return decisionResult
+        current = { ...current, state: decision === 'apply' ? 'applied' : 'rejected' }
+        return decisionResult
+      }
+      current = { ...current, state: decision === 'apply' ? 'applied' : 'rejected' }
+      return decision === 'apply'
+        ? { status: 'applied', receipt: { path: 'Projects/alpha--11111111/Decisions/a.md' } }
+        : { status: 'rejected' }
+    },
+  }
+  return {
+    services,
+    calls,
+    setDetail(next) {
+      current = next
+    },
+  }
+}
+
+test('the review mutations preview bounded Markdown and decide once over the wire', async (t) => {
+  const stub = reviewTransportServices()
+  const h = await harness(t, { services: stub.services })
+  const preview = await h.post(
+    {
+      sessionId: SESSION,
+      action: 'preview',
+      mutation: 'apply-proposal',
+      args: { proposalId: REVIEW_PROPOSAL_ID },
+    },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(preview.status, 200)
+  const value = preview.body.value
+  assert.deepEqual(Object.keys(value).sort(), ['expiresAt', 'mutation', 'preview', 'token'])
+  assert.equal(value.mutation, 'apply-proposal')
+  assert.match(value.token, /^[A-Za-z0-9_-]{40,}$/u)
+  assert.equal(value.preview.title, '批准候补记忆')
+  assert.equal(value.preview.confirmLabel, '批准')
+  assert.equal(Array.isArray(value.preview.facts), true)
+  assert.equal(Array.isArray(value.preview.effects), true)
+  assert.match(value.preview.markdown, /^# Panel review candidate\n/u)
+  assert.match(value.preview.markdown, /## 候选正文\n\nThe candidate body\./u)
+  assert.ok(
+    preview.bytes <= 8 * 1024,
+    'the preview answer fits its 8 KiB ceiling: ' + preview.bytes,
+  )
+  assert.equal(stub.calls.decisions.length, 0, 'a preview writes nothing')
+  assert.deepEqual(
+    stub.calls.details,
+    [{ binding: BOUND, proposalId: REVIEW_PROPOSAL_ID }],
+    'reviewDetail is binding-first',
+  )
+
+  const confirm = await h.post(
+    { sessionId: SESSION, action: 'confirm', token: value.token },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(confirm.status, 200)
+  assert.deepEqual(confirm.body.value, {
+    mutation: 'apply-proposal',
+    result: {
+      status: 'applied',
+      proposalId: REVIEW_PROPOSAL_ID,
+      path: 'Projects/alpha--11111111/Decisions/a.md',
+      reviewOnly: false,
+    },
+    replayed: false,
+  })
+  assert.ok(
+    confirm.bytes <= 8 * 1024,
+    'the confirm answer fits its 8 KiB ceiling: ' + confirm.bytes,
+  )
+  assert.deepEqual(stub.calls.decisions, [
+    {
+      binding: BOUND,
+      proposalId: REVIEW_PROPOSAL_ID,
+      decision: 'apply',
+      reviewer: { kind: 'human' },
+    },
+  ])
+  const replay = await h.post(
+    { sessionId: SESSION, action: 'confirm', token: value.token },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(replay.body.value.replayed, true)
+  assert.deepEqual(replay.body.value.result, confirm.body.value.result)
+  assert.equal(stub.calls.decisions.length, 1, 'a replay never decides twice')
+})
+
+test('review refusals keep their coded status over the wire, including the 404', async (t) => {
+  // Unknown proposal: the service throws the coded 404, and the route passes it on
+  // as a coded envelope (the panel reads coded 404s as data errors, not as
+  // "this route is not registered").
+  const missing = reviewTransportServices({ detail: null })
+  const missingHarness = await harness(t, { services: missing.services })
+  const gone = await missingHarness.post(
+    {
+      sessionId: SESSION,
+      action: 'preview',
+      mutation: 'apply-proposal',
+      args: { proposalId: REVIEW_PROPOSAL_ID },
+    },
+    ORIGIN_HEADER(missingHarness),
+  )
+  assert.equal(gone.status, 404)
+  assert.equal(gone.body.ok, false)
+  assert.equal(gone.body.error.code, 'proposal-missing')
+
+  // A review-only row can be rejected (a dismissal) but never applied.
+  const reviewOnly = reviewTransportServices({
+    detail: reviewDetailView({ kind: 'dead-wikilink', reviewOnly: true, operation: null }),
+  })
+  const reviewHarness = await harness(t, { services: reviewOnly.services })
+  const refusedApply = await reviewHarness.post(
+    {
+      sessionId: SESSION,
+      action: 'preview',
+      mutation: 'apply-proposal',
+      args: { proposalId: REVIEW_PROPOSAL_ID },
+    },
+    ORIGIN_HEADER(reviewHarness),
+  )
+  assert.equal(refusedApply.status, 409)
+  assert.equal(refusedApply.body.error.code, 'review-only')
+  const dismissal = await reviewHarness.post(
+    {
+      sessionId: SESSION,
+      action: 'preview',
+      mutation: 'reject-proposal',
+      args: { proposalId: REVIEW_PROPOSAL_ID },
+    },
+    ORIGIN_HEADER(reviewHarness),
+  )
+  assert.equal(dismissal.status, 200)
+  assert.match(dismissal.body.value.preview.markdown, /只读发现/u)
+  const dismissalConfirm = await reviewHarness.post(
+    { sessionId: SESSION, action: 'confirm', token: dismissal.body.value.token },
+    ORIGIN_HEADER(reviewHarness),
+  )
+  assert.equal(dismissalConfirm.status, 200)
+  assert.deepEqual(dismissalConfirm.body.value.result, {
+    status: 'rejected',
+    proposalId: REVIEW_PROPOSAL_ID,
+    path: null,
+    reviewOnly: true,
+  })
+  assert.ok(
+    dismissalConfirm.bytes <= 8 * 1024,
+    'a dismissal confirm answer fits its 8 KiB ceiling: ' + dismissalConfirm.bytes,
+  )
+
+  // A decided record is a stale operation, not a new preview.
+  const decided = reviewTransportServices({ detail: reviewDetailView({ state: 'applied' }) })
+  const decidedHarness = await harness(t, { services: decided.services })
+  const notCurrent = await decidedHarness.post(
+    {
+      sessionId: SESSION,
+      action: 'preview',
+      mutation: 'reject-proposal',
+      args: { proposalId: REVIEW_PROPOSAL_ID },
+    },
+    ORIGIN_HEADER(decidedHarness),
+  )
+  assert.equal(notCurrent.status, 409)
+  assert.equal(notCurrent.body.error.code, 'proposal-not-current')
+
+  // A refused confirmation carries the service's code and status.
+  const refused = reviewTransportServices({
+    decisionResult: { status: 'refused', code: 'source-changed', message: 'a source changed' },
+  })
+  const refusedHarness = await harness(t, { services: refused.services })
+  const preview = await refusedHarness.post(
+    {
+      sessionId: SESSION,
+      action: 'preview',
+      mutation: 'reject-proposal',
+      args: { proposalId: REVIEW_PROPOSAL_ID },
+    },
+    ORIGIN_HEADER(refusedHarness),
+  )
+  const refusedConfirm = await refusedHarness.post(
+    { sessionId: SESSION, action: 'confirm', token: preview.body.value.token },
+    ORIGIN_HEADER(refusedHarness),
+  )
+  assert.equal(refusedConfirm.status, 409)
+  assert.equal(refusedConfirm.body.error.code, 'source-changed')
+  assert.deepEqual(refused.calls.decisions, [
+    {
+      binding: BOUND,
+      proposalId: REVIEW_PROPOSAL_ID,
+      decision: 'reject',
+      reviewer: { kind: 'human' },
+    },
+  ])
+
+  // A malformed proposal id is a 400 before any service read.
+  const serviceReads = refused.calls.details.length
+  const malformed = await refusedHarness.post(
+    {
+      sessionId: SESSION,
+      action: 'preview',
+      mutation: 'apply-proposal',
+      args: { proposalId: 'not-a-proposal-id' },
+    },
+    ORIGIN_HEADER(refusedHarness),
+  )
+  assert.equal(malformed.status, 400)
+  assert.equal(malformed.body.error.code, 'bad-request')
+  assert.equal(
+    refused.calls.details.length,
+    serviceReads,
+    'a malformed id never reaches the service',
+  )
+})
+
+test('a confirm answer forwards a bounded relative path inside its 8 KiB ceiling', async (t) => {
+  const longPath = 'Projects/alpha--11111111/Decisions/' + '中'.repeat(2_000) + '.md'
+  const stub = reviewTransportServices({
+    decisionResult: { status: 'applied', receipt: { path: longPath } },
+  })
+  const h = await harness(t, { services: stub.services })
+  const preview = await h.post(
+    {
+      sessionId: SESSION,
+      action: 'preview',
+      mutation: 'apply-proposal',
+      args: { proposalId: REVIEW_PROPOSAL_ID },
+    },
+    ORIGIN_HEADER(h),
+  )
+  const confirm = await h.post(
+    { sessionId: SESSION, action: 'confirm', token: preview.body.value.token },
+    ORIGIN_HEADER(h),
+  )
+  assert.equal(confirm.status, 200)
+  const result = confirm.body.value.result
+  assert.equal(result.status, 'applied')
+  assert.equal(typeof result.path, 'string')
+  assert.ok([...result.path].length <= 240, 'the path is clipped to 240 codepoints')
+  assert.equal(
+    result.path.includes(homedir()),
+    false,
+    'an absolute home path never reaches the wire',
+  )
+  assert.equal(result.reviewOnly, false)
+  assert.ok(
+    confirm.bytes <= 8 * 1024,
+    'the confirm answer fits its 8 KiB ceiling: ' + confirm.bytes,
+  )
 })

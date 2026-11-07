@@ -1989,3 +1989,133 @@ test('the review vocabulary and the module’s own emitters are the same set', (
     'an emitter reading no declared table must be reported',
   )
 })
+
+// ---------------------------------------------------------------------------
+// Decision provenance (curation review panel, spec R8)
+// ---------------------------------------------------------------------------
+
+/**
+ * The stored sentence an automatic rejection writes.
+ *
+ * @param {string} note - the reviewer's bounded reason.
+ * @returns {string} the sentence.
+ */
+function autoRejectionReason(note) {
+  return `an automatic review rejected this candidate: ${note}`
+}
+
+test('a human decision records its provenance, and the human rejection sentence is unchanged', async (t) => {
+  const made = await world(t)
+  const applied = await parkCreateSeparate(made)
+  const applyAnswer = await reviewCurationProposal({
+    dataRoot: made.dataRoot,
+    proposalId: applied.proposal.proposalId,
+    decision: 'apply',
+    binding: made.binding,
+    now: NOW,
+  })
+  assert.equal(applyAnswer.status, 'applied', JSON.stringify(applyAnswer))
+  const appliedRecord = await readCurationProposal({
+    dataRoot: made.dataRoot,
+    projectId: made.binding.projectId,
+    proposalId: applied.proposal.proposalId,
+  })
+  assert.equal(appliedRecord.decidedBy, 'human')
+  assert.equal(appliedRecord.decidedByModel, null)
+  assert.equal(appliedRecord.decisionNote, null)
+
+  const rejected = await parkSupersede(made)
+  const rejectAnswer = await reviewCurationProposal({
+    dataRoot: made.dataRoot,
+    proposalId: rejected.proposal.proposalId,
+    decision: 'reject',
+    binding: made.binding,
+    now: NOW,
+    reviewer: { kind: 'human', note: 'read it, not a memory' },
+  })
+  assert.equal(rejectAnswer.status, 'rejected')
+  const rejectedRecord = await readCurationProposal({
+    dataRoot: made.dataRoot,
+    projectId: made.binding.projectId,
+    proposalId: rejected.proposal.proposalId,
+  })
+  assert.equal(rejectedRecord.decidedBy, 'human')
+  assert.equal(
+    rejectedRecord.reason,
+    'a human reviewed this candidate and rejected it',
+    'the human sentence is byte-identical to the one the CLI has always recorded',
+  )
+  assert.equal(rejectedRecord.decisionNote, 'read it, not a memory')
+})
+
+test('an automatic decision records the model and a reversible note on the record', async (t) => {
+  const made = await world(t)
+  const applied = await parkCreateSeparate(made)
+  const answer = await reviewCurationProposal({
+    dataRoot: made.dataRoot,
+    proposalId: applied.proposal.proposalId,
+    decision: 'apply',
+    binding: made.binding,
+    now: NOW,
+    reviewer: { kind: 'auto', model: 'openai/gpt-test', note: 'the evidence is strong' },
+  })
+  assert.equal(answer.status, 'applied', JSON.stringify(answer))
+  const record = await readCurationProposal({
+    dataRoot: made.dataRoot,
+    projectId: made.binding.projectId,
+    proposalId: applied.proposal.proposalId,
+  })
+  assert.equal(record.decidedBy, 'auto')
+  assert.equal(record.decidedByModel, 'openai/gpt-test')
+  assert.equal(record.decisionNote, 'the evidence is strong')
+
+  const rejected = await parkSupersede(made)
+  const rejection = await reviewCurationProposal({
+    dataRoot: made.dataRoot,
+    proposalId: rejected.proposal.proposalId,
+    decision: 'reject',
+    binding: made.binding,
+    now: NOW,
+    reviewer: { kind: 'auto', model: 'openai/gpt-test', note: 'the new body restates the old one' },
+  })
+  assert.equal(rejection.status, 'rejected')
+  const rejectedRecord = await readCurationProposal({
+    dataRoot: made.dataRoot,
+    projectId: made.binding.projectId,
+    proposalId: rejected.proposal.proposalId,
+  })
+  assert.equal(rejectedRecord.decidedBy, 'auto')
+  assert.equal(rejectedRecord.decidedByModel, 'openai/gpt-test')
+  assert.equal(
+    rejectedRecord.reason,
+    autoRejectionReason('the new body restates the old one'),
+    'an automatic rejection names the automatic reviewer',
+  )
+  assert.equal(rejectedRecord.decisionNote, 'the new body restates the old one')
+})
+
+test('a reviewer kind the queue does not know is a programming error, not a decision', async (t) => {
+  const made = await world(t)
+  const { proposal } = await parkSupersede(made)
+  for (const reviewer of [{ kind: 'model' }, { kind: null }, 'human', { kind: 'auto', note: 7 }]) {
+    await assert.rejects(
+      () =>
+        reviewCurationProposal({
+          dataRoot: made.dataRoot,
+          proposalId: proposal.proposalId,
+          decision: 'reject',
+          binding: made.binding,
+          now: NOW,
+          reviewer,
+        }),
+      RangeError,
+    )
+  }
+  // No refused decision was written by any of those attempts.
+  const record = await readCurationProposal({
+    dataRoot: made.dataRoot,
+    projectId: made.binding.projectId,
+    proposalId: proposal.proposalId,
+  })
+  assert.equal(record.state, 'pending')
+})

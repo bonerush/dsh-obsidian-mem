@@ -24,6 +24,10 @@ AGENTS.md
 # 会话临时目录：DSH 在本仓库里创建（粘贴的附件与 tmp），永远不该提交。
 .dsh/
 
+# Superpowers/SDD 运行工作区（briefs、reports、review diff）：一次运行的恢复地图，
+# 面向前一次会话而不是这份插件，不进版本库（WORKFLOW §7 把它列为 transient）。
+.superpowers/
+
 # 系统噪声
 .DS_Store
 

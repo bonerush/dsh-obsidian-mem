@@ -124,15 +124,16 @@ mem_admin(action="jobs", jobId="<id>", retry=true)
 
 ## 第七步：确认整理
 
-提案停在 `pending` 且没有笔记被改动，这是正常行为。
-整理不会自动应用任何提案。
+提案停在 `pending`、没有笔记被改动，这是正常状态：整理本身不应用提案。开启
+`autoReview`、配置了模型路由、且 DSH 宿主跑完自动整理回合时，插件只对置信度 ≥ 0.8 的
+可执行提案自动 apply / reject；手动扫描不触发自动审阅，其余等待人决定。
 
 | 现象 | 做法 |
 |---|---|
 | 想看队列 | `mem_admin(action="curation", operation="status")` |
 | 想立即扫描 | `mem_admin(action="curation", operation="scan")` |
-| 想批准或拒绝 | 运行 `dsh-obsidian-mem-review` |
-| 报 `reviewOnly: true` | 按 finding 修源笔记，再扫描 |
+| 想批准或拒绝 | 打开面板 **健康 → 待审阅**，或运行 `dsh-obsidian-mem-review` |
+| 报 `reviewOnly: true` | 按 finding 修源笔记，再做一次完整扫描；不再复现时会自动退场 |
 | 报 `source-changed` | 重新评审，提案仍在 |
 | 报 `review-lock-unavailable` | 稍后重试，不要删私有的 claim 文件 |
 

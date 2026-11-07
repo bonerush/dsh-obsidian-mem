@@ -461,8 +461,9 @@ test('the documented enums and defaults are exactly spec §9', async (t) => {
     'diagnostics',
     // Task 5's bounded administration: `status` reads private state without
     // scanning and `scan` runs one bounded pass. There is deliberately no
-    // `apply`, `approve` or `reject` value here — approval is a TTY-only command
-    // (Task 7), never a model-callable action.
+    // `apply`, `approve` or `reject` value here — approval is not a tool surface:
+    // the TTY command, the panel and the plugin-internal automatic reviewer are
+    // the routes, and no model-callable action may carry one.
     'curation',
     // The hot layer maintenance surface: `status` reports its fill level and what
     // could still be moved, `compact` is the recovery write a `hot-over-capacity`
