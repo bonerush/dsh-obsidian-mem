@@ -64,17 +64,28 @@ jobs:
           BEFORE: ${{ github.event.before }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: echo "sha=$(node scripts/ci-base.mjs)" >> "$GITHUB_OUTPUT"
-      - name: Unreleased gate
+      - name: Detect a release push
+        id: release
         # A push that IS the release consumes the Unreleased entry instead of
         # adding one: the body moves under the new version heading, so the base
         # and HEAD can both have an empty Unreleased while lib/ changed, and the
-        # gate would fail the release it is shipping. release.yml already exempts
-        # `chore(release):` commits with this same prefix; the checks workflow has
-        # to agree or main cannot go green for that release. Only this one step is
-        # exempted — every other gate still runs. For pull_request events
-        # `head_commit` is null and `startsWith(null, …)` is false, so the `!`
-        # keeps the gate running there.
-        if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
+        # gate would fail the release it is shipping.
+        #
+        # This used to key on the commit message (`chore(release):`), which is
+        # what release.yml writes for its own bump but NOT what the branch model
+        # produces: merging `Vx` into `main` with `--no-ff` gives git's default
+        # merge message, so the 2.1.0 release went red on every leg. The detector
+        # below decides from repository state instead — the declared version
+        # changed AND CHANGELOG carries a section for the version HEAD declares —
+        # so the push shape stops mattering while a version bump with no
+        # changelog section still reaches the gate.
+        shell: bash
+        run: echo "release=$(node scripts/ci-release.mjs --base "${{ steps.base.outputs.sha }}")" >> "$GITHUB_OUTPUT"
+      - name: Unreleased gate
+        # Only this one step is exempted — every other gate still runs. The
+        # detector runs on every event (a pull_request release branch consumes
+        # its Unreleased too), and only the gate reads its verdict.
+        if: ${{ steps.release.outputs.release != 'true' }}
         run: node scripts/verify-changelog.mjs --base "${{ steps.base.outputs.sha }}"
       # Named separately so a disordered file reports as itself rather than as part
       # of the suite. The same check runs inside `test/repo-gates.test.js`; this
