@@ -253,7 +253,12 @@ const LAYERS = {
   // L2. `appraisal` is the pure deterministic rule set the digest uses and
   // imports note-health (L0).
   'route-guard': 0,
+  // The plugin-settings route: it serves and persists the plugin's Config form for
+  // DSH's own Plugins page. The fence-header constants are imported from
+  // `panel-route` (L2) instead of being copied, so L3 is the first layer above them;
+  // `route-guard` (L0), `config` (L1) and `fs-atomic` (L0) all point downward too.
   'panel-route': 2,
+  'settings-route': 3,
   // The panel's dialog copy is a vocabulary leaf like `hot-text` and `locale`:
   // import-free, one sentence per locale, read by `panel-actions` so a
   // translation never touches the mutation state machine.
@@ -439,7 +444,12 @@ const BUDGETS = {
   // comment that no longer claims a full pass re-reads the paths it already covered.
   'lib/capture.js': 2250,
   // Nested unknown-key validation and integrated distillation options.
-  'lib/config.js': 400,
+  // Raised from 400 by the plugin-settings feature (547 formatted lines measured after
+  // the review fix wave; measured-plus-30 is 577, rounded up to 600). The 147 lines: describeConfigFields
+  // projects the Config schema into the flat leaf list the Plugins-page form renders
+  // (dotted path + segments + type/default/enum/range/integer), walking the
+  // schemastery ref table so the form cannot drift from validateConfig.
+  'lib/config.js': 600,
   // The curation plan's three Task 2 modules, on the same rule as every other
   // entry (measured plus 30, rounded up). What the size buys: the scanner carries
   // the coverage rules a bounded pass has to keep honest, the state module carries
@@ -1159,7 +1169,23 @@ const BUDGETS = {
   // `.mem-review-*` row/group/stamp rules and the `.mem-md-*` heading, list, code,
   // quote and link rules the sheet's rendered body needs, all in already-verified
   // `--dsw-*` tokens.
-  'lib/client.js': 1850,
+  // Raised from 1850 by the plugin-settings section (2669 formatted lines measured after
+  // the review fix wave; measured-plus-30 is 2699, rounded up to 2700). The 652 lines: the nested
+  // `slots` inject and `plugins.bundle.config` registration (silent on a host
+  // without the seat), the schema-driven settings form (groups, bilingual labels,
+  // five control kinds), the read/save/status round trip with polling and the
+  // read-only/read-error fallbacks, plus the settings test helpers.
+  'lib/client.js': 2700,
+  // The plugin-settings route, registered on the same web server as the panel
+  // (750 formatted lines measured after the review fix waves; measured-plus-30 is 780,
+  // rounded up to 800). What
+  // the size buys: the same-origin + JSON fence, the read projection (entry
+  // resolution from the config editor, effective raw config, defaults-filled values,
+  // field list, last-write record), the save path that validates before any write and
+  // schedules the edit AFTER replying because the edit remounts this plugin, the
+  // attempt status record written atomically under the data root, the status action
+  // the page polls, and the 64 KiB body / non-2xx refusals.
+  'lib/settings-route.js': 800,
   // Raised from 700 by the whole-graph round (716 formatted lines measured;
   // measured-plus-30 is 746, rounded up to 750). What the 16 lines buy: the
   // `spiralSeed` helper and the cold-frame branch that uses it, plus the comment

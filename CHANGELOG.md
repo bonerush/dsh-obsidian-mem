@@ -43,6 +43,22 @@ release artifact. The versioning policy is in the README, under Development.
     静态按钮去掉 U+2026 后缀（旧后缀只表示"会先打开抽屉"，容易被读成待处理）；抽屉里确认前不写入。
     验证：`npm run check` 1672 tests / 1671 pass / 1 skipped；面板相关测试 160/160。
 
+- **DSH 插件页现在有图形化的「配置」表单：不用再手改 profile YAML 就能调整本插件的
+  配置字段。** 在 DSH 的插件页打开 dsh-obsidian-mem 这个 bundle，配置区按 基础 /
+  采集与整理 / 上下文预算 / 模型蒸馏 / 检索 / 其他 分组列出每个字段的当前值、schema
+  默认值和就地校验。保存经宿主的 config editor 写进**当前 profile 的** patch 层
+  （`$DSH_HOME/profiles/<profile>/cordis.patch.yml`），插件随之重新加载（约 1–2 秒）；
+  `enabled` 归页面自己的开关管，不在表单里。schema 拒绝的取值会在保存时被拒绝并显示
+  宿主自己的报错，落不了盘的保存照实报错、不会假装成功。宿主没有 config editor、插件行
+  不是经 Loader 安装、或已存储的配置无法被 schema 读取时，配置区是只读的并写明原因
+  （无法读取时附上宿主的报错）。页面**从不**编辑 home 层的
+  `$DSH_HOME/cordis.patch.yml`：那是优先级更高的用户层，它还在时页面以只读方式打开并
+  显示实际生效的取值，保存不会落地；要迁移到页面，先记下自定义过的值，再删掉该文件里
+  `- id: obsidian-mem` 行的 `config:`（或整行），**重启 DSH** 后即可在表单里重新填入并
+  保存——宿主不监视 patch 文件，刷新页面不够。手改 patch 文件的路线仍然可用，表单没
+  暴露的取值以它为准。没有新增任何配置键，配置表与默认值保持不变。
+  - 验证：全量门禁以 Lead 的实测为准（`npm run check`）；本条目不预填测试数量。
+
 ## 2.0.3 — 2026-11-05
 
 - **语义地图可视化实验已回退：图谱只保留链接布局。** 2026-11-03 的设计
