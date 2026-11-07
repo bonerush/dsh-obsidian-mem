@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { setImmediate } from 'node:timers/promises'
 import { runInNewContext } from 'node:vm'
 import { test } from 'node:test'
 
@@ -190,6 +191,7 @@ async function mountShell(sessionId = 'session-shell', globals = {}) {
         }
       },
     },
+    inject() {},
     effect(callback) {
       this.dispose = callback()
     },
@@ -217,6 +219,7 @@ test('the shell keeps the graph tab id, retitles it 记忆 and renders the panel
         }
       },
     },
+    inject() {},
     effect(callback) {
       this.dispose = callback()
     },
@@ -547,6 +550,11 @@ test('the bundle reads only host tokens on the measured allowlist', async () => 
   // panel sheet (21) — which is exactly the set the measurement cross-checked.
   const verified = [
     '--dsw-alias-bg-base',
+    // Added for the plug-in page's settings section (Task 7): measured in the
+    // installed 0.2.2-rc.1 build, `grep -a -o -- '--dsw-alias-brand-primary:' app.asar`
+    // -> 5 matches; it is the primary-button border token the owner-specified
+    // form styling names. Verified against the host build like every entry here.
+    '--dsw-alias-brand-primary',
     '--dsw-alias-bg-layer-1',
     '--dsw-alias-bg-layer-2',
     '--dsw-alias-bg-overlay',
@@ -1394,6 +1402,36 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     'mem-sheet-actions',
     'mem-sheet-confirm',
     'mem-sheet-cancel',
+    // 待审阅: the curation review card (executable rows, the read-only findings
+    // group, the honest auto-review note and the recent-decisions list) and the
+    // sheet's rendered-Markdown region with its block/inline element hooks.
+    'mem-review',
+    'mem-review-row',
+    'mem-review-kind',
+    'mem-review-reason',
+    'mem-review-paths',
+    'mem-review-age',
+    'mem-review-actions',
+    'mem-review-subhead',
+    'mem-review-auto',
+    'mem-review-recent',
+    'mem-review-recent-row',
+    'mem-review-state',
+    'mem-review-by',
+    // The row itself is the way into the sheet now, so its full-row open control is
+    // a guarded hook like every other view class.
+    'mem-review-open',
+    'mem-sheet-markdown',
+    'mem-md',
+    'mem-md-h',
+    'mem-md-p',
+    'mem-md-list',
+    'mem-md-item',
+    'mem-md-quote',
+    'mem-md-hr',
+    'mem-md-code',
+    'mem-md-inline-code',
+    'mem-md-link',
   ]
   // The list is only a guard if it is bound to the producer: read the served
   // views and extract every class token they emit from quoted literals (comments
@@ -1424,12 +1462,14 @@ test('every class the redesigned views consume is styled in the one stylesheet',
   // and `mem-dot` hooks, plus the nine the GitHub-style heat map and the thirteen the
   // activity rail add. Round 5 adds the inline outcome line, the hot trigger state and
   // the sampled-day hint on the activity rail; round 2 adds the composition Sankey's
-  // scroll box and canvas pair. The count is what makes a deleted producer fail even
-  // when the list happens to still cover the rest — the subset check alone would pass
-  // on a shrunken view.
+  // scroll box and canvas pair; the curation review adds the 13 review-card hooks plus
+  // the 11 rendered-Markdown hooks (24, hence 177), plus the 待审阅 row-open control
+  // (178). The count is what makes a deleted
+  // producer fail even when the list happens to still cover the rest — the subset check
+  // alone would pass on a shrunken view.
   assert.equal(
     emitted.length,
-    153,
+    178,
     'the views scan still sees every emitted class (re-derive the count with the list)',
   )
   for (const hook of hooks)
@@ -1466,6 +1506,21 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     const rule = css.slice(start, css.indexOf('}', start))
     assert.ok(rule.includes('min-height:44px'), action + ' keeps its 44px hit area')
   }
+  // The sheet's rendered-Markdown region must stay a bounded scroll box: an
+  // unbounded body would push the warning and the confirm/cancel controls out of
+  // the modal, which is exactly the reason the region exists. Class coverage alone
+  // only proves a rule exists, so the two declarations are pinned here.
+  const markdownRegionStart = css.indexOf('.mem-panel .mem-sheet-markdown{')
+  assert.ok(markdownRegionStart >= 0, 'the sheet markdown region has a rule')
+  const markdownRegion = css.slice(markdownRegionStart, css.indexOf('}', markdownRegionStart))
+  assert.ok(
+    markdownRegion.includes('max-height:'),
+    'the markdown region is height-bounded: ' + markdownRegion,
+  )
+  assert.ok(
+    markdownRegion.includes('overflow:auto'),
+    'and scrolls inside its own box: ' + markdownRegion,
+  )
   assert.ok(css.includes('grid-template-columns:repeat(2,minmax(0,1fr))'), 'overflow folds to 2x2')
   // The Sankey's coordinate width is the MEASURED block width, so the chart fills a
   // wide panel instead of capping itself or scaling its 11px type; only the height is
@@ -1610,6 +1665,7 @@ test('the shell infers English from the browser language and keeps zh otherwise'
           tab = value
         },
       },
+      inject() {},
       effect(callback) {
         callback()
       },
@@ -2076,6 +2132,7 @@ test('a stored language choice beats the browser language in both directions', a
           tab = value
         },
       },
+      inject() {},
       effect(callback) {
         callback()
       },
@@ -2188,4 +2245,806 @@ test('the Sankey scrolls inside its own horizontal box', async () => {
     'the track stays invisible',
   )
   assert.ok(css.includes('.mem-panel .mem-sankey-canvas{display:block}'), 'the canvas is a block')
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The DSH plug-in page's 配置 section (Task 7).
+//
+// The owner asked for graphical settings instead of hand-edited profile YAML.
+// DSH already renders a configuration section on a bundle's Plugins page when the
+// bundle registers the `plugins.bundle.config` slot seat with its package name, so
+// this half of the feature is a slot registration plus a schema-driven form.
+//
+// The shell stand-in above deliberately never runs an effect (its components only
+// draw chrome). The settings form fetches on mount and polls a write's outcome, so
+// it gets a second stand-in that keeps state and re-runs an effect only when its
+// deps change — the shape test/panel-ui.test.js uses for the served views. The vm
+// sandbox has no timers or fetch, so both are injected through `globals`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function settingsReact() {
+  const slots = new Map()
+  let current = null
+  let cursor = 0
+  let pending = []
+  const slotState = () => {
+    let state = slots.get(current)
+    if (state === undefined) slots.set(current, (state = { values: [], effects: [] }))
+    return state
+  }
+  return {
+    React: {
+      createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+      useState(initial) {
+        const { values } = slotState()
+        const index = cursor++
+        if (!(index in values)) values[index] = typeof initial === 'function' ? initial() : initial
+        return [
+          values[index],
+          (next) => {
+            values[index] = typeof next === 'function' ? next(values[index]) : next
+          },
+        ]
+      },
+      useRef(initial) {
+        const { values } = slotState()
+        const index = cursor++
+        if (!(index in values)) values[index] = { current: initial }
+        return values[index]
+      },
+      useEffect(run, deps) {
+        const { effects } = slotState()
+        const index = cursor++
+        const previous = effects[index]
+        if (
+          previous?.deps &&
+          previous.deps.length === (deps ?? []).length &&
+          previous.deps.every((value, position) => Object.is(value, deps[position]))
+        )
+          return
+        pending.push(() => {
+          previous?.cleanup?.()
+          effects[index] = { deps: deps ?? [], cleanup: run() }
+        })
+      },
+    },
+    render(component, props) {
+      current = component
+      cursor = 0
+      const tree = component(props)
+      const runs = pending
+      pending = []
+      runs.forEach((run) => run())
+      return tree
+    },
+    unmount(component) {
+      for (const effect of slots.get(component)?.effects ?? []) effect?.cleanup?.()
+    },
+  }
+}
+
+/** Register the plugin through a fake ctx that models the nested slots inject. */
+async function mountPlugin(globals = {}) {
+  const react = settingsReact()
+  const { script, exports } = await bundle(react.React, globals)
+  const services = []
+  const seats = []
+  const registrations = []
+  const scoped = {
+    slots: {
+      inject(name, callback) {
+        seats.push(name)
+        callback()
+      },
+      register(seat, render) {
+        registrations.push({ seat, render })
+        return () => {}
+      },
+    },
+  }
+  exports.apply({
+    betterSidebar: { registerTab: () => () => {} },
+    inject(injected, callback) {
+      services.push(injected)
+      callback(scoped)
+    },
+    effect(callback) {
+      callback()
+    },
+  })
+  return { script, exports, react, services, seats, registrations }
+}
+
+const okValue = (value) => ({ ok: true, status: 200, json: async () => ({ ok: true, value }) })
+const codedFailure = (status, code, message) => ({
+  ok: false,
+  status,
+  json: async () => ({ ok: false, error: { code, message } }),
+})
+
+/** A fake fetch that records every settings request and answers from a handler. */
+function settingsFetch(handler) {
+  const sent = []
+  const fetch = async (url, options = {}) => {
+    const body = JSON.parse(options.body)
+    sent.push({ url, body, headers: options.headers ?? {}, method: options.method })
+    return handler(body, sent.length)
+  }
+  return { fetch, sent }
+}
+
+/**
+ * A controllable clock. The vm context has no timers of its own, so the form's
+ * `setTimeout`/`clearTimeout` are this fake's — which is what lets a test step the
+ * 600 ms poll deterministically instead of sleeping.
+ */
+function settingsClock() {
+  const queue = []
+  let nextId = 1
+  let now = 0
+  return {
+    setTimeout: (callback, delay) => {
+      const timer = { id: nextId++, at: now + Number(delay) || now, callback }
+      queue.push(timer)
+      return timer.id
+    },
+    clearTimeout: (id) => {
+      const index = queue.findIndex((timer) => timer.id === id)
+      if (index >= 0) queue.splice(index, 1)
+    },
+    /** Run every timer due at or before `now + ms`; returns how many ran. */
+    advance: (ms) => {
+      now += Number(ms) || 0
+      let ran = 0
+      for (;;) {
+        const due = queue
+          .filter((timer) => timer.at <= now)
+          .sort((left, right) => left.at - right.at)[0]
+        if (due === undefined) break
+        queue.splice(queue.indexOf(due), 1)
+        due.callback()
+        ran += 1
+      }
+      return ran
+    },
+    pending: () => queue.length,
+  }
+}
+
+/** Mount the registered page view and render it once its first read has landed. */
+async function mountSettingsPage(t, handler, extraGlobals = {}) {
+  const io = settingsFetch(handler)
+  const clock = settingsClock()
+  const mounted = await mountPlugin({
+    fetch: io.fetch,
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    ...extraGlobals,
+  })
+  const registration = mounted.registrations[0]
+  assert.ok(registration, 'the plugin registered the 配置 seat')
+  const element = registration.render({ view: 'page' })
+  mounted.react.render(element.type, element.props)
+  await setImmediate()
+  const render = () => mounted.react.render(element.type, element.props)
+  t.after(() => mounted.react.unmount(element.type))
+  return { ...mounted, clock, element, io, render, tree: render() }
+}
+
+const SETTINGS_FIELDS = [
+  { path: 'vaultPath', type: 'string', default: '~/Documents/dsh-memory' },
+  { path: 'initGitOnCreate', type: 'boolean', default: true },
+  { path: 'injectBrief', type: 'boolean', default: true },
+  { path: 'bindHint', type: 'boolean', default: true },
+  { path: 'autoCapture', type: 'boolean', default: true },
+  { path: 'captureIdleMs', type: 'number', default: 90000 },
+  { path: 'autoCurate', type: 'boolean', default: true },
+  { path: 'autoReview', type: 'boolean', default: true },
+  { path: 'briefBudgetChars', type: 'number', default: 6000 },
+  { path: 'briefConventionMode', type: 'enum', enum: ['summary', 'flat'], default: 'summary' },
+  { path: 'recallBudgetChars', type: 'number', default: 900 },
+  { path: 'failureRecall', type: 'boolean', default: true },
+  { path: 'hotCapacityChars', type: 'number', default: 9000, min: 2000, max: 100000 },
+  { path: 'hotArchiveRatio', type: 'number', default: 0.67 },
+  { path: 'distill.provider', type: 'string', default: '' },
+  { path: 'distill.model', type: 'string', default: '' },
+  { path: 'distill.maxItems', type: 'number', default: 12 },
+  { path: 'distill.minConfidence', type: 'number', default: 0.75 },
+  { path: 'distill.dryRun', type: 'boolean', default: false },
+  { path: 'indexBackend', type: 'enum', enum: ['auto', 'sqlite', 'scan'], default: 'auto' },
+  {
+    path: 'retrievalEngine',
+    type: 'enum',
+    enum: ['lexical', 'sparse', 'hybrid'],
+    default: 'hybrid',
+  },
+  { path: 'retrievalProvider.enabled', type: 'boolean', default: false },
+  { path: 'retrievalProvider.dimensions', type: 'number', default: 0 },
+  { path: 'ignoreGlobs', type: 'stringArray', default: [] },
+  // Unknown future paths still render: the host projects the schema and the form
+  // must never drop a field it has not learned a label for.
+  { path: 'futureFlag', type: 'boolean', default: false },
+  // The host projection carries `integer` as a flag beside a `number` type, and the
+  // exclusive bound flags beside min/max (one CONFIG_RANGES table host-side).
+  { path: 'futureCount', type: 'number', integer: true, default: 3, min: 1, max: 9 },
+  { path: 'futureRatio', type: 'number', default: 0.5, min: 0, exclusiveMin: true },
+  { path: 'futureCeiling', type: 'number', default: 10, max: 10, exclusiveMax: true },
+  // No host default: its row must show no 默认 hint.
+  { path: 'futureText', type: 'string' },
+]
+
+const settingsValues = () => ({
+  vaultPath: '/tmp/vault',
+  initGitOnCreate: true,
+  injectBrief: false,
+  bindHint: true,
+  autoCapture: true,
+  captureIdleMs: 90000,
+  autoCurate: true,
+  autoReview: false,
+  briefBudgetChars: 6000,
+  briefConventionMode: 'summary',
+  recallBudgetChars: 900,
+  failureRecall: true,
+  hotCapacityChars: 9000,
+  hotArchiveRatio: 0.67,
+  distill: { provider: '', model: '', maxItems: 12, minConfidence: 0.75, dryRun: false },
+  indexBackend: 'auto',
+  retrievalEngine: 'hybrid',
+  retrievalProvider: { enabled: false, dimensions: 0 },
+  ignoreGlobs: ['ignored/**'],
+  futureFlag: false,
+  futureCount: 3,
+  futureRatio: 0.5,
+  futureCeiling: 9,
+  futureText: '',
+  // Hidden from `fields` on purpose (the plugin page's own switch owns it). A save
+  // sends a complete raw config, so it must survive the form untouched.
+  enabled: true,
+})
+
+const settingsDefaults = () => ({
+  ...settingsValues(),
+  vaultPath: '~/Documents/dsh-memory',
+  autoReview: true,
+  ignoreGlobs: [],
+})
+
+const settingsRead = (overrides = {}) =>
+  okValue({
+    fields: SETTINGS_FIELDS,
+    values: settingsValues(),
+    defaults: settingsDefaults(),
+    writable: true,
+    entry: { name: 'dsh-obsidian-mem', id: 'row-obsidian-mem' },
+    lastWrite: null,
+    ...overrides,
+  })
+
+const settingsControl = (tree, path) =>
+  nodes(tree).find(
+    (node) => node?.props?.id === 'obsidian-mem-setting-' + path.replace(/\./gu, '-'),
+  )
+const settingsButton = (tree, label) =>
+  nodes(tree).find(
+    (node) =>
+      node?.type === 'button' &&
+      (Array.isArray(node.props?.children) ? node.props.children.flat(Infinity) : []).includes(
+        label,
+      ),
+  )
+const settingsStrings = (tree) => chromeText(tree)
+
+test('the plugin registers its 配置 seat through a nested optional slots inject', async () => {
+  const { exports, services, seats, registrations } = await mountPlugin()
+  assert.deepEqual(
+    services.map((names) => Array.from(names)),
+    [['slots']],
+    'the outer inject asks for the slots service',
+  )
+  assert.deepEqual(seats, ['plugins.bundle.config'], 'the nested inject waits for the seat')
+  assert.equal(registrations.length, 1, 'exactly one seat registration')
+  // The seat object comes from the vm realm, so its fields are asserted one by one
+  // (a cross-realm object has a different Object.prototype and deepEqual refuses it).
+  assert.equal(registrations[0].seat.name, 'plugins.bundle.config', 'the seat is the config slot')
+  // The key must be this bundle's package name: read package.json rather than
+  // repeating the literal, so a rename cannot silently drift the seat out of the page.
+  const packageJson = JSON.parse(
+    await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+  )
+  assert.equal(
+    registrations[0].seat.key,
+    packageJson.name,
+    'the page keys the section by this bundle package name',
+  )
+  // The summary view is one quiet line, never the form.
+  const summary = registrations[0].render({ view: 'summary' })
+  assert.deepEqual(settingsStrings(summary), ['记忆与整理配置'])
+  // The page view is the settings form component.
+  const page = registrations[0].render({ view: 'page' })
+  assert.equal(page.type.name, 'SettingsSection')
+  // ownerProps is optional: an undefined owner still renders the form, not a crash.
+  assert.equal(registrations[0].render(undefined).type.name, 'SettingsSection')
+  // `slots` stays out of the top-level inject list: an old host has no such
+  // service and the plugin must load exactly as before rather than wait on it.
+  assert.deepEqual(Array.from(exports.inject), ['betterSidebar'])
+})
+
+test('a ctx without inject still loads the memory tab and silently skips the settings seat', async () => {
+  const { exports } = await bundle()
+  let tab
+  const ctx = {
+    betterSidebar: {
+      registerTab(value) {
+        tab = value
+        return () => {
+          tab = undefined
+        }
+      },
+    },
+    effect(callback) {
+      callback()
+    },
+    // Deliberately NO `inject`: this is an older host, and also the shape
+    // test/graph-client.test.js and other consumers fake the client ctx with. The
+    // settings seat may never make the primary memory tab fail to load.
+  }
+  assert.doesNotThrow(() => exports.apply(ctx), 'the plugin applies without the slots API')
+  assert.ok(tab, 'the memory tab is still registered')
+  assert.equal(tab.id, 'obsidian-mem:graph', 'and it is the same tab as on a modern host')
+  assert.equal(typeof tab.component, 'function', 'with its component intact')
+})
+
+test('the settings form renders the host fields grouped, labelled and with current values', async (t) => {
+  const { io, tree } = await mountSettingsPage(t, () => settingsRead())
+  assert.equal(io.sent.length, 1, 'one read on mount')
+  assert.equal(io.sent[0].url, 'obsidian-mem/settings')
+  assert.equal(io.sent[0].method, 'POST')
+  assert.deepEqual(io.sent[0].body, { action: 'read' })
+  assert.equal(io.sent[0].headers['content-type'], 'application/json')
+  assert.equal(
+    io.sent[0].headers['x-obsidian-mem-panel'],
+    '1',
+    'the same same-origin fence header as the panel route',
+  )
+
+  const groups = nodes(tree)
+    .filter((node) => node?.type === 'section')
+    .map((node) => node.props['aria-label'])
+  assert.deepEqual(
+    groups,
+    ['基础', '采集与整理', '上下文预算', '模型蒸馏', '检索', '其他'],
+    'the groups render in the fixed order',
+  )
+  const strings = settingsStrings(tree)
+  for (const copy of [
+    '记忆库路径',
+    '自动审阅提案',
+    '热层容量（字符）',
+    '蒸馏模型',
+    '检索引擎',
+    '忽略的路径（每行一个）',
+    'futureFlag',
+    'futureCount',
+  ])
+    assert.ok(strings.includes(copy), 'the form labels ' + copy)
+  assert.equal(
+    nodes(tree).some((node) => typeof node?.props?.className === 'string'),
+    false,
+    'the form adds no stylesheet class — inline tokens only',
+  )
+
+  const control = (path) => settingsControl(tree, path)
+  assert.equal(control('autoReview').type, 'button')
+  assert.equal(control('autoReview').props.role, 'switch', 'a mobile-style switch, not a checkbox')
+  assert.equal(control('autoReview').props['aria-checked'], false, 'the current value is shown')
+  assert.equal(control('vaultPath').props.type, 'text')
+  assert.equal(control('vaultPath').props.value, '/tmp/vault')
+  assert.equal(control('retrievalEngine').type, 'select')
+  assert.equal(control('retrievalEngine').props.value, 'hybrid')
+  assert.deepEqual(
+    nodes(control('retrievalEngine'))
+      .filter((node) => node?.type === 'option')
+      .map((node) => node.props.value),
+    ['lexical', 'sparse', 'hybrid'],
+    'the enum options come from the host',
+  )
+  assert.equal(control('hotCapacityChars').props.type, 'number')
+  assert.equal(control('hotCapacityChars').props.value, '9000')
+  assert.equal(control('hotCapacityChars').props.min, 2000)
+  assert.equal(control('hotCapacityChars').props.max, 100000)
+  assert.equal(control('futureCount').props.type, 'number')
+  assert.equal(control('futureCount').props.step, 1, 'an integer field steps by one')
+  assert.equal(control('ignoreGlobs').type, 'textarea')
+  assert.equal(control('ignoreGlobs').props.value, 'ignored/**', 'one array item per line')
+  assert.equal(settingsButton(tree, '保存').props.disabled, true, 'nothing to save while clean')
+})
+
+test('boolean fields are toggle switches and a click dirties the form', async (t) => {
+  const { tree, render } = await mountSettingsPage(t, () => settingsRead())
+  const before = settingsControl(tree, 'autoReview')
+  assert.equal(before.props.disabled, false)
+  assert.equal(
+    before.props['aria-label'],
+    '自动审阅提案',
+    'the switch keeps the row label as its name',
+  )
+  const knob = nodes(before).find((node) => node?.type === 'span')
+  assert.ok(knob, 'the switch renders a knob element')
+  assert.equal(
+    nodes(tree).some((node) => node?.props?.type === 'checkbox'),
+    false,
+    'the settings form no longer renders checkboxes',
+  )
+  before.props.onClick()
+  const next = render()
+  assert.equal(
+    settingsControl(next, 'autoReview').props['aria-checked'],
+    true,
+    'clicking the switch flips it on',
+  )
+  assert.equal(settingsButton(next, '保存').props.disabled, false, 'the toggle dirties the form')
+})
+
+test('a dirty form saves the complete nested draft and reports the reload', async (t) => {
+  let reloads = 0
+  const { clock, io, render, tree } = await mountSettingsPage(t, (body) => {
+    if (body.action === 'read') return settingsRead()
+    if (body.action === 'save') return okValue({ scheduled: true, attempt: 7 })
+    if (body.action === 'status') {
+      reloads += 1
+      return okValue({ state: 'applied', attempt: 7 })
+    }
+    throw new Error('unexpected action ' + body.action)
+  })
+  settingsControl(tree, 'distill.provider').props.onChange({ target: { value: 'local/llm' } })
+  // The mirrored host pair rule is active: a one-sided route disables save, so the
+  // test fills both sides the way a user must.
+  settingsControl(tree, 'distill.model').props.onChange({ target: { value: 'local/model' } })
+  let next = render()
+  assert.equal(settingsButton(next, '保存').props.disabled, false, 'an edit enables save')
+  settingsButton(next, '保存').props.onClick()
+  await setImmediate()
+  render()
+  const save = io.sent.find((entry) => entry.body.action === 'save')
+  assert.ok(save, 'the save was posted')
+  assert.deepEqual(save.body.action, 'save')
+  // The draft is sent as one complete nested object: every projected path keeps the
+  // reader's value, and the untouched siblings keep their current ones.
+  assert.equal(save.body.values.vaultPath, '/tmp/vault')
+  assert.equal(save.body.values.distill.provider, 'local/llm')
+  assert.equal(save.body.values.distill.model, 'local/model')
+  assert.equal(save.body.values.distill.maxItems, 12)
+  assert.equal(save.body.values.retrievalProvider.dimensions, 0)
+  assert.deepEqual(save.body.values.ignoreGlobs, ['ignored/**'])
+  assert.equal(save.body.values.autoReview, false)
+  assert.equal(save.body.values.futureCount, 3)
+  assert.equal(
+    save.body.values.enabled,
+    true,
+    'the hidden enabled key survives the complete-draft save',
+  )
+  assert.equal(
+    io.sent.filter((entry) => entry.body.action === 'status').length,
+    0,
+    'the page waits before its first poll',
+  )
+  clock.advance(600)
+  await setImmediate()
+  next = render()
+  assert.equal(reloads, 1, 'one status poll')
+  assert.deepEqual(
+    io.sent.find((entry) => entry.body.action === 'status').body,
+    { action: 'status', attempt: 7 },
+    'the poll carries the attempt the save was scheduled under',
+  )
+  assert.ok(
+    settingsStrings(next).some((value) => value.includes('已保存') && value.includes('重载')),
+    'a successful reload is announced',
+  )
+  assert.equal(
+    io.sent.filter((entry) => entry.body.action === 'read').length,
+    2,
+    'applied re-reads the persisted values',
+  )
+})
+
+test('a failed reload shows the host message', async (t) => {
+  const { clock, render, tree } = await mountSettingsPage(t, (body) => {
+    if (body.action === 'read') return settingsRead()
+    if (body.action === 'save') return okValue({ scheduled: true, attempt: 3 })
+    return okValue({ state: 'failed', attempt: 3, message: 'loader rejected the row' })
+  })
+  settingsControl(tree, 'vaultPath').props.onChange({ target: { value: '/tmp/other' } })
+  settingsButton(render(), '保存').props.onClick()
+  await setImmediate()
+  render()
+  clock.advance(600)
+  await setImmediate()
+  const next = render()
+  assert.ok(
+    settingsStrings(next).some((value) => value.includes('loader rejected the row')),
+    'the host failure message is shown verbatim',
+  )
+})
+
+test('a read-only host offers no save and says how to edit', async (t) => {
+  const { tree } = await mountSettingsPage(t, () =>
+    settingsRead({ writable: false, reason: 'editor-unavailable' }),
+  )
+  const strings = settingsStrings(tree)
+  assert.ok(
+    strings.some((value) => value.includes('只读') && value.includes('配置编辑服务不可用')),
+    'the read-only hint carries the host reason',
+  )
+  assert.equal(settingsControl(tree, 'vaultPath').props.disabled, true, 'controls are disabled')
+  assert.equal(settingsButton(tree, '保存'), undefined, 'no save is offered at all')
+  assert.equal(settingsButton(tree, '恢复默认'), undefined, 'and no reset-to-defaults action')
+  assert.ok(settingsButton(tree, '刷新'), 'refresh stays available')
+})
+
+test('a home-layer override reports the client migration copy, never a save', async (t) => {
+  const { tree } = await mountSettingsPage(t, () =>
+    settingsRead({
+      writable: false,
+      reason: 'layer-override',
+      message: 'overridden by a home patch or command-line overlay',
+    }),
+  )
+  const strings = settingsStrings(tree)
+  assert.ok(
+    strings.some(
+      (value) => value.includes('$DSH_HOME/cordis.patch.yml') && value.includes('home 补丁'),
+    ),
+    'the banner names the home patch layer: ' + strings.join(' | '),
+  )
+  assert.ok(
+    strings.some((value) => value.includes('优先级高于 profile 补丁')),
+    'and explains why the profile write cannot win',
+  )
+  assert.ok(
+    strings.some((value) => value.includes('profile') && value.includes('cordis.patch.yml')),
+    'and tells the user to move the row into the profile patch',
+  )
+  assert.ok(
+    strings.some((value) => value.includes('overridden by a home patch')),
+    'the host message stays as a fallback detail',
+  )
+  assert.equal(settingsButton(tree, '保存'), undefined, 'a layer override is never saveable')
+  assert.equal(settingsControl(tree, 'vaultPath').props.disabled, true)
+})
+
+test('an invalid stored config is read-only and shows the stored error', async (t) => {
+  const { tree } = await mountSettingsPage(t, () =>
+    settingsRead({
+      writable: false,
+      reason: 'config-invalid',
+      readError: 'hotCapacityChars must be between 2000 and 100000',
+    }),
+  )
+  const strings = settingsStrings(tree)
+  assert.ok(
+    strings.some((value) => value.includes('hotCapacityChars must be between 2000 and 100000')),
+    'the stored-config error is printed',
+  )
+  assert.ok(
+    strings.some((value) => value.includes('只读')),
+    'the form is declared read-only',
+  )
+  assert.equal(settingsButton(tree, '保存'), undefined, 'no save button exists for it')
+})
+
+test('a degraded stored read is read-only and never overwrites the row', async (t) => {
+  // A legacy host could answer readError with writable:true; the client must still
+  // refuse to save values it could not verify (I1) instead of replacing the row.
+  const { tree } = await mountSettingsPage(t, () =>
+    settingsRead({ readError: 'profile row unreadable' }),
+  )
+  assert.ok(
+    settingsStrings(tree).some((value) => value.includes('profile row unreadable')),
+    'the degraded read is called out',
+  )
+  assert.equal(settingsControl(tree, 'vaultPath').props.disabled, true, 'controls read-only')
+  assert.equal(settingsButton(tree, '保存'), undefined, 'the row can never be replaced blind')
+})
+
+test('each scalar field prints its host default as a hint, arrays and unknowns do not', async (t) => {
+  const { tree } = await mountSettingsPage(t, () => settingsRead())
+  const row = (path) => nodes(tree).find((node) => node?.props?.key === path)
+  const rowStrings = (path) => chromeText(row(path))
+  assert.ok(
+    rowStrings('hotCapacityChars').some((value) => value === '默认：9000'),
+    'a number default is printed',
+  )
+  assert.ok(
+    rowStrings('autoReview').some((value) => value === '默认：开'),
+    'a boolean default reads 开',
+  )
+  assert.ok(
+    rowStrings('vaultPath').some((value) => value === '默认：~/Documents/dsh-memory'),
+    'a string default is printed',
+  )
+  assert.equal(
+    rowStrings('ignoreGlobs').some((value) => String(value).startsWith('默认：')),
+    false,
+    'an array field shows no scalar default hint',
+  )
+  assert.equal(
+    rowStrings('futureText').some((value) => String(value).startsWith('默认：')),
+    false,
+    'a field the host sent no default for shows none',
+  )
+})
+
+test('inline validation names range, integer and exclusive violations and disables save', async (t) => {
+  const { render, tree } = await mountSettingsPage(t, () => settingsRead())
+  const change = (path, value) => settingsControl(tree, path).props.onChange({ target: { value } })
+  change('hotCapacityChars', '10')
+  let next = render()
+  assert.ok(
+    settingsStrings(next).some((value) => value.includes('不能小于 2000')),
+    'a below-minimum number is named',
+  )
+  assert.equal(settingsButton(next, '保存').props.disabled, true, 'save is disabled')
+
+  change('hotCapacityChars', '9000')
+  change('futureCount', '2.5')
+  next = render()
+  assert.ok(
+    settingsStrings(next).some((value) => value.includes('必须是整数')),
+    'a non-integer value is named',
+  )
+
+  change('futureCount', '3')
+  change('futureRatio', '0')
+  next = render()
+  assert.ok(
+    settingsStrings(next).some((value) => value.includes('必须大于 0')),
+    'an exclusive minimum is named',
+  )
+
+  change('futureRatio', '0.5')
+  change('futureCeiling', '10')
+  next = render()
+  assert.ok(
+    settingsStrings(next).some((value) => value.includes('必须小于 10')),
+    'an exclusive maximum is named',
+  )
+  assert.equal(settingsButton(next, '保存').props.disabled, true, 'save stays disabled')
+
+  change('futureCeiling', '8')
+  next = render()
+  assert.equal(settingsButton(next, '保存').props.disabled, false, 'valid edits enable save again')
+})
+
+test('the distill route pair is validated locally and disables save', async (t) => {
+  const { render, tree } = await mountSettingsPage(t, () => settingsRead())
+  settingsControl(tree, 'distill.provider').props.onChange({ target: { value: 'openai' } })
+  let next = render()
+  assert.ok(
+    settingsStrings(next).some(
+      (value) =>
+        value.includes('distill.provider') &&
+        value.includes('distill.model') &&
+        value.includes('同时'),
+    ),
+    'a one-sided route pair is named',
+  )
+  assert.equal(
+    settingsButton(next, '保存').props.disabled,
+    true,
+    'save is disabled while the pair is broken',
+  )
+  settingsControl(tree, 'distill.model').props.onChange({ target: { value: 'gpt' } })
+  next = render()
+  assert.equal(
+    settingsButton(next, '保存').props.disabled,
+    false,
+    'both sides filled satisfies the pair',
+  )
+  settingsControl(tree, 'distill.provider').props.onChange({ target: { value: '' } })
+  settingsControl(tree, 'distill.model').props.onChange({ target: { value: '' } })
+  next = render()
+  assert.equal(
+    settingsStrings(next).some((value) => value.includes('同时')),
+    false,
+    'the pair warning clears when both sides are empty',
+  )
+  assert.equal(
+    settingsButton(next, '保存').props.disabled,
+    true,
+    'clearing back to the baseline leaves nothing to save',
+  )
+})
+
+test('a legacy status field is still accepted when the host sends no state', async (t) => {
+  const { clock, render, tree } = await mountSettingsPage(t, (body) => {
+    if (body.action === 'read') return settingsRead()
+    if (body.action === 'save') return okValue({ scheduled: true, attempt: 5 })
+    return okValue({ status: 'applied', attempt: 5 })
+  })
+  settingsControl(tree, 'vaultPath').props.onChange({ target: { value: '/tmp/one' } })
+  settingsButton(render(), '保存').props.onClick()
+  await setImmediate()
+  render()
+  clock.advance(600)
+  await setImmediate()
+  const next = render()
+  assert.ok(
+    settingsStrings(next).some((value) => value.includes('已保存')),
+    'an old host that wrote status:"applied" still resolves the reload',
+  )
+})
+
+test('a route failure is an error state with a retry, not a broken form', async (t) => {
+  const { io, render, tree } = await mountSettingsPage(t, (_body, count) =>
+    count === 1 ? codedFailure(503, 'unavailable', 'settings route unavailable') : settingsRead(),
+  )
+  assert.ok(
+    settingsStrings(tree).some((value) => value.includes('无法读取配置')),
+    'the read failure names itself',
+  )
+  assert.ok(
+    settingsStrings(tree).some((value) => value.includes('settings route unavailable')),
+    'and carries the host message',
+  )
+  settingsButton(tree, '重试').props.onClick()
+  await setImmediate()
+  const next = render()
+  assert.ok(settingsControl(next, 'vaultPath'), 'the retry reads again and renders the form')
+  assert.equal(io.sent.filter((entry) => entry.body.action === 'read').length, 2)
+})
+
+test('a malformed read is an error state instead of a crash', async (t) => {
+  const { tree } = await mountSettingsPage(t, () => okValue({ nope: true }))
+  assert.ok(
+    settingsStrings(tree).some((value) => value.includes('无法识别')),
+    'an unrecognized payload is reported, never assumed',
+  )
+})
+
+test('a silent plugin reload times out with the restart and diagnostics hint', async (t) => {
+  const { clock, io, render, tree } = await mountSettingsPage(t, (body) => {
+    if (body.action === 'read') return settingsRead()
+    if (body.action === 'save') return okValue({ scheduled: true, attempt: 11 })
+    return okValue({ state: 'pending', attempt: 11 })
+  })
+  settingsControl(tree, 'vaultPath').props.onChange({ target: { value: '/tmp/other' } })
+  settingsButton(render(), '保存').props.onClick()
+  await setImmediate()
+  render()
+  for (let step = 0; step < 40; step += 1) {
+    clock.advance(600)
+    await setImmediate()
+  }
+  const next = render()
+  const strings = settingsStrings(next)
+  assert.ok(
+    strings.some((value) => value.includes('重启') && value.includes('diagnostics')),
+    'the timeout points at restart and mem_admin(action="diagnostics"): ' + strings.join(' | '),
+  )
+  assert.ok(
+    io.sent.filter((entry) => entry.body.action === 'status').length >= 30,
+    'the poll kept asking before it gave up',
+  )
+})
+
+test('an English host page renders the settings form and the summary in English', async (t) => {
+  const { tree } = await mountSettingsPage(t, () => settingsRead(), {
+    navigator: { language: 'en-US' },
+  })
+  const strings = settingsStrings(tree)
+  for (const copy of [
+    'Basics',
+    'Capture & curation',
+    'Context budget',
+    'Model distillation',
+    'Retrieval',
+    'Other',
+    'Memory vault path',
+    'Save',
+    'Reset to defaults',
+    'Refresh',
+  ])
+    assert.ok(strings.includes(copy), 'the en form renders ' + copy)
 })

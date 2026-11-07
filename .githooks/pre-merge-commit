@@ -1,0 +1,13 @@
+#!/bin/sh
+# Branch guard for merges. main only takes --no-ff merges of a version branch
+# (V<number>); a version branch takes --no-ff merges of typed small branches
+# only after the user confirms them with DSH_MERGE_APPROVED=1, with a
+# main -> version branch sync merge the one exemption.
+#
+# git runs this hook whenever a merge creates a commit (so a --no-ff merge); a
+# fast-forward merge creates none and skips it, which is why the model always
+# merges with --no-ff. `git merge --no-verify` skips it too, which is why the
+# pre-push hook and the CI PR-topology check are the durable gates. Installed by
+# `npm run hooks:install`, which is opt-in.
+set -eu
+exec node scripts/branch-policy.mjs guard-merge

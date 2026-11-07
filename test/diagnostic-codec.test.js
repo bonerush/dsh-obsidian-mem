@@ -263,6 +263,10 @@ test('every curation outcome the bounded action emits survives the round trip', 
     'failed',
     'brief-fallback',
     'changed-path-dropped',
+    // One automatic review pass. Without it here every durable record of the
+    // reviewer's work would reach disk as `other`, which is the exact trap the
+    // distill `review` outcome fell into.
+    'auto-reviewed',
   ]
   for (const outcome of emitted) {
     const encoded = encodeDiagnosticEvent({ seq: 1, at, event: 'curation', outcome }, aliases)

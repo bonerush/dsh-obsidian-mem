@@ -209,6 +209,17 @@ const LAYERS = {
   // neighbours (`capture`, `hot`, `curation-scan`) are unrelated to it: no edge
   // exists in either direction, which is what the layer rule actually requires.
   'curation-review': 6,
+  // The review queue's model half: it reads pending executable proposals
+  // (`curation-proposals` L5) and decides one through the same executor
+  // (`curation-review` L6), so L7 is the first layer strictly above both. That
+  // placement is load-bearing: `services` (L8) and `index` (L10) import it
+  // downward, while the executor (L6) and the CLI entry (L9) reach it from no
+  // direction — the model call stays out of the review transaction and out of the
+  // command a human runs. Folding it into `curation-review` would put a model
+  // client in the executor's dependency surface; folding it into `services` would
+  // put the strict JSON contract and its bounds at L8, past the point the layer
+  // table can keep honest.
+  'curation-auto': 7,
   lint: 5,
   'curation-scan': 6,
   // The interactive review command (Task 7). It sits at the same layer as the
@@ -242,7 +253,12 @@ const LAYERS = {
   // L2. `appraisal` is the pure deterministic rule set the digest uses and
   // imports note-health (L0).
   'route-guard': 0,
+  // The plugin-settings route: it serves and persists the plugin's Config form for
+  // DSH's own Plugins page. The fence-header constants are imported from
+  // `panel-route` (L2) instead of being copied, so L3 is the first layer above them;
+  // `route-guard` (L0), `config` (L1) and `fs-atomic` (L0) all point downward too.
   'panel-route': 2,
+  'settings-route': 3,
   // The panel's dialog copy is a vocabulary leaf like `hot-text` and `locale`:
   // import-free, one sentence per locale, read by `panel-actions` so a
   // translation never touches the mutation state machine.
@@ -322,7 +338,12 @@ const BUDGETS = {
   // `brief` event now emits, the `vault`/`not-bound` refusals a `bind` diagnostic can
   // carry, and the comment recording which part of that vocabulary stays dynamic —
   // without them the journal wrote `other` where the ring had the token.
-  'lib/diagnostic-codec.js': 300,
+  // Raised from 300 to 350 by the automatic review (274 formatted lines measured;
+  // measured-plus-30 is 304, which rounds up to 350). The 9 lines buy the
+  // `auto-reviewed` curation outcome and the comment naming which of its fields are
+  // counts — the durable record must say a pass decided things without naming a
+  // proposal, a path or a model answer.
+  'lib/diagnostic-codec.js': 350,
   'lib/diagnostic-journal.js': 300,
   // The embedding store's first version measured 310 lines: 13 tests pin its
   // incremental sync, corruption rebuild, batching and atomic write, and the
@@ -423,7 +444,12 @@ const BUDGETS = {
   // comment that no longer claims a full pass re-reads the paths it already covered.
   'lib/capture.js': 2250,
   // Nested unknown-key validation and integrated distillation options.
-  'lib/config.js': 400,
+  // Raised from 400 by the plugin-settings feature (547 formatted lines measured after
+  // the review fix wave; measured-plus-30 is 577, rounded up to 600). The 147 lines: describeConfigFields
+  // projects the Config schema into the flat leaf list the Plugins-page form renders
+  // (dotted path + segments + type/default/enum/range/integer), walking the
+  // schemastery ref table so the form cannot drift from validateConfig.
+  'lib/config.js': 600,
   // The curation plan's three Task 2 modules, on the same rule as every other
   // entry (measured plus 30, rounded up). What the size buys: the scanner carries
   // the coverage rules a bounded pass has to keep honest, the state module carries
@@ -540,7 +566,22 @@ const BUDGETS = {
   // survives two processes racing one identity, and the scan→proposal recording
   // that has to replay rather than duplicate. Splitting the store from the recorder
   // would put one identity derivation in two files.
-  'lib/curation-proposals.js': 1150,
+  // Raised from 1150 by the review-queue growth (1346 formatted lines measured;
+  // measured-plus-30 is 1376, rounded up to 1400). What the 196 lines buy: the
+  // decision provenance three additive record fields plus their bounds
+  // (`decidedBy`/`decidedByModel`/`decisionNote`), the extracted
+  // `curationFindingKey` that keeps a finding's recorded identity and the
+  // reconciliation's lookup byte-identical, and `reconcileCurationFindings` — the
+  // deterministic pass that retires a review-only finding a completed scan examined
+  // and no longer reports, under the per-kind evidence rules that make absence
+  // meaningful (complete link universe, complete untruncated pass).
+  // Raised from 1400 by the review fix wave (1373 formatted lines measured;
+  // measured-plus-30 is 1403, rounded up to 1450). The 27 lines: the dead-wikilink
+  // gate now requires the pass's own coverage claim (a denied directory or the
+  // 500 ms deadline leaves no link judged, without a resolver-truncated finding),
+  // reconciliation walks the whole store instead of the newest-200 listing, and
+  // both the writer and the reconciler derive a finding's paths through one helper.
+  'lib/curation-proposals.js': 1450,
   // The Task 7 executor, on the same measured-plus-30-rounded-to-50 rule (608
   // formatted lines measured). What the lines buy: the operation ledger that refuses
   // anything but `create-separate` and `supersede`, the explicit request-field list
@@ -575,7 +616,31 @@ const BUDGETS = {
   // `O_CREAT` follows a dangling symlink on a platform with no `O_NOFOLLOW` (Windows)
   // and creates the link's target outside the data root; the existing post-open
   // inode/hardlink check cannot catch that because the creation has already happened.
-  'lib/curation-review.js': 850,
+  // Raised from 850 to 1050 by automatic review provenance (971 formatted lines
+  // measured; measured-plus-30 is 1001, rounded up to 1050). What the 121 lines buy:
+  // the additive `reviewer` provenance on the decision (human sentence
+  // byte-identical, automatic sentence naming the model, all three fields bounded),
+  // and `readProposalEvidence` — the one source re-read both the automatic judge and
+  // the panel detail use, exported instead of copied so an approval and a preview
+  // cannot verify different bytes.
+  'lib/curation-review.js': 1050,
+  // The model half of the review queue, registered on the measured-plus-30 rule
+  // (881 formatted lines measured; measured-plus-30 is 911, rounded up to 950). What
+  // the size buys: the strict verdict contract (one JSON object; unknown verdict,
+  // non-finite confidence, extra keys or prose refused whole), the bounded judge
+  // request (candidate, its sources, the supersede target's current bytes;
+  // <=12,000 chars), the one streaming model call with a 45 s composed timeout that
+  // tolerates the host's aborted/error terminal chunks, the evidence re-read that
+  // retires a moved proposal instead of applying it, the oldest-first three-per-pass
+  // loop, and the one content-free diagnostic. Splitting the parser from the loop
+  // would let the contract and its bounds drift apart.
+  // Raised from 950 by the review fix wave (943 formatted lines measured;
+  // measured-plus-30 is 973, rounded up to 1000). The 60 lines are the review's
+  // findings: the crash-recovery guard before a moved-evidence retirement, the
+  // whole-store reconciliation and its truncated signal, the sync-throw and
+  // malformed-operation containment that keeps one bad row from aborting a pass,
+  // and the shared reviewRouteOf predicate.
+  'lib/curation-auto.js': 1000,
   // The interactive command is mostly argument handling and the refusal text a
   // person reads; 223 lines is the measured size and 250 is the rule's number.
   'lib/curation-cli.js': 250,
@@ -738,8 +803,36 @@ const BUDGETS = {
   //     hide yesterday. The wire stays <=8 rows, so the byte ceiling is untouched —
   //     these are selection lines, not payload. The wide internal scan is why
   //     lib/index-db.js's recent() bound moved from 50 to 500 in the same round.
-  'lib/panel-route.js': 1050,
-  'lib/panel-actions.js': 900,
+  // Raised from 1050 by the health review card (1147 formatted lines measured after
+  // the review fix wave; measured-plus-30 is 1177, rounded up to 1200). What the 78 lines buy: the
+  // bounded `review` card (20 pending rows x 5 clipped paths + 6 recent decisions +
+  // the two auto flags), its two `shrink()` stages (recent first, then half the
+  // items) and the last-resort required shape, plus the same empty card on the
+  // unbound answer — one card shape for every host, so a client never has to guess.
+  'lib/panel-route.js': 1200,
+  // Raised from 900 by the review decisions (1501 formatted lines measured;
+  // measured-plus-30 is 1531, rounded up to 1550). What the 601 lines buy: two
+  // mutations on the same preview->confirm state machine — `{proposalId}` only,
+  // 64-hex normalized, a preview document assembled from `reviewDetail` and fitted
+  // to the 8 KiB preview ceiling by measured bytes (candidate body, then target
+  // body, then the source-line summary), a fingerprint over the stored record and
+  // hashes, the refusal-code table with the 404 for a missing proposal, and the
+  // bounded `{status, proposalId, path, reviewOnly}` confirm result. The copy stays
+  // in `panel-copy`; the write stays in the service.
+  // Raised from 1550 by the review fix wave (1567 formatted lines measured;
+  // measured-plus-30 is 1597, rounded up to 1600). The 17 lines are the two
+  // behaviours the independent review found missing: fence balancing in the
+  // assembled preview document (an unclosed candidate fence must not swallow the
+  // effect/footer framing into a code block) and one shared review-only rule
+  // (operationOf(detail) === null, refusing a non-executable operation kind at
+  // preview with 409 instead of promising an effect the confirm cannot perform).
+  // Raised from 1600 by the review fix wave 3 (1573 formatted lines measured;
+  // measured-plus-30 is 1603, rounded up to 1650). The 73 lines: one shared
+  // review-only rule at the fourth call site, the balanced-fence assembly that
+  // keeps the effect/footer framing out of a candidate's unclosed code block, the
+  // exported executable-kind list the two-source pin holds equal to the store's,
+  // and the create-separate preview path.
+  'lib/panel-actions.js': 1650,
   'lib/appraisal.js': 300,
   // Measured 280 formatted lines; measured-plus-30 is 310, rounded to 350.
   // The collector owns the window, the 200-source/500 ms bound, the honest
@@ -920,7 +1013,22 @@ const BUDGETS = {
   // 2 real lines are HEAT_MONTH_TAIL = 24 and its explanatory comment, plus the
   // months row's width change; the budget moves because the file was already at
   // 4300 and the change cannot be expressed without naming the tail constant.
-  'lib/memory-panel.js': 4350,
+  // Raised from 4350 by the 健康 review queue and the Markdown sheet (4838
+  // formatted lines measured; measured-plus-30 is 4868, rounded up to 4900). What
+  // the 488 lines buy: the 待审阅 card (executable rows with 批准/拒绝, read-only
+  // findings with 忽略, the honest auto-review line, the recent-decisions list and
+  // its outcome sentence), the element-only Markdown renderer the candidate body
+  // needs (the terminal CLI's plain text is not reviewable at a glance — this is the
+  // reported problem), and the sheet's scrollable body inside the existing
+  // alertdialog/described-by contract. A dependency or a second served asset was
+  // rejected; the module therefore carries the renderer's one copy.
+  // Raised from 4900 by the review fix wave (4880 formatted lines measured;
+  // measured-plus-30 is 4910, rounded up to 4950). The 80 lines: the empty state
+  // keys off the wire pending count (a trimmed list must not print "nothing
+  // waiting"), the trimmed-list line, the codepoint-safe Markdown cap, the
+  // five-mutation header, and the operation-not-executable failure copy plus its
+  // sheet-invalidation entry.
+  'lib/memory-panel.js': 4950,
   // The graph projection uses the existing SQLite links table and scan records;
   // keeping the two backend branches here avoids a second index implementation.
   // Raised from 2300 by the panel data plane: stats({scope}) and recent({limit})
@@ -1056,7 +1164,32 @@ const BUDGETS = {
   // renderer branch — the palette can be edited or deleted from the panel without
   // touching the renderer, and the neutral fallback for admin, untyped and
   // unresolved nodes is the existing theme colour, not new code.
-  'lib/client.js': 1750,
+  // Raised from 1750 by the review-card and Markdown styles (1784 formatted lines
+  // measured; measured-plus-30 is 1814, rounded up to 1850). The 34 lines are the
+  // `.mem-review-*` row/group/stamp rules and the `.mem-md-*` heading, list, code,
+  // quote and link rules the sheet's rendered body needs, all in already-verified
+  // `--dsw-*` tokens.
+  // Raised from 1850 by the plugin-settings section (2669 formatted lines measured after
+  // the review fix wave; measured-plus-30 is 2699, rounded up to 2700). The 652 lines: the nested
+  // `slots` inject and `plugins.bundle.config` registration (silent on a host
+  // without the seat), the schema-driven settings form (groups, bilingual labels,
+  // five control kinds), the read/save/status round trip with polling and the
+  // read-only/read-error fallbacks, plus the settings test helpers.
+  // Raised from 2700 by the owner's toggle-switch follow-up (2716 formatted lines
+  // measured; measured-plus-30 is 2746, rounded up to 2750). The 47 lines replace
+  // the checkbox branch with a real role=switch button (inline tokens only, so the
+  // form still adds no stylesheet class) and record the reason.
+  'lib/client.js': 2750,
+  // The plugin-settings route, registered on the same web server as the panel
+  // (750 formatted lines measured after the review fix waves; measured-plus-30 is 780,
+  // rounded up to 800). What
+  // the size buys: the same-origin + JSON fence, the read projection (entry
+  // resolution from the config editor, effective raw config, defaults-filled values,
+  // field list, last-write record), the save path that validates before any write and
+  // schedules the edit AFTER replying because the edit remounts this plugin, the
+  // attempt status record written atomically under the data root, the status action
+  // the page polls, and the 64 KiB body / non-2xx refusals.
+  'lib/settings-route.js': 800,
   // Raised from 700 by the whole-graph round (716 formatted lines measured;
   // measured-plus-30 is 746, rounded up to 750). What the 16 lines buy: the
   // `spiralSeed` helper and the cold-frame branch that uses it, plus the comment
@@ -1096,7 +1229,18 @@ const BUDGETS = {
   // `disposed` flag that stops a pass from being scheduled after the fiber unloads,
   // and the one comment that records why the two automatic gates read
   // `autoCurate !== false` while the result reports `=== true`.
-  'lib/index.js': 250,
+  // Raised from 250 to 350 by the automatic-review trigger (320 formatted lines
+  // measured; measured-plus-30 is 350). What the 70 lines buy: the second
+  // never-awaited branch off the one curation pass — switch + route + disposed +
+  // in-flight + five-minute per-project cooldown gates, `ctx.get('llm')` read at use
+  // time (P0: absent during apply), and the one content-free diagnostic that says a
+  // pass was asked to review. Moving it into `hooks` would put a model-route read
+  // behind the capture seam that also serves Codex, where no reviewer runs.
+  // Raised from 350 to 400 by the review fix wave (321 formatted lines measured;
+  // measured-plus-30 is 351, rounded up to 400). One shared route predicate
+  // (reviewRouteOf) replaces the trigger's own copy, so the panel's status, the
+  // pass's gate and this trigger cannot disagree about whether the reviewer runs.
+  'lib/index.js': 400,
   'lib/lint.js': 1450,
   // Raised from 1400 by Task 3 (1499 measured). The gate itself is deliberately
   // here rather than in a helper module: the decision is "is this candidate risky",
@@ -1283,7 +1427,14 @@ const BUDGETS = {
   // The hybrid wiring (lazy handle + search facts) added 53 measured lines, and
   // measured-plus-30 rounds up to 2100; the orchestration itself stays in
   // hybrid-recall, so this is the growth the service layer was expected to take.
-  'lib/services.js': 2100,
+  // Raised from 2100 by the review queue's service surface (2406 formatted lines
+  // measured; measured-plus-30 is 2436, rounded up to 2450). What the 306 lines buy:
+  // the four binding-first panel/engine methods (`reviewQueue`, `reviewDetail`,
+  // `reviewDecision`, `autoReviewQueue`) with their bounded projections, plus the
+  // reconciliation hook `curateForBinding` runs after a pass records its findings —
+  // the one call that keeps a fixed note's finding out of the queue forever. The
+  // write itself stays in `curation-review`; this layer only composes and bounds.
+  'lib/services.js': 2450,
   // Raised from 2200 by Task 7 (2229 formatted lines measured; measured-plus-30
   // rounds up to 2300, which is this number — the entry above the old one had no
   // note of its own, so this number states the rule it follows). What the 29 lines

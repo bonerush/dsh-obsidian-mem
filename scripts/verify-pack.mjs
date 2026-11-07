@@ -260,10 +260,12 @@ export function verifyPack(root) {
   if (pkg.bin?.['dsh-obsidian-mem-diagnose'] !== './lib/diagnose-cli.js') {
     problems.push('package.json bin.dsh-obsidian-mem-diagnose must target ./lib/diagnose-cli.js')
   }
-  // The review command is the only route by which a parked curation proposal
-  // becomes a vault change, so a package that dropped it would ship a plugin whose
-  // review queue could never be decided. It is named here, beside the other bin,
-  // because a `bin` entry is the one asset nothing else in the tarball implies.
+  // A human at a terminal needs the review command for a parked curation proposal
+  // to become a vault change — the panel and the automatic reviewer decide through
+  // the host, but a shell-only install has this binary as its route — so a package
+  // that dropped it would ship a plugin whose queue could not be decided from a
+  // terminal. It is named here, beside the other bin, because a `bin` entry is the
+  // one asset nothing else in the tarball implies.
   if (pkg.bin?.['dsh-obsidian-mem-review'] !== './lib/curation-cli.js') {
     problems.push('package.json bin.dsh-obsidian-mem-review must target ./lib/curation-cli.js')
   }

@@ -270,8 +270,9 @@ deterministic digest, followed by a **诊断记录** timeline (time, event, outc
 
 #### 健康 and the three confirmed actions
 
-The panel is read-only by default and adds exactly three confirmed maintenance
-operations when the service advertises them: **重新排队失败任务** (retry one
+The panel is read-only by default and adds three confirmed maintenance
+operations plus the review queue's 批准…/拒绝… decisions when the service
+advertises them: **重新排队失败任务** (retry one
 terminally failed job of the displayed project), **整理热层** (`mem_admin(action="hot",
 operation="compact")`) and **发布项目摘要** (write the owned `_meta/digest.md`).
 Each is preview → confirm: the preview shows a title, facts, effects and any
@@ -384,6 +385,33 @@ code is included.
 
 ## Configuration
 
+**Configuring from the plugin page.** Open DSH's Plugins page and the
+dsh-obsidian-mem bundle; its **配置** section lists every field below in groups —
+基础 / 采集与整理 / 上下文预算 / 模型蒸馏 / 检索 / 其他 — with the current value, the
+schema default and inline validation. Saving goes through the host's config editor
+into **this profile's** patch layer
+(`$DSH_HOME/profiles/<profile>/cordis.patch.yml`) and the plugin reloads in about
+one to two seconds; `enabled` is owned by the page's own switch and is not in the
+form. A value the schema refuses is rejected on save and the host's own message is
+shown: a save that cannot land is reported, never faked. The section needs DSH's
+config editor, which the desktop and web profiles have; when it is unavailable, or
+the plugin row was not installed through the loader, the section is read-only and
+says why. A stored configuration the schema cannot read also stays read-only, with
+the host's error, until the file is fixed.
+
+**First-time migration: the page writes the profile layer, not the home layer.** The
+page never edits `$DSH_HOME/cordis.patch.yml` — that home-level file is a
+higher-priority user layer, and a row there replaces the profile layer's row, so
+the page cannot be authoritative while it exists. If the `- id: obsidian-mem` row
+(or its `config:`) is still in that home-level file — the setup the example below
+uses — the **配置** section opens read-only and says so, showing the values the
+plugin is actually running with. To switch to the page: note whichever values you
+customised, delete that row's `config:` (or the whole row) from
+`$DSH_HOME/cordis.patch.yml`, restart DSH (the host does not watch patch files, so
+reloading the page is not enough), then open the **配置** section again — it is
+editable, and a save lands in the profile patch. The patch-file route below still
+works and remains authoritative for anything the form does not expose.
+
 Configuration lives in the plugin row, and a row's inline `config:` **replaces the
 whole object** — DSH patch layers do not deep-merge. So an override must list
 every field, `distill` included. Put it in the home-level patch layer,
@@ -412,6 +440,7 @@ every field, `distill` included. Put it in the home-level patch layer,
     hotArchiveRatio: 0.67
     autoCapture: true
     autoCurate: true
+    autoReview: true
     captureIdleMs: 90000
     distill:
       provider: ""
@@ -464,6 +493,7 @@ explanation instead of doing nothing.
 | `hotArchiveRatio` | `0.67` | open interval (0,1) | Above this fill level the plugin archives 已完成 entries before writing. A file already over its cap that has nothing archivable left is repaired with `mem_admin(action="hot", operation="compact")`, never by hand. |
 | `autoCapture` | `true` | boolean | Capture completed turns. `false` stops new capture but still drains jobs already queued. |
 | `autoCurate` | `true` | boolean | Automatic curation passes. `false` disables the automatic triggers only: `mem_admin(action="curation", operation="scan")` and the review command keep working, and no source note is changed either way. |
+| `autoReview` | `true` | boolean | Automatic review of parked executable proposals after the DSH host's automatic curation pass. Needs the `distill.provider` + `distill.model` route: with the pair empty there is no route, so it makes no model call and the queue waits for you. `false` disables only the automatic reviewer — the panel and the review command still work, and `autoCurate` is unchanged. |
 | `captureIdleMs` | `90000` | integer 1000–3600000 | Idle debounce before a captured turn is distilled. |
 | `distill.provider` | `""` | string | Model route. Must be set together with `model`, or both left empty (empty = reuse the session's last recorded route). A session imported from another harness has no recorded route, so imported history stays `deferred` until this is set. |
 | `distill.model` | `""` | string | See above. |
@@ -652,35 +682,32 @@ Turn it live by setting `dryRun: false` and restarting.
 ### Automatic curation
 
 With `autoCurate: true` (the default) the plugin also inspects the notes already
-in the vault and keeps a compact navigation view of the current project. Two
-things about it matter before anything else: the inspection reads Markdown and
-**makes no model call**, and **nothing semantic happens on its own** — no note is
-merged, archived, superseded, promoted or deleted. A finding either becomes a view
-entry or is parked for you to decide.
+in the vault and keeps a compact navigation view of the current project. The
+inspection itself reads Markdown, **makes no model call**, and never merges,
+archives, supersedes, promotes or deletes a note. A finding either becomes a view
+entry or is parked for a decision; a decision has three routes — the 健康 panel,
+the review command and, when enabled, the automatic reviewer — described below.
+Only an apply changes a note, and it runs the same reviewed-memory transaction as
+every other write.
 
 #### The everyday loop
 
 Doing nothing is a valid way to use this. The automatic pass keeps the view fresh
-and parked proposals simply wait. When you want to see what it found:
+and parked proposals simply wait. When you want to see what it found, or decide a
+proposal, there are three routes — and all of them decide through the same review
+path: claim, a source-hash re-verify before an apply, and the reviewed-memory
+transaction an apply uses.
 
-1. **Ask for the state.** `mem_admin(action="curation", operation="status")` reads
-   the stored cursor, the committed view and the bounded proposal queue. It
-   inspects no note, so its `examined`, `counts.findings` and
-   `counts.unexamined` are `0` by design — those numbers describe a pass, not the
-   project.
-2. **Scan when you want the check to run now.**
-   `mem_admin(action="curation", operation="scan")` runs one bounded pass and
-   reports what that pass did. A project larger than one pass is normal: repeat
-   `operation="scan"` until the result says `complete: true`. Do not expect the
-   next session to finish it for you — see *When a pass is incomplete* below.
-3. **Pick a proposal to decide.** The result carries `proposals.items`, up to 200
-   pending rows, newest first, each with exactly `proposalId`, `kind`, `reason`
-   and `reviewOnly`. Tell the two forms apart by `reviewOnly`, not by `kind`: a
-   `near-duplicate` can be either. If `proposals.truncated` is `true`, more pending
-   rows exist than were returned — decide the listed ones, then ask for the state
-   again.
-4. **Run the review command** from the bound project's directory, with the same
-   `DSH_HOME` your host uses:
+1. **Panel — 健康 → 待审阅.** Open the memory panel from the DSH sidebar
+   (**+ → 记忆 (Memory)**) and switch to **健康**. The **待审阅** card is the
+   pending review queue: each row names its kind, reason, sources and age. Open a
+   row and the sheet renders the candidate as Markdown — a supersede candidate
+   also shows the note it would replace and the status the write would move.
+   **批准…** applies exactly that proposal; **拒绝…** changes no note. A
+   review-only finding offers only **忽略…**, a rejection: it records the
+   decision and changes no note.
+2. **Review command — unchanged.** Run it from the bound project's directory with
+   the same `DSH_HOME` your host uses:
 
    ```sh
    dsh-obsidian-mem-review --vault /absolute/path/to/vault <proposal-id>
@@ -691,13 +718,54 @@ and parked proposals simply wait. When you want to see what it found:
    the same command — use the absolute script path when the bound project is a
    different repository. It prints the proposal's exact operation and sources, and
    accepts only `apply <id>` or `reject <id>` typed byte-for-byte, one proposal per
-   run: there is no `--all` and no default answer. `reject` changes no source note.
-5. **Look again.** `status` shows the queue without the decided item, and the next
-   brief or scan reflects an approved change.
+   run: there is no `--all` and no default answer. `reject` changes no source note,
+   and the command needs a terminal on stdin *and* stdout.
+3. **Automatic reviewer — when `autoReview: true` (the default), the
+   `distill.provider` + `distill.model` route is configured, and the DSH host runs
+   an automatic curation pass.** The plugin asks the model, over that route, to
+   judge up to three pending executable proposals. It re-reads every source hash
+   first; only a `confidence ≥ 0.8` `apply` or `reject` acts, and everything else —
+   `defer`, low confidence, an answer outside the contract, or no route — leaves
+   the row pending for routes 1 and 2. A proposal whose evidence changed is
+   retired, not applied: no decision could use it any more, and the next
+   distillation produces a fresh candidate. An automatic decision records
+   `decidedBy: "auto"` and the model id, and the 健康 card's recent list shows the
+   most recent decisions and retirements so you can audit what the plugin decided
+   for you. An explicit `operation="scan"` and the Codex adapter's pass do not
+   start the reviewer; with `autoCurate: false` no automatic pass runs, so no
+   automatic review happens (the panel and the command keep working).
+   `autoReview: false` disables only this route.
 
-**No `mem_admin` action, parameter or enum value applies, approves or rejects a
-proposal**, so approval is never something a model can do on your behalf. The
-review command is the only route, and it needs a terminal on stdin *and* stdout.
+**No tool and no `mem_admin` action, parameter or enum value approves or rejects a
+proposal** — so the session model cannot decide one on your behalf. The panel and
+the review command are the human routes; the built-in reviewer is plugin-internal,
+bounded (at most three proposals per pass) and every decision is recorded.
+
+To only read the state or run the check now:
+`mem_admin(action="curation", operation="status")` reads the stored cursor, the
+committed view and the bounded proposal queue without inspecting a note — its
+`examined`, `counts.findings` and `counts.unexamined` are `0` by design.
+`operation="scan"` runs one bounded pass now and reports what it did; a project
+larger than one pass needs repeated scans until `complete: true` (see *When a pass
+is incomplete* below). Both still work with `autoCurate: false`: only the automatic
+triggers stop. The queue itself returns up to 200 pending rows, newest first, each
+with exactly `proposalId`, `kind`, `reason` and `reviewOnly`; tell the two forms
+apart by `reviewOnly`, not by `kind` (a `near-duplicate` can be either), and
+`proposals.truncated: true` means more pending rows exist than were returned.
+
+**What stays automatic, and what stays manual.** The inspection itself and the
+navigation view are automatic and make no model call. The deterministic retirement
+of review-only findings is automatic too: a completed pass retires a finding it
+examined and no longer reproduces, so a fixed note cannot leave a row in the queue
+forever. A semantic decision about a parked executable candidate is automatic only
+through the confidence-gated reviewer in route 3; with `autoReview: false`, without
+a route, or on any uncertain answer, a human decides it. A review-only finding is
+never decided by a model — it is evidence, so the only automatic change to it is
+retirement; applying one is impossible and dismissing one is a human action.
+
+After a decision the health card drops the row on its next poll; `status` no
+longer lists the decided record, and the next brief or scan reflects an approved
+change.
 
 #### What you can approve, and what you can only fix
 
@@ -715,9 +783,9 @@ wikilink that resolves to nothing, a plugin-owned note with no provenance, or th
 scanner's own near-duplicate observation. `apply` cannot repair one, and the review
 command offers no operation to run. Fix the source issue the finding names — edit
 the note, correct the link, refresh or retire it — and run `operation="scan"` again;
-the finding clears once the note no longer shows the problem. A finding you
-disagree with can simply be rejected, which records the decision and changes no
-note.
+a completed pass examines the note and, once the problem is gone, retires the row.
+A finding you disagree with can simply be rejected (on the panel with **忽略…**, or
+by the command), which records the decision and changes no note.
 
 The command refuses rather than guessing, and each refusal is a code you can act
 on. `source-changed` means a source moved between the scan and the approval: the
@@ -1117,7 +1185,7 @@ sandbox.
 | A curation proposal is `pending` and no note changed | That is the design: a suspected near duplicate or a model-proposed supersede is parked for review and never applied automatically. | `mem_admin(action="curation", operation="status")` lists the queue with an id per row; approve or reject one with `dsh-obsidian-mem-review --vault <absolute-path> <proposal-id>`. Rejecting touches no source note. |
 | A review says `review-recovery-required` | This proposal already has a partial or committed application: a process died between publishing the note and recording the decision, so rejecting it would leave a published note behind a `rejected` record. | Run the review again and approve with `apply <id>`, which resolves that attempt — rolling it back if it never committed, forward if it did — and publishes the candidate. Rejecting stays refused until the evidence is resolved. |
 | A review says `review-lock-unavailable` | The private claim guard could not be taken at all: another review is inside its short claim guard, or the guard file is unreadable or on storage that cannot hold it. A healthy competing review of one proposal is answered `proposal-not-current` instead. | Wait a moment and retry; if it persists with no review running, inspect the data root. Do not delete the guard while a review might be live. |
-| A review on a machine without `O_NOFOLLOW` refuses with `review-lock-unavailable` for every proposal | The claim guard refuses to open a path it cannot prove is a regular, single-link file, and some platforms (Node on Windows) do not expose `O_NOFOLLOW`. The refusal is deliberate: the guard protects the only approval route. | Until a symlink-safe fallback ships, review curation proposals on macOS or Linux. Reads, writes and scans are unaffected. |
+| A review on a machine without `O_NOFOLLOW` refuses with `review-lock-unavailable` for every proposal | The claim guard refuses to open a path it cannot prove is a regular, single-link file, and some platforms (Node on Windows) do not expose `O_NOFOLLOW`. The refusal is deliberate: the guard protects the approval path. | Until a symlink-safe fallback ships, review curation proposals on macOS or Linux. Reads, writes and scans are unaffected. |
 | A review says `source-changed` | A source note was edited between the scan and the approval. The proposal stays `pending` rather than rebasing itself onto bytes nobody reviewed. | Review the new state and decide again. |
 | The brief no longer shows the compact navigation, or a claimed duplicate group disappeared | The stored view is a cache: one of its sources changed, vanished or became unreadable, so the brief fell back to the source-navigation path instead of injecting a stale line. | Nothing to repair. The next complete pass rebuilds it; `mem_admin(action="curation", operation="scan")` runs one now and reports `complete` and any truncation reason. |
 

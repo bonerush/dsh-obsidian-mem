@@ -43,6 +43,10 @@ const DEFAULTS = {
   // turns them off, and `false` disables only the automatic ones — the explicit
   // `mem_admin(action="curation", operation="scan")` stays available.
   autoCurate: true,
+  // The automatic reviewer for parked executable proposals: on by default, and
+  // `false` disables only the model decision — the queue, the CLI and the panel
+  // stay available. It needs the `distill` route; without one it is a no-op.
+  autoReview: true,
   captureIdleMs: 90000,
   distill: {
     provider: '',
@@ -370,6 +374,18 @@ test('autoCurate is the default switch Task 6 reads, and only a boolean is accep
   assert.equal(validateConfig(validateConfig({ autoCurate: false })).autoCurate, false)
   assertRejected(/autoCurate/, { autoCurate: 'off' })
   assertRejected(/autoCurate/, { autoCurate: 0 })
+})
+
+test('autoReview is the automatic reviewer switch, and only a boolean is accepted', () => {
+  // `autoReview` gates only the bounded model reviewer the curation review panel
+  // adds: the panel and the TTY command are unaffected, and with the default
+  // empty `distill` route the reviewer is a stated no-op rather than an error.
+  assert.equal(validateConfig({}).autoReview, true)
+  assert.equal(validateConfig({ autoReview: false }).autoReview, false)
+  assert.equal(validateConfig({ autoReview: true }).autoReview, true)
+  assert.equal(validateConfig(validateConfig({ autoReview: false })).autoReview, false)
+  assertRejected(/autoReview/, { autoReview: 'off' })
+  assertRejected(/autoReview/, { autoReview: 0 })
 })
 
 test('an unknown top-level key is refused instead of silently defaulting', () => {
