@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 2.1.1 — 2026-11-08
+
 ### Fixed
 
 - CI 的 Unreleased 门禁改为按仓库状态识别发布推送：旧实现只豁免提交信息以
