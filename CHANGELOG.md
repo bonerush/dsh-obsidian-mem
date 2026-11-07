@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 2.1.0 — 2026-11-07
+
 - **整理提案现在有三条决定路径：健康面板的待审阅队列、未改动的评审命令、以及插件内置的
   自动审阅；新增顶层配置 `autoReview`（默认 `true`）。** 此前评审命令是唯一路径，它要求
   真实终端和逐字节输入的 `apply <id>` / `reject <id>`，不开终端的项目会让可执行提案一直

@@ -95,7 +95,6 @@ function fakeEditor({ entries = [entryOf()], configuration = null, edit = null }
 /** One harness: a fake webServer, a real loopback HTTP server and a request helper. */
 async function harness(t, { editor = () => null, now = () => FIXED_NOW } = {}) {
   const dataRoot = await mkdtemp(join(tmpdir(), 'obsidian-mem-settings-'))
-  t.after(() => rm(dataRoot, { recursive: true, force: true }))
   const routes = new Map()
   const dispose = registerSettingsRoute(
     {
@@ -108,7 +107,6 @@ async function harness(t, { editor = () => null, now = () => FIXED_NOW } = {}) {
     },
     { editor, dataRoot, packageName: PACKAGE_NAME, now },
   )
-  t.after(dispose)
   const server = createServer((request, response) => {
     const route = routes.get(request.url)
     if (route === undefined) {
@@ -120,7 +118,19 @@ async function harness(t, { editor = () => null, now = () => FIXED_NOW } = {}) {
   })
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
-  t.after(() => server.close())
+  // One teardown in a safe order: stop the listener first, so a cleanup failure can
+  // never leave the process alive on an open server (the runner has no --test-force-exit
+  // and would wait on that handle forever), then drop the routes, then remove the data
+  // root. The route writes its outcome record after the reply, so a deferred save a test
+  // releases at the very end may still be writing here; the retry window absorbs that
+  // race instead of failing the hook with ENOTEMPTY.
+  t.after(async () => {
+    const closed = new Promise((resolve) => server.close(resolve))
+    server.closeAllConnections?.()
+    await closed
+    dispose()
+    await rm(dataRoot, { recursive: true, force: true, maxRetries: 8, retryDelay: 25 })
+  })
   const origin = 'http://127.0.0.1:' + server.address().port
   const request = async (body, headers) => {
     const response = await fetch(origin + ROUTE_PATH, {
