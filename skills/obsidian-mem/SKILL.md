@@ -83,7 +83,12 @@ Report it and stop: do not delete, rewrite or "repair" it, and do not read the
 
 A user who does not want to be asked can turn the notice off — `bindHint: false`
 in the DSH plugin config, `OBSIDIAN_MEM_BIND_HINT=0` for the Codex adapter — and
-this section then applies only when a tool refuses.
+this section then applies only when a tool refuses. On DSH, that plugin config —
+and every other plugin setting — can also be changed from the Plugins page (open
+the dsh-obsidian-mem bundle, then its 配置 section), not only by editing the patch
+files by hand. The page writes the profile patch; if a hand-edited row still lives
+in the home-level patch, the section opens read-only, so tell the user to remove
+that row once first.
 
 ## 2. Vault layout
 

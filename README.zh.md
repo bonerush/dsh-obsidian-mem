@@ -328,6 +328,25 @@ Canvas 绘制、力模型与播种/拖拽协议都提取自本机 Obsidian 图�
 
 ## 配置
 
+**在插件页配置。** 打开 DSH 的插件页，进入 dsh-obsidian-mem 这个 bundle：它的
+**配置** 区按 基础 / 采集与整理 / 上下文预算 / 模型蒸馏 / 检索 / 其他 分组列出下文
+每一个字段，带当前值、schema 默认值和就地校验。保存由宿主的配置编辑器（config
+editor）写进**这个 profile 的** patch 层
+（`$DSH_HOME/profiles/<profile>/cordis.patch.yml`），插件随之重新加载（约 1–2 秒）；
+`enabled` 归页面自己的开关管，不在表单里。schema 拒绝的取值会在保存时被拒绝并显示宿主
+自己的报错：落不了盘的保存照实报错，绝不假装成功。这个区需要 DSH 的配置编辑器（桌面版
+和 web profile 都有）；没有它，或者插件行不是经 Loader 安装的，这个区就是只读的并写明
+原因。已存储的配置若无法被 schema 读取，同样保持只读并显示宿主的报错，直到修好文件。
+
+**首次迁移：页面写 profile 层，不写 home 层。** 页面从不编辑
+`$DSH_HOME/cordis.patch.yml`——那是优先级更高的用户层，那里的一行会整体取代 profile
+层的一行，所以只要它还在，页面就无法作准。如果 `- id: obsidian-mem` 这一行（或它的
+`config:`）还在那个 home 层文件里——也就是下面示例的写法——**配置** 区会以只读方式打开
+并写明原因，同时显示插件实际正在使用的取值。要换到页面来配置：先记下你自定义过的值，
+从 `$DSH_HOME/cordis.patch.yml` 删掉那一行的 `config:`（或整行），**重启 DSH**（宿主
+不监视 patch 文件，刷新页面不够），再打开 **配置** 区——它现在可编辑，保存会写进
+profile patch。下面直接编辑 patch 文件的路线仍然可用，表单没暴露的取值以它为准。
+
 配置写在插件行里，而行内的 `config:` 会**整体替换整个对象**——DSH 的 patch 层不做
 深合并。所以要覆盖就必须列出每一个字段，包括 `distill`。把它写进 home 级 patch
 层 `$DSH_HOME/cordis.patch.yml`，和文件里已有的内容放在一起：

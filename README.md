@@ -385,6 +385,33 @@ code is included.
 
 ## Configuration
 
+**Configuring from the plugin page.** Open DSH's Plugins page and the
+dsh-obsidian-mem bundle; its **配置** section lists every field below in groups —
+基础 / 采集与整理 / 上下文预算 / 模型蒸馏 / 检索 / 其他 — with the current value, the
+schema default and inline validation. Saving goes through the host's config editor
+into **this profile's** patch layer
+(`$DSH_HOME/profiles/<profile>/cordis.patch.yml`) and the plugin reloads in about
+one to two seconds; `enabled` is owned by the page's own switch and is not in the
+form. A value the schema refuses is rejected on save and the host's own message is
+shown: a save that cannot land is reported, never faked. The section needs DSH's
+config editor, which the desktop and web profiles have; when it is unavailable, or
+the plugin row was not installed through the loader, the section is read-only and
+says why. A stored configuration the schema cannot read also stays read-only, with
+the host's error, until the file is fixed.
+
+**First-time migration: the page writes the profile layer, not the home layer.** The
+page never edits `$DSH_HOME/cordis.patch.yml` — that home-level file is a
+higher-priority user layer, and a row there replaces the profile layer's row, so
+the page cannot be authoritative while it exists. If the `- id: obsidian-mem` row
+(or its `config:`) is still in that home-level file — the setup the example below
+uses — the **配置** section opens read-only and says so, showing the values the
+plugin is actually running with. To switch to the page: note whichever values you
+customised, delete that row's `config:` (or the whole row) from
+`$DSH_HOME/cordis.patch.yml`, restart DSH (the host does not watch patch files, so
+reloading the page is not enough), then open the **配置** section again — it is
+editable, and a save lands in the profile patch. The patch-file route below still
+works and remains authoritative for anything the form does not expose.
+
 Configuration lives in the plugin row, and a row's inline `config:` **replaces the
 whole object** — DSH patch layers do not deep-merge. So an override must list
 every field, `distill` included. Put it in the home-level patch layer,

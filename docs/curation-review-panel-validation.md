@@ -188,3 +188,131 @@ README.zh.md c5378339c94190bd7cbf51b8a6b8f34c2da079e3
   adapter (no automatic reviewer exists there by design); Windows-specific
   filesystem paths. Both are stated in the README/skill and unchanged by this
   feature.
+
+## 9. Plugin-page settings (second feature, same branch, 2026-11-07)
+
+The same typed branch `feat/review-inbox` was then extended with the graphical
+settings feature requested after the review panel landed (see
+`docs/superpowers/specs/2026-11-07-plugin-settings-panel-design.md`, frozen
+2026-11-07, amendments A1–A5; briefs/reports in the same
+`.superpowers/sdd/2026-11-07-curation-review-panel/` workspace as
+`task-{6..8}-*`). Goal: edit the ~30 config fields on DSH's own Plugins page
+instead of hand-editing the profile patch. Non-goals stayed non-goals: the page
+never writes the home layer (`$DSH_HOME/cordis.patch.yml`), never exposes the
+tool surface, and does not implement volatile semantics.
+
+### 9.1 Shape landed
+
+| Unit | Measured | Budget (architecture.test.js) |
+|---|---|---|
+| `lib/settings-route.js` (new) | 750 formatted lines | 800 |
+| `lib/config.js` | 547 | 600 |
+| `lib/index.js` | 340 | 400 |
+| `lib/client.js` | 2669 | 2700 |
+| `test/settings-route.test.js` (new) | 819 lines, 25 cases | unbudgeted |
+| `test/panel-client.test.js` | 52 tests (+10 settings) | unbudgeted |
+
+- `lib/settings-route.js` serves exactly `/obsidian-mem/settings` (GET = read;
+  POST read/save/status) behind the existing trusted-origin + `x-obsidian-mem-panel: 1`
+  + JSON fence with a 64 KiB body bound. It reads the **live** row
+  (`entry.options.config`, so the home layer is visible), projects
+  `fields`/`defaults` from `describeConfigFields()` plus `CONFIG_RANGES`, and
+  decides writability by comparing live values against
+  `configuration().override` (non-empty) else `inherited`.
+- Saving validates before writing, refuses a non-writable row with
+  409 `not-writable`, guards a second save while a pending record is younger
+  than `SETTINGS_PENDING_TTL_MS = 120000`, writes an atomic pending record, then
+  schedules `configEditor.edit()` **after** replying `{scheduled, attempt}` (the
+  edit remounts this plugin) and records applied/failed for status polling.
+- Client: nested optional `slots` inject registers `plugins.bundle.config` keyed
+  `dsh-obsidian-mem`; the form is generated from the host schema (boolean,
+  enum, integer/number with bounds, string, stringArray), grouped by dotted path
+  prefix, bilingual labels, defaults hints, inline range/integer and
+  distill-pair validation, dirty tracking, 恢复默认/刷新, reason-aware read-only
+  banners (`layer-override` names `$DSH_HOME/cordis.patch.yml` and the
+  migration; `config-invalid`/readError shows the error and offers no save).
+- `lib/config.js` gained one `CONFIG_RANGES` table (11 bounded fields) shared by
+  `validateConfig()` and the projection, so the form cannot drift from the
+  validator; the projection is 33 leaves (all except `enabled`).
+
+### 9.2 Final repository gate (after settings review fix waves and budget re-derivation)
+
+```sh
+npm run check        # lint, format:check, types, full suite, prepack, pack:check
+```
+
+Result: **exit 0** (2026-11-07).
+
+- `npm run lint` — clean.
+- `npm run format:check` — clean.
+- `npm run types` — clean (`tsc --noEmit`).
+- Full suite: **1714 tests / 1713 pass / 1 skipped / 0 fail**, 253 s
+  (the one skip is the pre-existing live-marketplace probe).
+- `verify-pack`: OK — version 2.0.3, files allowlist 7 entries, 16 required
+  assets present and covered, 6 tools registered, 4 names published.
+- `verify-tarball`: OK — **94 entries, 84 lib modules**, every required asset
+  present (feature baseline: 93/83; settings adds `lib/settings-route.js`).
+- `git diff --check` — clean.
+
+### 9.3 Independent review and fix waves
+
+- Round 1 (`review-settings`, fresh context, diff vs `0120868`, DSH 0.2.2-rc.1
+  package sources as ground truth): **SPEC fail / QUALITY fail — 1 Critical,
+  3 Important, 12 Minor**. Security fence judged sound.
+  - **C1 (Critical):** the read used `configEditor.configuration()` (bundle +
+    profile layers only); the **home patch** `$DSH_HOME/cordis.patch.yml`
+    outranks it and holds the owner's real `- id: obsidian-mem` row (19 keys),
+    so the page showed defaults and every save was refused as overridden.
+    Fixed by reading the live row and returning `writable:false, reason:
+    'layer-override'` with the literal `$DSH_HOME/cordis.patch.yml` migration
+    hint; the page never writes that layer.
+  - **I1:** a read error returned defaults and still allowed save (a save would
+    have silently replaced stored values) → read-only `config-invalid`.
+  - **I2:** a stale `pending` record wedged saves forever → 120 s TTL (stale
+    status answers failed; a newer save may proceed).
+  - **I3:** docs claimed schema defaults and inline validation that were not
+    implemented → `CONFIG_RANGES` + projected flags + client defaults/inline
+    validation.
+- Fix waves were applied by `impl-host` / `impl-ui` / `impl-docs`; re-review
+  verdict: **SPEC pass / QUALITY pass — 0 Critical, 0 Important, 15 Minor**.
+  N1 (save not gated by the read-only decision) fixed by sharing one
+  `rowDecision()` between read and save (409 `not-writable` for all four
+  read-only shapes, nothing written or scheduled); N3 (docs said "restart DSH
+  or refresh") corrected to **restart DSH** because the host does not watch
+  patch files; N5 skipped (integer wire shape already pinned by the projection
+  test).
+
+### 9.4 Deferred minors (recorded, not silent)
+
+- **N2** — layer-equality corner: the "row or its config" nuance when a
+  higher layer overrides only part of the row; the resolved-row decision is
+  conservative (read-only) and the copy explains migration.
+- **N4** — 409/timeout copy does not state "retry in up to 2 minutes" (TTL
+  behaviour is tested; wording not).
+- **N6** — older-editor fallback path untested (this desktop ships the
+  documented `configEditor` surface).
+- **M1** — status-without-attempt ordering/JSDoc nuance.
+- **M2** — response ceilings hold by construction, not a measured cap, for
+  user-supplied `ignoreGlobs` (bounded elsewhere).
+- **M5** — client budget comment numbers drift from measured lines (budget
+  itself is enforced by the architecture test).
+- **M6** — LAYERS comment placement.
+- **M8** — glob trim in a fixture.
+- **M10** — the "~1–2 s reload" wording is reasoned, not measured.
+- **M11** — diagnostics hint in the timeout copy is frozen by the spec.
+- **M12** — projection error branches are not all exercised; save completeness
+  is not asserted for every field type.
+- **Not run live:** the page was exercised through the real host route with the
+  dashboard harness and real loopback HTTP, not yet in the running DSH desktop
+  UI; the owner restart is the live check. The host does not watch patch files,
+  so a restart (not a page refresh) is required after changing the home layer.
+
+### 9.5 Known user-facing consequence (home layer)
+
+The owner's current configuration lives in the home patch
+(`$DSH_HOME/cordis.patch.yml`, one `- id: obsidian-mem` row with 19 keys), and
+that layer outranks the profile. Until those keys are removed from the home
+layer and DSH is restarted, the new settings page correctly reports
+**read-only — overridden by a higher layer** instead of silently writing a
+profile patch that would never apply. This is the C1 fix behaving as designed,
+not a bug; the page itself never edits the home layer.
