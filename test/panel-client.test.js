@@ -2635,9 +2635,9 @@ test('the settings form renders the host fields grouped, labelled and with curre
   )
 
   const control = (path) => settingsControl(tree, path)
-  assert.equal(control('autoReview').type, 'input')
-  assert.equal(control('autoReview').props.type, 'checkbox')
-  assert.equal(control('autoReview').props.checked, false, 'the current value is shown')
+  assert.equal(control('autoReview').type, 'button')
+  assert.equal(control('autoReview').props.role, 'switch', 'a mobile-style switch, not a checkbox')
+  assert.equal(control('autoReview').props['aria-checked'], false, 'the current value is shown')
   assert.equal(control('vaultPath').props.type, 'text')
   assert.equal(control('vaultPath').props.value, '/tmp/vault')
   assert.equal(control('retrievalEngine').type, 'select')
@@ -2658,6 +2658,32 @@ test('the settings form renders the host fields grouped, labelled and with curre
   assert.equal(control('ignoreGlobs').type, 'textarea')
   assert.equal(control('ignoreGlobs').props.value, 'ignored/**', 'one array item per line')
   assert.equal(settingsButton(tree, '保存').props.disabled, true, 'nothing to save while clean')
+})
+
+test('boolean fields are toggle switches and a click dirties the form', async (t) => {
+  const { tree, render } = await mountSettingsPage(t, () => settingsRead())
+  const before = settingsControl(tree, 'autoReview')
+  assert.equal(before.props.disabled, false)
+  assert.equal(
+    before.props['aria-label'],
+    '自动审阅提案',
+    'the switch keeps the row label as its name',
+  )
+  const knob = nodes(before).find((node) => node?.type === 'span')
+  assert.ok(knob, 'the switch renders a knob element')
+  assert.equal(
+    nodes(tree).some((node) => node?.props?.type === 'checkbox'),
+    false,
+    'the settings form no longer renders checkboxes',
+  )
+  before.props.onClick()
+  const next = render()
+  assert.equal(
+    settingsControl(next, 'autoReview').props['aria-checked'],
+    true,
+    'clicking the switch flips it on',
+  )
+  assert.equal(settingsButton(next, '保存').props.disabled, false, 'the toggle dirties the form')
 })
 
 test('a dirty form saves the complete nested draft and reports the reload', async (t) => {

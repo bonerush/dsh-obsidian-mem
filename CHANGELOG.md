@@ -56,8 +56,12 @@ release artifact. The versioning policy is in the README, under Development.
   显示实际生效的取值，保存不会落地；要迁移到页面，先记下自定义过的值，再删掉该文件里
   `- id: obsidian-mem` 行的 `config:`（或整行），**重启 DSH** 后即可在表单里重新填入并
   保存——宿主不监视 patch 文件，刷新页面不够。手改 patch 文件的路线仍然可用，表单没
-  暴露的取值以它为准。没有新增任何配置键，配置表与默认值保持不变。
-  - 验证：全量门禁以 Lead 的实测为准（`npm run check`）；本条目不预填测试数量。
+  暴露的取值以它为准。布尔字段用手机式拨块开关（`role="switch"`、内联 token 配色）而不是
+  勾选框，点击即改草稿、只读时同样禁用——2026-11-07 按主人反馈替换。没有新增任何配置键，
+  配置表与默认值保持不变。
+  - 验证：全量 `npm run check` 通过：1715 tests / 1714 pass / 1 skipped；`verify-pack`
+    16 required assets、6 tools（4 names published）；`verify-tarball` 94 entries / 84 lib
+    modules；`test/panel-client.test.js` 53/53（新增拨块开关用例）。
 
 ## 2.0.3 — 2026-11-05
 

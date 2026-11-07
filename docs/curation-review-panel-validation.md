@@ -316,3 +316,49 @@ layer and DSH is restarted, the new settings page correctly reports
 **read-only — overridden by a higher layer** instead of silently writing a
 profile patch that would never apply. This is the C1 fix behaving as designed,
 not a bug; the page itself never edits the home layer.
+
+## 10. Toggle switches and home-layer migration (owner follow-up, 2026-11-07)
+
+**Trigger.** After the settings page shipped in `b537039` and was installed, the owner
+reported that the form could not be used at all: every control was grey/inert. The same
+message asked for a second change: replace the boolean checkboxes with phone-style toggle
+buttons.
+
+**Cause.** Exactly the case §9.5 predicted. The owner's configuration lived in the home
+patch (`$DSH_HOME/cordis.patch.yml`, one `- id: obsidian-mem` row, 19 top-level keys);
+that layer outranks the profile, so the route correctly answered `writable:false,
+reason:'layer-override'` and the client correctly disabled the controls. The plugin code
+was not broken; the installed config location was.
+
+**Migration (operator action, explicit owner consent).** The owner chose "迁移到 profile
+层，现在帮我做" when asked. `/tmp/migrate-obsidian-config.mjs --apply` then:
+
+- backed the home patch up to `~/.dsh/cordis.patch.yml.bak-2026-11-07T13-19-14`
+  (1,359 B, mode 600) and replaced the file with the four general comment lines, a note
+  naming the backup, and `[]` (435 B, mode 600);
+- appended the row text verbatim (`- id: obsidian-mem` + the full `config:` block) to
+  `~/.dsh/profiles/desktop/cordis.patch.yml` (3,866 B, mode 600);
+- verified with the repo-resolvable `yaml` package that the home file parses to `[]`,
+  the profile file parses to 19 entries, and the migrated `config` deep-equals the
+  original 19-key object. The page still never writes the home layer; a restart (not a
+  refresh) remains required because the host does not watch patch files.
+
+**Toggle switches (presentation only).** The `boolean` branch in `lib/client.js` now
+renders a real `<button type="button" role="switch" aria-checked aria-label>` with an
+inline-styled track/knob using the verified tokens (`--dsw-alias-border-l2` off,
+`--dsw-alias-brand-primary` on), plus the same click-to-dirty path the checkbox had. It
+is still inline styles only — the form adds no stylesheet class — and `disabled` still
+follows the host's writable decision. `test/panel-client.test.js` was updated (checkbox
+assertions removed, new test "boolean fields are toggle switches and a click dirties the
+form"): 53 tests / 53 pass. `test/architecture.test.js` budget for `lib/client.js` was
+raised 2,700 → 2,750 (2,716 formatted lines measured; measured-plus-30 is 2,746).
+
+**Gate.** `npm run check` exit 0: 1715 tests / 1714 pass / 1 skipped; `verify-pack`
+16 required assets present and covered, 6 tools registered and 4 names published;
+`verify-tarball` 94 entries / 84 lib modules.
+
+**Spec.** Amendments A6 (toggles) and A7 (migration) were appended to
+`docs/superpowers/specs/2026-11-07-plugin-settings-panel-design.md`.
+
+**Not changed.** No host route, schema, default, or tool surface changed in this
+follow-up; the read-only decision still applies whenever a higher layer really is present.

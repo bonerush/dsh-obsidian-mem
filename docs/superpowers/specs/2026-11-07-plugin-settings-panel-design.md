@@ -233,3 +233,23 @@ host's refusal.
 **A5 — the save action re-checks writability.** A save POST for a row whose read
 would be read-only is refused with a coded 409 (`not-writable`) before anything is
 scheduled, so a stale page cannot overwrite a row it can no longer read correctly.
+
+**A6 — booleans are toggle switches, not checkboxes.** The owner asked for a phone-style
+toggle button after using the first build. The client renders every `boolean` field as a
+real `<button type="button" role="switch" aria-checked>` with an inline-styled track and
+knob (tokens only: `--dsw-alias-border-l2` off, `--dsw-alias-brand-primary` on, white
+knob), keeping the row label as the switch's accessible name. Clicking flips the draft
+through the same `update(path, value)` path the checkbox used; `disabled` still follows
+the host's writable decision. This preserves the "inline styles only, no stylesheet
+class" contract of the section (still no `className` in the form) and removes the last
+checkbox from the plugin page's settings surface.
+
+**A7 — operator migration of the home layer happened after the review.** The owner's
+`- id: obsidian-mem` row lived in `$DSH_HOME/cordis.patch.yml` (A1's exact case) and made
+the page read-only. With the owner's explicit consent the row's `config:` was moved
+verbatim into `$DSH_HOME/profiles/desktop/cordis.patch.yml`, the home file was backed up
+as `cordis.patch.yml.bak-<stamp>` and reduced to a valid empty patch (`[]`) with a note,
+and every value was verified equal by parsing both files. This is an operator action, not
+a page capability: the design rule "the page never writes the home layer" is unchanged,
+and a restart (not a refresh) is still required because the host does not watch patch
+files.

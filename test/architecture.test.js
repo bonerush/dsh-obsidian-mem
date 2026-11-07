@@ -1175,7 +1175,11 @@ const BUDGETS = {
   // without the seat), the schema-driven settings form (groups, bilingual labels,
   // five control kinds), the read/save/status round trip with polling and the
   // read-only/read-error fallbacks, plus the settings test helpers.
-  'lib/client.js': 2700,
+  // Raised from 2700 by the owner's toggle-switch follow-up (2716 formatted lines
+  // measured; measured-plus-30 is 2746, rounded up to 2750). The 47 lines replace
+  // the checkbox branch with a real role=switch button (inline tokens only, so the
+  // form still adds no stylesheet class) and record the reason.
+  'lib/client.js': 2750,
   // The plugin-settings route, registered on the same web server as the panel
   // (750 formatted lines measured after the review fix waves; measured-plus-30 is 780,
   // rounded up to 800). What
