@@ -28,9 +28,12 @@ import { test } from 'node:test'
 import {
   CurationError,
   MAX_PROPOSAL_BYTES,
+  MAX_REASON_CHARS,
+  curationFindingKey,
   listCurationProposals,
   markCurationProposal,
   readCurationProposal,
+  reconcileCurationFindings,
   recordCurationFindings,
   saveCurationProposal,
   snapshotProposalSources,
@@ -929,4 +932,434 @@ test('proposals live beside, not inside, the scan records', async (t) => {
   // Both stores keep working: a proposal write does not damage a scan record.
   const again = await readScanRecord(made.dataRoot, made.binding.projectId, made.seed.path)
   assert.equal(again.hash, record.hash)
+})
+
+// ---------------------------------------------------------------------------
+// The finding key and the deterministic reconciliation (curation review panel)
+// ---------------------------------------------------------------------------
+
+/** The reason `reconcileCurationFindings` records when a later pass disproved a row. */
+const RECONCILE_REASON = 'a later curation pass examined this evidence and no longer finds it'
+
+/** One project-relative path a hand-built finding can name. */
+function findingPath(made, name) {
+  return `${made.binding.relativeDir}/Docs/${name}.md`
+}
+
+/**
+ * Park one review-only finding proposal without running a scan.
+ *
+ * The reconciliation reads the store, not a scanner result, so its cases build the
+ * same record `recordCurationFindings` would build from the same finding — literal
+ * source hashes are honest here because a review-only record's hashes are never
+ * re-verified by any decision.
+ */
+function parkFindingProposal(made, { kind, paths, itemKey = null, now = NOW }) {
+  return saveCurationProposal({
+    dataRoot: made.dataRoot,
+    now,
+    projectId: made.binding.projectId,
+    itemKey: itemKey ?? curationFindingKey(kind, paths),
+    kind,
+    reviewOnly: true,
+    reason: '一个需要人类判断的发现',
+    sources: paths.map((path) => ({ id: null, path, hash: 'a'.repeat(64) })),
+  })
+}
+
+/** The pass-shaped value a reconciliation reads: what it examined and what it published. */
+function passOf({ examinedPaths = [], findings = [], complete = true, truncated = false } = {}) {
+  return { examinedPaths, findings, complete, truncated }
+}
+
+test('curationFindingKey is the exact identity the finding recorder stores', async (t) => {
+  const made = await world(t)
+  const recorded = await recordCurationFindings({
+    binding: made.binding,
+    dataRoot: made.dataRoot,
+    findings: [
+      {
+        kind: 'dead-wikilink',
+        path: made.seed.path,
+        target: '不存在的东西',
+        message: '一个死链',
+      },
+    ],
+    now: NOW,
+  })
+  assert.equal(recorded.created.length, 1, JSON.stringify(recorded))
+  const listed = await listCurationProposals({
+    dataRoot: made.dataRoot,
+    projectId: made.binding.projectId,
+    state: 'pending',
+  })
+  assert.equal(
+    listed.proposals[0].itemKey,
+    curationFindingKey('dead-wikilink', [made.seed.path]),
+    'the exported key is byte-identical to the record the writer built',
+  )
+  // Order is not part of the identity, and the prefix is the store's own.
+  assert.equal(
+    curationFindingKey('near-duplicate', ['b.md', 'a.md']),
+    'scan:near-duplicate:a.md|b.md',
+  )
+})
+
+test('reconcileCurationFindings retires only findings the pass examined and no longer reports', async (t) => {
+  const made = await world(t)
+  const expiredPath = findingPath(made, '待复盘')
+  const nakedPath = findingPath(made, '无出处')
+  const expired = await parkFindingProposal(made, { kind: 'expired-review', paths: [expiredPath] })
+  const naked = await parkFindingProposal(made, {
+    kind: 'missing-provenance',
+    paths: [nakedPath],
+  })
+
+  const answer = await reconcileCurationFindings({
+    binding: made.binding,
+    dataRoot: made.dataRoot,
+    scan: passOf({ examinedPaths: [expiredPath, nakedPath] }),
+    now: NOW,
+  })
+  assert.equal(answer.reason, null)
+  assert.deepEqual(
+    answer.retired.map((row) => row.proposalId).sort(),
+    [expired.proposalId, naked.proposalId].sort(),
+  )
+  for (const row of answer.retired) {
+    assert.equal(row.state, 'retired')
+    assert.equal(row.reason, RECONCILE_REASON)
+    const record = await readCurationProposal({
+      dataRoot: made.dataRoot,
+      projectId: made.binding.projectId,
+      proposalId: row.proposalId,
+    })
+    assert.equal(record.state, 'retired')
+    assert.equal(record.retiredAt, NOW.toISOString())
+    assert.equal(record.retiredReason, RECONCILE_REASON)
+  }
+  // Nothing is left pending, so a second reconciliation has nothing to write.
+  const again = await reconcileCurationFindings({
+    binding: made.binding,
+    dataRoot: made.dataRoot,
+    scan: passOf({ examinedPaths: [expiredPath, nakedPath] }),
+    now: NOW,
+  })
+  assert.deepEqual(again.retired, [])
+  // A pass that found nothing at all makes no write and answers honestly.
+  const empty = await makeCurationWorld(t)
+  await empty.services.write({ type: 'doc', title: '起点', body: '起点正文。\n' })
+  const emptyBinding = await bindingOf(empty)
+  const nothing = await reconcileCurationFindings({
+    binding: emptyBinding,
+    dataRoot: empty.dataRoot,
+    scan: passOf(),
+    now: NOW,
+  })
+  assert.deepEqual(nothing, { retired: [], scanned: 0, truncated: false, reason: null })
+  const emptyListing = await listCurationProposals({
+    dataRoot: empty.dataRoot,
+    projectId: emptyBinding.projectId,
+  })
+  assert.equal(emptyListing.missingDir, true, 'an empty queue was not created by a read')
+})
+
+test('reconcileCurationFindings keeps a finding whose evidence the pass did not examine or still reports', async (t) => {
+  const made = await world(t)
+  const examinedPath = findingPath(made, '考过')
+  const unexaminedPath = findingPath(made, '没考过')
+  const examined = await parkFindingProposal(made, {
+    kind: 'expired-review',
+    paths: [examinedPath],
+  })
+  const unexamined = await parkFindingProposal(made, {
+    kind: 'expired-review',
+    paths: [unexaminedPath],
+  })
+  // A grouped finding is only disproved when every one of its sources was read.
+  const partialPathA = findingPath(made, '半边甲')
+  const partialPathB = findingPath(made, '半边乙')
+  const partial = await parkFindingProposal(made, {
+    kind: 'missing-provenance',
+    paths: [partialPathA, partialPathB],
+  })
+
+  const answer = await reconcileCurationFindings({
+    binding: made.binding,
+    dataRoot: made.dataRoot,
+    scan: passOf({
+      examinedPaths: [examinedPath, partialPathA],
+      // The examined row still reproduces: its key is in the pass's findings.
+      findings: [
+        {
+          kind: 'expired-review',
+          path: examinedPath,
+          reviewAfter: '2000-01-01',
+          message: '仍然过期',
+        },
+      ],
+    }),
+    now: NOW,
+  })
+  assert.deepEqual(answer.retired, [])
+  for (const proposal of [examined, unexamined, partial]) {
+    const record = await readCurationProposal({
+      dataRoot: made.dataRoot,
+      projectId: made.binding.projectId,
+      proposalId: proposal.proposalId,
+    })
+    assert.equal(record.state, 'pending')
+  }
+})
+
+test('R9: a dead link needs a complete link universe, and a near duplicate a complete pass', async (t) => {
+  const made = await world(t)
+  const deadPath = findingPath(made, '引用者')
+  const dead = await parkFindingProposal(made, { kind: 'dead-wikilink', paths: [deadPath] })
+
+  // A truncated link universe cannot prove a link dead, whatever else the pass says.
+  const truncatedUniverse = await reconcileCurationFindings({
+    binding: made.binding,
+    dataRoot: made.dataRoot,
+    scan: passOf({
+      examinedPaths: [deadPath],
+      findings: [
+        { kind: 'resolver-truncated', path: null, message: 'the file universe was truncated' },
+      ],
+    }),
+    now: NOW,
+  })
+  assert.deepEqual(truncatedUniverse.retired, [])
+  assert.equal(
+    (
+      await readCurationProposal({
+        dataRoot: made.dataRoot,
+        projectId: made.binding.projectId,
+        proposalId: dead.proposalId,
+      })
+    ).state,
+    'pending',
+  )
+  // A pass whose universe was unusable for the *other* two scanner reasons — a denied
+  // directory or the wall-clock deadline — carries no `resolver-truncated` finding,
+  // yet its resolver also answers every target as alive: no link was judged dead, so
+  // the absence of a dead-link finding proves nothing. R9 needs the pass's own
+  // coverage claim (`complete`), not just the file-bound finding.
+  const unusableUniverse = await reconcileCurationFindings({
+    binding: made.binding,
+    dataRoot: made.dataRoot,
+    scan: passOf({
+      examinedPaths: [deadPath],
+      complete: false,
+      truncated: true,
+      findings: [
+        {
+          kind: 'enumeration-failed',
+          path: null,
+          message: 'a directory of this project could not be read',
+        },
+      ],
+    }),
+    now: NOW,
+  })
+  assert.deepEqual(unusableUniverse.retired, [])
+  const completeUniverse = await reconcileCurationFindings({
+    binding: made.binding,
+    dataRoot: made.dataRoot,
+    scan: passOf({ examinedPaths: [deadPath] }),
+    now: NOW,
+  })
+  assert.deepEqual(
+    completeUniverse.retired.map((row) => row.proposalId),
+    [dead.proposalId],
+  )
+
+  // A twin pair is a claim about the whole project, so only a pass that certified
+  // `complete` and was not truncated may disprove one.
+  const other = await makeCurationWorld(t)
+  await other.services.write({ type: 'doc', title: '起点', body: '起点正文。\n' })
+  const otherBinding = await bindingOf(other)
+  const twinPath = `${otherBinding.relativeDir}/Docs/孪生.md`
+  const twin = await parkFindingProposal(
+    { ...other, binding: otherBinding },
+    { kind: 'near-duplicate', paths: [twinPath] },
+  )
+  for (const incompleteScan of [
+    passOf({ examinedPaths: [twinPath], complete: false }),
+    passOf({ examinedPaths: [twinPath], truncated: true }),
+  ]) {
+    const answer = await reconcileCurationFindings({
+      binding: otherBinding,
+      dataRoot: other.dataRoot,
+      scan: incompleteScan,
+      now: NOW,
+    })
+    assert.deepEqual(answer.retired, [])
+  }
+  const completePass = await reconcileCurationFindings({
+    binding: otherBinding,
+    dataRoot: other.dataRoot,
+    scan: passOf({ examinedPaths: [twinPath] }),
+    now: NOW,
+  })
+  assert.deepEqual(
+    completePass.retired.map((row) => row.proposalId),
+    [twin.proposalId],
+  )
+})
+
+test('R9: reconciliation scans the whole pending queue, not the newest 200-row listing', async (t) => {
+  const made = await world(t)
+  // One old review-only row plus 200 newer ones: the listing returns the newest 200
+  // and the old row is exactly the one a new pass must still see. R9 exists to drain
+  // a queue, and a cap that hid its oldest rows would starve the rows a user has
+  // been waiting on longest.
+  const stalePath = findingPath(made, '被挤出队列')
+  const oldest = await parkFindingProposal(made, {
+    kind: 'expired-review',
+    paths: [stalePath],
+    now: new Date(NOW.getTime() - 60_000),
+  })
+  for (let index = 0; index < 200; index += 1) {
+    await parkFindingProposal(made, {
+      kind: 'expired-review',
+      paths: [findingPath(made, `新发现-${index}`)],
+    })
+  }
+  const answer = await reconcileCurationFindings({
+    binding: made.binding,
+    dataRoot: made.dataRoot,
+    scan: passOf({ examinedPaths: [stalePath] }),
+    now: NOW,
+  })
+  assert.equal(answer.scanned, 201, 'every pending review-only record was considered')
+  assert.equal(answer.truncated, false, 'the store walk is complete, not capped')
+  assert.deepEqual(
+    answer.retired.map((row) => row.proposalId),
+    [oldest.proposalId],
+    'the old row beyond the 200-row listing is still reconciled',
+  )
+})
+
+test('reconcileCurationFindings never retires a pending executable proposal', async (t) => {
+  const made = await world(t)
+  const parked = await saveCurationProposal({
+    dataRoot: made.dataRoot,
+    now: NOW,
+    projectId: made.binding.projectId,
+    itemKey: 'item:still-executable',
+    kind: 'supersede',
+    sources: await snapshotProposalSources(made.binding, {
+      supersedesId: made.seed.id,
+      twin: { id: made.seed.id, path: made.seed.path },
+      home: made.home,
+    }),
+    operation: {
+      kind: 'supersede',
+      supersedesId: made.seed.id,
+      item: itemFixture({ supersedesId: made.seed.id }),
+    },
+  })
+  const answer = await reconcileCurationFindings({
+    binding: made.binding,
+    dataRoot: made.dataRoot,
+    // The row's evidence was examined and nothing reports it — a review-only rule
+    // would retire it, which is exactly what this case proves cannot happen.
+    scan: passOf({ examinedPaths: [made.seed.path] }),
+    now: NOW,
+  })
+  assert.deepEqual(answer.retired, [])
+  const record = await readCurationProposal({
+    dataRoot: made.dataRoot,
+    projectId: made.binding.projectId,
+    proposalId: parked.proposalId,
+  })
+  assert.equal(record.state, 'pending')
+})
+
+test('a decision records its provenance, and a record without one still transitions', async (t) => {
+  const made = await world(t)
+  const park = async () =>
+    saveCurationProposal({
+      dataRoot: made.dataRoot,
+      now: NOW,
+      projectId: made.binding.projectId,
+      itemKey: `item:${randomUUID()}`,
+      kind: 'supersede',
+      sources: await snapshotProposalSources(made.binding, {
+        supersedesId: made.seed.id,
+        twin: { id: made.seed.id, path: made.seed.path },
+        home: made.home,
+      }),
+      operation: {
+        kind: 'supersede',
+        supersedesId: made.seed.id,
+        item: itemFixture({ supersedesId: made.seed.id }),
+      },
+    })
+
+  const decided = await markCurationProposal({
+    binding: made.binding,
+    dataRoot: made.dataRoot,
+    proposalId: (await park()).proposalId,
+    state: 'rejected',
+    reason: 'reject-with-provenance',
+    decidedBy: 'auto',
+    decidedByModel: 'provider/model',
+    decisionNote: 'the evidence was weak',
+    now: NOW,
+  })
+  assert.equal(decided.decidedBy, 'auto')
+  assert.equal(decided.decidedByModel, 'provider/model')
+  assert.equal(decided.decisionNote, 'the evidence was weak')
+  assert.equal(decided.reason, 'reject-with-provenance', 'the decision sentence is stored')
+  const listed = await listCurationProposals({
+    dataRoot: made.dataRoot,
+    projectId: made.binding.projectId,
+    state: 'rejected',
+  })
+  assert.equal(listed.proposals[0].decidedBy, 'auto', 'a listing row carries the provenance')
+
+  // An old record carries none of the three fields: it still reads and transitions,
+  // and the transition adds them as nulls rather than refusing the record.
+  const legacy = await markCurationProposal({
+    binding: made.binding,
+    dataRoot: made.dataRoot,
+    proposalId: (await park()).proposalId,
+    state: 'rejected',
+    reason: 'a human reviewed this candidate and rejected it',
+    now: NOW,
+  })
+  assert.equal(legacy.decidedBy, null)
+  assert.equal(legacy.decidedByModel, null)
+  assert.equal(legacy.decisionNote, null)
+
+  const invalidProvenance = await park()
+  await assert.rejects(
+    () =>
+      markCurationProposal({
+        binding: made.binding,
+        dataRoot: made.dataRoot,
+        proposalId: invalidProvenance.proposalId,
+        state: 'rejected',
+        decidedBy: 'model',
+        now: NOW,
+      }),
+    RangeError,
+  )
+
+  // Prose fields are bounded, never refused: a note longer than the reason bound is
+  // clipped exactly like the record's own prose.
+  const clipped = await markCurationProposal({
+    binding: made.binding,
+    dataRoot: made.dataRoot,
+    proposalId: (await park()).proposalId,
+    state: 'rejected',
+    decidedBy: 'auto',
+    decidedByModel: 'm'.repeat(MAX_REASON_CHARS + 20),
+    decisionNote: 'n'.repeat(MAX_REASON_CHARS + 20),
+    now: NOW,
+  })
+  assert.equal(clipped.decidedByModel.length, MAX_REASON_CHARS)
+  assert.equal(clipped.decisionNote.length, MAX_REASON_CHARS)
 })

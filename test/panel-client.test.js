@@ -1394,6 +1394,33 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     'mem-sheet-actions',
     'mem-sheet-confirm',
     'mem-sheet-cancel',
+    // 待审阅: the curation review card (executable rows, the read-only findings
+    // group, the honest auto-review note and the recent-decisions list) and the
+    // sheet's rendered-Markdown region with its block/inline element hooks.
+    'mem-review',
+    'mem-review-row',
+    'mem-review-kind',
+    'mem-review-reason',
+    'mem-review-paths',
+    'mem-review-age',
+    'mem-review-actions',
+    'mem-review-subhead',
+    'mem-review-auto',
+    'mem-review-recent',
+    'mem-review-recent-row',
+    'mem-review-state',
+    'mem-review-by',
+    'mem-sheet-markdown',
+    'mem-md',
+    'mem-md-h',
+    'mem-md-p',
+    'mem-md-list',
+    'mem-md-item',
+    'mem-md-quote',
+    'mem-md-hr',
+    'mem-md-code',
+    'mem-md-inline-code',
+    'mem-md-link',
   ]
   // The list is only a guard if it is bound to the producer: read the served
   // views and extract every class token they emit from quoted literals (comments
@@ -1424,12 +1451,13 @@ test('every class the redesigned views consume is styled in the one stylesheet',
   // and `mem-dot` hooks, plus the nine the GitHub-style heat map and the thirteen the
   // activity rail add. Round 5 adds the inline outcome line, the hot trigger state and
   // the sampled-day hint on the activity rail; round 2 adds the composition Sankey's
-  // scroll box and canvas pair. The count is what makes a deleted producer fail even
-  // when the list happens to still cover the rest — the subset check alone would pass
-  // on a shrunken view.
+  // scroll box and canvas pair; the curation review adds the 13 review-card hooks plus
+  // the 11 rendered-Markdown hooks (24, hence 177). The count is what makes a deleted
+  // producer fail even when the list happens to still cover the rest — the subset check
+  // alone would pass on a shrunken view.
   assert.equal(
     emitted.length,
-    153,
+    177,
     'the views scan still sees every emitted class (re-derive the count with the list)',
   )
   for (const hook of hooks)
@@ -1466,6 +1494,21 @@ test('every class the redesigned views consume is styled in the one stylesheet',
     const rule = css.slice(start, css.indexOf('}', start))
     assert.ok(rule.includes('min-height:44px'), action + ' keeps its 44px hit area')
   }
+  // The sheet's rendered-Markdown region must stay a bounded scroll box: an
+  // unbounded body would push the warning and the confirm/cancel controls out of
+  // the modal, which is exactly the reason the region exists. Class coverage alone
+  // only proves a rule exists, so the two declarations are pinned here.
+  const markdownRegionStart = css.indexOf('.mem-panel .mem-sheet-markdown{')
+  assert.ok(markdownRegionStart >= 0, 'the sheet markdown region has a rule')
+  const markdownRegion = css.slice(markdownRegionStart, css.indexOf('}', markdownRegionStart))
+  assert.ok(
+    markdownRegion.includes('max-height:'),
+    'the markdown region is height-bounded: ' + markdownRegion,
+  )
+  assert.ok(
+    markdownRegion.includes('overflow:auto'),
+    'and scrolls inside its own box: ' + markdownRegion,
+  )
   assert.ok(css.includes('grid-template-columns:repeat(2,minmax(0,1fr))'), 'overflow folds to 2x2')
   // The Sankey's coordinate width is the MEASURED block width, so the chart fills a
   // wide panel instead of capping itself or scaling its 11px type; only the height is

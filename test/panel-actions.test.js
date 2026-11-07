@@ -10,15 +10,17 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { validateConfig } from '../lib/config.js'
+import { EXECUTABLE_OPERATIONS } from '../lib/curation-review.js'
 import { writeMemory } from '../lib/memory.js'
 import { localDate } from '../lib/note-health.js'
 import { PENDING_SCHEMA, queueRootFor, readPendingJobs, writeJobAtomic } from '../lib/pending.js'
 import {
+  EXECUTABLE_OPERATION_KINDS,
   MAX_PREVIEW_TOKENS,
   PANEL_MUTATIONS,
   PREVIEW_TTL_MS,
@@ -274,12 +276,183 @@ async function temporaryRoot(t, name) {
 }
 
 // ---------------------------------------------------------------------------
+// The review-proposal fixtures: a pending supersede candidate served by a stub
+// service set whose `reviewDetail`/`reviewDecision` are the frozen Task-1 contract
+// ---------------------------------------------------------------------------
+
+/** A 64-character lowercase hex proposal id, as the store mints them. */
+const PROPOSAL_ID = 'a'.repeat(64)
+const PROPOSAL_TARGET_PATH = 'Projects/demo--11111111/Decisions/old-decision.md'
+
+/** One stored source with its re-read hash facts. */
+function proposalSource(overrides = {}) {
+  return {
+    path: PROPOSAL_TARGET_PATH,
+    hash: '1'.repeat(64),
+    currentHash: '1'.repeat(64),
+    matched: true,
+    missing: false,
+    ...overrides,
+  }
+}
+
+/** The detail shape `services.reviewDetail` answers (frozen in the task brief). */
+function proposalDetail(overrides = {}) {
+  return {
+    proposalId: PROPOSAL_ID,
+    kind: 'supersede',
+    state: 'pending',
+    reason: 'a newer note covers this decision',
+    reviewOnly: false,
+    itemKey: 'session-1:2:0',
+    createdAt: '2026-11-06T10:00:00.000Z',
+    sources: [proposalSource()],
+    operation: {
+      kind: 'supersede',
+      title: 'Panel review candidate',
+      body: '# Candidate\n\nThe body that will be written.\n',
+      bodyTruncated: false,
+      supersedesId: 'dec-1234',
+      target: {
+        path: PROPOSAL_TARGET_PATH,
+        title: 'Old decision',
+        status: 'active',
+        body: 'The old body that this candidate supersedes.',
+        bodyTruncated: false,
+      },
+    },
+    ...overrides,
+  }
+}
+
+/** A pending create-separate candidate: a near-duplicate that becomes its own note. */
+function createSeparateDetail(overrides = {}) {
+  return proposalDetail({
+    kind: 'near-duplicate',
+    operation: {
+      kind: 'create-separate',
+      title: 'Panel separate candidate',
+      body: 'The separate note body.',
+      bodyTruncated: false,
+      supersedesId: null,
+      target: null,
+    },
+    ...overrides,
+  })
+}
+
+/** A review-only finding: evidence with no executable operation. */
+function reviewOnlyDetail(overrides = {}) {
+  return proposalDetail({
+    kind: 'dead-wikilink',
+    reviewOnly: true,
+    operation: null,
+    ...overrides,
+  })
+}
+
+/**
+ * A stub of the three frozen review-service methods.
+ *
+ * It records every read and every decision and lets a case move the stored detail
+ * between the preview and the confirmation, which is how the staleness branch is
+ * driven without a vault.
+ */
+function reviewStub({ detail = proposalDetail(), decision, failure } = {}) {
+  const calls = { details: [], decisions: [], admin: [] }
+  let current = detail
+  const services = {
+    // The real service set always has `admin`; these cases must never reach it.
+    async admin(args) {
+      calls.admin.push({ ...args })
+      throw new Error('unexpected admin call ' + JSON.stringify(args))
+    },
+    async reviewDetail(binding, proposalId) {
+      calls.details.push({ binding, proposalId })
+      if (current === null || current.proposalId !== proposalId) {
+        const missing = new Error('no proposal ' + proposalId + ' exists for this project')
+        missing.code = 'proposal-missing'
+        missing.status = 404
+        throw missing
+      }
+      return current
+    },
+    async reviewDecision(binding, proposalId, action, reviewer) {
+      calls.decisions.push({ binding, proposalId, decision: action, reviewer })
+      if (failure !== undefined) throw failure
+      if (decision !== undefined) return decision
+      current = { ...current, state: action === 'apply' ? 'applied' : 'rejected' }
+      return action === 'apply'
+        ? { status: 'applied', receipt: { path: 'Projects/demo--11111111/Decisions/new-note.md' } }
+        : { status: 'rejected' }
+    },
+  }
+  return {
+    services,
+    calls,
+    setDetail(next) {
+      current = next
+    },
+  }
+}
+
+/** The exact UTF-8 size of the wire answer the route sends for one preview. */
+function previewWireBytes(issued) {
+  return Buffer.byteLength(
+    JSON.stringify({
+      ok: true,
+      value: {
+        mutation: issued.operation,
+        token: issued.token,
+        expiresAt: issued.expiresAt,
+        preview: issued.preview,
+      },
+    }),
+    'utf8',
+  )
+}
+
+/** The exact UTF-8 size of the wire answer the route sends for one confirmation. */
+function confirmWireBytes(confirmed) {
+  return Buffer.byteLength(
+    JSON.stringify({
+      ok: true,
+      value: {
+        mutation: confirmed.operation,
+        result: confirmed.result,
+        replayed: confirmed.replayed,
+      },
+    }),
+    'utf8',
+  )
+}
+
+/** The Markdown body section of a preview document, cut out for length checks. */
+function candidateSectionOf(markdown) {
+  return markdown.split('## 候选正文\n\n')[1].split('\n\n## 来源')[0]
+}
+
+// ---------------------------------------------------------------------------
 // The vocabulary and the argument contract
 // ---------------------------------------------------------------------------
 
-test('the confirmed operation vocabulary is exactly the three reviewed operations', () => {
-  assert.deepEqual([...PANEL_MUTATIONS], ['retry-job', 'compact-hot', 'refresh-digest'])
-  for (const forbidden of ['lint', 'index', 'bind', 'curation', 'promote', 'digest', 'hot'])
+test('the confirmed operation vocabulary grows by exactly the two review decisions', () => {
+  assert.deepEqual(
+    [...PANEL_MUTATIONS],
+    ['retry-job', 'compact-hot', 'refresh-digest', 'apply-proposal', 'reject-proposal'],
+  )
+  for (const forbidden of [
+    'lint',
+    'index',
+    'bind',
+    'curation',
+    'promote',
+    'digest',
+    'hot',
+    'apply',
+    'reject',
+    'retire',
+  ])
     assert.equal(PANEL_MUTATIONS.includes(forbidden), false, forbidden + ' is not a panel mutation')
 })
 
@@ -301,6 +474,47 @@ test('normalizePanelArgs bounds every operation to its one reviewed argument', (
   assert.throws(() => normalizePanelArgs('lint', {}), RangeError)
   assert.throws(() => normalizePanelArgs('digest', {}), RangeError)
   assert.throws(() => normalizePanelArgs('retry-job', []), RangeError)
+})
+
+test('the panel executable kinds match the store review contract exactly', () => {
+  // lib/panel-actions.js cannot import lib/curation-review.js (layer 1 vs layer 6), so
+  // the executable-kind list is a deliberate duplicate. If the store ever adds or
+  // renames an executable operation this pin fails, instead of the panel silently
+  // refusing a legitimate preview with `operation-not-executable`.
+  assert.deepEqual([...EXECUTABLE_OPERATION_KINDS], [...EXECUTABLE_OPERATIONS])
+})
+
+test('the two review mutations accept exactly a 64-character lowercase hex proposal id', () => {
+  for (const operation of ['apply-proposal', 'reject-proposal']) {
+    assert.deepEqual(
+      { ...normalizePanelArgs(operation, { proposalId: PROPOSAL_ID }) },
+      {
+        proposalId: PROPOSAL_ID,
+      },
+    )
+    for (const bad of [
+      undefined,
+      {},
+      { proposalId: '' },
+      { proposalId: 'a'.repeat(63) },
+      { proposalId: 'a'.repeat(65) },
+      { proposalId: 'A'.repeat(64) },
+      { proposalId: 'g'.repeat(64) },
+      { proposalId: ' ' + PROPOSAL_ID },
+      { proposalId: PROPOSAL_ID + '\n' },
+      { proposalId: '0x' + 'a'.repeat(62) },
+      { proposalId: 42 },
+      { proposalId: null },
+      { proposalId: ['a'] },
+      { proposalId: PROPOSAL_ID, days: 1 },
+      { jobId: PROPOSAL_ID.replaceAll('a', '0') },
+    ])
+      assert.throws(
+        () => normalizePanelArgs(operation, bad),
+        RangeError,
+        operation + ' ' + JSON.stringify(bad),
+      )
+  }
 })
 
 test('the preview fingerprint binds project, operation, arguments and facts', () => {
@@ -882,6 +1096,770 @@ test('previews refuse missing, foreign and non-terminal jobs and a missing hot f
       }),
     assertCode(503, 'digest-unavailable'),
   )
+})
+
+// ---------------------------------------------------------------------------
+// The review-proposal mutations: preview a bounded Markdown document, then decide
+// ---------------------------------------------------------------------------
+
+test('an apply preview renders the candidate body, sources and supersede effect', async () => {
+  const stub = reviewStub()
+  const env = panelEnv(stub)
+  const preview = await previewPanelAction({
+    operation: 'apply-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...env,
+  })
+  assert.equal(preview.operation, 'apply-proposal')
+  assert.equal(preview.projectId, PROJECT_ID)
+  assert.match(preview.token, /^[A-Za-z0-9_-]{40,}$/u)
+  assert.equal(preview.preview.title, '批准候补记忆')
+  assert.equal(preview.preview.confirmLabel, '批准')
+  assert.deepEqual(
+    preview.preview.facts.map((fact) => fact.label),
+    ['类型', '状态', '理由', '来源', '目标'],
+  )
+  assert.deepEqual(
+    preview.preview.facts.map((fact) => fact.value),
+    [
+      '取代',
+      '待审阅',
+      'a newer note covers this decision',
+      '1 个来源，其中 1 个匹配',
+      PROPOSAL_TARGET_PATH,
+    ],
+  )
+  assert.equal(
+    preview.preview.effects.some((effect) => /superseded/u.test(effect)),
+    true,
+  )
+  assert.equal(
+    preview.preview.effects.some((effect) => effect.includes(PROPOSAL_TARGET_PATH)),
+    true,
+  )
+  assert.match(preview.preview.warning, /superseded/u)
+  const markdown = preview.preview.markdown
+  assert.equal(typeof markdown, 'string')
+  assert.match(markdown, /^# Panel review candidate\n/u)
+  assert.match(markdown, /> 类型：取代 · 状态：待审阅 · 创建于：2026-11-06T10:00:00\.000Z/u)
+  assert.match(markdown, /理由：a newer note covers this decision/u)
+  assert.match(
+    markdown,
+    /\n## 候选正文\n\n# Candidate\n\nThe body that will be written\.\n\n## 来源\n/u,
+    'the candidate body is embedded verbatim, never escaped or fenced',
+  )
+  assert.match(markdown, /\n- ✔ Projects\/demo--11111111\/Decisions\/old-decision\.md — 匹配\n/u)
+  assert.match(
+    markdown,
+    /\n## 影响\n\n目标笔记 Projects\/demo--11111111\/Decisions\/old-decision\.md 的状态从 active 改为 superseded/u,
+  )
+  assert.match(
+    markdown,
+    /确认是唯一写入点/u,
+    'the footer names the two decisions and the one write',
+  )
+  assert.equal(stub.calls.decisions.length, 0, 'a preview never decides')
+  assert.deepEqual(
+    stub.calls.details,
+    [{ binding: BINDING, proposalId: PROPOSAL_ID }],
+    'reviewDetail is called binding-first, exactly as the frozen contract says',
+  )
+  assert.equal(stub.calls.admin.length, 0)
+  assert.ok(previewWireBytes(preview) <= 8 * 1024, 'a preview answer fits its 8 KiB ceiling')
+})
+
+test('a reject preview promises no note write and a review-only row can be dismissed', async () => {
+  const stub = reviewStub()
+  const env = panelEnv(stub)
+  const preview = await previewPanelAction({
+    operation: 'reject-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...env,
+  })
+  assert.equal(preview.preview.title, '拒绝候补记忆')
+  assert.equal(preview.preview.confirmLabel, '拒绝')
+  assert.equal(
+    preview.preview.effects.some((effect) => /不写入/u.test(effect)),
+    true,
+  )
+  assert.match(preview.preview.markdown, /拒绝只会更新候补记录；批准才会写入候选/u)
+  assert.match(preview.preview.markdown, /## 候选正文/u, 'a rejection shows what is being rejected')
+
+  const reviewOnly = reviewStub({ detail: reviewOnlyDetail() })
+  const dismissed = await previewPanelAction({
+    operation: 'reject-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...panelEnv(reviewOnly),
+  })
+  assert.equal(dismissed.preview.facts.find((fact) => fact.label === '类型').value, '死链接')
+  assert.equal(
+    dismissed.preview.facts.some((fact) => fact.label === '目标'),
+    false,
+    'a review-only row has no supersede target',
+  )
+  assert.match(dismissed.preview.markdown, /只读发现只能拒绝/u)
+  assert.match(dismissed.preview.markdown, /不写入任何笔记/u)
+  assert.doesNotMatch(
+    dismissed.preview.markdown,
+    /^# Candidate/mu,
+    'a review-only row carries no candidate body',
+  )
+})
+
+test('previews refuse a missing, decided or review-only apply', async () => {
+  const missing = reviewStub({ detail: null })
+  await assert.rejects(
+    () =>
+      previewPanelAction({
+        operation: 'apply-proposal',
+        args: { proposalId: PROPOSAL_ID },
+        ...panelEnv(missing),
+      }),
+    assertCode(404, 'proposal-missing'),
+  )
+  for (const state of ['applied', 'rejected', 'retired']) {
+    const decided = reviewStub({ detail: proposalDetail({ state }) })
+    await assert.rejects(
+      () =>
+        previewPanelAction({
+          operation: 'apply-proposal',
+          args: { proposalId: PROPOSAL_ID },
+          ...panelEnv(decided),
+        }),
+      assertCode(409, 'proposal-not-current'),
+      state,
+    )
+  }
+  const reviewOnly = reviewStub({ detail: reviewOnlyDetail() })
+  await assert.rejects(
+    () =>
+      previewPanelAction({
+        operation: 'apply-proposal',
+        args: { proposalId: PROPOSAL_ID },
+        ...panelEnv(reviewOnly),
+      }),
+    (error) => {
+      assert.equal(error.code, 'review-only')
+      assert.equal(error.status, 409)
+      assert.match(error.message, /只能拒绝|review-only/u)
+      return true
+    },
+  )
+  // A record with no operation is review-only evidence even when the flag is stale.
+  const noOperation = reviewStub({ detail: proposalDetail({ operation: null }) })
+  await assert.rejects(
+    () =>
+      previewPanelAction({
+        operation: 'apply-proposal',
+        args: { proposalId: PROPOSAL_ID },
+        ...panelEnv(noOperation),
+      }),
+    assertCode(409, 'review-only'),
+  )
+})
+
+test('a contradictory reviewOnly flag follows the executable operation, not the flag', async () => {
+  // A hand-edited/corrupt record can carry `reviewOnly: true` beside a valid
+  // executable operation. The operation is the authority (the same single rule the
+  // service derives the flag from), so the sheet must promise what apply will do —
+  // never the record-only footer it would show for a real read-only finding.
+  const stub = reviewStub({ detail: proposalDetail({ reviewOnly: true }) })
+  const preview = await previewPanelAction({
+    operation: 'apply-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...panelEnv(stub),
+  })
+  const markdown = preview.preview.markdown
+  assert.match(markdown, /## 候选正文/u)
+  assert.match(markdown, /改为 superseded/u, 'the effect follows the supersede operation')
+  assert.doesNotMatch(markdown, /只读发现只是证据/u, 'never claim a no-write finding')
+  assert.match(
+    markdown,
+    /确认是唯一写入点：批准会写入候选/u,
+    'the apply footer, not the review-only one',
+  )
+  assert.equal(
+    preview.preview.effects.some((effect) => /superseded/u.test(effect)),
+    true,
+    'the sheet effects follow the operation',
+  )
+})
+
+test('a create-separate candidate previews and confirms as a separate new note', async () => {
+  const stub = reviewStub({ detail: createSeparateDetail() })
+  const env = panelEnv(stub)
+  const preview = await previewPanelAction({
+    operation: 'apply-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...env,
+  })
+  assert.equal(preview.preview.facts.find((fact) => fact.label === '类型').value, '近似重复')
+  assert.equal(
+    preview.preview.effects.join('\n').includes('独立的新笔记'),
+    true,
+    'the effect says a separate note is written',
+  )
+  assert.equal(preview.preview.warning, undefined, 'only a supersede writes a warning')
+  const markdown = preview.preview.markdown
+  assert.match(markdown, /^# Panel separate candidate\n/u)
+  assert.match(markdown, /\n## 影响\n\n候选作为一篇独立的新笔记写入 vault\n不改动任何已有笔记/u)
+  assert.doesNotMatch(markdown, /目标笔记当前正文摘录/u, 'no create-separate target excerpt')
+  assert.doesNotMatch(markdown, /改为 superseded/u, 'nothing is superseded')
+  assert.match(markdown, /确认是唯一写入点：批准会写入候选/u)
+  assert.equal(stub.calls.details[0].binding, BINDING, 'the read is binding-first')
+
+  const confirmed = await confirmPanelAction({ token: preview.token, ...env })
+  assert.deepEqual(confirmed.result, {
+    status: 'applied',
+    proposalId: PROPOSAL_ID,
+    path: 'Projects/demo--11111111/Decisions/new-note.md',
+    reviewOnly: false,
+  })
+  assert.deepEqual(stub.calls.decisions, [
+    { binding: BINDING, proposalId: PROPOSAL_ID, decision: 'apply', reviewer: { kind: 'human' } },
+  ])
+})
+
+test('an English proposal preview translates every string and keeps the body bytes', async () => {
+  const stub = reviewStub()
+  const preview = await previewPanelAction({
+    operation: 'apply-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...panelEnv(stub),
+    locale: 'en',
+  })
+  assert.equal(preview.preview.title, 'Approve candidate memory')
+  assert.equal(preview.preview.confirmLabel, 'Approve')
+  assert.deepEqual(
+    preview.preview.facts.map((fact) => fact.label),
+    ['Kind', 'State', 'Reason', 'Sources', 'Target'],
+  )
+  assert.equal(preview.preview.facts[0].value, 'Replace')
+  assert.equal(preview.preview.facts[3].value, '1 source, 1 matching')
+  assertNoHan([
+    preview.preview.title,
+    preview.preview.confirmLabel,
+    ...preview.preview.facts.map((fact) => fact.label),
+    ...preview.preview.facts.map((fact) => fact.value),
+    ...preview.preview.effects,
+    preview.preview.warning,
+    preview.preview.markdown,
+  ])
+  // The note's own bytes are never translated; only the framing around them is.
+  assert.match(preview.preview.markdown, /^# Panel review candidate\n/u)
+  assert.match(
+    preview.preview.markdown,
+    /\n## Candidate body\n\n# Candidate\n\nThe body that will be written\.\n/u,
+  )
+})
+
+test('the preview refuses an operation this build cannot execute', async () => {
+  // A corrupt or foreign record may carry a kind the decision path never executes.
+  // The sheet must not promise an effect the confirmation cannot perform.
+  const foreign = reviewStub({
+    detail: proposalDetail({
+      operation: {
+        kind: 'rewrite-everything',
+        title: 'Foreign candidate',
+        body: 'The body it will not write.\n',
+        bodyTruncated: false,
+        supersedesId: null,
+        target: null,
+      },
+    }),
+  })
+  await assert.rejects(
+    () =>
+      previewPanelAction({
+        operation: 'apply-proposal',
+        args: { proposalId: PROPOSAL_ID },
+        ...panelEnv(foreign),
+      }),
+    (error) => {
+      assert.equal(error.code, 'operation-not-executable')
+      assert.equal(error.status, 409)
+      assert.match(error.message, /cannot apply/u)
+      return true
+    },
+  )
+  // A rejection is still legal: the store allows dismissing a pending record.
+  const rejection = await previewPanelAction({
+    operation: 'reject-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...panelEnv(foreign),
+  })
+  assert.match(rejection.preview.markdown, /只把候补记录标记为已拒绝/u)
+
+  // A non-plain operation (an array) is not an operation at all: the single
+  // review-only rule refuses apply instead of promising a candidate write.
+  const corrupt = reviewStub({ detail: proposalDetail({ operation: [] }) })
+  await assert.rejects(
+    () =>
+      previewPanelAction({
+        operation: 'apply-proposal',
+        args: { proposalId: PROPOSAL_ID },
+        ...panelEnv(corrupt),
+      }),
+    assertCode(409, 'review-only'),
+  )
+  const corruptRejection = await previewPanelAction({
+    operation: 'reject-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...panelEnv(corrupt),
+  })
+  assert.doesNotMatch(corruptRejection.preview.markdown, /候选正文/u)
+  assert.match(corruptRejection.preview.markdown, /不写入任何笔记/u)
+})
+
+test('confirm applies the proposal once and a replay returns the recorded result', async () => {
+  const stub = reviewStub()
+  const env = panelEnv(stub)
+  const preview = await previewPanelAction({
+    operation: 'apply-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...env,
+  })
+  const confirmed = await confirmPanelAction({ token: preview.token, ...env })
+  assert.equal(confirmed.replayed, false)
+  assert.equal(confirmed.operation, 'apply-proposal')
+  assert.deepEqual(confirmed.result, {
+    status: 'applied',
+    proposalId: PROPOSAL_ID,
+    path: 'Projects/demo--11111111/Decisions/new-note.md',
+    reviewOnly: false,
+  })
+  assert.deepEqual(stub.calls.decisions, [
+    {
+      binding: BINDING,
+      proposalId: PROPOSAL_ID,
+      decision: 'apply',
+      reviewer: { kind: 'human' },
+    },
+  ])
+  const replay = await confirmPanelAction({ token: preview.token, ...env })
+  assert.equal(replay.replayed, true)
+  assert.deepEqual(replay.result, confirmed.result)
+  assert.equal(stub.calls.decisions.length, 1, 'a replay never decides twice')
+  assert.equal(stub.calls.admin.length, 0)
+})
+
+test('a review-only decision confirms as a record-only rejection with no path', async () => {
+  const stub = reviewStub({ detail: reviewOnlyDetail() })
+  const env = panelEnv(stub)
+  const preview = await previewPanelAction({
+    operation: 'reject-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...env,
+  })
+  const confirmed = await confirmPanelAction({ token: preview.token, ...env })
+  assert.deepEqual(confirmed.result, {
+    status: 'rejected',
+    proposalId: PROPOSAL_ID,
+    path: null,
+    reviewOnly: true,
+  })
+  assert.deepEqual(stub.calls.decisions, [
+    {
+      binding: BINDING,
+      proposalId: PROPOSAL_ID,
+      decision: 'reject',
+      reviewer: { kind: 'human' },
+    },
+  ])
+  assert.ok(confirmWireBytes(confirmed) <= 8 * 1024, 'a confirm answer fits its 8 KiB ceiling')
+})
+
+test('the confirm result forwards a bounded relative path and never an absolute one', async () => {
+  const longPath =
+    homedir() +
+    '/Documents/knowledge/Projects/demo--11111111/Decisions/' +
+    'x'.repeat(2_000) +
+    '.md'
+  const stub = reviewStub({
+    decision: { status: 'applied', receipt: { path: longPath } },
+  })
+  const env = panelEnv(stub)
+  const preview = await previewPanelAction({
+    operation: 'apply-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...env,
+  })
+  const confirmed = await confirmPanelAction({ token: preview.token, ...env })
+  assert.equal(confirmed.result.status, 'applied')
+  assert.equal(typeof confirmed.result.path, 'string')
+  assert.ok(
+    [...confirmed.result.path].length <= 240,
+    'the receipt path is clipped to 240 codepoints',
+  )
+  assert.equal(
+    confirmed.result.path.includes(homedir()),
+    false,
+    'no absolute home path reaches the wire',
+  )
+  assert.match(confirmed.result.path, /^~\/Documents\/knowledge\//u)
+  assert.equal(confirmed.result.reviewOnly, false)
+  assert.ok(
+    confirmWireBytes(confirmed) <= 8 * 1024,
+    'a bounded confirm answer fits its 8 KiB ceiling',
+  )
+})
+
+test('a proposal that moved or vanished between preview and confirm is preview-stale', async () => {
+  const stub = reviewStub()
+  const env = panelEnv(stub)
+  const first = await previewPanelAction({
+    operation: 'apply-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...env,
+  })
+  stub.setDetail(proposalDetail({ state: 'applied' }))
+  await assert.rejects(
+    () => confirmPanelAction({ token: first.token, ...env }),
+    assertCode(409, 'preview-stale'),
+  )
+  assert.equal(stub.calls.decisions.length, 0)
+
+  // A stored source re-hash alone moves the fingerprint even when the state string stays.
+  const hashMoved = reviewStub()
+  const hashEnv = panelEnv(hashMoved)
+  const second = await previewPanelAction({
+    operation: 'reject-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...hashEnv,
+  })
+  hashMoved.setDetail(
+    proposalDetail({
+      sources: [proposalSource({ hash: '2'.repeat(64), currentHash: '2'.repeat(64) })],
+    }),
+  )
+  await assert.rejects(
+    () => confirmPanelAction({ token: second.token, ...hashEnv }),
+    assertCode(409, 'preview-stale'),
+  )
+  assert.equal(hashMoved.calls.decisions.length, 0)
+
+  // A record deleted after the preview is a moved state, not a second 404.
+  const gone = reviewStub()
+  const goneEnv = panelEnv(gone)
+  const third = await previewPanelAction({
+    operation: 'reject-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...goneEnv,
+  })
+  gone.setDetail(null)
+  await assert.rejects(
+    () => confirmPanelAction({ token: third.token, ...goneEnv }),
+    assertCode(409, 'preview-stale'),
+  )
+  assert.equal(gone.calls.decisions.length, 0)
+})
+
+test('a refused decision keeps its code and status, and an unknown refusal is 503', async () => {
+  const table = [
+    ['proposal-missing', 404],
+    ['proposal-not-current', 409],
+    ['review-only', 409],
+    ['source-changed', 409],
+    ['review-recovery-required', 409],
+    ['proposal-unreadable', 409],
+    // A record whose operation this build cannot execute is a conflict, not an
+    // outage: the frozen "otherwise unavailable" row would hide the real cause.
+    ['operation-not-executable', 409],
+  ]
+  for (const [code, status] of table) {
+    const stub = reviewStub({
+      decision: { status: 'refused', code, message: 'refused by the service' },
+    })
+    const env = panelEnv(stub)
+    const preview = await previewPanelAction({
+      operation: 'apply-proposal',
+      args: { proposalId: PROPOSAL_ID },
+      ...env,
+    })
+    await assert.rejects(
+      () => confirmPanelAction({ token: preview.token, ...env }),
+      (error) => {
+        assert.equal(error.code, code)
+        assert.equal(error.status, status)
+        assert.equal(error.message, 'refused by the service')
+        return true
+      },
+      code,
+    )
+    assert.equal(stub.calls.decisions.length, 1)
+  }
+  for (const decision of [
+    { status: 'refused', code: 'queue-lock-timeout', message: 'an unregistered code' },
+    { status: 'refused', code: undefined, message: 'no code' },
+    { status: 'confused' },
+    null,
+  ]) {
+    const stub = reviewStub({ decision })
+    const env = panelEnv(stub)
+    const preview = await previewPanelAction({
+      operation: 'reject-proposal',
+      args: { proposalId: PROPOSAL_ID },
+      ...env,
+    })
+    await assert.rejects(
+      () => confirmPanelAction({ token: preview.token, ...env }),
+      assertCode(503, 'unavailable'),
+      JSON.stringify(decision),
+    )
+  }
+})
+
+test('a thrown decision error maps by its code, and an unknown throw is unavailable', async () => {
+  const coded = Object.assign(new Error('a source changed under the decision'), {
+    code: 'source-changed',
+    status: 409,
+  })
+  const codedStub = reviewStub({ failure: coded })
+  const codedEnv = panelEnv(codedStub)
+  const codedPreview = await previewPanelAction({
+    operation: 'apply-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...codedEnv,
+  })
+  await assert.rejects(
+    () => confirmPanelAction({ token: codedPreview.token, ...codedEnv }),
+    (error) => {
+      assert.equal(error.code, 'source-changed')
+      assert.equal(error.status, 409)
+      return true
+    },
+  )
+  // The failed token is released so the same sheet can be confirmed again.
+  await assert.rejects(
+    () => confirmPanelAction({ token: codedPreview.token, ...codedEnv }),
+    assertCode(409, 'source-changed'),
+  )
+  assert.equal(codedStub.calls.decisions.length, 2)
+
+  const unknownStub = reviewStub({ failure: new Error('the store exploded') })
+  const unknownEnv = panelEnv(unknownStub)
+  const unknownPreview = await previewPanelAction({
+    operation: 'reject-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...unknownEnv,
+  })
+  await assert.rejects(
+    () => confirmPanelAction({ token: unknownPreview.token, ...unknownEnv }),
+    (error) => {
+      assert.equal(error.code, 'unavailable')
+      assert.equal(error.status, 503)
+      assert.doesNotMatch(error.message, /exploded/u, 'an unknown fault leaks no internals')
+      return true
+    },
+  )
+})
+
+test('a long candidate body is clipped with an explicit marker inside both ceilings', async () => {
+  const longBody = 'A'.repeat(20_000)
+  const bigTarget = 'B'.repeat(4_000)
+  const detail = proposalDetail({
+    operation: {
+      kind: 'supersede',
+      title: 'Big candidate',
+      body: longBody,
+      bodyTruncated: false,
+      supersedesId: 'dec-1234',
+      target: {
+        path: PROPOSAL_TARGET_PATH,
+        title: 'Old decision',
+        status: 'active',
+        body: bigTarget,
+        bodyTruncated: false,
+      },
+    },
+    sources: [
+      proposalSource({ path: 'Projects/demo--11111111/Decisions/' + 'x'.repeat(300) + '.md' }),
+    ],
+  })
+  const stub = reviewStub({ detail })
+  const preview = await previewPanelAction({
+    operation: 'apply-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...panelEnv(stub),
+  })
+  const markdown = preview.preview.markdown
+  assert.ok(markdown.length <= 24_000, 'document <= 24000 chars: ' + markdown.length)
+  assert.ok(previewWireBytes(preview) <= 8 * 1024, 'preview answer <= 8 KiB')
+  assert.match(markdown, /…（已截断）/u, 'a clipped body says so')
+  const section = candidateSectionOf(markdown)
+  assert.ok(
+    [...section].length <= 5_500 + [...'…（已截断）'].length,
+    'the candidate body keeps its 5500-character cap: ' + section.length,
+  )
+  assert.match(markdown, /B{100}/u, 'the target excerpt survives a long candidate')
+  const targetSection = markdown.split('## 影响\n\n')[1]
+  assert.match(targetSection, /目标笔记当前正文摘录/u)
+})
+
+test('a CJK candidate body is trimmed by bytes before the target body is touched', async () => {
+  const candidate = '中'.repeat(4_000)
+  const targetBody = '目标正文'.repeat(200)
+  const detail = proposalDetail({
+    operation: {
+      kind: 'supersede',
+      title: '中文候选',
+      body: candidate,
+      bodyTruncated: false,
+      supersedesId: 'dec-1234',
+      target: {
+        path: PROPOSAL_TARGET_PATH,
+        title: '旧决定',
+        status: 'active',
+        body: targetBody,
+        bodyTruncated: false,
+      },
+    },
+  })
+  const stub = reviewStub({ detail })
+  const preview = await previewPanelAction({
+    operation: 'apply-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...panelEnv(stub),
+  })
+  const markdown = preview.preview.markdown
+  assert.ok(previewWireBytes(preview) <= 8 * 1024, 'a CJK body cannot overflow the wire ceiling')
+  const section = candidateSectionOf(markdown)
+  assert.ok(
+    [...section].length < 3_000,
+    'the candidate body is trimmed far below its character cap to fit bytes: ' + section.length,
+  )
+  assert.match(markdown, /…（已截断）/u)
+  assert.match(markdown, new RegExp(targetBody.slice(0, 40), 'u'), 'the target excerpt survives')
+})
+
+test('an unterminated candidate fence is closed before the document framing', async () => {
+  // The sheet's renderer treats every line starting with ``` as a fence toggle, so an
+  // odd fence count in the candidate would swallow the source/effect/footer framing
+  // into a code block. The host appends one closing fence line; body bytes otherwise
+  // stay untouched.
+  const unterminated = '# 标题\n\n说明\n\n```js\nconst unfinished = 1\n'
+  const detail = proposalDetail({
+    operation: {
+      kind: 'supersede',
+      title: '围栏候选',
+      body: unterminated,
+      bodyTruncated: false,
+      supersedesId: 'dec-1234',
+      target: {
+        path: PROPOSAL_TARGET_PATH,
+        title: 'Old decision',
+        status: 'active',
+        body: 'old body',
+        bodyTruncated: false,
+      },
+    },
+  })
+  const preview = await previewPanelAction({
+    operation: 'apply-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...panelEnv(reviewStub({ detail })),
+  })
+  const markdown = preview.preview.markdown
+  const lines = markdown.split('\n')
+  const fences = lines.filter((line) => line.startsWith('```'))
+  assert.equal(fences.length % 2, 0, 'the assembled document carries balanced fences')
+  let inCode = false
+  const framed = []
+  for (const line of lines) {
+    if (line.startsWith('```')) {
+      inCode = !inCode
+      continue
+    }
+    if (inCode && /^## (?:来源|影响)$/u.test(line)) framed.push(line)
+    if (inCode && line.startsWith('确认是唯一写入点')) framed.push(line)
+    if (inCode && line.startsWith('目标笔记当前正文摘录')) framed.push(line)
+  }
+  assert.deepEqual(framed, [], 'no host framing line renders inside the candidate code block')
+  assert.equal(inCode, false, 'the document ends outside every fence')
+  assert.match(
+    markdown,
+    /## 候选正文\n\n# 标题\n\n说明\n\n```js\nconst unfinished = 1\n```\n\n## 来源/u,
+    'the one appended line closes the body fence without rewriting the body',
+  )
+
+  // A balanced body gains no extra fence: only the two the note itself carries.
+  const balanced = proposalDetail({
+    operation: {
+      ...proposalDetail().operation,
+      body: 'before\n\n```\ncode\n```\n',
+    },
+  })
+  const balancedPreview = await previewPanelAction({
+    operation: 'apply-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...panelEnv(reviewStub({ detail: balanced })),
+  })
+  const balancedMarkdown = balancedPreview.preview.markdown
+  assert.equal(
+    balancedMarkdown.split('\n').filter((line) => line.startsWith('```')).length,
+    2,
+    'a balanced body keeps exactly its own fences',
+  )
+  assert.match(balancedMarkdown, /```\ncode\n```\n\n## 来源/u)
+})
+
+test('a record with no sources renders the explicit no-sources line', async () => {
+  const detail = proposalDetail({ sources: [] })
+  const preview = await previewPanelAction({
+    operation: 'apply-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...panelEnv(reviewStub({ detail })),
+  })
+  assert.match(
+    preview.preview.markdown,
+    /## 来源\n\n（没有记录来源）\n/u,
+    'an empty source list says so instead of rendering a blank section',
+  )
+  assert.equal(
+    preview.preview.facts.find((fact) => fact.label === '来源').value,
+    '0 个来源，其中 0 个匹配',
+  )
+})
+
+test('the preview document bounds its source lines and masks an absolute home path', async () => {
+  const sources = Array.from({ length: 10 }, (_, index) =>
+    proposalSource({
+      path: 'Projects/demo--11111111/Decisions/' + index + '.md',
+      matched: index % 2 === 0,
+      currentHash: index % 2 === 0 ? '1'.repeat(64) : '3'.repeat(64),
+      missing: index === 9,
+    }),
+  )
+  const detail = proposalDetail({
+    sources,
+    operation: {
+      ...proposalDetail().operation,
+      target: {
+        path: homedir() + '/Documents/knowledge/Projects/demo--11111111/Decisions/old.md',
+        title: 'Old',
+        status: 'active',
+        body: 'old body',
+        bodyTruncated: false,
+      },
+    },
+  })
+  const stub = reviewStub({ detail })
+  const preview = await previewPanelAction({
+    operation: 'apply-proposal',
+    args: { proposalId: PROPOSAL_ID },
+    ...panelEnv(stub),
+  })
+  const markdown = preview.preview.markdown
+  const sourceLines = markdown.split('## 来源\n\n')[1].split('\n\n## 影响')[0].split('\n')
+  assert.ok(
+    sourceLines.length <= 9,
+    'at most eight source lines plus the remainder: ' + sourceLines.length,
+  )
+  assert.match(sourceLines.join('\n'), /还有 2 个来源/u)
+  assert.match(sourceLines.join('\n'), /✔ Projects\/demo--11111111\/Decisions\/0\.md — 匹配/u)
+  assert.match(sourceLines.join('\n'), /✘ Projects\/demo--11111111\/Decisions\/1\.md — 已变或缺失/u)
+  assert.equal(markdown.includes(homedir()), false, 'no absolute home path reaches the wire')
+  assert.match(markdown, /~\/Documents\/knowledge/u)
 })
 
 // ---------------------------------------------------------------------------

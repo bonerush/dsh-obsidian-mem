@@ -11,6 +11,35 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+- **整理提案现在有三条决定路径：健康面板的待审阅队列、未改动的评审命令、以及插件内置的
+  自动审阅；新增顶层配置 `autoReview`（默认 `true`）。** 此前评审命令是唯一路径，它要求
+  真实终端和逐字节输入的 `apply <id>` / `reject <id>`，不开终端的项目会让可执行提案一直
+  停在 pending；而 review-only finding 只要不再复现反而会永远停在队列里。现在：
+  - 面板：健康页新增「待审阅」卡片，每行给出种类、原因、来源和等待时长；抽屉把候选渲染成
+    Markdown（取代类候选还会显示将被取代的笔记和这次写入会改动的状态）。**批准…** 应用的
+    正是这一条提案，**拒绝…** 不改动任何笔记；只读 finding 只提供 **忽略…**。面板与命令
+    走同一条写入路径：claim、来源哈希复核、reviewed-memory 事务。
+  - 评审命令：`dsh-obsidian-mem-review` 的命令行契约未改动，仍是逐字节 `apply <id>` /
+    `reject <id>`、一次一条提案，没有 `--all` 和默认答案。
+  - 自动审阅：`autoReview: true`、`distill.provider` + `distill.model` 已配置、且 DSH
+    宿主完成一次自动整理回合之后，插件最多判断 3 条待决定的可执行提案，判断前先复核
+    每个来源的哈希；只有 `confidence ≥ 0.8` 的 `apply` / `reject` 生效，`defer`、低
+    置信度、回答不合契约或没有路由都保持 pending。证据已变化的提案会被 retire 而不是
+    应用——它已不可能被任何决定使用，下一次蒸馏会产出新候选。`autoReview: false` 只
+    关掉自动审阅；`autoCurate`、面板与命令的行为都不变，也没有新增任何 `mem_*` 工具或
+    `mem_admin` 动作/参数/枚举值。
+  - 来源与留痕：每个决定记录 `decidedBy: "human"` 或 `"auto"`、`decidedByModel`（自动决定
+    为模型 id，人工决定为 `null`）和 `decisionNote`；健康卡片的最近列表显示最近的决定，
+    可据此审计。旧记录没有这些字段也能读，提案记录 schema 不变。
+  - 确定性退场：一趟完整整理会 retire 它检查过、且不再复现的 review-only finding
+    （`missing-provenance`、`expired-review`、`dead-wikilink`、`near-duplicate`），修好的
+    笔记不再在队列里留下永不消失的行；`dead-wikilink` 只在链接全集完整时、`near-duplicate`
+    只在整趟完整未截断时才退场，其他情况保持 pending。
+  - 验证：全量 `npm run check` 的门禁记录见 `docs/curation-review-panel-validation.md`。
+    实测全量 `npm run check` 通过：1670 tests / 1669 pass / 1 skipped；`verify-pack`
+    16 required assets、6 tools；`verify-tarball` 93 entries / 83 lib modules（基线
+    1577 tests / 82 lib modules）。
+
 ## 2.0.3 — 2026-11-05
 
 - **语义地图可视化实验已回退：图谱只保留链接布局。** 2026-11-03 的设计

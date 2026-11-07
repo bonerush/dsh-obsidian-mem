@@ -4609,3 +4609,759 @@ test('the composed zh health tab drops the repeated heading and keeps zone names
     'the zh zone name stays exactly as the server wrote it',
   )
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 待审阅: the curation review queue card and the sheet's rendered Markdown.
+//
+// The wire shape is frozen by the feature spec (R10) and Task 1/2 implement it:
+// the 健康 payload carries a `review` card, a preview for `apply-proposal` /
+// `reject-proposal` may carry a host-assembled `markdown` string, and a confirm
+// answers `{mutation, result, replayed}`. These fixtures speak exactly that
+// contract, so the view is tested against the shapes the host produces rather
+// than against invented ones.
+// ─────────────────────────────────────────────────────────────────────────────
+const REVIEW_APPLY_ID = 'a'.repeat(64)
+const REVIEW_ONLY_ID = 'b'.repeat(64)
+const REVIEW_RECENT_ID = 'c'.repeat(64)
+const reviewCard = (overrides = {}) => ({
+  pending: 2,
+  total: 3,
+  truncated: false,
+  items: [
+    {
+      proposalId: REVIEW_APPLY_ID,
+      kind: 'supersede',
+      reason: '把两条重复的约定合并为一条',
+      reviewOnly: false,
+      paths: ['Projects/repo/Conventions/a.md', 'Projects/repo/Conventions/b.md'],
+      createdAt: '2026-10-27T12:00:00.000Z',
+    },
+    {
+      proposalId: REVIEW_ONLY_ID,
+      kind: 'dead-wikilink',
+      reason: '链接指向不存在的笔记',
+      reviewOnly: true,
+      paths: ['Projects/repo/Pitfalls/c.md'],
+      createdAt: '2026-10-26T12:00:00.000Z',
+    },
+  ],
+  recent: [
+    {
+      proposalId: REVIEW_RECENT_ID,
+      kind: 'near-duplicate',
+      state: 'applied',
+      decidedBy: 'human',
+      decidedAt: '2026-10-25T12:00:00.000Z',
+      reason: 'a human reviewed this candidate and applied it',
+    },
+  ],
+  auto: { enabled: true, routeConfigured: true },
+  ...overrides,
+})
+const reviewHealth = (overrides = {}) =>
+  healthValue({
+    capabilities: {
+      mutations: [
+        'retry-job',
+        'compact-hot',
+        'refresh-digest',
+        'apply-proposal',
+        'reject-proposal',
+      ],
+    },
+    review: reviewCard(),
+    ...overrides,
+  })
+// One candidate body exercising every construct the renderer must support, plus
+// the two it must NOT interpret: raw HTML stays text and an unknown block (a table
+// row) stays a literal paragraph.
+const MARKDOWN_CANDIDATE = [
+  '# 一级标题',
+  '## 二级标题',
+  '### 三级标题',
+  '#### 四级标题',
+  '##### 五级标题',
+  '###### 六级标题',
+  '',
+  '一段 **加粗**、*斜体*、`inline code` 与 [链接](https://example.com/doc) 的正文。',
+  '',
+  '> 引用一行',
+  '',
+  '- 第一项',
+  '  - 嵌套项',
+  '- 第二项',
+  '',
+  '1. 有序一',
+  '2. 有序二',
+  '',
+  '```js',
+  'const a = 1',
+  '```',
+  '',
+  '---',
+  '',
+  '[[Projects/repo/Conventions/a|约定 A]]',
+  '',
+  '<script>alert(1)</script>',
+  '',
+  '| 表格 | 还是文本 |',
+].join('\n')
+const reviewPreview = (markdown = MARKDOWN_CANDIDATE) => ({
+  mutation: 'apply-proposal',
+  token: 'token-review-1',
+  expiresAt: Date.now() + 60_000,
+  preview: {
+    title: '批准记忆建议',
+    confirmLabel: '确认执行',
+    facts: [
+      { label: '建议', value: REVIEW_APPLY_ID },
+      { label: '类型', value: 'supersede' },
+    ],
+    effects: ['新笔记会写入约定目录'],
+    markdown,
+    warning: '批准会写入新笔记，并可能移动目标笔记的状态。',
+  },
+})
+const reviewConfirmValue = (replayed = false) => ({
+  mutation: 'apply-proposal',
+  replayed,
+  result: {
+    status: 'applied',
+    receipt: { path: 'Projects/repo/Conventions/merged.md' },
+    record: { proposalId: REVIEW_APPLY_ID, state: 'applied' },
+  },
+})
+const reviewSectionNode = (tree, label = '待审阅') =>
+  find(tree, (node) => node?.type === 'section' && node.props['aria-label'] === label)
+const reviewRows = (tree) => byClass(reviewSectionNode(tree), 'mem-review-row')
+const childNodesOf = (node, type) =>
+  flat(node?.props?.children ?? []).filter((c) => c?.type === type)
+
+test('the health page lists the review queue: executable rows first, read-only without apply', async (t) => {
+  stubFetch(t, () => ok(reviewHealth()))
+  const { tree } = await health(t)
+  const card = reviewSectionNode(tree)
+  assert.ok(card, '待审阅 is a card on the 健康 page')
+  // It sits after the queue card and before the hot card, the position the spec names.
+  const sections = nodes(tree)
+    .filter((node) => node?.type === 'section')
+    .map((node) => node.props['aria-label'])
+  assert.ok(sections.indexOf('待处理作业') < sections.indexOf('待审阅'), 'after the queue card')
+  assert.ok(sections.indexOf('待审阅') < sections.indexOf('热层'), 'before the hot card')
+
+  const stamps = byClass(card, 'mem-stamp')
+  assert.equal(stamps.length, 1, 'the card carries one pending-count stamp')
+  assert.ok(
+    stamps[0].props.className.includes('is-err'),
+    'a pending executable row is the error tone: ' + stamps[0].props.className,
+  )
+  assert.ok(
+    texts(stamps[0]).some((value) => String(value).includes('2')),
+    'the stamp prints the pending count',
+  )
+
+  const rows = reviewRows(tree)
+  assert.equal(rows.length, 2, 'both groups render their rows')
+  assert.equal(byText(rows[0], '批准…').length, 1, 'an executable row offers 批准')
+  assert.equal(byText(rows[0], '拒绝…').length, 1, 'and 拒绝')
+  assert.equal(byText(rows[1], '批准…').length, 0, 'a read-only finding offers no apply control')
+  assert.equal(byText(rows[1], '忽略…').length, 1, 'it offers one 忽略 control instead')
+  const first = texts(rows[0]).map(String).join(' ')
+  assert.ok(first.includes('取代'), 'the supersede kind is labelled')
+  assert.ok(first.includes('把两条重复的约定合并为一条'), 'the reason is printed')
+  assert.ok(first.includes('Conventions/a.md'), 'the source paths are printed')
+  assert.ok(first.includes('Conventions/b.md'), 'every bounded path is printed')
+  assert.ok(
+    texts(rows[1]).map(String).join(' ').includes('dead-wikilink'),
+    'unknown kinds stay literal',
+  )
+
+  const groupHead = find(card, (node) => node?.type === 'h3' && texts(node).includes('只读发现'))
+  assert.ok(groupHead, 'the read-only findings sit under their own sub-heading')
+  const order = nodes(card)
+  assert.ok(order.indexOf(groupHead) < order.indexOf(rows[1]), 'the sub-heading precedes its rows')
+  assert.equal(
+    byClass(card, 'mem-review-auto').length,
+    0,
+    'an enabled, configured automatic review prints no excuse line',
+  )
+
+  const recent = byClass(card, 'mem-review-recent-row')
+  assert.equal(recent.length, 1, 'one recent decision is listed')
+  const recentText = texts(recent[0]).map(String).join(' ')
+  for (const copy of ['近似重复', '已批准', '人工'])
+    assert.ok(recentText.includes(copy), 'the recent row prints ' + copy)
+})
+
+test('a read-only finding can only be ignored, and ignoring previews reject-proposal', async (t) => {
+  const sent = stubFetch(t, (body) =>
+    body.action === 'preview' ? ok(previewValue('reject-proposal')) : ok(reviewHealth()),
+  )
+  const { render, props } = await health(t)
+  const tree = render(props)
+  byText(reviewRows(tree)[1], '忽略…')[0].props.onClick()
+  await setImmediate()
+  const after = render(props)
+  assert.ok(
+    find(after, (node) => node?.props?.role === 'alertdialog'),
+    'the dismissal preview opens the confirm sheet',
+  )
+  assert.deepEqual(sent.find((entry) => entry.body.action === 'preview').body, {
+    sessionId: 'session-a',
+    action: 'preview',
+    mutation: 'reject-proposal',
+    args: { proposalId: REVIEW_ONLY_ID },
+    locale: 'zh',
+  })
+})
+
+test('approving a proposal previews it by id, renders the body and confirms one token', async (t) => {
+  const sent = stubFetch(t, (body) => {
+    if (body.action === 'preview') return ok(reviewPreview())
+    if (body.action === 'confirm') return ok(reviewConfirmValue())
+    return ok(reviewHealth())
+  })
+  const { render, props } = await health(t)
+  let tree = render(props)
+  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  assert.equal(
+    sent.filter((entry) => entry.body.action === 'confirm').length,
+    0,
+    'a preview writes nothing',
+  )
+  assert.deepEqual(sent.find((entry) => entry.body.action === 'preview').body, {
+    sessionId: 'session-a',
+    action: 'preview',
+    mutation: 'apply-proposal',
+    args: { proposalId: REVIEW_APPLY_ID },
+    locale: 'zh',
+  })
+  assert.equal(byClass(tree, 'mem-sheet-markdown').length, 1, 'the preview body is in the sheet')
+
+  byText(tree, '确认执行')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  assert.equal(
+    find(tree, (node) => node?.props?.role === 'alertdialog'),
+    undefined,
+    'the sheet closes on the decision',
+  )
+  assert.deepEqual(sent.filter((entry) => entry.body.action === 'confirm').at(-1).body, {
+    sessionId: 'session-a',
+    action: 'confirm',
+    token: 'token-review-1',
+    locale: 'zh',
+  })
+  // The success belongs to the card that owns the action, like every other mutation.
+  const card = reviewSectionNode(tree)
+  const outcome = byClass(card, 'mem-action-result')
+  assert.equal(outcome.length, 1, 'the outcome is drawn in the review card')
+  const outcomeText = texts(outcome[0]).map(String).join(' ')
+  assert.ok(outcomeText.includes('已批准并应用'), 'the decision is named in words')
+  assert.ok(outcomeText.includes('Conventions/merged.md'), 'and the written path is printed')
+})
+
+test('the sheet renders the candidate as Markdown elements and keeps raw HTML as text', async (t) => {
+  stubFetch(t, (body) => (body.action === 'preview' ? ok(reviewPreview()) : ok(reviewHealth())))
+  const { render, props } = await health(t)
+  let tree = render(props)
+  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+
+  // The a11y contract is unchanged: the dialog still describes the SAME body node,
+  // and the markdown region lives inside it (so the description reads it too).
+  const dialog = find(tree, (node) => node?.props?.role === 'alertdialog')
+  assert.equal(dialog.props['aria-describedby'], 'obsidian-mem-sheet-body')
+  const body = find(tree, (node) => node?.props?.id === 'obsidian-mem-sheet-body')
+  const markdown = find(tree, (node) => node?.props?.className === 'mem-sheet-markdown')
+  assert.ok(markdown, 'the sheet renders a .mem-sheet-markdown region')
+  assert.ok(nodes(body).includes(markdown), 'the region sits inside the described body')
+  const sequence = nodes(body)
+  const firstFact = sequence.findIndex((node) => node?.props?.className === 'mem-sheet-fact')
+  const warning = sequence.findIndex((node) => node?.props?.className === 'mem-sheet-warning')
+  const at = sequence.indexOf(markdown)
+  assert.ok(firstFact >= 0 && firstFact < at, 'the markdown body comes below the facts')
+  assert.ok(warning < 0 || at < warning, 'and above the warning')
+  const md = find(tree, (node) => node?.props?.className === 'mem-md')
+  assert.ok(md, 'the renderer wraps its blocks in one .mem-md element')
+
+  // Block constructs.
+  const headings = byClass(md, 'mem-md-h')
+  assert.equal(headings.length, 6, 'one element per heading level')
+  for (const [level, copy] of [
+    ['h1', '一级标题'],
+    ['h2', '二级标题'],
+    ['h3', '三级标题'],
+    ['h4', '四级标题'],
+    ['h5', '五级标题'],
+    ['h6', '六级标题'],
+  ])
+    assert.ok(
+      nodes(tree).some((node) => node?.type === level && texts(node).includes(copy)),
+      level + ' renders ' + copy,
+    )
+  const quote = find(md, (node) => node?.type === 'blockquote')
+  assert.ok(
+    quote && texts(quote).join(' ').includes('引用一行'),
+    'the blockquote keeps only its text',
+  )
+  const uls = nodes(md).filter((node) => node?.type === 'ul')
+  assert.equal(uls.length, 2, 'the two-space indent makes one nested <ul>')
+  const outer = uls.find((node) => childNodesOf(node, 'li').length === 2)
+  const nested = uls.find((node) => childNodesOf(node, 'li').length === 1)
+  assert.ok(outer && nested, 'the outer list has two items and the nested one has one')
+  assert.ok(
+    nodes(childNodesOf(outer, 'li')[0]).includes(nested),
+    'the nested list lives inside the first item',
+  )
+  const ordered = find(md, (node) => node?.type === 'ol')
+  assert.equal(childNodesOf(ordered, 'li').length, 2, 'the ordered list keeps both items')
+  const pre = find(md, (node) => node?.type === 'pre')
+  assert.equal(pre.props.className, 'mem-md-code', 'a fenced block is a <pre> with the code class')
+  assert.ok(texts(pre).join('').includes('const a = 1'), 'the fenced content is literal')
+  assert.ok(
+    find(md, (node) => node?.type === 'hr'),
+    '--- is a horizontal rule',
+  )
+
+  // Inline constructs.
+  assert.ok(texts(find(md, (node) => node?.type === 'strong')).includes('加粗'))
+  assert.ok(texts(find(md, (node) => node?.type === 'em')).includes('斜体'))
+  const inline = nodes(md).filter(
+    (node) => node?.type === 'code' && node.props?.className === 'mem-md-inline-code',
+  )
+  assert.ok(
+    inline.some((node) => texts(node).includes('inline code')),
+    'inline code is a <code>',
+  )
+  const links = nodes(md).filter((node) => node?.type === 'a')
+  assert.equal(links.length, 1, 'only the http(s) link is an anchor')
+  assert.equal(links[0].props.href, 'https://example.com/doc')
+  assert.equal(links[0].props.target, '_blank')
+  assert.equal(links[0].props.rel, 'noreferrer noopener')
+  assert.ok(texts(links[0]).includes('链接'), 'the link shows its label, not its URL')
+  assert.ok(
+    inline.some((node) => texts(node).join('').includes('[[Projects/repo/Conventions/a|约定 A]]')),
+    'a wikilink renders as plain code text',
+  )
+
+  // Nothing is HTML: the script tag is one text node, the table row stays text, and
+  // no element anywhere carries an HTML-injection prop.
+  assert.equal(
+    find(tree, (node) => node?.type === 'script'),
+    undefined,
+    'no <script> element',
+  )
+  assert.ok(texts(tree).includes('<script>alert(1)</script>'), 'the script tag is rendered as text')
+  assert.ok(
+    texts(tree).some((value) => String(value).includes('| 表格 | 还是文本 |')),
+    'an unsupported construct stays a literal paragraph',
+  )
+  assert.equal(
+    nodes(tree).some((node) => Object.hasOwn(node?.props ?? {}, 'dangerouslySetInnerHTML')),
+    false,
+    'no element sets inner HTML',
+  )
+  const source = await readFile(MODULE, 'utf8')
+  assert.equal(
+    /dangerouslySetInnerHTML\s*:/u.test(source),
+    false,
+    'the module never sets inner HTML, not even as a prop',
+  )
+})
+
+test('the Markdown renderer caps an oversized candidate defensively', async (t) => {
+  stubFetch(t, (body) =>
+    body.action === 'preview' ? ok(reviewPreview('x'.repeat(30_000))) : ok(reviewHealth()),
+  )
+  const { render, props } = await health(t)
+  let tree = render(props)
+  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  const root = find(tree, (node) => node?.props?.className === 'mem-md')
+  assert.ok(root, 'an oversized body still renders')
+  const rendered = texts(root).join('')
+  assert.ok(rendered.length > 0, 'it renders a clipped body rather than nothing')
+  assert.ok(rendered.length <= 24_000, 'the defensive 24,000-character cap clips it')
+})
+
+test('an empty review queue says nothing is waiting and still lists recent decisions', async (t) => {
+  stubFetch(t, () => ok(reviewHealth({ review: reviewCard({ pending: 0, items: [] }) })))
+  const { tree } = await health(t)
+  const card = reviewSectionNode(tree)
+  assert.ok(texts(card).map(String).includes('没有待审阅的记忆'), 'the quiet empty sentence')
+  const stamps = byClass(card, 'mem-stamp')
+  assert.equal(stamps.length, 1)
+  assert.ok(
+    stamps[0].props.className.includes('is-warn'),
+    'an empty queue is a warn stamp, not an error: ' + stamps[0].props.className,
+  )
+  assert.equal(byText(tree, '批准…').length, 0, 'nothing to approve')
+  assert.equal(byClass(card, 'mem-review-recent-row').length, 1, 'the recent list stays visible')
+})
+
+test('the review card states honestly why automatic review is idle', async (t) => {
+  let reads = 0
+  stubFetch(t, () => {
+    const disabled = reads++ === 0
+    return ok(
+      reviewHealth({
+        review: reviewCard({
+          auto: disabled
+            ? { enabled: false, routeConfigured: false }
+            : { enabled: true, routeConfigured: false },
+        }),
+      }),
+    )
+  })
+  const first = await health(t)
+  assert.ok(
+    texts(reviewSectionNode(first.tree))
+      .map(String)
+      .some((value) => value.includes('自动审阅已关闭（autoReview: false）')),
+    'a disabled autoReview names its config key',
+  )
+  // A second mount reads the route-missing shape: enabled but not configured.
+  const render = mount(t, 'HealthView')
+  const props = { sessionId: 'session-a', visible: true }
+  render(props)
+  await setImmediate()
+  const second = render(props)
+  assert.ok(
+    texts(reviewSectionNode(second))
+      .map(String)
+      .some((value) => value.includes('distill.provider')),
+    'an enabled but unconfigured route names the config it needs',
+  )
+})
+
+test('an older host without a review card renders no 待审阅 card at all', async (t) => {
+  stubFetch(t, () => ok(healthValue()))
+  const { tree } = await health(t)
+  assert.equal(reviewSectionNode(tree), undefined, 'an absent review card renders nothing')
+})
+
+test('a stale apply preview closes the sheet, refreshes 健康 and says so', async (t) => {
+  const sent = stubFetch(t, (body) => {
+    if (body.action === 'preview') return ok(reviewPreview())
+    if (body.action === 'confirm') return failure(409, 'preview-stale', 'stale preview')
+    return ok(reviewHealth())
+  })
+  const { render, props } = await health(t)
+  let tree = render(props)
+  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  byText(tree, '确认执行')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  assert.equal(
+    find(tree, (node) => node?.props?.role === 'alertdialog'),
+    undefined,
+  )
+  assert.ok(
+    byClass(tree, 'mem-action-status').some((node) =>
+      texts(node).some((value) => String(value).includes('预览已过期')),
+    ),
+    'the stale refusal is announced',
+  )
+  assert.equal(
+    sent.filter((entry) => entry.body.action === 'confirm').length,
+    1,
+    'one confirm attempt, then the sheet is gone',
+  )
+  assert.ok(
+    sent.filter((entry) => entry.body.action === 'health').length >= 2,
+    'the underlying read refreshes',
+  )
+})
+
+test('a non-executable operation refusal maps to its own copy, not the generic line', async (t) => {
+  // A corrupt record can carry an operation kind the panel has no apply path for:
+  // the preview is refused with `operation-not-executable` (409). That refusal
+  // invalidates the token like the other proposal refusals, so the sheet closes and
+  // the page-level notice names the cause in the reader's language — an unmapped
+  // code would fall through to the mixed-language `操作失败（code）` line.
+  stubFetch(t, (body) => {
+    if (body.action === 'preview') return ok(reviewPreview())
+    if (body.action === 'confirm')
+      return failure(409, 'operation-not-executable', 'no generic apply')
+    return ok(reviewHealth())
+  })
+  const { render, props } = await health(t)
+  let tree = render(props)
+  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  byText(tree, '确认执行')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  assert.equal(
+    find(tree, (node) => node?.props?.role === 'alertdialog'),
+    undefined,
+  )
+  const notice = byClass(tree, 'mem-action-status')
+  assert.ok(
+    notice.some((node) => texts(node).some((value) => String(value).includes('操作类型无法执行'))),
+    'the unmapped refusal gets its own sentence',
+  )
+  assert.equal(
+    notice.some((node) => texts(node).some((value) => String(value).includes('操作失败'))),
+    false,
+    'and never falls through to the generic mixed-language line',
+  )
+})
+
+test('a decision refusal names the review code in the panel copy', async (t) => {
+  stubFetch(t, (body) => {
+    if (body.action === 'preview') return ok(reviewPreview())
+    if (body.action === 'confirm') return failure(409, 'source-changed', 'source changed')
+    return ok(reviewHealth())
+  })
+  const { render, props } = await health(t)
+  let tree = render(props)
+  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  byText(tree, '确认执行')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  assert.ok(
+    byClass(tree, 'mem-action-status').some((node) =>
+      texts(node).some((value) => String(value).includes('来源笔记已变化')),
+    ),
+    'the refusal maps to its own explanation, not a generic failure',
+  )
+})
+
+test('an explicit en locale renders the review card in English', async (t) => {
+  const englishReview = reviewCard({
+    items: [
+      { ...reviewCard().items[0], reason: 'Merge two duplicate conventions' },
+      { ...reviewCard().items[1], reason: 'The link points at a missing note' },
+    ],
+  })
+  stubFetch(t, () => ok(reviewHealth({ review: englishReview })))
+  const render = mount(t, 'HealthView', { locale: 'en' })
+  const props = { sessionId: 'session-a', visible: true }
+  render(props)
+  await setImmediate()
+  const tree = render(props)
+  const strings = rendered(tree)
+  for (const copy of [
+    'Review queue',
+    'Approve…',
+    'Reject…',
+    'Read-only findings',
+    'Ignore…',
+    'Recently decided',
+    'Replace',
+    'Near duplicate',
+    'Applied',
+    'Human',
+  ])
+    assert.ok(strings.includes(copy), 'the en review card renders ' + copy)
+  assert.deepEqual(
+    strings.filter((value) => HAN.test(value)),
+    [],
+    'no Han-character chrome in the en review card',
+  )
+})
+
+test('the narrow review result names the written path without the full receipt', async (t) => {
+  // Task 2's bounded confirm answer forwards only `{status, proposalId, path,
+  // reviewOnly}`; the outcome line must still name the note that was written.
+  stubFetch(t, (body) => {
+    if (body.action === 'preview') return ok(reviewPreview())
+    if (body.action === 'confirm')
+      return ok({
+        mutation: 'apply-proposal',
+        replayed: false,
+        result: {
+          status: 'applied',
+          proposalId: REVIEW_APPLY_ID,
+          path: 'Projects/repo/Conventions/narrow.md',
+          reviewOnly: false,
+        },
+      })
+    return ok(reviewHealth())
+  })
+  const { render, props } = await health(t)
+  let tree = render(props)
+  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  byText(tree, '确认执行')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  const outcome = byClass(reviewSectionNode(tree), 'mem-action-result')
+  assert.equal(outcome.length, 1, 'the outcome is drawn in the review card')
+  const outcomeText = texts(outcome[0]).map(String).join(' ')
+  assert.ok(
+    outcomeText.includes('已批准并应用：Projects/repo/Conventions/narrow.md'),
+    'the narrow path field names the written note: ' + outcomeText,
+  )
+})
+
+test('the narrow review result says a read-only dismissal changed no note', async (t) => {
+  stubFetch(t, (body) => {
+    if (body.action === 'preview') return ok(previewValue('reject-proposal'))
+    if (body.action === 'confirm')
+      return ok({
+        mutation: 'reject-proposal',
+        replayed: false,
+        result: {
+          status: 'rejected',
+          proposalId: REVIEW_ONLY_ID,
+          path: null,
+          reviewOnly: true,
+        },
+      })
+    return ok(reviewHealth())
+  })
+  const { render, props } = await health(t)
+  let tree = render(props)
+  byText(reviewRows(tree)[1], '忽略…')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  byText(tree, '确认执行')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  const outcomeText = texts(byClass(reviewSectionNode(tree), 'mem-action-result')[0])
+    .map(String)
+    .join(' ')
+  assert.ok(
+    outcomeText.includes('已忽略这条只读发现'),
+    'the narrow reviewOnly flag picks the dismissal wording: ' + outcomeText,
+  )
+  assert.equal(
+    outcomeText.includes('已拒绝这条建议'),
+    false,
+    'a dismissal is not reported as rejecting a plan',
+  )
+})
+
+test('a trimmed review list never pretends the queue is empty', async (t) => {
+  // The health answer is bounded: the last-resort trim empties `items`, and the
+  // list stage can halve a queue to zero, while `pending` (the required count)
+  // still names the waiting work. The empty sentence belongs to the QUEUE, so it
+  // must key off the wire count — otherwise the card says "20 条" above
+  // "没有待审阅的记忆".
+  let reads = 0
+  stubFetch(t, () => {
+    const trimmed = reads++ === 0
+    return ok(
+      reviewHealth({
+        review: trimmed
+          ? reviewCard({ pending: 20, items: [], truncated: true })
+          : reviewCard({ pending: 0, items: [] }),
+      }),
+    )
+  })
+  const first = await health(t)
+  const trimmedCard = reviewSectionNode(first.tree)
+  const trimmedText = texts(trimmedCard).map(String)
+  assert.equal(
+    trimmedText.includes('没有待审阅的记忆'),
+    false,
+    'a queue with pending rows never claims nothing is waiting',
+  )
+  assert.ok(
+    trimmedText.some((value) => value.includes('队列已截断')),
+    'the trimmed list says it was trimmed, and how many rows are waiting',
+  )
+
+  // The genuinely empty queue still gets the quiet sentence.
+  const render = mount(t, 'HealthView')
+  const props = { sessionId: 'session-a', visible: true }
+  render(props)
+  await setImmediate()
+  const second = render(props)
+  assert.ok(
+    texts(reviewSectionNode(second)).map(String).includes('没有待审阅的记忆'),
+    'an actually empty queue says so',
+  )
+})
+
+test('the defensive Markdown cap never splits a surrogate pair', async (t) => {
+  // 24,000 is the panel's defensive cap. A UTF-16 slice would cut "😀" in half and
+  // put a lone high surrogate in a text child; the cap is codepoint-based so the
+  // last surviving character is a whole one.
+  const emojiAtCap = 'x'.repeat(23_999) + '😀' + ' tail'
+  stubFetch(t, (body) =>
+    body.action === 'preview' ? ok(reviewPreview(emojiAtCap)) : ok(reviewHealth()),
+  )
+  const { render, props } = await health(t)
+  let tree = render(props)
+  byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+  await setImmediate()
+  tree = render(props)
+  const root = find(tree, (node) => node?.props?.className === 'mem-md')
+  const rendered = texts(root).join('')
+  assert.equal([...rendered].length, 24_000, 'the cap counts codepoints, not UTF-16 units')
+  assert.equal([...rendered].at(-1), '😀', 'the trailing emoji survives whole')
+  assert.equal(
+    /[\uD800-\uDBFF]$/u.test(rendered),
+    false,
+    'the clipped string does not end in a lone high surrogate',
+  )
+})
+
+test('an unclosed fence closes at EOF, and a balanced body keeps its framing', async (t) => {
+  // Two layers, two assertions. The renderer must terminate an open fence at EOF
+  // (no hang) even before the host's balanced-document fix lands; and a balanced
+  // document — the host closes the candidate's fence before `## 来源` — must keep
+  // the framing out of the code block. A body whose balanced fence was cut by the
+  // byte clip is exactly the unbalanced first case.
+  const unbalanced = ['候选正文', '', '```js', 'const a = 1', '## 不应成为标题'].join('\n')
+  const balanced = ['候选正文', '', '```js', 'const a = 1', '```', '', '## 来源', '', 'a.md'].join(
+    '\n',
+  )
+  let previews = 0
+  stubFetch(t, (body) =>
+    body.action === 'preview'
+      ? ok(reviewPreview(previews++ === 0 ? unbalanced : balanced))
+      : ok(reviewHealth()),
+  )
+  const openSheet = async () => {
+    const render = mount(t, 'HealthView')
+    const props = { sessionId: 'session-a', visible: true }
+    render(props)
+    await setImmediate()
+    let tree = render(props)
+    byText(reviewRows(tree)[0], '批准…')[0].props.onClick()
+    await setImmediate()
+    tree = render(props)
+    return find(tree, (node) => node?.props?.className === 'mem-md')
+  }
+
+  const unbalancedTree = await openSheet()
+  const unbalancedPre = find(unbalancedTree, (node) => node?.type === 'pre')
+  assert.ok(unbalancedPre, 'an unclosed fence still renders as one code block and returns')
+  assert.ok(
+    texts(unbalancedPre).join('\n').includes('## 不应成为标题'),
+    'everything after the unclosed fence stays code text until EOF',
+  )
+  assert.equal(
+    nodes(unbalancedTree).filter((node) => node?.type === 'h2').length,
+    0,
+    'an unclosed fence never promotes later lines to headings',
+  )
+
+  const balancedTree = await openSheet()
+  const balancedPre = find(balancedTree, (node) => node?.type === 'pre')
+  const balancedHead = find(
+    balancedTree,
+    (node) => node?.type === 'h2' && texts(node).includes('来源'),
+  )
+  assert.ok(balancedPre && balancedHead, 'a closed fence ends the code block at the fence')
+  const order = nodes(balancedTree)
+  assert.ok(
+    order.indexOf(balancedPre) < order.indexOf(balancedHead),
+    'the framing follows the code',
+  )
+})
