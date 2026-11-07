@@ -571,6 +571,10 @@ and the `Vx` merge is the only commit a `main` push adds. The bump path
 (`release.yml` cuts `chore(release): X` itself) only runs when the pushed tree
 already carries a tagged version; that commit is then on `main`, and the next
 `Vx` sync brings it back with `git merge --no-ff main` (exempt from the marker).
+The `checks` workflow recognises a release push mechanically — the declared
+version changed from the base and `CHANGELOG.md` carries the section for HEAD's
+version — so the release merge needs no special commit message, and a version
+bump that forgets the section still runs the Unreleased gate.
 
 **PR topology.** `main` ← `Vx` only (a release PR); `Vx` ← typed small branch
 only (a work PR). `check-pr` fails on any other pair, so a mistargeted PR fails

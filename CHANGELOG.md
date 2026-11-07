@@ -11,6 +11,17 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Fixed
+
+- CI 的 Unreleased 门禁改为按仓库状态识别发布推送：旧实现只豁免提交信息以
+  `chore(release):` 开头的 push，而分支模型的发布是 `Vx` 合并进 `main` 的 `--no-ff`
+  merge 提交，信息是 git 的默认合并信息。结果 2.1.0 的发布合并让 main 上五个 check
+  全部变红（`verify-changelog` 报 `no non-empty ## Unreleased section`），尽管 tag 与
+  GitHub Release 已经由 `release.yml` 的 bootstrap 路径正常发布。现在由
+  `scripts/ci-release.mjs` 判断「声明的版本相对 base 发生变化，且 CHANGELOG 带有 HEAD
+  版本的发布小节」；普通推送与 pull request 照常运行门禁，只提升版本却不写小节的推送
+  也不会被豁免。
+
 ## 2.1.0 — 2026-11-07
 
 - **整理提案现在有三条决定路径：健康面板的待审阅队列、未改动的评审命令、以及插件内置的
