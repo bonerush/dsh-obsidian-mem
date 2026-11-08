@@ -35,6 +35,36 @@ release artifact. The versioning policy is in the README, under Development.
 - **`mem_search` 新增可选 `context` 参数。** 指代性追问（"继续"、"那个改一下"）
   可把上一轮请求交给语义通道；lexical 分支忽略它。
 
+- **长提示词的语义通道不再先被截断。** 生产路径此前把 `queryFor()` 截到 16 个
+  token 的有界查询同时喂给 lexical 和 dense；冻结语料按生产形状重放后，200 条查询里
+  有 86 条被截断（exact 29、paraphrase 24、cross-lingual 14、concept 19），池化
+  P@3 从 70.6% 掉到 61.9%、paraphrase 从 93.8% 掉到 71.9%。现在 lexical 仍用有界
+  查询，dense 通道改用完整 plain prompt（上限 800 码点：400 会再损失 1.3pp P@3，
+  800 与不设上限质量相同）。恢复后池化 P@3 69.4%、paraphrase 93.8%、exact 96.9%，
+  与未截断基线持平。
+- **子代理会话的一次性召回指令。** 真实日志里 47/47 个 delegated 会话都收到了 brief
+  （254,815 字符），却只有 1/47 主动调用过召回工具（2.1/100 会话，且来自合成探针），
+  9/47 改用 125 次直接读 vault 的 shell；根因是 brief 没有给出「先用记忆再动手」的
+  指令。现在第一个 full brief 之后、同一 pre-step 内注入一条 plugin-source 的短指令
+  （涉及项目历史/决策/踩坑先 `mem_search`；没有记录先明说；全文用 `mem_read`；不要用
+  bash/read 读 vault 代替检索），每会话一次，根会话不收。
+- **跨进程 brief 状态持久化。** session 的 in-memory 快照在进程重启后丢失，task-1
+  重放里 83 次重复 full brief = 224,090 字符 = 全部注入字符的 52.0% = 模型输出的
+  103%。现在把 `sentFull`、hot 快照/hash 集合与 full/delta 两个 brief hash 存到
+  `<dataRoot>/session-state/<sha256(sessionKey)>.json`（0600、≤64 KiB、30 天 TTL、
+  懒 GC、全程 fail-open）；新进程只在 claimed 消息里仍能找到**这个 full brief 的
+  精确 hash** 时才采纳（`resume-delta`），否则按原样重发 full brief（`resume-full`）。
+  永不持久化上一轮 prompt、seenPaths、召回预算、continuation 或 epoch。
+- **`retrieval:` frontmatter 作为检索面。** 笔记可以声明
+  `retrieval: {questions, aliases, keys_zh, keys_en, triggers}`；索引把这块（≤600 码点）
+  只加进 FTS `tokens` 列与 embedding 文本，绝不进 `body`/`searchText`，因此 snippet 与
+  `mem_read` 正文不受影响，`mem_read` 返回的 frontmatter 也会剥掉它。索引 schema 升到
+  v2 并一次性重建。60 条 gold 笔记的 overlay 实测：池化 P@3 70.6→79.4（+8.8）、
+  P@1 52.5→60.6、MRR 63.4→70.3、recall@8 84.7→87.2，no-answer FPR 保持 2.5%；
+  cross-lingual P@3 46.9→71.9（+25）且 recall@8 68.8→81.3（+12.5），paraphrase
+  P@3 93.8→96.9，deictic 43.8→59.4，exact/concept 不降。该块只被读取索引，`mem_write`
+  的参数面与生成/回填流程不在本次改动内。
+
 ### Changed
 
 - 六个 `mem_*` 工具的 description 改为携带调用策略：何时必须先搜、空结果必须明说、

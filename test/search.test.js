@@ -33,6 +33,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import {
+  INDEX_SCHEMA_VERSION,
   IndexError,
   MAX_NOTE_BYTES,
   MAX_QUERY_TOKENS,
@@ -1129,7 +1130,7 @@ test(
       assert.ok(tables.includes(table), `missing table ${table}`)
     }
     const schemaVersion = db.prepare("SELECT value FROM kv WHERE key = 'schema_version'").get()
-    assert.equal(schemaVersion.value, '1')
+    assert.equal(schemaVersion.value, INDEX_SCHEMA_VERSION)
     assert.ok(db.prepare("SELECT value FROM kv WHERE key = 'last_scan'").get().value.length > 0)
     const note = db.prepare('SELECT id, hash FROM notes WHERE path = ?').get(N.alphaDecision)
     assert.equal(note.id, 'dec-5d46ff43-1bf8-496d-8b9f-c11e89d4e2aa')
@@ -1745,3 +1746,49 @@ test(
     assert.ok(hits.length > 0)
   },
 )
+
+test('a retrieval: frontmatter block is indexed as a query surface, not as note content', async (t) => {
+  const h = await harness(t)
+  const relative = `${ALPHA_DIR}/Docs/向量检索接入.md`
+  await mkdir(dirname(join(h.vault, relative)), { recursive: true })
+  await writeFile(
+    join(h.vault, relative),
+    [
+      '---',
+      'id: "doc-0f3e5c7a-1111-4222-8333-444455556666"',
+      'type: "doc"',
+      'title: "向量检索接入"',
+      'status: "active"',
+      `project: "${ALPHA}"`,
+      'retrieval:',
+      '  questions:',
+      '    - "怎么把词面索引和向量索引融合"',
+      '  keys_zh: ["混合召回", "词面索引"]',
+      '  keys_en: ["hybrid retrieval fusion"]',
+      '---',
+      '# 向量检索接入',
+      '',
+      '正文只讲接入方式，不出现那组关键词。',
+      '',
+    ].join('\n'),
+  )
+  const index = await h.open()
+  await ready(index)
+  const hits = await searchNotes(index, {
+    query: '词面索引 融合',
+    scope: 'project',
+    projectId: ALPHA,
+  })
+  const hit = hits.find((candidate) => candidate.path === relative)
+  assert.ok(
+    hit,
+    `the retrieval keys must make the note findable: ${JSON.stringify(hits.map((h) => h.path))}`,
+  )
+  assert.ok(hit.signals.tokenHits >= 1, 'the key tokens must have matched')
+  // The keys are not content: the snippet is built from the body and never quotes them.
+  assert.equal(hit.snippet.includes('词面索引'), false)
+  assert.equal(hit.snippet.includes('hybrid retrieval'), false)
+  // The internal read still returns the block; only the tool view hides it.
+  const note = await readNote(h.vault, relative)
+  assert.equal(note.frontmatter.retrieval.keys_zh[0], '混合召回')
+})

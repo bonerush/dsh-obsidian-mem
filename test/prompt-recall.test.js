@@ -397,3 +397,52 @@ test('a strong hit this session suppresses the weak line', async () => {
   assert.ok(!result.text.includes('弱匹配'))
   assert.equal(result.paths.length, 1)
 })
+
+test('a long prompt keeps a bounded lexical query and sends the full text to the dense channel', async () => {
+  // The lexical query stays bounded so FTS does not pay for a pasted page, but an
+  // embedding is not a keyword query: production replay showed truncating the
+  // text before both channels costs 8.7pp P@3. The full plain prompt therefore
+  // travels as `denseQuery`; the fake search here stands in for services.search.
+  const calls = []
+  const prompt =
+    '我需要你根据之前几个 session 的对话，评估记忆的调动情况、召回情况以及相关记忆工具的使用频率，看是否还存在什么问题。当前还是处于 V2 的次主分支上，你可以新建一个 feature 的分支，这个分支描述的是对于召回机制的改进。'
+  const result = await promptRecall({
+    prompt,
+    search: async (args) => {
+      calls.push(args)
+      return []
+    },
+  })
+  assert.equal(result.outcome, 'no-hits')
+  assert.notEqual(calls[0].query, prompt, 'the lexical query is truncated')
+  assert.ok([...calls[0].query].length < 200)
+  assert.equal(calls[0].denseQuery, prompt, 'the dense channel receives the untruncated prompt')
+})
+
+test('the dense query is capped at 800 code points', async () => {
+  // E2b on the recovery corpus: cap 400 costs 1.3pp P@3; 800 equals uncapped
+  // quality (69.4% P@3, 85.0% recall@8) without embedding a pasted page.
+  const calls = []
+  const prompt = '记忆召回'.repeat(300) // 1,200 code points before the cap
+  await promptRecall({
+    prompt,
+    search: async (args) => {
+      calls.push(args)
+      return []
+    },
+  })
+  assert.equal([...calls[0].denseQuery].length, 800)
+  assert.ok([...calls[0].query].length < 200, 'the lexical query stays bounded')
+})
+
+test('a short prompt does not duplicate itself into denseQuery', async () => {
+  const calls = []
+  await promptRecall({
+    prompt: '如何修复 FTS5 中文索引？',
+    search: async (args) => {
+      calls.push(args)
+      return []
+    },
+  })
+  assert.equal(calls[0].denseQuery, undefined, 'no truncation means no denseQuery argument')
+})

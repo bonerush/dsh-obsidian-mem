@@ -7,6 +7,7 @@ import test from 'node:test'
 import {
   EmbeddingStoreError,
   embeddingStorePath,
+  embeddingText,
   nextBatchSize,
   openEmbeddingStore,
 } from '../lib/embedding-store.js'
@@ -441,4 +442,20 @@ test('embeddingStorePath is deterministic and vault-scoped', async (t) => {
   assert.equal(pathA, pathAgain)
   assert.notEqual(pathA, pathB)
   assert.match(pathA, /embeddings-[0-9a-f]{16}-[0-9a-f]{16}-384\.json$/)
+})
+
+test('embeddingText puts the retrieval surface between title and body', () => {
+  assert.equal(embeddingText({ title: '标题', body: '正文' }), '标题\n正文')
+  const keyed = embeddingText({
+    title: '标题',
+    body: '正文',
+    retrieval: '如何召回\n混合检索',
+  })
+  assert.equal(keyed, '标题\n如何召回\n混合检索\n正文')
+  assert.ok(keyed.indexOf('如何召回') < keyed.indexOf('正文'))
+})
+
+test('the embedding text still stops at the 1200-code-point cap', () => {
+  const text = embeddingText({ title: 't', body: '记'.repeat(2000) })
+  assert.equal([...text].length, 1200)
 })
