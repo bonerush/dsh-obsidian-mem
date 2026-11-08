@@ -13,6 +13,17 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Added
 
+- **后台自动审阅（`autoReview`）不再要求手工配置路由，云端模型可用。** 路由优先用
+  配置的 `distill.provider` + `distill.model`；两者都留空时回退到捕获时记下的
+  「本项目最近一次会话实际使用的 provider/model」（`<dataRoot>/review-route.json`，
+  0600、锁定原子写、30 天 TTL、按项目上限裁剪、任何失败 fail-open）。DSH 的云端
+  provider 通过同一个 `ctx.llm` 提供，所以这条回退让默认配置下的自动审阅在本项目
+  正常对话一轮之后即可运行，而不是永久 `no-route`。触发器和面板状态读取同一个
+  `resolveReviewRoute`，三者不会再对「有没有路由」给出互相矛盾的说法。
+- **设置页开关在深色主题下可见。** 深色主题里 `--dsw-alias-brand-primary` 是近白色
+  （#f9fafb），而开关圆点写死 `#ffffff`，开启态因此成为一颗无特征的白色胶囊；圆点
+  改用 `--dsw-alias-bg-base`（浅色主题为白、深色主题为近黑 #151517），在两种主题下
+  都与轨道形成对比。
 - **自动召回新增「弱匹配」档。** 强档判定不变（标题/短语/≥6 token-hits，以及保留给
   e5 标尺 operator 的 `semantic-score ≥ 0.92` 分支）；当且仅当没有任何强命中被接受、
   且没有已展示的强命中时，向量通道可以在「第一名 + 对第二名的领先 ≥ 0.02 + 余弦

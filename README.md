@@ -493,7 +493,7 @@ explanation instead of doing nothing.
 | `hotArchiveRatio` | `0.67` | open interval (0,1) | Above this fill level the plugin archives 已完成 entries before writing. A file already over its cap that has nothing archivable left is repaired with `mem_admin(action="hot", operation="compact")`, never by hand. |
 | `autoCapture` | `true` | boolean | Capture completed turns. `false` stops new capture but still drains jobs already queued. |
 | `autoCurate` | `true` | boolean | Automatic curation passes. `false` disables the automatic triggers only: `mem_admin(action="curation", operation="scan")` and the review command keep working, and no source note is changed either way. |
-| `autoReview` | `true` | boolean | Automatic review of parked executable proposals after the DSH host's automatic curation pass. Needs the `distill.provider` + `distill.model` route: with the pair empty there is no route, so it makes no model call and the queue waits for you. `false` disables only the automatic reviewer — the panel and the review command still work, and `autoCurate` is unchanged. |
+| `autoReview` | `true` | boolean | Automatic review of parked executable proposals after the DSH host's automatic curation pass. The route is the configured `distill.provider` + `distill.model` pair, or — when that pair is empty — the provider/model the capture seam last observed for this project, so one normal conversation is enough to enable it; only when neither exists is there no route, and then it makes no model call and the queue waits for you. `false` disables only the automatic reviewer — the panel and the review command still work, and `autoCurate` is unchanged. |
 | `captureIdleMs` | `90000` | integer 1000–3600000 | Idle debounce before a captured turn is distilled. |
 | `distill.provider` | `""` | string | Model route. Must be set together with `model`, or both left empty (empty = reuse the session's last recorded route). A session imported from another harness has no recorded route, so imported history stays `deferred` until this is set. |
 | `distill.model` | `""` | string | See above. |
@@ -720,9 +720,10 @@ transaction an apply uses.
    accepts only `apply <id>` or `reject <id>` typed byte-for-byte, one proposal per
    run: there is no `--all` and no default answer. `reject` changes no source note,
    and the command needs a terminal on stdin *and* stdout.
-3. **Automatic reviewer — when `autoReview: true` (the default), the
-   `distill.provider` + `distill.model` route is configured, and the DSH host runs
-   an automatic curation pass.** The plugin asks the model, over that route, to
+3. **Automatic reviewer — when `autoReview: true` (the default), a model route
+   resolves (the configured `distill.provider` + `distill.model` pair, or the route
+   the last captured conversation in this project actually ran on), and the DSH
+   host runs an automatic curation pass.** The plugin asks the model, over that route, to
    judge up to three pending executable proposals. It re-reads every source hash
    first; only a `confidence ≥ 0.8` `apply` or `reject` acts, and everything else —
    `defer`, low confidence, an answer outside the contract, or no route — leaves

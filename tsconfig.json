@@ -30,6 +30,7 @@
     "lib/receipts.js",
     "lib/registry.js",
     "lib/routing.js",
+    "lib/route-state.js",
     "lib/search.js",
     "scripts/run-tests.mjs",
     "scripts/verify-pack.mjs",

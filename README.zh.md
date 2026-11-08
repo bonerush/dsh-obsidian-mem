@@ -424,7 +424,7 @@ profile patch。下面直接编辑 patch 文件的路线仍然可用，表单没
 | `hotArchiveRatio` | `0.67` | 开区间 (0,1) | 填充率高于此值时，插件在写入前先归档已完成条目。已经超出上限、且没有可归档条目的文件，用 `mem_admin(action="hot", operation="compact")` 修复，绝不手工修改。 |
 | `autoCapture` | `true` | boolean | 捕获已完成的回合。`false` 停止新的捕获，但仍会排空已入队的 job。 |
 | `autoCurate` | `true` | boolean | 自动整理（curation）回合。`false` 只关掉自动触发：`mem_admin(action="curation", operation="scan")` 和评审命令照常可用，而且两种取值都不会改动任何源笔记。 |
-| `autoReview` | `true` | boolean | DSH 宿主的每次自动整理回合后自动评审停放中的可执行提案。需要 `distill.provider` + `distill.model` 这条路由：两者都留空时没有路由，它不会调用模型，队列等你自己决定。`false` 只关掉自动审阅器——面板与评审命令照常可用，`autoCurate` 不变。 |
+| `autoReview` | `true` | boolean | DSH 宿主的每次自动整理回合后自动评审停放中的可执行提案。路由优先用配置的 `distill.provider` + `distill.model`；两者都留空时，回退到捕获时记录的本项目最近一次会话实际使用的 provider/model，所以正常对话一轮后即可启用；两者都没有时没有路由，它不会调用模型，队列等你自己决定。`false` 只关掉自动审阅器——面板与评审命令照常可用，`autoCurate` 不变。 |
 | `captureIdleMs` | `90000` | 整数 1000–3600000 | 被捕获的回合进入蒸馏前的空闲去抖时间。 |
 | `distill.provider` | `""` | string | 模型路由。必须和 `model` 一起设置，或者两个都留空（留空 = 复用会话最近记录的路由）。从别的 harness 导入的会话没有这条路由，所以导入的历史会一直停在 `deferred`，直到设了这一项。 |
 | `distill.model` | `""` | string | 见上。 |
@@ -577,8 +577,9 @@ Inbox。这些是参考 ASD-STE100 的项目规则，不表示标准认证或召
    与来源，并且只接受逐字节输入的 `apply <id>` 或 `reject <id>`，一次一条提案：没有
    `--all`，也没有默认答案。`reject` 不改动任何源笔记；命令要求 stdin **和** stdout
    都是终端。
-3. **自动审阅：`autoReview: true`（默认）、配置了 `distill.provider` +
-   `distill.model` 路由、且 DSH 宿主跑完一次自动整理回合时。** 插件用这条路由让模型
+3. **自动审阅：`autoReview: true`（默认）、能解析出一条模型路由（配置的
+   `distill.provider` + `distill.model`，或本项目最近一次被捕获的会话实际使用的
+   路由）、且 DSH 宿主跑完一次自动整理回合时。** 插件用这条路由让模型
    判断最多 3 条待决定的可执行提案。判断前先重新核对每个来源的哈希；只有
    `confidence ≥ 0.8` 的 `apply` 或 `reject` 生效，其它情况（`defer`、低置信度、回答
    不合契约、没有路由）一律保持 pending，留给路径 1 和 2。证据已经变化的提案不会

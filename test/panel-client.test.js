@@ -607,6 +607,34 @@ test('the bundle reads only host tokens on the measured allowlist', async () => 
   )
 })
 
+test('the settings switch contrasts in both host palettes', async () => {
+  const { script } = await bundle()
+  // The host's dark palette defines `--dsw-alias-brand-primary` as near-white
+  // (#f9fafb). An ON track painted with it plus a hardcoded white knob rendered as
+  // one featureless white pill in the reported screenshot. The contract: the ON
+  // track stays the brand token, and the ON knob is painted with `bg-base` (white
+  // in the light palette, #151517 in the dark one), so the two differ in both.
+  const slice = (name) => {
+    const at = script.indexOf(name + ':')
+    assert.ok(at >= 0, `${name} is declared`)
+    const end = script.indexOf('}', at)
+    return script.slice(at, end)
+  }
+  assert.ok(
+    slice('switchTrackOn').includes('var(--dsw-alias-brand-primary)'),
+    'the ON track is still the host brand token',
+  )
+  const knobOn = slice('switchKnobOn')
+  assert.ok(
+    knobOn.includes('var(--dsw-alias-bg-base)'),
+    'the ON knob uses the palette-aware background token',
+  )
+  assert.ok(!knobOn.includes('#ffffff'), 'the ON knob is never hardcoded white')
+  // The OFF state keeps the plain white knob on the border track, which is visible
+  // on its own in either palette.
+  assert.ok(slice('switchKnob').includes('#ffffff'))
+})
+
 test('the heat map is a fixed 10px GitHub-style calendar in its own scroll box', async () => {
   const { script } = await bundle()
   const css = panelCss(script)

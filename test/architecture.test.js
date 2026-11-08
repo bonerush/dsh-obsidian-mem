@@ -250,6 +250,12 @@ const LAYERS = {
   // The cross-process brief snapshot reuses the delivery-state private I/O (L3)
   // and the routing hash (L1) instead of a second writer; hooks (L8) adopts it.
   'session-state': 4,
+  // The remembered conversation route (2026-11-08): the fallback that lets a
+  // background review pass run on the default empty `distill` pair. It reuses the
+  // delivery-state private I/O (L3) and node:path only, so L4 — the trigger
+  // (`index`, L10), the pass (`curation-auto`, L7) and the services card all point
+  // down at it, never the other way.
+  'route-state': 4,
   // The browser route fence is import-free; the panel route receives the
   // services through its arguments but resolves the request locale (L0), reads
   // one date helper (L0) and calls the mutation state machine (L1), which fixes
@@ -744,9 +750,11 @@ const BUDGETS = {
   // follow-through; and the listener that now also feeds the `tool` diagnostics
   // event. Raised to 2250 by the delegated-first-brief directive and the
   // cross-process brief snapshot: the hydrate/persist helpers, the two hash
-  // fields, and the resume-delta/resume-full codes. Measured 2209 formatted lines;
-  // measured-plus-30 is 2239, rounded to 2250.
-  'lib/hooks.js': 2250,
+  // fields, and the resume-delta/resume-full codes. Raised to 2300 by the
+  // remembered-route observation at the capture hand-off (one bounded map and one
+  // fire-and-forget write). Measured 2267 formatted lines; measured-plus-30 is
+  // 2297, rounded to 2300.
+  'lib/hooks.js': 2300,
   // Raised from 600 by the hot-zone deadlock fix (1069 formatted lines measured;
   // measured-plus-30 is 1099, which rounds up to 1100). What the 469 lines buy:
   // archival that can tell a pointer line from an entry — the reported bug, since
@@ -1292,6 +1300,11 @@ const BUDGETS = {
   'lib/pointer.js': 300,
   'lib/receipts.js': 450,
   'lib/registry.js': 500,
+  // The remembered review route: one private JSON file, a locked read-modify-write
+  // and the bounded prune. Measured 223 formatted lines; measured-plus-30 is 253,
+  // rounded to 300. It is a small file on purpose — routing metadata only, never a
+  // prompt, a note or a credential.
+  'lib/route-state.js': 300,
   'lib/routing.js': 500,
   // Raised from 200 for the title-twin lookup: the duplicate rule needs the same
   // tokenizer and the same project-scoped search as `mem_search`, and putting it
