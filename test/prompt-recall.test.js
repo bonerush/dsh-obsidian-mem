@@ -366,6 +366,31 @@ test('the weak tier needs a dense lead, a margin, and a low absolute floor', asy
   assert.deepEqual(result.paths, [path])
 })
 
+test('a top dense lead is named without a margin; a middling lead still needs one', async () => {
+  const caseOf =
+    ([first, second]) =>
+    async () => [
+      { path, title: '候选', scoreSignals: [first] },
+      { path: path.replace('FTS5', 'FTS5-b'), title: '次席', scoreSignals: [second] },
+    ]
+  // 0.66 vs 0.655 is under the 0.02 margin, but an absolute lead this high is
+  // not a coin flip: on the key-backed vault the margin rule was hiding real
+  // leads (coverage 147->151 of 200, no-answer weak hints unchanged 5/40).
+  let result = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    search: caseOf(['semantic-score:0.66', 'semantic-score:0.655']),
+  })
+  assert.equal(result.outcome, 'near-miss', 'top-score lead needs no margin')
+  assert.deepEqual(result.paths, [path])
+  // Just under the top-score floor the old margin rule applies again.
+  result = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    search: caseOf(['semantic-score:0.64', 'semantic-score:0.635']),
+  })
+  assert.equal(result.outcome, 'below-floor', 'below the top-score floor, margin still rules')
+  assert.equal(result.text, null)
+})
+
 test('a weak hint already offered this session is all-seen, not repeated', async () => {
   const search = async () => [
     { path, title: '候选', scoreSignals: ['semantic-score:0.80', 'hybrid-rank:1'] },
@@ -445,4 +470,68 @@ test('a short prompt does not duplicate itself into denseQuery', async () => {
     },
   })
   assert.equal(calls[0].denseQuery, undefined, 'no truncation means no denseQuery argument')
+})
+
+test('a very short follow-up searches with the previous turn as its lexical query', async () => {
+  // All 40 deictic prompts on the frozen corpus are 5-14 code points and carry a
+  // previous-turn context. The token gate can never pass a referent-less query,
+  // so the lexical query is rebuilt from prompt + context: deictic P@3 43.8% ->
+  // 53.1%, gate pass 0% -> 9.4%, every other class unchanged, no-answer FP 2.5%.
+  const calls = []
+  const context = '上一轮在核对 AGENTS.md 里的开发依赖数量'
+  const result = await promptRecall({
+    prompt: '继续推进',
+    context,
+    search: async (args) => {
+      calls.push(args)
+      return []
+    },
+  })
+  assert.equal(result.outcome, 'no-hits')
+  assert.match(calls[0].query, /agents|开发/)
+  assert.equal(calls[0].denseQuery, '继续推进', 'the dense channel still gets the prompt itself')
+  assert.equal(calls[0].context, context, 'the dense channel still receives the context as well')
+})
+
+test('a two-character continuation is a query only when a previous turn exists', async () => {
+  const calls = []
+  await promptRecall({
+    prompt: '继续',
+    context: '上一轮在核对 AGENTS.md 里的开发依赖数量',
+    search: async (args) => {
+      calls.push(args)
+      return []
+    },
+  })
+  assert.equal(calls.length, 1, 'the context gives a referent-less continuation a query')
+  assert.ok([...calls[0].query].length > 2)
+  await promptRecall({ prompt: '继续', search: async () => [] })
+  assert.equal(calls.length, 1, 'without context there is still nothing to search')
+})
+
+test('the context never joins a prompt that is not a short follow-up', async () => {
+  const calls = []
+  const prompt = '如何修复 FTS5 中文索引？'
+  await promptRecall({
+    prompt,
+    context: '上一轮在核对 AGENTS.md 里的开发依赖数量',
+    search: async (args) => {
+      calls.push(args)
+      return []
+    },
+  })
+  assert.equal(calls[0].query, prompt, 'a real question keeps exactly its own words')
+  assert.equal(calls[0].denseQuery, undefined)
+})
+
+test('the thin-prompt cutoff is eight code points', async () => {
+  const calls = []
+  const search = async (args) => {
+    calls.push(args)
+    return []
+  }
+  await promptRecall({ prompt: '这个还是要改一下', context: '上一轮在改召回门槛', search })
+  assert.equal(calls[0].query, '这个还是要改一下 上一轮在改召回门槛')
+  await promptRecall({ prompt: '这个还是要改一下啊', context: '上一轮在改召回门槛', search })
+  assert.equal(calls[1].query, '这个还是要改一下啊', 'nine code points is not a follow-up')
 })

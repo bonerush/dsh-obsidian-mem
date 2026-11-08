@@ -433,9 +433,10 @@ test('a real user turn receives one relevant project map and never repeats its p
 
 test('a short follow-up carries the previous prompt as dense context', async (t) => {
   // The user complaint in one test: a three-character follow-up is not a lexical
-  // query. The lexical branch still sees only the follow-up — unchanged this
-  // round — but the hybrid branch needs the turn before it, and this seam is
-  // where it is handed over.
+  // query. The hybrid branch always gets the previous turn as `context`; a prompt
+  // of at most eight code points also searches with it (lib/prompt-recall.js
+  // THIN_PROMPT_MAX_CHARS), which is the only way a referent-less follow-up can
+  // reach the token gate. Longer follow-ups keep their own words.
   const calls = []
   const path = RELATIVE_DIR + '/Decisions/FTS5-中文索引.md'
   const h = bed(t, {
@@ -464,7 +465,23 @@ test('a short follow-up carries the previous prompt as dense context', async (t)
   await h.preStep(agent, undefined, undefined, { messages: [second], turn: 2 })
   assert.equal(calls.length, 2)
   assert.equal(calls[1].context, '如何修复 FTS5 中文索引？')
-  assert.ok(calls[1].query.length > 0)
+  assert.equal(
+    calls[1].query,
+    '刚才那个问题该怎么继续修？',
+    'a longer follow-up keeps its own words',
+  )
+
+  const third = {
+    id: 'human-3',
+    role: 'user',
+    content: [{ type: 'text', text: '继续修' }],
+    source: { kind: 'user' },
+  }
+  await h.preStep(agent, undefined, undefined, { messages: [third], turn: 3 })
+  assert.equal(calls.length, 3)
+  assert.equal(calls[2].context, '刚才那个问题该怎么继续修？')
+  assert.match(calls[2].query, /刚才那个问题/)
+  assert.equal(calls[2].denseQuery, '继续修', 'the dense channel still gets the prompt itself')
 })
 
 test('a full-size brief does not starve the per-turn recall on the first turn', async (t) => {

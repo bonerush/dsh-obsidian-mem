@@ -17,7 +17,9 @@ release artifact. The versioning policy is in the README, under Development.
   e5 标尺 operator 的 `semantic-score ≥ 0.92` 分支）；当且仅当没有任何强命中被接受、
   且没有已展示的强命中时，向量通道可以在「第一名 + 对第二名的领先 ≥ 0.02 + 余弦
   ≥ 0.55」时给出一条**无摘录**的 `[弱匹配·需核实]` 指针，outcome 仍是 `near-miss`，
-  并明确要求先 `mem_read` 核实全文。旧的固定 0.88 近邻阈值删除：线上
+  并明确要求先 `mem_read` 核实全文。绝对余弦 ≥ 0.65 的第一名不再要求领先边距（高绝对
+  分本身不是掷硬币；在 key-backed 语料上这使覆盖 147→151/200，弱档 no-answer 提示
+  仍为 5/40，弱档精度 64.2%→64.8%）。旧的固定 0.88 近邻阈值删除：线上
   `Qwen/Qwen3-Embedding-0.6B` 的相关候选余弦只有 0.23–0.62，0.88/0.92 在该标尺上
   不可达（见 `docs/superpowers/specs/2026-11-08-recall-invocation-design.md`）。
   在冻结的 200 查询语料上用真实 `promptRecall` 重放：仅强档覆盖 70/200，弱档加入后
@@ -42,6 +44,14 @@ release artifact. The versioning policy is in the README, under Development.
   查询，dense 通道改用完整 plain prompt（上限 800 码点：400 会再损失 1.3pp P@3，
   800 与不设上限质量相同）。恢复后池化 P@3 69.4%、paraphrase 93.8%、exact 96.9%，
   与未截断基线持平。
+- **极短追问的 lexical 查询改用上一轮内容。** 冻结语料里 40 条指代性提示全部只有
+  5–14 码点，且每条都带上一轮 `context`；dense 通道一直能嵌入这个上下文，但 lexical
+  只搜追问本身，而 3 个 token 的查询永远达不到 6 token 的门槛。现在不超过 8 码点的
+  提示用「prompt + 上一轮」重建 lexical 查询：离线检索 deictic P@3 43.8→53.1、
+  gate pass 0→9.4%、in-gate 精度 55.6%，其余四类逐字节不变，no-answer FPR 保持
+  2.5%。真实 `promptRecall` 重放中 deictic 强档 0→9/40（弱档 29→21，总覆盖 29→30），
+  池化强档覆盖 70→79/200、弱档 76→68、总覆盖 146→147/200，no-answer 弱提示仍为
+  5/40。超过 8 码点的追问不拼 context，避免把无关轮次塞进一个本身有内容的问题。
 - **子代理会话的一次性召回指令。** 真实日志里 47/47 个 delegated 会话都收到了 brief
   （254,815 字符），却只有 1/47 主动调用过召回工具（2.1/100 会话，且来自合成探针），
   9/47 改用 125 次直接读 vault 的 shell；根因是 brief 没有给出「先用记忆再动手」的
