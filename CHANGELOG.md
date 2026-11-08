@@ -11,6 +11,78 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+### Added
+
+- **自动召回新增「弱匹配」档。** 强档判定不变（标题/短语/≥6 token-hits，以及保留给
+  e5 标尺 operator 的 `semantic-score ≥ 0.92` 分支）；当且仅当没有任何强命中被接受、
+  且没有已展示的强命中时，向量通道可以在「第一名 + 对第二名的领先 ≥ 0.02 + 余弦
+  ≥ 0.55」时给出一条**无摘录**的 `[弱匹配·需核实]` 指针，outcome 仍是 `near-miss`，
+  并明确要求先 `mem_read` 核实全文。绝对余弦 ≥ 0.65 的第一名不再要求领先边距（高绝对
+  分本身不是掷硬币；在 key-backed 语料上这使覆盖 147→151/200，弱档 no-answer 提示
+  仍为 5/40，弱档精度 64.2%→64.8%）。旧的固定 0.88 近邻阈值删除：线上
+  `Qwen/Qwen3-Embedding-0.6B` 的相关候选余弦只有 0.23–0.62，0.88/0.92 在该标尺上
+  不可达（见 `docs/superpowers/specs/2026-11-08-recall-invocation-design.md`）。
+  在冻结的 200 查询语料上用真实 `promptRecall` 重放：仅强档覆盖 70/200，弱档加入后
+  142/200（71%）；弱条目命中 gold 44/72（61%），40 条 no-answer 对照里弱档提示 5 条
+  （12.5%），强档 2 条（5%）。按类看 deictic 从强档 0/40 变为弱档 28/40（16 条命中
+  gold），cross-lingual 弱档 18 条中 14 条命中 gold。
+- **一次会话最多一条显式弃权提示。** 真实用户提示词确实检索过、但强/弱两档都没有
+  可展示内容、且本步没有 brief/lint 提示时，注入一行「未在项目记忆中检索到……；
+  若问题依赖项目历史，请先用 mem_search 再回答」；它让「沉默」不再同时意味着
+  「检索过但没有」和「根本没有检索」。
+- **`tool` 诊断事件。** 生产环境里始终存在的 `session/event` 工具监听器现在为每次
+  `mem_*` 调用写一条内容无关记录；`mem_read` 打开的路径若正是本会话自动召回展示过的
+  路径，则 `outcome: 'follow'`。这是「召回→跟随」闭环率第一次可测，也让
+  `mem_admin(action="diagnostics")` 能区分「没触发召回」与「触发但没被使用」。
+- **`mem_search` 新增可选 `context` 参数。** 指代性追问（"继续"、"那个改一下"）
+  可把上一轮请求交给语义通道；lexical 分支忽略它。
+
+- **长提示词的语义通道不再先被截断。** 生产路径此前把 `queryFor()` 截到 16 个
+  token 的有界查询同时喂给 lexical 和 dense；冻结语料按生产形状重放后，200 条查询里
+  有 86 条被截断（exact 29、paraphrase 24、cross-lingual 14、concept 19），池化
+  P@3 从 70.6% 掉到 61.9%、paraphrase 从 93.8% 掉到 71.9%。现在 lexical 仍用有界
+  查询，dense 通道改用完整 plain prompt（上限 800 码点：400 会再损失 1.3pp P@3，
+  800 与不设上限质量相同）。恢复后池化 P@3 69.4%、paraphrase 93.8%、exact 96.9%，
+  与未截断基线持平。
+- **极短追问的 lexical 查询改用上一轮内容。** 冻结语料里 40 条指代性提示全部只有
+  5–14 码点，且每条都带上一轮 `context`；dense 通道一直能嵌入这个上下文，但 lexical
+  只搜追问本身，而 3 个 token 的查询永远达不到 6 token 的门槛。现在不超过 8 码点的
+  提示用「prompt + 上一轮」重建 lexical 查询：离线检索 deictic P@3 43.8→53.1、
+  gate pass 0→9.4%、in-gate 精度 55.6%，其余四类逐字节不变，no-answer FPR 保持
+  2.5%。真实 `promptRecall` 重放中 deictic 强档 0→9/40（弱档 29→21，总覆盖 29→30），
+  池化强档覆盖 70→79/200、弱档 76→68、总覆盖 146→147/200，no-answer 弱提示仍为
+  5/40。超过 8 码点的追问不拼 context，避免把无关轮次塞进一个本身有内容的问题。
+- **子代理会话的一次性召回指令。** 真实日志里 47/47 个 delegated 会话都收到了 brief
+  （254,815 字符），却只有 1/47 主动调用过召回工具（2.1/100 会话，且来自合成探针），
+  9/47 改用 125 次直接读 vault 的 shell；根因是 brief 没有给出「先用记忆再动手」的
+  指令。现在第一个 full brief 之后、同一 pre-step 内注入一条 plugin-source 的短指令
+  （涉及项目历史/决策/踩坑先 `mem_search`；没有记录先明说；全文用 `mem_read`；不要用
+  bash/read 读 vault 代替检索），每会话一次，根会话不收。
+- **跨进程 brief 状态持久化。** session 的 in-memory 快照在进程重启后丢失，task-1
+  重放里 83 次重复 full brief = 224,090 字符 = 全部注入字符的 52.0% = 模型输出的
+  103%。现在把 `sentFull`、hot 快照/hash 集合与 full/delta 两个 brief hash 存到
+  `<dataRoot>/session-state/<sha256(sessionKey)>.json`（0600、≤64 KiB、30 天 TTL、
+  懒 GC、全程 fail-open）；新进程只在 claimed 消息里仍能找到**这个 full brief 的
+  精确 hash** 时才采纳（`resume-delta`），否则按原样重发 full brief（`resume-full`）。
+  永不持久化上一轮 prompt、seenPaths、召回预算、continuation 或 epoch。
+- **`retrieval:` frontmatter 作为检索面。** 笔记可以声明
+  `retrieval: {questions, aliases, keys_zh, keys_en, triggers}`；索引把这块（≤600 码点）
+  只加进 FTS `tokens` 列与 embedding 文本，绝不进 `body`/`searchText`，因此 snippet 与
+  `mem_read` 正文不受影响，`mem_read` 返回的 frontmatter 也会剥掉它。索引 schema 升到
+  v2 并一次性重建。60 条 gold 笔记的 overlay 实测：池化 P@3 70.6→79.4（+8.8）、
+  P@1 52.5→60.6、MRR 63.4→70.3、recall@8 84.7→87.2，no-answer FPR 保持 2.5%；
+  cross-lingual P@3 46.9→71.9（+25）且 recall@8 68.8→81.3（+12.5），paraphrase
+  P@3 93.8→96.9，deictic 43.8→59.4，exact/concept 不降。该块只被读取索引，`mem_write`
+  的参数面与生成/回填流程不在本次改动内。
+
+### Changed
+
+- 六个 `mem_*` 工具的 description 改为携带调用策略：何时必须先搜、空结果必须明说、
+  摘要与弱提示只是指针、`mem_write` 只在用户陈述持久知识时使用。常驻 system prompt
+  同步增加一句「回答项目历史/既有决策前先 `mem_search`；没有记录就明说，不要猜」。
+- `skills/obsidian-mem/SKILL.md` 的召回规则补上同样的触发时机、`context` 用法和弱匹配
+  的核实要求。
+
 ## 2.1.1 — 2026-11-08
 
 ### Fixed

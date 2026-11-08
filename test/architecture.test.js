@@ -247,6 +247,9 @@ const LAYERS = {
   'hot-delivery': 0,
   'delivery-state': 3,
   'convention-rotation': 4,
+  // The cross-process brief snapshot reuses the delivery-state private I/O (L3)
+  // and the routing hash (L1) instead of a second writer; hooks (L8) adopts it.
+  'session-state': 4,
   // The browser route fence is import-free; the panel route receives the
   // services through its arguments but resolves the request locale (L0), reads
   // one date helper (L0) and calls the mutation state machine (L1), which fixes
@@ -317,7 +320,11 @@ const LAYERS = {
 const BUDGETS = {
   // The optional support sink adds one failure-isolated observer to the existing
   // ring. It stays here so every call site still passes only one diagnostics seam.
-  'lib/debug.js': 250,
+  // Raised from 250 by the `tool` event and its underscore-tolerant field validator:
+  // the ring had no way to record explicit memory-tool calls or recall→read
+  // follow-through, and the closed name/field lists must grow together. Measured 249
+  // formatted lines; measured-plus-30 is 279, rounded to 300.
+  'lib/debug.js': 300,
   // Raised from 200 by the Task 5 fix round (210 formatted lines measured; the
   // file's rule is measured plus 30 rounded to the next 50, so 250 is the rule's
   // number). What the 10 lines buy: the closed `code` vocabulary the curation call
@@ -732,7 +739,14 @@ const BUDGETS = {
   // the capture before the search and the one argument passed through. The lexical
   // branch's query is unchanged; only a fused retriever reads it. Measured 1909
   // formatted lines; measured-plus-30 is 1939, rounded to 1940.
-  'lib/hooks.js': 1940,
+  // Raised from 1940 by the recall-invocation work: the miss notice's copy, field
+  // and one-shot flag; the injected-path set that lets `mem_read` be reported as
+  // follow-through; and the listener that now also feeds the `tool` diagnostics
+  // event. Raised to 2250 by the delegated-first-brief directive and the
+  // cross-process brief snapshot: the hydrate/persist helpers, the two hash
+  // fields, and the resume-delta/resume-full codes. Measured 2209 formatted lines;
+  // measured-plus-30 is 2239, rounded to 2250.
+  'lib/hooks.js': 2250,
   // Raised from 600 by the hot-zone deadlock fix (1069 formatted lines measured;
   // measured-plus-30 is 1099, which rounds up to 1100). What the 469 lines buy:
   // archival that can tell a pointer line from an entry — the reported bug, since
@@ -764,6 +778,9 @@ const BUDGETS = {
   // 291 by the rule, rounded to 300.
   'lib/hot-delivery.js': 350,
   'lib/delivery-state.js': 1200,
+  // The private brief snapshot: identity check, bounded record, adoption probe
+  // hash set, and the lazy GC. Measured 331, +30 = 361, rounded to 400.
+  'lib/session-state.js': 400,
   'lib/convention-rotation.js': 300,
   // Measured 83 and 263 formatted lines; measured-plus-30 is 113 and 293, rounded
   // to 150 and 300. `panel-route` is larger than the plan's estimate because it
@@ -1065,7 +1082,11 @@ const BUDGETS = {
   // rounded up to 2800, and the entry is left at 2900 rather than 2800 because the
   // next reader this file grows should not need an accounting round to land. The
   // gap is headroom on a file that just lost 131 lines, not standing debt.
-  'lib/index-db.js': 2900,
+  // Raised to 3000 by the retrieval: frontmatter surface — schema v2, the
+  // retrieval column, the token-stream flattening and the sqlite fallback token
+  // set. Measured 2926 formatted lines; measured-plus-30 is 2956, rounded up to
+  // 3000 so the 600-code-point flattening rule keeps its breathing room.
+  'lib/index-db.js': 3000,
   // The extracted 概览 projections. Measured 207 formatted lines; measured-plus-30
   // is 237, rounded up to 250. It is a move, not new surface: the code left
   // `index-db` and arrived here, and the two backends now call it.
@@ -1301,7 +1322,13 @@ const BUDGETS = {
   // (334 formatted lines measured; 370 is measured plus 30). All of it is policy,
   // so it stays beside the floor it replaces rather than moving into a module
   // that would have to re-import the eligibility rules.
-  'lib/prompt-recall.js': 370,
+  // Raised from 370 by the rank-relative weak tier and the explicit abstention
+  // path: the shared note-eligibility helper, the dense-lead/margin selector, the
+  // one-line `[弱匹配·需核实]` renderer, and the branch that reports `near-miss`.
+  // The old fixed 0.88 threshold is deleted, so the raise buys a policy that can
+  // actually fire on the installed model's cosine scale. Measured 377 formatted
+  // lines; measured-plus-30 is 407, rounded to 450.
+  'lib/prompt-recall.js': 450,
   // Raised from 1950 when the diagnostics action's schema landed here. This file
   // is the one the split is for, so the raise is explicitly temporary: the next
   // structural change reduces it to a façade and lowers this number with it.

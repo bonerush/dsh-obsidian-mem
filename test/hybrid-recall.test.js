@@ -369,3 +369,67 @@ test('warm forwards the request shape the provider contract expects', async () =
   assert.deepEqual(calls[0].texts, ['alpha', 'beta'])
   assert.equal(calls[0].kind, 'passage')
 })
+
+test('searchNotes forwards the untruncated denseQuery to the hybrid runtime', async (t) => {
+  // The prompt path keeps the lexical query bounded (a pasted page is not a
+  // keyword query), but the embedding does not need to be short: production
+  // replay showed truncating before both channels costs 8.7pp P@3.
+  const { index } = await makeVault(t, [
+    { path: 'Docs/retry.md', title: '重试策略', body: '失败重试要指数退避。' },
+  ])
+  const calls = []
+  const hybrid = {
+    async rank(request) {
+      calls.push(request)
+      return [lexicalHit(projectPath('Docs/retry.md'), 6)]
+    },
+  }
+  await searchNotes(index, {
+    query: '重试',
+    engine: 'hybrid',
+    hybrid,
+    denseQuery: 'the full untruncated prompt text',
+    limit: 2,
+  })
+  assert.equal(calls[0].denseQuery, 'the full untruncated prompt text')
+
+  await assert.rejects(
+    searchNotes(index, { query: '重试', engine: 'hybrid', hybrid, denseQuery: '  ', limit: 2 }),
+    (error) => error instanceof RangeError,
+  )
+})
+
+test('the dense channel embeds denseQuery when the caller has a longer prompt', async () => {
+  // `query` is the bounded lexical string; `denseQuery` is what the prompt path
+  // judged worth embedding. The previous turn's tail is still appended, so a
+  // deictic follow-up keeps its context.
+  const calls = []
+  const runtime = createHybridRecall({
+    config: { retrievalProvider: { enabled: true, model: 'fake', dimensions: 2 } },
+    dataRoot: '/tmp/unused',
+    vaultRoot: '/tmp/unused',
+    index: fakeIndex([ROW_DENSE]),
+    provider: fakeProvider(new Float64Array([1, 0]), calls),
+    store: fakeStore(new Map([[ROW_DENSE.path, new Float64Array([1, 0])]])),
+  })
+  const lexicalTop = [lexicalHit(ROW_LEXICAL.path, 3)]
+  await runtime.rank({
+    query: 'bounded query',
+    denseQuery: 'the full untruncated prompt',
+    context: 'previous turn',
+    filters: {},
+    lexicalTop,
+    limit: 3,
+  })
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].texts, ['the full untruncated prompt\nprevious turn'])
+
+  calls.length = 0
+  await runtime.rank({
+    query: 'short question',
+    filters: {},
+    lexicalTop,
+    limit: 3,
+  })
+  assert.deepEqual(calls[0].texts, ['short question'], 'no denseQuery falls back to the query')
+})

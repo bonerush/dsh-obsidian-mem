@@ -297,7 +297,7 @@ test('only producer-owned user messages become the DSH query', () => {
   )
 })
 
-test('a semantic near miss becomes one weak hint line, never the body', async () => {
+test('a ranked dense lead becomes one weak hint line, never the body', async () => {
   const result = await promptRecall({
     prompt: '记忆召回为什么对不上',
     seenPaths: new Set(),
@@ -309,33 +309,229 @@ test('a semantic near miss becomes one weak hint line, never the body', async ()
         snippet: '这段摘录绝不能被注入为弱提示',
         scoreSignals: ['semantic-score:0.914', 'hybrid-rank:1', 'token-hits:2'],
       },
+      {
+        path: path.replace('FTS5', 'FTS5-b'),
+        title: '次席候选',
+        snippet: '次席摘录也不该出现',
+        scoreSignals: ['semantic-score:0.60', 'hybrid-rank:3', 'token-hits:1'],
+      },
     ],
   })
   assert.equal(result.outcome, 'near-miss')
-  assert.equal(result.accepted, 0, 'the gate accepted nothing')
+  assert.equal(result.accepted, 0, 'the strong gate accepted nothing')
   assert.equal(result.injected, 1, 'the single hint line was offered')
   assert.deepEqual(result.paths, [path], 'the session dedupe records the hint')
   assert.match(result.text, /弱匹配/)
+  assert.match(result.text, /需核实/)
   assert.match(result.text, /FTS5 中文索引/)
-  assert.ok(!result.text.includes('这段摘录'), 'the excerpt is not injected on a near miss')
+  assert.ok(!result.text.includes('这段摘录'), 'no excerpt on a weak hint')
+  assert.ok(!result.text.includes('次席'), 'only the dense lead is named')
   assert.equal(result.text.split('\n').filter((line) => line.startsWith('- ')).length, 1)
 })
 
-test('a near miss below the semantic threshold, or outside the shortlist, stays silent', async () => {
-  const cases = [
-    ['semantic-score:0.87', 'hybrid-rank:1'],
-    ['semantic-score:0.95', 'hybrid-rank:4'],
-    ['token-hits:2'],
+test('the weak tier needs a dense lead, a margin, and a low absolute floor', async () => {
+  const caseOf =
+    ([first, second]) =>
+    async () => [
+      { path, title: '候选', scoreSignals: [first] },
+      { path: path.replace('FTS5', 'FTS5-b'), title: '次席', scoreSignals: [second] },
+    ]
+  // Below the weak floor: the score cannot be a lead at all.
+  let result = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    search: caseOf(['semantic-score:0.54', 'semantic-score:0.50']),
+  })
+  assert.equal(result.outcome, 'below-floor', 'below the weak floor')
+  assert.equal(result.text, null)
+  // Two dense candidates too close to call: no margin, no lead.
+  result = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    search: caseOf(['semantic-score:0.62', 'semantic-score:0.61']),
+  })
+  assert.equal(result.outcome, 'below-floor', 'margin below 0.02')
+  assert.equal(result.text, null)
+  // Lexical-only evidence never becomes a weak hint: the measured no-answer
+  // false-positive rate was 50-60% for a token-hits>=3 weak tier.
+  result = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    search: async () => [{ path, title: '候选', scoreSignals: ['token-hits:2'] }],
+  })
+  assert.equal(result.outcome, 'below-floor', 'lexical-only')
+  // A clear dense lead just above the floor is offered, without an excerpt.
+  result = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    search: caseOf(['semantic-score:0.56', 'semantic-score:0.40']),
+  })
+  assert.equal(result.outcome, 'near-miss')
+  assert.deepEqual(result.paths, [path])
+})
+
+test('a top dense lead is named without a margin; a middling lead still needs one', async () => {
+  const caseOf =
+    ([first, second]) =>
+    async () => [
+      { path, title: '候选', scoreSignals: [first] },
+      { path: path.replace('FTS5', 'FTS5-b'), title: '次席', scoreSignals: [second] },
+    ]
+  // 0.66 vs 0.655 is under the 0.02 margin, but an absolute lead this high is
+  // not a coin flip: on the key-backed vault the margin rule was hiding real
+  // leads (coverage 147->151 of 200, no-answer weak hints unchanged 5/40).
+  let result = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    search: caseOf(['semantic-score:0.66', 'semantic-score:0.655']),
+  })
+  assert.equal(result.outcome, 'near-miss', 'top-score lead needs no margin')
+  assert.deepEqual(result.paths, [path])
+  // Just under the top-score floor the old margin rule applies again.
+  result = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    search: caseOf(['semantic-score:0.64', 'semantic-score:0.635']),
+  })
+  assert.equal(result.outcome, 'below-floor', 'below the top-score floor, margin still rules')
+  assert.equal(result.text, null)
+})
+
+test('a weak hint already offered this session is all-seen, not repeated', async () => {
+  const search = async () => [
+    { path, title: '候选', scoreSignals: ['semantic-score:0.80', 'hybrid-rank:1'] },
   ]
-  for (const signals of cases) {
-    const result = await promptRecall({
-      prompt: '记忆召回为什么对不上',
-      search: async () => [
-        { path, title: 'FTS5 中文索引', snippet: '摘录', scoreSignals: signals },
-      ],
-    })
-    assert.equal(result.outcome, 'below-floor', signals.join(' '))
-    assert.equal(result.text, null)
-    assert.deepEqual(result.paths, [])
+  const first = await promptRecall({ prompt: '记忆召回为什么对不上', search })
+  assert.equal(first.outcome, 'near-miss')
+  const second = await promptRecall({
+    prompt: '记忆召回为什么对不上',
+    search,
+    seenPaths: new Set(first.paths),
+  })
+  assert.equal(second.outcome, 'all-seen')
+  assert.equal(second.text, null)
+})
+
+test('a strong hit this session suppresses the weak line', async () => {
+  const result = await promptRecall({
+    prompt: '如何修复 FTS5 中文索引？',
+    search: async () => [
+      { path, title: 'FTS5 中文索引', snippet: '直接命中', scoreSignals: ['title-contains'] },
+      {
+        path: path.replace('FTS5', 'FTS5-b'),
+        title: '弱候选',
+        scoreSignals: ['semantic-score:0.9', 'hybrid-rank:1'],
+      },
+    ],
+  })
+  assert.equal(result.outcome, 'fired')
+  assert.ok(!result.text.includes('弱匹配'))
+  assert.equal(result.paths.length, 1)
+})
+
+test('a long prompt keeps a bounded lexical query and sends the full text to the dense channel', async () => {
+  // The lexical query stays bounded so FTS does not pay for a pasted page, but an
+  // embedding is not a keyword query: production replay showed truncating the
+  // text before both channels costs 8.7pp P@3. The full plain prompt therefore
+  // travels as `denseQuery`; the fake search here stands in for services.search.
+  const calls = []
+  const prompt =
+    '我需要你根据之前几个 session 的对话，评估记忆的调动情况、召回情况以及相关记忆工具的使用频率，看是否还存在什么问题。当前还是处于 V2 的次主分支上，你可以新建一个 feature 的分支，这个分支描述的是对于召回机制的改进。'
+  const result = await promptRecall({
+    prompt,
+    search: async (args) => {
+      calls.push(args)
+      return []
+    },
+  })
+  assert.equal(result.outcome, 'no-hits')
+  assert.notEqual(calls[0].query, prompt, 'the lexical query is truncated')
+  assert.ok([...calls[0].query].length < 200)
+  assert.equal(calls[0].denseQuery, prompt, 'the dense channel receives the untruncated prompt')
+})
+
+test('the dense query is capped at 800 code points', async () => {
+  // E2b on the recovery corpus: cap 400 costs 1.3pp P@3; 800 equals uncapped
+  // quality (69.4% P@3, 85.0% recall@8) without embedding a pasted page.
+  const calls = []
+  const prompt = '记忆召回'.repeat(300) // 1,200 code points before the cap
+  await promptRecall({
+    prompt,
+    search: async (args) => {
+      calls.push(args)
+      return []
+    },
+  })
+  assert.equal([...calls[0].denseQuery].length, 800)
+  assert.ok([...calls[0].query].length < 200, 'the lexical query stays bounded')
+})
+
+test('a short prompt does not duplicate itself into denseQuery', async () => {
+  const calls = []
+  await promptRecall({
+    prompt: '如何修复 FTS5 中文索引？',
+    search: async (args) => {
+      calls.push(args)
+      return []
+    },
+  })
+  assert.equal(calls[0].denseQuery, undefined, 'no truncation means no denseQuery argument')
+})
+
+test('a very short follow-up searches with the previous turn as its lexical query', async () => {
+  // All 40 deictic prompts on the frozen corpus are 5-14 code points and carry a
+  // previous-turn context. The token gate can never pass a referent-less query,
+  // so the lexical query is rebuilt from prompt + context: deictic P@3 43.8% ->
+  // 53.1%, gate pass 0% -> 9.4%, every other class unchanged, no-answer FP 2.5%.
+  const calls = []
+  const context = '上一轮在核对 AGENTS.md 里的开发依赖数量'
+  const result = await promptRecall({
+    prompt: '继续推进',
+    context,
+    search: async (args) => {
+      calls.push(args)
+      return []
+    },
+  })
+  assert.equal(result.outcome, 'no-hits')
+  assert.match(calls[0].query, /agents|开发/)
+  assert.equal(calls[0].denseQuery, '继续推进', 'the dense channel still gets the prompt itself')
+  assert.equal(calls[0].context, context, 'the dense channel still receives the context as well')
+})
+
+test('a two-character continuation is a query only when a previous turn exists', async () => {
+  const calls = []
+  await promptRecall({
+    prompt: '继续',
+    context: '上一轮在核对 AGENTS.md 里的开发依赖数量',
+    search: async (args) => {
+      calls.push(args)
+      return []
+    },
+  })
+  assert.equal(calls.length, 1, 'the context gives a referent-less continuation a query')
+  assert.ok([...calls[0].query].length > 2)
+  await promptRecall({ prompt: '继续', search: async () => [] })
+  assert.equal(calls.length, 1, 'without context there is still nothing to search')
+})
+
+test('the context never joins a prompt that is not a short follow-up', async () => {
+  const calls = []
+  const prompt = '如何修复 FTS5 中文索引？'
+  await promptRecall({
+    prompt,
+    context: '上一轮在核对 AGENTS.md 里的开发依赖数量',
+    search: async (args) => {
+      calls.push(args)
+      return []
+    },
+  })
+  assert.equal(calls[0].query, prompt, 'a real question keeps exactly its own words')
+  assert.equal(calls[0].denseQuery, undefined)
+})
+
+test('the thin-prompt cutoff is eight code points', async () => {
+  const calls = []
+  const search = async (args) => {
+    calls.push(args)
+    return []
   }
+  await promptRecall({ prompt: '这个还是要改一下', context: '上一轮在改召回门槛', search })
+  assert.equal(calls[0].query, '这个还是要改一下 上一轮在改召回门槛')
+  await promptRecall({ prompt: '这个还是要改一下啊', context: '上一轮在改召回门槛', search })
+  assert.equal(calls[1].query, '这个还是要改一下啊', 'nine code points is not a follow-up')
 })
