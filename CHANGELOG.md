@@ -88,6 +88,10 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Changed
 
+- 设置页的「模型蒸馏」分组增加一段说明：`distill.provider` 是 DSH「设置 → 模型」里
+  已添加的路由 ID，`distill.model` 是该路由下的模型 ID；第三方 API 的 Base URL、API Key
+  在 DSH 模型设置里配置，不写进插件配置；两项都留空时自动使用最近一次对话的模型。
+  此前这两项没有任何说明，容易被误读为插件缺少 endpoint/key 字段。
 - 六个 `mem_*` 工具的 description 改为携带调用策略：何时必须先搜、空结果必须明说、
   摘要与弱提示只是指针、`mem_write` 只在用户陈述持久知识时使用。常驻 system prompt
   同步增加一句「回答项目历史/既有决策前先 `mem_search`；没有记录就明说，不要猜」。

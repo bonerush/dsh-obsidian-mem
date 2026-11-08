@@ -2656,6 +2656,16 @@ test('the settings form renders the host fields grouped, labelled and with curre
     'futureCount',
   ])
     assert.ok(strings.includes(copy), 'the form labels ' + copy)
+  const routeHint = strings.filter((value) => value.includes('路由 ID'))
+  assert.equal(routeHint.length, 1, 'the distill group explains what the pair selects once')
+  assert.ok(
+    routeHint[0].includes('最近一次对话'),
+    'the hint says an empty pair falls back to the latest conversation model',
+  )
+  assert.ok(
+    routeHint[0].includes('Base URL'),
+    'the hint sends third-party API settings to the host model settings',
+  )
   assert.equal(
     nodes(tree).some((node) => typeof node?.props?.className === 'string'),
     false,
