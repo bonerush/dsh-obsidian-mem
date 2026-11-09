@@ -60,8 +60,8 @@ repository                                vault (~/Documents/dsh-memory)
 | 🧠 **纯 Markdown 的项目记忆** | 一个项目对应一个稳定的 `projectId`、一个提交进版本库的指针文件、仓库里一个固定目录。Obsidian 只负责展示结果；仓库比 DSH 活得久，卸载插件后照样能读。 |
 | 🔌 **协议 + 适配器** | 仓库布局、指针和笔记 frontmatter 是一套协议：`skills/obsidian-mem/SKILL.md` 把它交给任何 Agent-Skills 宿主，`codex/` 则通过一个直接 import `lib/`（而不是复制）的 MCP server，把同样的六个操作装进 Codex CLI。 |
 | ✍️ **六个记忆工具** | `mem_search`、`mem_read`、`mem_write`、`mem_log`、`mem_brief`、`mem_admin`——事务化写入、可重建的 SQLite/FTS5 缓存，以及一份始终在固定字符预算内的会话简报。 |
-| 🔎 **默认带语义引擎的检索** | 基线是 FTS5/BM25；`hybrid` 引擎已是默认，只要把 `retrievalProvider` 指向本地模型服务就多一条回环 embedding 的语义通道（不配 provider 就是原样的 lexical 路径），另有本地 TF-IDF/余弦重排（`sparse`）、同日创建/更新的互斥口径、每轮相关笔记召回，以及一份是导航而不是正文倾倒的简报。 |
-| 🗂️ **蒸馏与整理** | 完成的回合在后台蒸馏成带类型的笔记；近似重复和危险的改写只停成提案，只能由人在终端里用 `dsh-obsidian-mem-review` 批准。 |
+| 🔎 **默认带语义引擎的检索，本地与云端都行** | 基线是 FTS5/BM25；`hybrid` 引擎已是默认，只要把 `retrievalProvider` 指向一个 embedding 服务就多一条语义通道——回环服务（`egress: loopback`）或内部/云端网关（显式 `egress: remote`，`apiStyle: openai` 直接说 OpenAI 的 `/embeddings`），不配 provider 就是原样的 lexical 路径；另有本地 TF-IDF/余弦重排（`sparse`）、同日创建/更新的互斥口径、每轮相关笔记召回，以及一份是导航而不是正文倾倒的简报。 |
+| 🗂️ **蒸馏与整理，宿主或直连都行** | 完成的回合在后台蒸馏成带类型的笔记；模型调用默认走 DSH 宿主的 `llm`（`transport: host`），也可以直连一个 OpenAI 兼容端点（`transport: http`，本地 Ollama/LM Studio 或云端），所以没有宿主路由的 host 也能蒸馏。近似重复和危险的改写只停成提案，只能由人在终端里用 `dsh-obsidian-mem-review` 批准。 |
 | 📊 **实时记忆面板** | GitHub 形式的 53 周贡献日历（固定 10 px 方格、月份与星期标签、悬停 tooltip、窄侧栏里图内横向滚动）；新建/更新分流柱、标签树状图、类型→状态的构成桑基图、KPI 迷你折线、按天分组的活动时间线，以及一个把三个维护操作结果就地写在按钮所属卡片里的 **健康** 仪表盘。后台轮询静默重扫索引，别的进程写下的记忆无需重启 DSH 就能出现。 |
 | 🕸️ **知识图谱** | 作用域内的**每个节点**都画出来（没有 top-N 截断），力模型、alpha 衰减与播种/拖拽协议是 Obsidian D3 回退模拟器的 1:1 移植；筛选、颜色组、外观与力度按浏览器来源持久化；读/写/检索/注入召回会点亮这一轮真正碰到的节点。 |
 | 🔒 **默认安全** | 面板默认只读；恰好三个维护操作可以写，每一个都是「预览 → 确认」，背后是一次性 60 秒令牌。即使经过桌面壳的 `dsh-app://` 代理，Web 路由的 loopback 与同源栅栏仍然生效。 |
@@ -365,7 +365,13 @@ profile patch。下面直接编辑 patch 文件的路线仍然可用，表单没
     retrievalEngine: hybrid
     retrievalProvider:
       enabled: false
+      # loopback | remote。remote 必须显式写出：非回环地址只在它之下才合法。
+      egress: loopback
       endpoint: ""
+      # embed（插件自己的 /embed 契约）| openai（OpenAI 兼容的 /embeddings）
+      apiStyle: embed
+      # 凭证所在**环境变量名**，不是密钥本身
+      apiKeyEnv: ""
       model: ""
       dimensions: 0
       timeoutMs: 500
@@ -379,6 +385,12 @@ profile patch。下面直接编辑 patch 文件的路线仍然可用，表单没
     distill:
       provider: ""
       model: ""
+      # host（DSH 宿主的 llm service）| http（本插件自己调 OpenAI 兼容端点）
+      transport: host
+      egress: loopback
+      endpoint: ""
+      apiStyle: openai-chat
+      apiKeyEnv: ""
       maxItems: 12
       minConfidence: 0.75
       maxInputChars: 24000
@@ -410,10 +422,13 @@ profile patch。下面直接编辑 patch 文件的路线仍然可用，表单没
 | `bindHint` | `true` | boolean | 当会话所在目录解析不出可用项目时，是否一次性告知该会话。这条通知既是「要不要为这个项目建记忆」的提问入口，也是「会话记录的目录已被移动或删除」的报错入口——否则记忆只会静默失效。`false` 只去掉这一条注入，别的都不变；Codex 侧同一个开关是 `OBSIDIAN_MEM_BIND_HINT`。 |
 | `briefBudgetChars` | `6000` | 整数 256–20000 | 会话简报与每周提醒的硬上限，单位是 Unicode 码点。 |
 | `briefConventionMode` | `summary` | `summary` 或 `flat` | 长约定索引的渲染方式。`summary` 只显示 5 行 MOC，其余通过 `mem_brief(section="conventions", offset=5)` 逐页取回；`flat` 是 0.3 之前的列表，完全由预算决定显示多少。只影响渲染：分页始终能读到全部条目。`summary` 模式下这五行会跨已确认的会话轮转，所以长 MOC 不会永远是同五条。 |
-| `retrievalEngine` | `hybrid` | `lexical`、`sparse` 或 `hybrid` | 检索引擎。`lexical` 是原样的 FTS 路径。`sparse` 用本地 TF-IDF/余弦对至多 24 条源码已验证的 lexical 候选重排，再以 RRF k=60 融合；不需要模型、网络或依赖。`hybrid`（2.0.0 起的默认）从 `retrievalProvider` 里配置的回环服务取一份语义候选，再与 lexical 列表按加权 RRF（k=60，语义权重 2）融合。provider 本身仍然默认关闭，所以没有任何 provider 的默认配置走的是原样的 lexical 路径，并在 search 诊断里记 `provider-disabled`；不会静默降级。 |
-| `retrievalProvider` | `{enabled: false, endpoint: "", model: "", dimensions: 0, timeoutMs: 500, rerank: false}` | 对象；未知键会被拒绝 | `hybrid` 使用的回环 embedding 服务。它永远不是云调用：endpoint 必须是回环地址。`enabled` 为 false 时不会构造 provider，其余字段全部无效，`hybrid` 等价于 `lexical`。 |
+| `retrievalEngine` | `hybrid` | `lexical`、`sparse` 或 `hybrid` | 检索引擎。`lexical` 是原样的 FTS 路径。`sparse` 用本地 TF-IDF/余弦对至多 24 条源码已验证的 lexical 候选重排，再以 RRF k=60 融合；不需要模型、网络或依赖。`hybrid`（2.0.0 起的默认）从 `retrievalProvider` 里配置的 embedding 服务（本地或云端）取一份语义候选，再与 lexical 列表按加权 RRF（k=60，语义权重 2）融合。provider 本身仍然默认关闭，所以没有任何 provider 的默认配置走的是原样的 lexical 路径，并在 search 诊断里记 `provider-disabled`；不会静默降级。 |
+| `retrievalProvider` | `{enabled: false, egress: "loopback", endpoint: "", apiStyle: "embed", apiKeyEnv: "", model: "", dimensions: 0, timeoutMs: 500, rerank: false}` | 对象；未知键会被拒绝 | `hybrid` 使用的 embedding 服务，本地与云端都支持。`egress: loopback` 时 endpoint 必须是字面回环地址；`egress: remote` 是运维显式的出网决定，任何 http(s) 主机都合法。`enabled` 为 false 时不会构造 provider，其余字段全部无效，`hybrid` 等价于 `lexical`。 |
 | `retrievalProvider.enabled` | `false` | boolean | 打开 provider。即使 `retrievalEngine: hybrid`（现在的默认）它也是可选的：没有它，引擎解析成 lexical 路径，search 诊断里写明 `provider-disabled`。 |
-| `retrievalProvider.endpoint` | `""` | 127.0.0.1/localhost 上的 URL | `/embed` 的地址。任何非回环主机都会在加载配置时被拒绝。 |
+| `retrievalProvider.egress` | `loopback` | `loopback` 或 `remote` | 允许的端点形态。`loopback` 只接受 `127.0.0.1` 与 `::1`。`remote` 接受任意 http(s) 主机，是显式的出网决定：没有任何默认值会替你打开它，取值本身也会写进 search 诊断。 |
+| `retrievalProvider.endpoint` | `""` | http(s) URL | 服务基址。`apiStyle: embed` 时请求 `<endpoint>/embed`，`openai` 时请求 `<endpoint>/embeddings`。任何形态都不接受 URL 内嵌凭证、query 或 fragment，也不跟随重定向。 |
+| `retrievalProvider.apiStyle` | `embed` | `embed` 或 `openai` | 线上协议。`embed` 是插件自己的 `/embed` 契约（请求体逐字节不变）；`openai` 是 OpenAI 兼容的 `/embeddings`，把 `data[].embedding` 按 `index` 还原后映射回同一份契约，所以内部网关或云端 API 不需要中间 shim。`openai` 与 `rerank: true` 互斥（该协议没有 `/rerank`）。 |
+| `retrievalProvider.apiKeyEnv` | `""` | 环境变量名 | 凭证所在的**环境变量名**，不是密钥。请求发出前才读取；缺失时以 `provider-credential` 拒绝且不打开任何 socket。值不会出现在错误消息、诊断或日志里。 |
 | `retrievalProvider.model` | `""` | 启用时非空字符串 | 请求体里的模型名；它也是向量文件名字的一部分，改了会触发本地整份重建。 |
 | `retrievalProvider.dimensions` | `0` | 启用时正整数 | 期望的向量维度。provider 返回其它维度会让已存向量失效并强制重建。 |
 | `retrievalProvider.timeoutMs` | `500` | 整数 50–5000 | embedding 调用的单请求超时。超时的那次搜索回退到 lexical。 |
@@ -428,6 +443,11 @@ profile patch。下面直接编辑 patch 文件的路线仍然可用，表单没
 | `captureIdleMs` | `90000` | 整数 1000–3600000 | 被捕获的回合进入蒸馏前的空闲去抖时间。 |
 | `distill.provider` | `""` | string | 模型路由。必须和 `model` 一起设置，或者两个都留空（留空 = 复用会话最近记录的路由）。从别的 harness 导入的会话没有这条路由，所以导入的历史会一直停在 `deferred`，直到设了这一项。 |
 | `distill.model` | `""` | string | 见上。 |
+| `distill.transport` | `host` | `host` 或 `http` | 模型调用的传输方式。`host` 是 DSH 宿主的 `llm` service，1.0.0 起的行为，`endpoint` 必须留空。`http` 是本插件自己调一个 OpenAI 兼容的 `/chat/completions` 端点（`lib/model-transport.js`）：没有宿主路由的 host（Codex 适配器、未配置 provider 的 TUI、CLI）也能蒸馏，也可以指向本地 Ollama/LM Studio 或云端。提示词、严格 JSON 契约与全部校验规则两条路径一致。 |
+| `distill.egress` | `loopback` | `loopback` 或 `remote` | 与 `retrievalProvider.egress` 同一套规则：非回环端点只在显式 `remote` 下合法。 |
+| `distill.endpoint` | `""` | `transport: http` 时必填，`host` 时必须为空 | `/chat/completions` 的基址。两种取值与 `transport` 不一致都是配置错误，而不是等到第一个 job 才失败。 |
+| `distill.apiStyle` | `openai-chat` | `openai-chat` | 目前只有一种线上协议。这个键存在是为了让未来的方言有地方落，而不是让表单猜。 |
+| `distill.apiKeyEnv` | `""` | 环境变量名 | 与 `retrievalProvider.apiKeyEnv` 同一条凭证规则。 |
 | `distill.maxItems` | `12` | 整数 1–50 | 一次蒸馏最多接受多少个候选，包括失败留档的兜底候选。同一个数字会写进 system prompt，模型因此知道超过多少条会被拒绝；超限是整批拒绝，绝不裁剪。 |
 | `distill.minConfidence` | `0.75` | number 0–1 | 低于此值的候选进入 `Inbox/`，而不是成为记忆笔记。 |
 | `distill.maxInputChars` | `24000` | 整数 256–100000 | 那次模型调用的输入上限。 |
@@ -893,10 +913,12 @@ Obsidian 里冲突。要补上这个缺口，要么在仓库侧读 `types.json`�
 - **语义检索默认在引擎上开启、在你配 provider 之前不产生任何效果，代价也已经量过。**
   `retrievalEngine: "sparse"` 仍是词法的：它只用 TF-IDF/余弦对至多 24 条源码已验证候选
   重排，找不到索引从未匹配过的同义词。`hybrid`（2.0.0 起的默认引擎）通过
-  `retrievalProvider` 里配置的回环 provider 增加一条真正的语义候选通道。provider 本身
-  仍然默认关闭，所以没有任何 provider 的配置读的是逐字节相同的 lexical 路径，并在
-  search 诊断里记 `provider-disabled`：默认值只是「要了这条通道」，你不把它指向本地模型
-  服务之前它不花任何代价。在冻结的 200 条语料上，它把 pooled P@3 从 44.4% 提到
+  `retrievalProvider` 里配置的 embedding provider（回环服务或显式 `egress: remote` 的
+  网关）增加一条真正的语义候选通道。provider 本身仍然默认关闭，所以没有任何 provider
+  的配置读的是逐字节相同的 lexical 路径，并在 search 诊断里记 `provider-disabled`：默认值
+  只是「要了这条通道」，你不把它指向一个服务之前它不花任何代价。选择 remote 就是选择
+  让笔记与查询文本离开本机——这是运维显式写出的决定，插件不会替你打开，也不会从已有的
+  宿主凭证里推断端点。在冻结的 200 条语料上，它把 pooled P@3 从 44.4% 提到
   61.25%，五类无一回退，随后的校准闸门（token 命中，或前三名 dense 槽位 cosine ≥ 0.92）
   再把 in-gate precision 从 27.9% 提到 41.8%、no-answer 假阳性从 32.5% 降到 5.0%。
   真正打开它的代价是每次查询多一次 embedding 往返（查询计划修复后语料 p50 为 121.2ms，
