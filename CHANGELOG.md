@@ -135,6 +135,16 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Fixed
 
+- **设置页的模型路由字段改用中文标签、翻译选项并补上逐字段说明。** `lib/client.js`
+  的设置表单只为旧字段提供了中文名，`distill.transport|egress|endpoint|apiStyle|apiKeyEnv`
+  与 `retrievalProvider.egress|apiStyle|apiKeyEnv` 因此显示成原始英文路径；
+  `host`/`http`、`loopback`/`remote`、`openai-chat`/`embed`/`openai` 这些枚举值也照原样
+  打印英文 token。现在八个字段都有中文名，七个枚举选项显示「中文含义（原始取值）」，
+  41 个投影字段各有一行说明（输入什么、取值范围、endpoint 写到版本路径为止、
+  `apiKeyEnv` 是变量名而不是密钥、egress 的边界规则、切换向量模型后需重建索引），
+  模型蒸馏与检索两组还各有一段说明介绍 transport/egress 的组合方式。未知字段照旧
+  原样显示，避免表单丢弃宿主新加的字段。
+
 - **`distill.transport: http` 的 SSE 文本不再按 TCP 分片解码。** `lib/model-transport.js`
   此前把响应流里的每个 `Buffer` 分片单独拼进字符串，一个多字节字符（例如中文）被拆到
   两个分片时会被静默替换成 U+FFFD；现在响应整体按 utf8 文本流读取，不完整的字节序列

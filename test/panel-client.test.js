@@ -2476,6 +2476,11 @@ const SETTINGS_FIELDS = [
   { path: 'hotArchiveRatio', type: 'number', default: 0.67 },
   { path: 'distill.provider', type: 'string', default: '' },
   { path: 'distill.model', type: 'string', default: '' },
+  { path: 'distill.transport', type: 'enum', enum: ['host', 'http'], default: 'host' },
+  { path: 'distill.egress', type: 'enum', enum: ['loopback', 'remote'], default: 'loopback' },
+  { path: 'distill.endpoint', type: 'string', default: '' },
+  { path: 'distill.apiStyle', type: 'enum', enum: ['openai-chat'], default: 'openai-chat' },
+  { path: 'distill.apiKeyEnv', type: 'string', default: '' },
   { path: 'distill.maxItems', type: 'number', default: 12 },
   { path: 'distill.minConfidence', type: 'number', default: 0.75 },
   { path: 'distill.dryRun', type: 'boolean', default: false },
@@ -2487,6 +2492,15 @@ const SETTINGS_FIELDS = [
     default: 'hybrid',
   },
   { path: 'retrievalProvider.enabled', type: 'boolean', default: false },
+  {
+    path: 'retrievalProvider.egress',
+    type: 'enum',
+    enum: ['loopback', 'remote'],
+    default: 'loopback',
+  },
+  { path: 'retrievalProvider.endpoint', type: 'string', default: '' },
+  { path: 'retrievalProvider.apiStyle', type: 'enum', enum: ['embed', 'openai'], default: 'embed' },
+  { path: 'retrievalProvider.apiKeyEnv', type: 'string', default: '' },
   { path: 'retrievalProvider.dimensions', type: 'number', default: 0 },
   { path: 'ignoreGlobs', type: 'stringArray', default: [] },
   // Unknown future paths still render: the host projects the schema and the form
@@ -2516,10 +2530,28 @@ const settingsValues = () => ({
   failureRecall: true,
   hotCapacityChars: 9000,
   hotArchiveRatio: 0.67,
-  distill: { provider: '', model: '', maxItems: 12, minConfidence: 0.75, dryRun: false },
+  distill: {
+    provider: '',
+    model: '',
+    transport: 'host',
+    egress: 'loopback',
+    endpoint: '',
+    apiStyle: 'openai-chat',
+    apiKeyEnv: '',
+    maxItems: 12,
+    minConfidence: 0.75,
+    dryRun: false,
+  },
   indexBackend: 'auto',
   retrievalEngine: 'hybrid',
-  retrievalProvider: { enabled: false, dimensions: 0 },
+  retrievalProvider: {
+    enabled: false,
+    egress: 'loopback',
+    endpoint: '',
+    apiStyle: 'embed',
+    apiKeyEnv: '',
+    dimensions: 0,
+  },
   ignoreGlobs: ['ignored/**'],
   futureFlag: false,
   futureCount: 3,
@@ -2656,7 +2688,9 @@ test('the settings form renders the host fields grouped, labelled and with curre
     'futureCount',
   ])
     assert.ok(strings.includes(copy), 'the form labels ' + copy)
-  const routeHint = strings.filter((value) => value.includes('路由 ID'))
+  const routeHint = strings.filter(
+    (value) => value.includes('路由 ID') && value.includes('Base URL'),
+  )
   assert.equal(routeHint.length, 1, 'the distill group explains what the pair selects once')
   assert.ok(
     routeHint[0].includes('最近一次对话'),
@@ -2696,6 +2730,53 @@ test('the settings form renders the host fields grouped, labelled and with curre
   assert.equal(control('ignoreGlobs').type, 'textarea')
   assert.equal(control('ignoreGlobs').props.value, 'ignored/**', 'one array item per line')
   assert.equal(settingsButton(tree, '保存').props.disabled, true, 'nothing to save while clean')
+})
+
+test('the model-route fields carry Chinese labels, translated options and a meaning hint', async (t) => {
+  const { tree } = await mountSettingsPage(t, () => settingsRead())
+  const strings = settingsStrings(tree)
+  for (const label of [
+    '蒸馏调用方式',
+    '蒸馏出站范围',
+    '蒸馏服务地址',
+    '蒸馏接口协议',
+    '蒸馏 API Key 环境变量名',
+    '检索出站范围',
+    '检索接口协议',
+    '检索 API Key 环境变量名',
+  ])
+    assert.ok(strings.includes(label), 'the form labels ' + label)
+
+  const optionTexts = (path) =>
+    nodes(settingsControl(tree, path))
+      .filter((node) => node?.type === 'option')
+      .map((node) =>
+        Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children,
+      )
+  assert.deepEqual(
+    optionTexts('distill.transport'),
+    ['宿主模型（host）', 'HTTP 端点（http）'],
+    'the transport options print their Chinese meaning beside the raw token',
+  )
+  assert.deepEqual(optionTexts('distill.egress'), ['本机回环（loopback）', '远端服务（remote）'])
+  assert.deepEqual(optionTexts('distill.apiStyle'), ['OpenAI 兼容对话（openai-chat）'])
+  assert.deepEqual(optionTexts('retrievalProvider.egress'), [
+    '本机回环（loopback）',
+    '远端服务（remote）',
+  ])
+  assert.deepEqual(optionTexts('retrievalProvider.apiStyle'), [
+    '插件原生向量（embed）',
+    'OpenAI 兼容向量（openai）',
+  ])
+  const explains = (copy) => strings.some((value) => value.includes(copy))
+  for (const copy of [
+    'API 基址',
+    '存放 API Key 的环境变量名（不是 Key 本身）',
+    '允许任意 http(s) 主机',
+    '向量维度与本地不同，切换后要重建索引',
+    '直接调用 OpenAI 兼容的 /chat/completions 端点',
+  ])
+    assert.ok(explains(copy), 'a field or group explains ' + copy)
 })
 
 test('boolean fields are toggle switches and a click dirties the form', async (t) => {
@@ -2956,18 +3037,17 @@ test('inline validation names range, integer and exclusive violations and disabl
 })
 
 test('the distill route pair is validated locally and disables save', async (t) => {
-  const { render, tree } = await mountSettingsPage(t, () => settingsRead())
-  settingsControl(tree, 'distill.provider').props.onChange({ target: { value: 'openai' } })
-  let next = render()
-  assert.ok(
-    settingsStrings(next).some(
+  const pairWarning = (tree) =>
+    settingsStrings(tree).some(
       (value) =>
         value.includes('distill.provider') &&
         value.includes('distill.model') &&
         value.includes('同时'),
-    ),
-    'a one-sided route pair is named',
-  )
+    )
+  const { render, tree } = await mountSettingsPage(t, () => settingsRead())
+  settingsControl(tree, 'distill.provider').props.onChange({ target: { value: 'openai' } })
+  let next = render()
+  assert.ok(pairWarning(next), 'a one-sided route pair is named')
   assert.equal(
     settingsButton(next, '保存').props.disabled,
     true,
@@ -2983,11 +3063,7 @@ test('the distill route pair is validated locally and disables save', async (t) 
   settingsControl(tree, 'distill.provider').props.onChange({ target: { value: '' } })
   settingsControl(tree, 'distill.model').props.onChange({ target: { value: '' } })
   next = render()
-  assert.equal(
-    settingsStrings(next).some((value) => value.includes('同时')),
-    false,
-    'the pair warning clears when both sides are empty',
-  )
+  assert.equal(pairWarning(next), false, 'the pair warning clears when both sides are empty')
   assert.equal(
     settingsButton(next, '保存').props.disabled,
     true,

@@ -1230,7 +1230,15 @@ const BUDGETS = {
   // measured; measured-plus-30 is 2746, rounded up to 2750). The 47 lines replace
   // the checkbox branch with a real role=switch button (inline tokens only, so the
   // form still adds no stylesheet class) and record the reason.
-  'lib/client.js': 2750,
+  // Raised from 2750 by the owner's settings-readability round (2941 formatted lines
+  // measured; measured-plus-30 is 2971, rounded up to 3000). The 225 lines are the
+  // model-route vocabulary the local/cloud release added but the client never learned:
+  // eight Chinese labels for `distill.transport|egress|endpoint|apiStyle|apiKeyEnv` and
+  // `retrievalProvider.egress|apiStyle|apiKeyEnv`, seven translated enum options
+  // (host/http/loopback/remote/openai-chat/embed/openai), a one-line description for all
+  // 41 projected fields, and two group paragraphs that explain how transport/egress
+  // combine. No new control kinds, no stylesheet class, no second field list.
+  'lib/client.js': 3000,
   // The plugin-settings route, registered on the same web server as the panel
   // (750 formatted lines measured after the review fix waves; measured-plus-30 is 780,
   // rounded up to 800). What
