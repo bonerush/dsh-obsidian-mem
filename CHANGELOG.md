@@ -127,6 +127,14 @@ release artifact. The versioning policy is in the README, under Development.
 - `skills/obsidian-mem/SKILL.md` 的召回规则补上同样的触发时机、`context` 用法和弱匹配
   的核实要求。
 
+### Fixed
+
+- **`distill.transport: http` 的 SSE 文本不再按 TCP 分片解码。** `lib/model-transport.js`
+  此前把响应流里的每个 `Buffer` 分片单独拼进字符串，一个多字节字符（例如中文）被拆到
+  两个分片时会被静默替换成 U+FFFD；现在响应整体按 utf8 文本流读取，不完整的字节序列
+  由 `StringDecoder` 跨分片保留。新增用例把「你好，世界」切在首字符的 UTF-8 字节中间
+  分两次写出，断言 `block-end` 文本与原文完全相同。
+
 ## 2.1.1 — 2026-11-08
 
 ### Fixed

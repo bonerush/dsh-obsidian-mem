@@ -297,6 +297,38 @@ test('one SSE answer becomes the host chunk sequence, the whole text and the usa
   assert.equal(raw, 'Hello')
 })
 
+test('a multi-byte character split across TCP chunks is decoded, not replaced', async (t) => {
+  // The bytes of one delta frame, cut one byte into the first character's UTF-8
+  // encoding: neither half is valid UTF-8 on its own, exactly the shape a real socket
+  // produces when a packet boundary lands inside a Chinese character. A per-chunk
+  // `String()` conversion would freeze the halves into U+FFFD before the line parses.
+  const answer = '你好，世界'
+  const body = 'data: ' + JSON.stringify({ choices: [{ delta: { content: answer } }] }) + '\n\n'
+  const bytes = Buffer.from(body, 'utf8')
+  const charAt = body.indexOf('你')
+  const cut = Buffer.byteLength(body.slice(0, charAt), 'utf8') + 1
+  const server = await listen((entry, response) => {
+    response.write(bytes.subarray(0, cut))
+    // The timer makes the split deterministic: two writes in one tick can still
+    // coalesce into a single chunk on some kernels.
+    setTimeout(() => {
+      response.write(bytes.subarray(cut))
+      response.end('data: [DONE]\n\n')
+    }, 25)
+  })
+  t.after(() => server.close())
+
+  const chunks = await collect(routeTo(server.url).stream(request()))
+  const deltas = chunks
+    .filter((chunk) => chunk.type === 'text-delta')
+    .map((chunk) => /** @type {any} */ (chunk).text)
+  // The block-end text is what `lib/distill.js` parses, and the deltas are what a
+  // reader would display; both must survive the split unchanged.
+  assert.deepEqual(deltas, [answer])
+  const end = chunks.find((chunk) => chunk.type === 'block-end')
+  assert.equal(/** @type {any} */ (end).block.text, answer)
+})
+
 test('the request is one POST /chat/completions with the system message first', async (t) => {
   const server = await listen((entry, response) => {
     frame(response, { choices: [{ delta: { content: 'ok' } }] })
