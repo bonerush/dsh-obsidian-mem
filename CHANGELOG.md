@@ -13,6 +13,41 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Added
 
+- **`distill.transport: http` 已接入插件入口。** `lib/index.js` 在 `transport: 'http'`
+  时用 `lib/model-transport.js` 构建一次路由，交给队列 worker（经 `registerHooks` 的
+  `llm` 参数）与自动审阅（`autoReviewQueue` 的 `llm`），优先于宿主 `ctx.get('llm')`；
+  `transport: 'host'`（出厂默认）仍然什么都不构建。路由构建失败在激活时抛出，而不是
+  让每个 job 在调用时退避。新增对照用例：注入路由时宿主 service 的调用计数为 0。
+- **embedding 与蒸馏现在同时支持本地与云端模型。** 两条原来各自被钉死的部署路径
+  放开成「一个契约、两种传输」：`retrievalProvider` 新增 `egress`（`loopback` |
+  `remote`，默认 `loopback`）、`apiStyle`（`embed` | `openai`，默认 `embed`）与
+  `apiKeyEnv`（环境变量**名**，不是密钥）；`distill` 新增 `transport`（`host` |
+  `http`，默认 `host`）、`egress`、`endpoint`、`apiStyle`、`apiKeyEnv`。
+  `egress: remote` 必须由运维显式写出，非回环地址不再被无差别拒绝；`apiStyle:
+  openai` 直接把 OpenAI 兼容的 `/embeddings` 映射回插件自己的 `/embed` 契约，
+  内部网关或云端 API 因此不需要中间 shim。`distill.transport: http` 用
+  `lib/model-transport.js` 把 `/chat/completions` 的 SSE 流适配成宿主 `llm.stream()`
+  的 chunk 契约，没有宿主路由的 host（Codex 适配器、未配置 provider 的 TUI、CLI）
+  也能蒸馏，且可以指向本地 Ollama/LM Studio 或云端。两条路径的提示词、严格 JSON
+  契约与全部校验规则完全不变——新增的是传输，不是策略。
+  - 安全边界：`apiKeyEnv` 只存变量名，密钥在请求发出前才读取；缺失时报
+    `provider-credential` 且不打开任何 socket；密钥值从不出现在错误消息、诊断事件
+    或日志里（回显的上游文本会被 `redactSecret` 覆盖）。端点仍拒绝内嵌凭证、query、
+    fragment 与非 http(s) 协议，重定向从不跟随。
+- **`lib/model-egress.js`：egress 与凭证规则只有一份实现。** 回环判定、端点形态、
+  环境变量名校验与密钥读取集中在这个叶子模块（L0），`retrieval-provider`（L1）与
+  `model-transport`（L1）都向下引用它，而不是各自复制一份规则。
+- **`lib/model-transport.js`：OpenAI 兼容 `/chat/completions` 适配器。**
+  `stream()` 同步返回 async iterable（失败一律是最后一个 `finish` chunk，绝不是同步
+  抛错）；`block-end` 携带全文，`usage` 映射宿主字段，`finish_reason: length` 映射成
+  `max-tokens` 以免截断答案被当成完整答案；非 2xx 只报状态码，不回显上游 body。
+
+- **search 诊断记录 embedding 的 egress 模式。** `retrievalProvider` 启用且 hybrid 分支
+  实际运行时，`mem_admin(action="diagnostics")` 的 search 事件新增
+  `egress: "loopback" | "remote"`：这是非秘密枚举，让运维不必回读配置就能确认本次
+  embedding 调用被允许走哪条边界，也与 README 里「取值本身会写进 search 诊断」的说法
+  一致。新增用例分别断言默认 `loopback` 与显式 `remote` 的写入。
+
 - **后台自动审阅（`autoReview`）不再要求手工配置路由，云端模型可用。** 路由优先用
   配置的 `distill.provider` + `distill.model`；两者都留空时回退到捕获时记下的
   「本项目最近一次会话实际使用的 provider/model」（`<dataRoot>/review-route.json`，
@@ -97,6 +132,20 @@ release artifact. The versioning policy is in the README, under Development.
   同步增加一句「回答项目历史/既有决策前先 `mem_search`；没有记录就明说，不要猜」。
 - `skills/obsidian-mem/SKILL.md` 的召回规则补上同样的触发时机、`context` 用法和弱匹配
   的核实要求。
+
+### Fixed
+
+- **`distill.transport: http` 的 SSE 文本不再按 TCP 分片解码。** `lib/model-transport.js`
+  此前把响应流里的每个 `Buffer` 分片单独拼进字符串，一个多字节字符（例如中文）被拆到
+  两个分片时会被静默替换成 U+FFFD；现在响应整体按 utf8 文本流读取，不完整的字节序列
+  由 `StringDecoder` 跨分片保留。新增用例把「你好，世界」切在首字符的 UTF-8 字节中间
+  分两次写出，断言 `block-end` 文本与原文完全相同。
+
+- **只带空 query/fragment 分隔符的端点不再被静默接受。** `lib/model-egress.js` 此前只检查
+  `parsed.search`/`parsed.hash` 是否非空，因此 `http://host/?` 这类端点能通过校验；随后
+  `new URL(endpoint + '/chat/completions')` 会把后缀并进 query、请求落到错误路径。现在只要
+  端点字符串里出现 `?` 或 `#` 就以 `endpoint-query` 拒绝，与 README 的「任何形态都不接受
+  URL 内嵌凭证、query 或 fragment」一致，并补了空分隔符用例。
 
 ## 2.1.1 — 2026-11-08
 

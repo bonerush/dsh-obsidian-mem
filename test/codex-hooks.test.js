@@ -26,6 +26,7 @@ import {
   curationCursorPath,
   readCurationCursor,
   readCurationViewJson,
+  writeCurationCursor,
 } from '../lib/curation-state.js'
 import {
   CONTINUE,
@@ -241,6 +242,48 @@ async function bind({ dsh, vault, repo, home }) {
   })
   await memory.services.close?.()
   return receipt
+}
+
+/**
+ * Wait for the automatic pass to leave a *complete* view, replaying as a host would.
+ *
+ * The pass runs on the shipped 500 ms deadline (`DEFAULT_MAX_MS`), which is a
+ * session-start budget rather than a statement about this fixture: on a loaded
+ * machine one bootstrap-sized walk can exceed it. The design then does exactly what
+ * it promises — an incomplete view is stored and the next due check replays the
+ * pass — so this helper drives that replay through the same seams a host has: the
+ * due marker is made stale (25 hours, exactly as time would) and the real hook is
+ * started again. The claim is unchanged: a complete view must arrive before the
+ * deadline, and a changed-path pass cannot repair this (the builder refuses
+ * `backfill-incomplete` without a complete predecessor), which is why the marker is
+ * made stale first.
+ *
+ * @param {object} env - the child's environment, always built from a fresh `world()`.
+ * @param {string} input - the raw SessionStart stdin.
+ * @param {string} dataRoot - the throwaway plugin data root.
+ * @param {string} projectId - the project whose view is awaited.
+ * @param {number} [timeoutMs] - how long the loop may keep replaying.
+ * @returns {Promise<object>} the complete view document.
+ */
+async function untilCompleteView(env, input, dataRoot, projectId, { timeoutMs = 60000 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const view = await readCurationViewJson(dataRoot, projectId)
+    if (view?.complete === true) return view
+    if (Date.now() > deadline) {
+      assert.fail('a complete view never arrived: every pass reported a truncation')
+    }
+    const cursor = await readCurationCursor(dataRoot, projectId)
+    if (cursor !== null) {
+      await writeCurationCursor(dataRoot, projectId, {
+        ...cursor,
+        scannedAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+      })
+    }
+    const replay = hook(env, input)
+    assert.equal(replay.status, 0)
+    assert.equal(replay.lines.length, 1)
+  }
 }
 
 test('the hook injects on the sources that open a conversation with no context', async () => {
@@ -743,10 +786,9 @@ test('a bound start injects the real brief and the due pass never reaches stdout
     false,
     'an MCP-only write runs no pass',
   )
-  const run = hook(
-    { HOME: space.home, DSH_HOME: space.dsh, OBSIDIAN_MEM_VAULT: space.vault },
-    JSON.stringify(payload(space.repo)),
-  )
+  const env = { HOME: space.home, DSH_HOME: space.dsh, OBSIDIAN_MEM_VAULT: space.vault }
+  const input = JSON.stringify(payload(space.repo))
+  const run = hook(env, input)
   assert.equal(run.status, 0)
   assert.equal(run.lines.length, 1)
   assert.equal(run.answer.hookSpecificOutput.hookEventName, 'SessionStart')
@@ -754,10 +796,13 @@ test('a bound start injects the real brief and the due pass never reaches stdout
   assert.match(run.answer.hookSpecificOutput.additionalContext, /钩子注入的决定/u)
   // And the real handle ran the due pass, not just the stub below: the pass leaves
   // a marker and a committed view for the note the write queued, which is state no
-  // other caller in this world can produce.
+  // other caller in this world can produce. The shipped 500 ms session budget may
+  // have cut the first pass short on a loaded host, so the view is awaited through
+  // the documented replay instead of read from whichever pass landed first; the
+  // claim is about a complete view, and it is unchanged.
   const cursor = await readCurationCursor(dataRoot, projectId)
   assert.notEqual(cursor, null, 'the hook process ran the automatic pass')
-  const view = await readCurationViewJson(dataRoot, projectId)
+  const view = await untilCompleteView(env, input, dataRoot, projectId)
   assert.equal(view.complete, true)
   assert.equal(
     view.entries.some((entry) => entry.path === receipt.path),

@@ -68,8 +68,8 @@ Two layers, on purpose:
 | 🧠 **Plain-Markdown memory** | One project gets one stable `projectId`, one committed pointer file and one directory in the vault. Obsidian only displays the result; the vault outlives DSH and stays readable with the plugin uninstalled. |
 | 🔌 **Protocol plus adapters** | Vault layout, pointer and note frontmatter are a protocol: `skills/obsidian-mem/SKILL.md` ships it for any Agent-Skills harness, and `codex/` installs the same six operations into Codex CLI through an MCP server that imports `lib/` instead of copying it. |
 | ✍️ **Six memory tools** | `mem_search`, `mem_read`, `mem_write`, `mem_log`, `mem_brief`, `mem_admin` — transactional writes, a rebuildable SQLite/FTS5 cache, and a session brief that stays inside a fixed character budget. |
-| 🔎 **Retrieval with a default semantic engine** | FTS5/BM25 baseline; the `hybrid` engine is the default and adds a loopback-embedding semantic channel once you point `retrievalProvider` at a local model service (no provider configured means the lexical path, unchanged), plus a local TF-IDF/cosine reranker (`sparse`), same-day create/update accounting, per-turn relevant-note recall, and a brief that is navigation rather than a content dump. |
-| 🗂️ **Distillation and curation** | Completed turns distill into typed notes in the background; near-duplicates and risky rewrites are parked as proposals that only a person can approve — with `dsh-obsidian-mem-review`, in a terminal. |
+| 🔎 **Retrieval with a default semantic engine, local or cloud** | FTS5/BM25 baseline; the `hybrid` engine is the default and adds a semantic channel once you point `retrievalProvider` at an embedding service — a loopback one (`egress: loopback`) or an internal/cloud gateway (`egress: remote` stated explicitly, `apiStyle: openai` speaking OpenAI `/embeddings` directly); no provider configured means the lexical path, unchanged. Plus a local TF-IDF/cosine reranker (`sparse`), same-day create/update accounting, per-turn relevant-note recall, and a brief that is navigation rather than a content dump. |
+| 🗂️ **Distillation and curation** | Completed turns distill into typed notes in the background, through the DSH host `llm` by default (`transport: host`) or straight to an OpenAI-compatible endpoint (`transport: http`: a local Ollama/LM Studio server or a cloud gateway), so a host with no routed provider can still distil; near-duplicates and risky rewrites are parked as proposals that only a person can approve — with `dsh-obsidian-mem-review`, in a terminal. |
 | 📊 **Live memory panel** | A GitHub-style 53-week activity calendar with fixed 10 px cells, month and weekday labels, a hover tooltip and in-figure horizontal scrolling; new-versus-updated flow bars, a tag treemap, a type→status composition Sankey, a KPI sparkline, a day-grouped activity timeline, and a 健康 dashboard whose three maintenance actions report their outcome in the card that owns the button. Background polls re-scan the index silently, so memory written by another process appears without a DSH restart. |
 | 🕸️ **Knowledge graph** | Every node in scope is drawn — no top-N truncation — with a 1:1 port of Obsidian's D3 fallback forces, alpha schedule and seeding/drag protocol. Filters, colour groups, display and forces persist per browser origin; read/write/search/reinjection cues light up the nodes a turn touched. |
 | 🔒 **Safe by default** | The panel is read-only; exactly three maintenance operations can write, each preview → confirm behind a single-use 60-second token. The web route keeps its loopback/same-origin fences even through the desktop shell's `dsh-app://` proxy. |
@@ -431,7 +431,14 @@ every field, `distill` included. Put it in the home-level patch layer,
     retrievalEngine: hybrid
     retrievalProvider:
       enabled: false
+      # loopback | remote. `remote` is an explicit egress decision: a non-loopback
+      # address is legal under it and nowhere else.
+      egress: loopback
       endpoint: ""
+      # embed (this plugin's own /embed contract) | openai (OpenAI-compatible /embeddings)
+      apiStyle: embed
+      # The NAME of the environment variable holding the credential, never the key.
+      apiKeyEnv: ""
       model: ""
       dimensions: 0
       timeoutMs: 500
@@ -445,6 +452,13 @@ every field, `distill` included. Put it in the home-level patch layer,
     distill:
       provider: ""
       model: ""
+      # host (the DSH host `llm` service) | http (an OpenAI-compatible endpoint this
+      # plugin calls itself)
+      transport: host
+      egress: loopback
+      endpoint: ""
+      apiStyle: openai-chat
+      apiKeyEnv: ""
       maxItems: 12
       minConfidence: 0.75
       maxInputChars: 24000
@@ -479,10 +493,13 @@ explanation instead of doing nothing.
 | `bindHint` | `true` | boolean | Whether a session whose directory resolves to no usable project is told so, once. That notice is how the user is asked whether to bind the project, and how a session whose recorded directory has moved or been deleted says so instead of losing memory in silence. `false` removes that injection and nothing else. The Codex adapter has the same switch as `OBSIDIAN_MEM_BIND_HINT`. |
 | `briefBudgetChars` | `6000` | integer 256–20000 | Hard ceiling for the session brief and the weekly hint, in Unicode code points. |
 | `briefConventionMode` | `summary` | `summary` or `flat` | How a long conventions index is rendered. `summary` shows five MOC lines and leaves the rest addressable through `mem_brief(section="conventions", offset=5)`; `flat` is the pre-0.3 list where the budget alone decides. Rendering only: paging always sees every entry. In summary mode the five lines rotate across acknowledged sessions, so a long MOC is not the same five forever. |
-| `retrievalEngine` | `hybrid` | `lexical`, `sparse` or `hybrid` | Retrieval engine. `lexical` is the FTS path unchanged. `sparse` re-ranks at most 24 source-verified lexical candidates with local TF-IDF/cosine and fuses them by RRF k=60; no model, network or dependency. `hybrid` — the default since 2.0.0 — adds a semantic candidate list from the loopback provider configured under `retrievalProvider` and fuses it with the lexical list by weighted RRF (k=60, dense weight 2). The provider still ships disabled, so the default row with no provider reads through the lexical path unchanged and records `provider-disabled` on the search diagnostic; nothing falls back silently. |
-| `retrievalProvider` | `{enabled: false, endpoint: "", model: "", dimensions: 0, timeoutMs: 500, rerank: false}` | object; unknown keys are refused | Loopback embedding service for `hybrid`. It is never a cloud call: the endpoint must be a loopback address. When `enabled` is false the provider is never constructed, every other field is inert and `hybrid` behaves like `lexical`. |
+| `retrievalEngine` | `hybrid` | `lexical`, `sparse` or `hybrid` | Retrieval engine. `lexical` is the FTS path unchanged. `sparse` re-ranks at most 24 source-verified lexical candidates with local TF-IDF/cosine and fuses them by RRF k=60; no model, network or dependency. `hybrid` — the default since 2.0.0 — adds a semantic candidate list from the embedding provider configured under `retrievalProvider` (a loopback service or a remote gateway) and fuses it with the lexical list by weighted RRF (k=60, dense weight 2). The provider still ships disabled, so the default row with no provider reads through the lexical path unchanged and records `provider-disabled` on the search diagnostic; nothing falls back silently. |
+| `retrievalProvider` | `{enabled: false, egress: "loopback", endpoint: "", apiStyle: "embed", apiKeyEnv: "", model: "", dimensions: 0, timeoutMs: 500, rerank: false}` | object; unknown keys are refused | Embedding service for `hybrid`, local or cloud. Under `egress: loopback` the endpoint must be a literal loopback address; `egress: remote` is the operator's explicit egress decision and admits any http(s) host. When `enabled` is false the provider is never constructed, every other field is inert and `hybrid` behaves like `lexical`. |
 | `retrievalProvider.enabled` | `false` | boolean | Turns the provider on. Optional even with `retrievalEngine: hybrid`, which is the default: without it the engine resolves to the lexical path and the search diagnostic states `provider-disabled`. |
-| `retrievalProvider.endpoint` | `""` | URL on 127.0.0.1/localhost | Where `/embed` is served. Any non-loopback host is refused at config load. |
+| `retrievalProvider.egress` | `loopback` | `loopback` or `remote` | Which endpoint forms are legal. `loopback` accepts `127.0.0.1` and `::1` only. `remote` accepts any http(s) host and is an explicit egress decision: no default opens it, and the value is stated on the search diagnostic. |
+| `retrievalProvider.endpoint` | `""` | http(s) URL | Service base URL. `apiStyle: embed` requests `<endpoint>/embed`; `openai` requests `<endpoint>/embeddings`. No form accepts credentials, a query or a fragment inside the URL, and redirects are never followed. |
+| `retrievalProvider.apiStyle` | `embed` | `embed` or `openai` | Wire protocol. `embed` is this plugin's own `/embed` contract (request body unchanged byte for byte); `openai` is OpenAI-compatible `/embeddings`, mapping `data[].embedding` back by `index` onto the same contract, so an internal gateway or a cloud API needs no intermediate shim. `openai` and `rerank: true` are mutually exclusive: that protocol has no `/rerank`. |
+| `retrievalProvider.apiKeyEnv` | `""` | environment variable name | The NAME of the environment variable holding the credential, never the secret. It is read immediately before a request; a missing variable is `provider-credential` and opens no socket. The value never appears in an error message, a diagnostic or a log line. |
 | `retrievalProvider.model` | `""` | non-blank string when enabled | Model name sent in the request body; also part of the vector-store filename, so changing it triggers a full local rebuild. |
 | `retrievalProvider.dimensions` | `0` | positive integer when enabled | Expected vector size. A provider response of another size invalidates the stored vectors and forces a rebuild. |
 | `retrievalProvider.timeoutMs` | `500` | integer 50–5000 | Per-request timeout for embedding calls. A timeout falls back to lexical for that search. |
@@ -497,6 +514,11 @@ explanation instead of doing nothing.
 | `captureIdleMs` | `90000` | integer 1000–3600000 | Idle debounce before a captured turn is distilled. |
 | `distill.provider` | `""` | string | Model route. Must be set together with `model`, or both left empty (empty = reuse the session's last recorded route). A session imported from another harness has no recorded route, so imported history stays `deferred` until this is set. |
 | `distill.model` | `""` | string | See above. |
+| `distill.transport` | `host` | `host` or `http` | How the one tool-free model call reaches a model. `host` is the DSH host `llm` service (the behaviour since 1.0.0) and requires an empty `endpoint`. `http` is an OpenAI-compatible `/chat/completions` endpoint this plugin calls itself (`lib/model-transport.js`), so a host with no routed provider (the Codex adapter, a TUI without one, a CLI run) can still distil, and it may target a local Ollama/LM Studio server or a cloud gateway. The prompt, the strict JSON contract and every validation rule are identical on both paths. |
+| `distill.egress` | `loopback` | `loopback` or `remote` | The same rule as `retrievalProvider.egress`: a non-loopback endpoint is legal only under an explicit `remote`. |
+| `distill.endpoint` | `""` | required for `transport: http`, forbidden for `host` | Base URL of `/chat/completions`. Either mismatch with `transport` is a config error at load, not a failure on the first job. |
+| `distill.apiStyle` | `openai-chat` | `openai-chat` | The only wire protocol offered today. The key exists so a future dialect has a place to land, rather than a form left guessing. |
+| `distill.apiKeyEnv` | `""` | environment variable name | The same credential rule as `retrievalProvider.apiKeyEnv`. |
 | `distill.maxItems` | `12` | integer 1–50 | Maximum candidates, including failure fallbacks, accepted from one distillation. The same number is written into the system prompt, so the model is told the ceiling it would be refused for exceeding; a batch over it is refused whole, never trimmed. |
 | `distill.minConfidence` | `0.75` | number 0–1 | Below this, a candidate goes to `Inbox/` instead of a memory note. |
 | `distill.maxInputChars` | `24000` | integer 256–100000 | Input ceiling for the single model call. |
@@ -1114,10 +1136,13 @@ sandbox.
   it re-ranks at most 24 source-verified candidates with
   TF-IDF/cosine and cannot find a synonym the index never matched. `hybrid` — the
   default engine since 2.0.0 — adds a real semantic candidate channel through the
-  loopback provider configured under `retrievalProvider`. That provider still ships
+  embedding provider configured under `retrievalProvider`: a loopback service, or a
+  gateway you open explicitly with `egress: remote`. That provider still ships
   disabled, so an unconfigured row reads byte-for-byte the lexical path and says
   `provider-disabled` on the search diagnostic: the default asks for the channel, it
-  does not spend anything until you point it at a local model service. On a frozen
+  does not spend anything until you point it at a service. Choosing `remote` is
+  choosing to let note and query text leave this machine — an operator's explicit
+  decision, never inferred from existing host credentials. On a frozen
   200-query corpus it moved pooled P@3 from 44.4% to 61.25% with no class
   regression, and the calibrated gate (token hits or a top-three dense slot at cosine
   0.92) then took in-gate precision from 27.9% to 41.8% and no-answer false positives
