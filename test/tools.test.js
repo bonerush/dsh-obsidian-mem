@@ -874,7 +874,19 @@ test('mem_admin(action="digest") validates through the real tool runtime', async
   assert.equal(result.value.result.window.days, 1)
   assert.equal(result.value.result.notes.created >= 1, true)
   assert.equal(result.value.result.collection.inspected >= 1, true)
-  assert.equal(Array.isArray(result.value.result.appraisal.findings), true)
+  // The appraisal runs inside the digest's shared 500 ms budget, so a busy host can
+  // cut it short and answer `appraisal: null` — a designed outcome, not a failure.
+  // What may never happen is a null appraisal that the answer does not declare:
+  // `collection.incomplete` is where the digest states that it ran out of time.
+  if (result.value.result.appraisal === null) {
+    assert.equal(
+      result.value.result.collection.incomplete,
+      true,
+      'a null appraisal must be a stated truncation, never a silent empty one',
+    )
+  } else {
+    assert.equal(Array.isArray(result.value.result.appraisal.findings), true)
+  }
 
   const refreshed = await call(
     ctx,
