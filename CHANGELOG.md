@@ -42,6 +42,12 @@ release artifact. The versioning policy is in the README, under Development.
   抛错）；`block-end` 携带全文，`usage` 映射宿主字段，`finish_reason: length` 映射成
   `max-tokens` 以免截断答案被当成完整答案；非 2xx 只报状态码，不回显上游 body。
 
+- **search 诊断记录 embedding 的 egress 模式。** `retrievalProvider` 启用且 hybrid 分支
+  实际运行时，`mem_admin(action="diagnostics")` 的 search 事件新增
+  `egress: "loopback" | "remote"`：这是非秘密枚举，让运维不必回读配置就能确认本次
+  embedding 调用被允许走哪条边界，也与 README 里「取值本身会写进 search 诊断」的说法
+  一致。新增用例分别断言默认 `loopback` 与显式 `remote` 的写入。
+
 - **后台自动审阅（`autoReview`）不再要求手工配置路由，云端模型可用。** 路由优先用
   配置的 `distill.provider` + `distill.model`；两者都留空时回退到捕获时记下的
   「本项目最近一次会话实际使用的 provider/model」（`<dataRoot>/review-route.json`，
@@ -134,6 +140,12 @@ release artifact. The versioning policy is in the README, under Development.
   两个分片时会被静默替换成 U+FFFD；现在响应整体按 utf8 文本流读取，不完整的字节序列
   由 `StringDecoder` 跨分片保留。新增用例把「你好，世界」切在首字符的 UTF-8 字节中间
   分两次写出，断言 `block-end` 文本与原文完全相同。
+
+- **只带空 query/fragment 分隔符的端点不再被静默接受。** `lib/model-egress.js` 此前只检查
+  `parsed.search`/`parsed.hash` 是否非空，因此 `http://host/?` 这类端点能通过校验；随后
+  `new URL(endpoint + '/chat/completions')` 会把后缀并进 query、请求落到错误路径。现在只要
+  端点字符串里出现 `?` 或 `#` 就以 `endpoint-query` 拒绝，与 README 的「任何形态都不接受
+  URL 内嵌凭证、query 或 fragment」一致，并补了空分隔符用例。
 
 ## 2.1.1 — 2026-11-08
 

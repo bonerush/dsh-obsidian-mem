@@ -185,6 +185,22 @@ test('the shared endpoint rules are the only ones applied, and they are refused 
       'expected ' + code + ' for ' + JSON.stringify(config),
     )
   }
+  // A bare `?`/`#` has an empty search/hash but still breaks the path join: the
+  // suffix would be filed under the query instead of the path. The shared rules
+  // refuse the delimiter itself, so the README's "no credentials, no query, no
+  // fragment" sentence is true for these forms too.
+  for (const endpoint of [
+    'http://127.0.0.1:8765/?',
+    'http://127.0.0.1:8765/v1?',
+    'http://127.0.0.1:8765/#',
+    'http://127.0.0.1:8765/v1#',
+  ]) {
+    assert.throws(
+      () => createHttpLlmRoute({ endpoint }),
+      (error) => error instanceof ModelEgressError && error.code === 'endpoint-query',
+      'expected endpoint-query for ' + JSON.stringify(endpoint),
+    )
+  }
   assert.throws(
     () => createHttpLlmRoute({ endpoint: 'http://127.0.0.1:1', egress: 'everywhere' }),
     (error) => error instanceof ModelEgressError && error.code === 'egress-mode',

@@ -53,6 +53,33 @@ test('services.search runs the hybrid branch when configured for it', async (t) 
   assert.equal(last.fallback, 'store-warming')
   assert.equal(last.denseCandidates, 0)
   assert.ok(last.ms >= 0)
+  // The egress mode the configured provider was allowed to use is part of the
+  // funnel record: the operator's boundary is inspectable without reading the
+  // config back, which is what the README claims about `retrievalProvider.egress`.
+  assert.equal(last.egress, 'loopback')
+})
+
+test('the search diagnostic reports an explicit remote egress decision', async (t) => {
+  const world = await makeCurationWorld(t, {
+    config: {
+      ...HYBRID_CONFIG,
+      retrievalProvider: { ...HYBRID_CONFIG.retrievalProvider, egress: 'remote' },
+    },
+  })
+  await world.services.write({
+    type: 'decision',
+    title: '缓存失效策略',
+    body: '缓存失效后重新计算。',
+  })
+  await world.services.search({ query: '重新计算后的缓存' }, new AbortController().signal, {})
+  const snapshot = await world.services.admin(
+    { action: 'diagnostics' },
+    new AbortController().signal,
+    {},
+  )
+  const last = snapshot.result.events.filter((event) => event.event === 'search').at(-1)
+  assert.equal(last.engine, 'hybrid')
+  assert.equal(last.egress, 'remote')
 })
 
 test('a lexical engine config never mounts a hybrid runtime', async (t) => {

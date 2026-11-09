@@ -1346,7 +1346,7 @@ const BUDGETS = {
   // Raised from 650 by the cloud/local provider work (2026-11-09): a remote egress
   // mode, an OpenAI-compatible /embeddings mapping and a named-credential read all
   // land here, because the contract that will read them is the one that must judge
-  // them. Measured 833 formatted lines; measured-plus-30 is 863, rounded to 900.
+  // them. Measured 847 formatted lines; measured-plus-30 is 877, rounded to 900.
   'lib/retrieval-provider.js': 900,
   // The shared egress and credential rules (2026-11-09). Measured 202 formatted
   // lines; measured-plus-30 rounds to 250. The rules are five small functions and
