@@ -51,6 +51,14 @@ const DEFAULTS = {
   distill: {
     provider: '',
     model: '',
+    // The transport ships as `host`: the DSH host service, unchanged since 1.0.0.
+    // `http` (an OpenAI-compatible endpoint this plugin calls itself) needs an
+    // endpoint, so the shipped row cannot carry one.
+    transport: 'host',
+    egress: 'loopback',
+    endpoint: '',
+    apiStyle: 'openai-chat',
+    apiKeyEnv: '',
     maxItems: 12,
     minConfidence: 0.75,
     maxInputChars: 24000,
@@ -72,7 +80,13 @@ const DEFAULTS = {
   // reads it; the values here are the shipped defaults, not a working provider.
   retrievalProvider: {
     enabled: false,
+    // Loopback + the plugin's own /embed contract are the shipped defaults: an
+    // unconfigured row makes no request, and a configured one stays local until
+    // an operator writes `egress: remote` or `apiStyle: openai` themselves.
+    egress: 'loopback',
     endpoint: '',
+    apiStyle: 'embed',
+    apiKeyEnv: '',
     model: '',
     dimensions: 0,
     timeoutMs: 500,
@@ -337,7 +351,10 @@ test('a hybrid engine without an enabled provider loads, and a bad provider is r
   // defaults leave an unconfigured row with no provider and no request path
   assert.deepEqual(validateConfig({}).retrievalProvider, {
     enabled: false,
+    egress: 'loopback',
     endpoint: '',
+    apiStyle: 'embed',
+    apiKeyEnv: '',
     model: '',
     dimensions: 0,
     timeoutMs: 500,
@@ -403,6 +420,42 @@ test('an unknown top-level key is refused instead of silently defaulting', () =>
       return true
     },
   )
+})
+
+test('distill transport selects a transport, and its endpoint is part of that choice', () => {
+  // `host` is the DSH service (`ctx.get('llm')`), unchanged since 1.0.0; `http` is an
+  // OpenAI-compatible endpoint this plugin calls itself. The two halves of that
+  // decision — the transport and the endpoint — may never disagree: an endpoint next
+  // to `host` is config nothing reads, and `http` without one cannot make a call.
+  assert.equal(validateConfig({}).distill.transport, 'host')
+  assert.equal(validateConfig({}).distill.egress, 'loopback')
+  assert.equal(validateConfig({}).distill.endpoint, '')
+  assert.equal(validateConfig({}).distill.apiStyle, 'openai-chat')
+  assert.equal(validateConfig({}).distill.apiKeyEnv, '')
+  const http = {
+    distill: {
+      transport: 'http',
+      endpoint: 'http://127.0.0.1:11434/v1',
+      provider: 'ollama',
+      model: 'qwen3-embedding',
+    },
+  }
+  assert.deepEqual(validateConfig(http).distill.endpoint, 'http://127.0.0.1:11434/v1')
+  // A remote endpoint needs the explicit egress statement, same rule as the provider.
+  const remote = {
+    distill: { ...http.distill, egress: 'remote', endpoint: 'https://gateway.example.com/v1' },
+  }
+  assert.equal(validateConfig(remote).distill.egress, 'remote')
+  assert.throws(() => validateConfig({ distill: { transport: 'http' } }), /distill\.endpoint/)
+  assert.throws(
+    () => validateConfig({ distill: { transport: 'host', endpoint: 'http://127.0.0.1:1/v1' } }),
+    /distill\.endpoint/,
+  )
+  assert.throws(
+    () => validateConfig({ distill: { ...http.distill, transport: 'socket' } }),
+    /transport/,
+  )
+  assert.throws(() => validateConfig({ distill: { transport: 'host', typo: 1 } }), /distill\.typo/)
 })
 
 test('an unknown distill key is refused, named with its path', () => {

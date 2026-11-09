@@ -1571,3 +1571,34 @@ test('a stored curation view changes no retrieval answer on the baseline fixture
     'another project is not this brief',
   )
 })
+
+test('mem_read hides the retrieval: query surface from frontmatter', async (t) => {
+  const f = await fixture(t)
+  const { ctx } = await memoryBed(t, f)
+  const written = value(
+    await call(
+      ctx,
+      'mem_write',
+      { type: 'doc', title: '检索键读取', body: '正文只有这一句。' },
+      { cwd: f.repo },
+    ),
+    'mem_write',
+  )
+  // Add the frontmatter block the way an author (or a later backfill) would.
+  const absolute = join(f.vault, written.path)
+  const original = await readFile(absolute, 'utf8')
+  const withKeys = original.replace(/^---\n([\s\S]*?)\n---\n/u, (_all, inner) => {
+    return `---\n${inner}\nretrieval:\n  questions: ["如何召回键"]\n  keys_en: ["recall keys"]\n---\n`
+  })
+  assert.notEqual(withKeys, original, 'the fixture note must carry frontmatter')
+  await writeFile(absolute, withKeys)
+
+  const read = value(
+    await call(ctx, 'mem_read', { path: written.path }, { cwd: f.repo }),
+    'mem_read',
+  )
+  assert.equal(Object.hasOwn(read.frontmatter, 'retrieval'), false)
+  assert.match(read.body, /正文只有这一句/)
+  // The file keeps the durable surface; only the tool view strips it.
+  assert.match(await readFile(absolute, 'utf8'), /retrieval:/u)
+})

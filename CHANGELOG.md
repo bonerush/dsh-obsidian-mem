@@ -11,6 +11,154 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 2.2.0 — 2026-11-10
+
+### Added
+
+- **`distill.transport: http` 已接入插件入口。** `lib/index.js` 在 `transport: 'http'`
+  时用 `lib/model-transport.js` 构建一次路由，交给队列 worker（经 `registerHooks` 的
+  `llm` 参数）与自动审阅（`autoReviewQueue` 的 `llm`），优先于宿主 `ctx.get('llm')`；
+  `transport: 'host'`（出厂默认）仍然什么都不构建。路由构建失败在激活时抛出，而不是
+  让每个 job 在调用时退避。新增对照用例：注入路由时宿主 service 的调用计数为 0。
+- **embedding 与蒸馏现在同时支持本地与云端模型。** 两条原来各自被钉死的部署路径
+  放开成「一个契约、两种传输」：`retrievalProvider` 新增 `egress`（`loopback` |
+  `remote`，默认 `loopback`）、`apiStyle`（`embed` | `openai`，默认 `embed`）与
+  `apiKeyEnv`（环境变量**名**，不是密钥）；`distill` 新增 `transport`（`host` |
+  `http`，默认 `host`）、`egress`、`endpoint`、`apiStyle`、`apiKeyEnv`。
+  `egress: remote` 必须由运维显式写出，非回环地址不再被无差别拒绝；`apiStyle:
+  openai` 直接把 OpenAI 兼容的 `/embeddings` 映射回插件自己的 `/embed` 契约，
+  内部网关或云端 API 因此不需要中间 shim。`distill.transport: http` 用
+  `lib/model-transport.js` 把 `/chat/completions` 的 SSE 流适配成宿主 `llm.stream()`
+  的 chunk 契约，没有宿主路由的 host（Codex 适配器、未配置 provider 的 TUI、CLI）
+  也能蒸馏，且可以指向本地 Ollama/LM Studio 或云端。两条路径的提示词、严格 JSON
+  契约与全部校验规则完全不变——新增的是传输，不是策略。
+  - 安全边界：`apiKeyEnv` 只存变量名，密钥在请求发出前才读取；缺失时报
+    `provider-credential` 且不打开任何 socket；密钥值从不出现在错误消息、诊断事件
+    或日志里（回显的上游文本会被 `redactSecret` 覆盖）。端点仍拒绝内嵌凭证、query、
+    fragment 与非 http(s) 协议，重定向从不跟随。
+- **`lib/model-egress.js`：egress 与凭证规则只有一份实现。** 回环判定、端点形态、
+  环境变量名校验与密钥读取集中在这个叶子模块（L0），`retrieval-provider`（L1）与
+  `model-transport`（L1）都向下引用它，而不是各自复制一份规则。
+- **`lib/model-transport.js`：OpenAI 兼容 `/chat/completions` 适配器。**
+  `stream()` 同步返回 async iterable（失败一律是最后一个 `finish` chunk，绝不是同步
+  抛错）；`block-end` 携带全文，`usage` 映射宿主字段，`finish_reason: length` 映射成
+  `max-tokens` 以免截断答案被当成完整答案；非 2xx 只报状态码，不回显上游 body。
+
+- **search 诊断记录 embedding 的 egress 模式。** `retrievalProvider` 启用且 hybrid 分支
+  实际运行时，`mem_admin(action="diagnostics")` 的 search 事件新增
+  `egress: "loopback" | "remote"`：这是非秘密枚举，让运维不必回读配置就能确认本次
+  embedding 调用被允许走哪条边界，也与 README 里「取值本身会写进 search 诊断」的说法
+  一致。新增用例分别断言默认 `loopback` 与显式 `remote` 的写入。
+
+- **后台自动审阅（`autoReview`）不再要求手工配置路由，云端模型可用。** 路由优先用
+  配置的 `distill.provider` + `distill.model`；两者都留空时回退到捕获时记下的
+  「本项目最近一次会话实际使用的 provider/model」（`<dataRoot>/review-route.json`，
+  0600、锁定原子写、30 天 TTL、按项目上限裁剪、任何失败 fail-open）。DSH 的云端
+  provider 通过同一个 `ctx.llm` 提供，所以这条回退让默认配置下的自动审阅在本项目
+  正常对话一轮之后即可运行，而不是永久 `no-route`。触发器和面板状态读取同一个
+  `resolveReviewRoute`，三者不会再对「有没有路由」给出互相矛盾的说法。
+- **设置页开关在深色主题下可见。** 深色主题里 `--dsw-alias-brand-primary` 是近白色
+  （#f9fafb），而开关圆点写死 `#ffffff`，开启态因此成为一颗无特征的白色胶囊；圆点
+  改用 `--dsw-alias-bg-base`（浅色主题为白、深色主题为近黑 #151517），在两种主题下
+  都与轨道形成对比。
+- **自动召回新增「弱匹配」档。** 强档判定不变（标题/短语/≥6 token-hits，以及保留给
+  e5 标尺 operator 的 `semantic-score ≥ 0.92` 分支）；当且仅当没有任何强命中被接受、
+  且没有已展示的强命中时，向量通道可以在「第一名 + 对第二名的领先 ≥ 0.02 + 余弦
+  ≥ 0.55」时给出一条**无摘录**的 `[弱匹配·需核实]` 指针，outcome 仍是 `near-miss`，
+  并明确要求先 `mem_read` 核实全文。绝对余弦 ≥ 0.65 的第一名不再要求领先边距（高绝对
+  分本身不是掷硬币；在 key-backed 语料上这使覆盖 147→151/200，弱档 no-answer 提示
+  仍为 5/40，弱档精度 64.2%→64.8%）。旧的固定 0.88 近邻阈值删除：线上
+  `Qwen/Qwen3-Embedding-0.6B` 的相关候选余弦只有 0.23–0.62，0.88/0.92 在该标尺上
+  不可达（见 `docs/superpowers/specs/2026-11-08-recall-invocation-design.md`）。
+  在冻结的 200 查询语料上用真实 `promptRecall` 重放：仅强档覆盖 70/200，弱档加入后
+  142/200（71%）；弱条目命中 gold 44/72（61%），40 条 no-answer 对照里弱档提示 5 条
+  （12.5%），强档 2 条（5%）。按类看 deictic 从强档 0/40 变为弱档 28/40（16 条命中
+  gold），cross-lingual 弱档 18 条中 14 条命中 gold。
+- **一次会话最多一条显式弃权提示。** 真实用户提示词确实检索过、但强/弱两档都没有
+  可展示内容、且本步没有 brief/lint 提示时，注入一行「未在项目记忆中检索到……；
+  若问题依赖项目历史，请先用 mem_search 再回答」；它让「沉默」不再同时意味着
+  「检索过但没有」和「根本没有检索」。
+- **`tool` 诊断事件。** 生产环境里始终存在的 `session/event` 工具监听器现在为每次
+  `mem_*` 调用写一条内容无关记录；`mem_read` 打开的路径若正是本会话自动召回展示过的
+  路径，则 `outcome: 'follow'`。这是「召回→跟随」闭环率第一次可测，也让
+  `mem_admin(action="diagnostics")` 能区分「没触发召回」与「触发但没被使用」。
+- **`mem_search` 新增可选 `context` 参数。** 指代性追问（"继续"、"那个改一下"）
+  可把上一轮请求交给语义通道；lexical 分支忽略它。
+
+- **长提示词的语义通道不再先被截断。** 生产路径此前把 `queryFor()` 截到 16 个
+  token 的有界查询同时喂给 lexical 和 dense；冻结语料按生产形状重放后，200 条查询里
+  有 86 条被截断（exact 29、paraphrase 24、cross-lingual 14、concept 19），池化
+  P@3 从 70.6% 掉到 61.9%、paraphrase 从 93.8% 掉到 71.9%。现在 lexical 仍用有界
+  查询，dense 通道改用完整 plain prompt（上限 800 码点：400 会再损失 1.3pp P@3，
+  800 与不设上限质量相同）。恢复后池化 P@3 69.4%、paraphrase 93.8%、exact 96.9%，
+  与未截断基线持平。
+- **极短追问的 lexical 查询改用上一轮内容。** 冻结语料里 40 条指代性提示全部只有
+  5–14 码点，且每条都带上一轮 `context`；dense 通道一直能嵌入这个上下文，但 lexical
+  只搜追问本身，而 3 个 token 的查询永远达不到 6 token 的门槛。现在不超过 8 码点的
+  提示用「prompt + 上一轮」重建 lexical 查询：离线检索 deictic P@3 43.8→53.1、
+  gate pass 0→9.4%、in-gate 精度 55.6%，其余四类逐字节不变，no-answer FPR 保持
+  2.5%。真实 `promptRecall` 重放中 deictic 强档 0→9/40（弱档 29→21，总覆盖 29→30），
+  池化强档覆盖 70→79/200、弱档 76→68、总覆盖 146→147/200，no-answer 弱提示仍为
+  5/40。超过 8 码点的追问不拼 context，避免把无关轮次塞进一个本身有内容的问题。
+- **子代理会话的一次性召回指令。** 真实日志里 47/47 个 delegated 会话都收到了 brief
+  （254,815 字符），却只有 1/47 主动调用过召回工具（2.1/100 会话，且来自合成探针），
+  9/47 改用 125 次直接读 vault 的 shell；根因是 brief 没有给出「先用记忆再动手」的
+  指令。现在第一个 full brief 之后、同一 pre-step 内注入一条 plugin-source 的短指令
+  （涉及项目历史/决策/踩坑先 `mem_search`；没有记录先明说；全文用 `mem_read`；不要用
+  bash/read 读 vault 代替检索），每会话一次，根会话不收。
+- **跨进程 brief 状态持久化。** session 的 in-memory 快照在进程重启后丢失，task-1
+  重放里 83 次重复 full brief = 224,090 字符 = 全部注入字符的 52.0% = 模型输出的
+  103%。现在把 `sentFull`、hot 快照/hash 集合与 full/delta 两个 brief hash 存到
+  `<dataRoot>/session-state/<sha256(sessionKey)>.json`（0600、≤64 KiB、30 天 TTL、
+  懒 GC、全程 fail-open）；新进程只在 claimed 消息里仍能找到**这个 full brief 的
+  精确 hash** 时才采纳（`resume-delta`），否则按原样重发 full brief（`resume-full`）。
+  永不持久化上一轮 prompt、seenPaths、召回预算、continuation 或 epoch。
+- **`retrieval:` frontmatter 作为检索面。** 笔记可以声明
+  `retrieval: {questions, aliases, keys_zh, keys_en, triggers}`；索引把这块（≤600 码点）
+  只加进 FTS `tokens` 列与 embedding 文本，绝不进 `body`/`searchText`，因此 snippet 与
+  `mem_read` 正文不受影响，`mem_read` 返回的 frontmatter 也会剥掉它。索引 schema 升到
+  v2 并一次性重建。60 条 gold 笔记的 overlay 实测：池化 P@3 70.6→79.4（+8.8）、
+  P@1 52.5→60.6、MRR 63.4→70.3、recall@8 84.7→87.2，no-answer FPR 保持 2.5%；
+  cross-lingual P@3 46.9→71.9（+25）且 recall@8 68.8→81.3（+12.5），paraphrase
+  P@3 93.8→96.9，deictic 43.8→59.4，exact/concept 不降。该块只被读取索引，`mem_write`
+  的参数面与生成/回填流程不在本次改动内。
+
+### Changed
+
+- 设置页的「模型蒸馏」分组增加一段说明：`distill.provider` 是 DSH「设置 → 模型」里
+  已添加的路由 ID，`distill.model` 是该路由下的模型 ID；第三方 API 的 Base URL、API Key
+  在 DSH 模型设置里配置，不写进插件配置；两项都留空时自动使用最近一次对话的模型。
+  此前这两项没有任何说明，容易被误读为插件缺少 endpoint/key 字段。
+- 六个 `mem_*` 工具的 description 改为携带调用策略：何时必须先搜、空结果必须明说、
+  摘要与弱提示只是指针、`mem_write` 只在用户陈述持久知识时使用。常驻 system prompt
+  同步增加一句「回答项目历史/既有决策前先 `mem_search`；没有记录就明说，不要猜」。
+- `skills/obsidian-mem/SKILL.md` 的召回规则补上同样的触发时机、`context` 用法和弱匹配
+  的核实要求。
+
+### Fixed
+
+- **设置页的模型路由字段改用中文标签、翻译选项并补上逐字段说明。** `lib/client.js`
+  的设置表单只为旧字段提供了中文名，`distill.transport|egress|endpoint|apiStyle|apiKeyEnv`
+  与 `retrievalProvider.egress|apiStyle|apiKeyEnv` 因此显示成原始英文路径；
+  `host`/`http`、`loopback`/`remote`、`openai-chat`/`embed`/`openai` 这些枚举值也照原样
+  打印英文 token。现在八个字段都有中文名，七个枚举选项显示「中文含义（原始取值）」，
+  41 个投影字段各有一行说明（输入什么、取值范围、endpoint 写到版本路径为止、
+  `apiKeyEnv` 是变量名而不是密钥、egress 的边界规则、切换向量模型后需重建索引），
+  模型蒸馏与检索两组还各有一段说明介绍 transport/egress 的组合方式。未知字段照旧
+  原样显示，避免表单丢弃宿主新加的字段。
+
+- **`distill.transport: http` 的 SSE 文本不再按 TCP 分片解码。** `lib/model-transport.js`
+  此前把响应流里的每个 `Buffer` 分片单独拼进字符串，一个多字节字符（例如中文）被拆到
+  两个分片时会被静默替换成 U+FFFD；现在响应整体按 utf8 文本流读取，不完整的字节序列
+  由 `StringDecoder` 跨分片保留。新增用例把「你好，世界」切在首字符的 UTF-8 字节中间
+  分两次写出，断言 `block-end` 文本与原文完全相同。
+
+- **只带空 query/fragment 分隔符的端点不再被静默接受。** `lib/model-egress.js` 此前只检查
+  `parsed.search`/`parsed.hash` 是否非空，因此 `http://host/?` 这类端点能通过校验；随后
+  `new URL(endpoint + '/chat/completions')` 会把后缀并进 query、请求落到错误路径。现在只要
+  端点字符串里出现 `?` 或 `#` 就以 `endpoint-query` 拒绝，与 README 的「任何形态都不接受
+  URL 内嵌凭证、query 或 fragment」一致，并补了空分隔符用例。
+
 ## 2.1.1 — 2026-11-08
 
 ### Fixed

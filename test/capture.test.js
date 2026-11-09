@@ -18,6 +18,7 @@ import { test } from 'node:test'
 
 import { createCapture, enqueueTurn } from '../lib/capture.js'
 import { registerHooks } from '../lib/hooks.js'
+import { readRememberedRoute, resolveReviewRoute } from '../lib/route-state.js'
 import {
   PROCESSED_DIRNAME,
   jobFileName,
@@ -1115,7 +1116,7 @@ test('disposed flushes what was captured and never reaches for a model', async (
 // The hooks wiring
 // ---------------------------------------------------------------------------
 
-function hookBed(t, queueRoot, config = CONFIG) {
+function hookBed(t, queueRoot, config = CONFIG, dataRoot = undefined) {
   const ctx = new Context()
   let modelCalls = 0
   ctx.provide('llm', {
@@ -1134,6 +1135,7 @@ function hookBed(t, queueRoot, config = CONFIG) {
     },
     config: { briefBudgetChars: 6000, injectBrief: true, ...config },
     queueRoot,
+    ...(dataRoot === undefined ? {} : { dataRoot }),
   })
   t.after(async () => {
     for (const dispose of disposers) await dispose()
@@ -1170,6 +1172,40 @@ test('the registered session/event listener captures a completed turn durably', 
     ['user', 'assistant-final'],
   )
   assert.equal(bed.modelCalls(), 0)
+})
+
+test('a captured turn remembers its model route for the background reviewer', async (t) => {
+  const queueRoot = await queueIn(t)
+  const dataRoot = join(await temporaryRoot(t), 'data')
+  const bed = hookBed(t, queueRoot, CONFIG, dataRoot)
+  const events = simpleTurn()
+  const session = sessionOf(events)
+
+  bed.ctx.emit('session/event', session, events.at(-1))
+  const jobs = await waitFor(async () => {
+    const found = await loadPending(queueRoot)
+    return found.length === 1 ? found : null
+  })
+  assert.notEqual(jobs, null, 'the completed turn reaches the queue')
+  // The capture seam saw the host's request context; the observation the reviewer
+  // needs is written beside the queue, not into it.
+  const remembered = await waitFor(() =>
+    readRememberedRoute({ dataRoot, projectId: PROJECT_ID }).then((route) =>
+      route === null ? null : route,
+    ),
+  )
+  assert.notEqual(remembered, null, 'the route observation is durable')
+  assert.equal(remembered.provider, 'deepseek-official')
+  assert.equal(remembered.model, 'deepseek-flash')
+  // And the automatic reviewer can now resolve a route with an empty configured
+  // pair, which is exactly the default configuration this fix targets.
+  const resolved = await resolveReviewRoute({
+    config: { distill: { provider: '', model: '' } },
+    dataRoot,
+    projectId: PROJECT_ID,
+  })
+  assert.equal(resolved?.source, 'remembered')
+  assert.equal(resolved?.model, 'deepseek-flash')
 })
 
 test('the flush barrier backs up a notification the hook never saw', async (t) => {

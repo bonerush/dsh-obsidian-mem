@@ -1873,6 +1873,57 @@ test('an explicit queueRoot and dataRoot are the only filesystem targets; DSH_HO
   assert.equal((await stat(f.vault)).isDirectory(), true)
 })
 
+test('an injected model route wins over the host llm service for the queue worker', async (t) => {
+  // The cloud/local wiring (2026-11-09): with \`distill.transport: 'http'\` the plugin
+  // builds its own route (lib/model-transport.js) and hands it to the queue worker,
+  // which must prefer it to \`ctx.get('llm')\`. Both answer the same chunk contract, so
+  // nothing downstream can tell them apart — the precedence is observable only at
+  // this seam, and this case drives it: one durably queued job, the worker the hooks
+  // build, and a counter per side.
+  const f = await fixture(t)
+  await writeJobAtomic(f.queueRoot, jobFixture())
+  const llm = stubLlm(JSON.stringify({ items: [itemFixture({ evidenceSeqs: [1] })] }))
+  let hostCalls = 0
+  const hostStream = llm.stream
+  llm.stream = (options) => {
+    hostCalls += 1
+    return hostStream(options)
+  }
+  let routeCalls = 0
+  const route = {
+    stream() {
+      routeCalls += 1
+      return (async function* () {
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      })()
+    },
+  }
+  const ctx = fakeContext({ llm })
+  const disposers = registerHooks(ctx, {
+    resolveBinding: async () => f.binding,
+    index: async () => ({}),
+    buildBrief: async () => null,
+    config: baseConfig({ captureIdleMs: 1000 }),
+    queueRoot: f.queueRoot,
+    dataRoot: f.dataRoot,
+    home: f.home,
+    resolveJobBinding: () => f.binding,
+    llm: route,
+  })
+  f.onCleanup(() => {
+    for (const dispose of disposers) dispose()
+  })
+  await ctx.settled()
+  // The worker's first pass runs off its own arm; wait for a counter instead of
+  // guessing at a timer.
+  const deadline = Date.now() + 10000
+  while (hostCalls === 0 && routeCalls === 0 && Date.now() < deadline) {
+    await sleep(20)
+  }
+  assert.equal(hostCalls, 0, 'the host service is never asked when a route is injected')
+  assert.equal(routeCalls, 1, 'the injected route is the one the worker calls')
+})
+
 test('registerHooks starts capture and the worker from one queue root, end to end', async (t) => {
   const f = await fixture(t)
   const llm = stubLlm(JSON.stringify({ items: [itemFixture({ evidenceSeqs: [1] })] }))

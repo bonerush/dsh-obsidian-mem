@@ -50,6 +50,19 @@ const LAYERS = {
   // codec holding a second copy. The alternative — the codec importing the emitters —
   // is the upward edge this table exists to refuse.
   'curation-codes': 0,
+  // The egress and credential rules both model-backed features obey: which endpoints
+  // are legal in which mode and where a secret is read from. It imports only
+  // node:net, and it sits at L0 so the retrieval provider (L0) and the distillation
+  // transport (L1) can both point down at it instead of each keeping a copy. A raised
+  // layer would make one of those two edges lateral, which is the shape this table
+  // exists to refuse.
+  'model-egress': 0,
+  // The HTTP transport for the one tool-free model call (2026-11-09). It speaks the
+  // host's chunk contract over an OpenAI-compatible /chat/completions endpoint, so a
+  // host with no routed provider can still distil. L1 because it imports
+  // model-egress (L0) and Node's http/https and nothing else: distill (L8) and
+  // index (L10) compose it above, and it must stay below both.
+  'model-transport': 1,
   'diagnostic-codec': 1,
   'diagnostic-journal': 2,
   // The standalone report probes the complete plugin through dynamic imports;
@@ -61,7 +74,11 @@ const LAYERS = {
   // the loopback/dimension rules, so config gains one downward edge to that leaf.
   // Every importer of config (lint L5, curation-scan L6, index L10) is above it, so
   // the raise moves the module to the first layer that can see the provider.
-  config: 1,
+  // Raised from 1 to 2 by the same 2026-11-09 provider work: the provider itself
+  // moved to L1 (it reads model-egress L0), so config must sit strictly above it
+  // or the edge would be lateral. Every config importer is at L5 or higher, so
+  // this second raise changes no other module.
+  config: 2,
   // Browser-only code and the bounded activity/HTTP helpers do not import
   // another repository module; the host entry composes them at L10.
   client: 1,
@@ -167,7 +184,12 @@ const LAYERS = {
   // without giving `search` (L3) a lateral edge; the provider contract imports
   // only Node builtins and stays a leaf.
   'retrieval-rank': 1,
-  'retrieval-provider': 0,
+  // Raised from 0 by the cloud/local provider work (2026-11-09): the contract now
+  // imports the shared egress and credential rules from model-egress (L0), so the
+  // edge to that leaf is what fixes this at L1 rather than making the two lateral
+  // neighbours. Everything that imports the provider is above it, so the raise
+  // moves nothing else.
+  'retrieval-provider': 1,
   'prompt-recall': 3,
   transaction: 3,
   vault: 4,
@@ -247,6 +269,15 @@ const LAYERS = {
   'hot-delivery': 0,
   'delivery-state': 3,
   'convention-rotation': 4,
+  // The cross-process brief snapshot reuses the delivery-state private I/O (L3)
+  // and the routing hash (L1) instead of a second writer; hooks (L8) adopts it.
+  'session-state': 4,
+  // The remembered conversation route (2026-11-08): the fallback that lets a
+  // background review pass run on the default empty `distill` pair. It reuses the
+  // delivery-state private I/O (L3) and node:path only, so L4 — the trigger
+  // (`index`, L10), the pass (`curation-auto`, L7) and the services card all point
+  // down at it, never the other way.
+  'route-state': 4,
   // The browser route fence is import-free; the panel route receives the
   // services through its arguments but resolves the request locale (L0), reads
   // one date helper (L0) and calls the mutation state machine (L1), which fixes
@@ -317,7 +348,11 @@ const LAYERS = {
 const BUDGETS = {
   // The optional support sink adds one failure-isolated observer to the existing
   // ring. It stays here so every call site still passes only one diagnostics seam.
-  'lib/debug.js': 250,
+  // Raised from 250 by the `tool` event and its underscore-tolerant field validator:
+  // the ring had no way to record explicit memory-tool calls or recall→read
+  // follow-through, and the closed name/field lists must grow together. Measured 249
+  // formatted lines; measured-plus-30 is 279, rounded to 300.
+  'lib/debug.js': 300,
   // Raised from 200 by the Task 5 fix round (210 formatted lines measured; the
   // file's rule is measured plus 30 rounded to the next 50, so 250 is the rule's
   // number). What the 10 lines buy: the closed `code` vocabulary the curation call
@@ -732,7 +767,16 @@ const BUDGETS = {
   // the capture before the search and the one argument passed through. The lexical
   // branch's query is unchanged; only a fused retriever reads it. Measured 1909
   // formatted lines; measured-plus-30 is 1939, rounded to 1940.
-  'lib/hooks.js': 1940,
+  // Raised from 1940 by the recall-invocation work: the miss notice's copy, field
+  // and one-shot flag; the injected-path set that lets `mem_read` be reported as
+  // follow-through; and the listener that now also feeds the `tool` diagnostics
+  // event. Raised to 2250 by the delegated-first-brief directive and the
+  // cross-process brief snapshot: the hydrate/persist helpers, the two hash
+  // fields, and the resume-delta/resume-full codes. Raised to 2300 by the
+  // remembered-route observation at the capture hand-off (one bounded map and one
+  // fire-and-forget write). Measured 2267 formatted lines; measured-plus-30 is
+  // 2297, rounded to 2300.
+  'lib/hooks.js': 2300,
   // Raised from 600 by the hot-zone deadlock fix (1069 formatted lines measured;
   // measured-plus-30 is 1099, which rounds up to 1100). What the 469 lines buy:
   // archival that can tell a pointer line from an entry — the reported bug, since
@@ -764,6 +808,9 @@ const BUDGETS = {
   // 291 by the rule, rounded to 300.
   'lib/hot-delivery.js': 350,
   'lib/delivery-state.js': 1200,
+  // The private brief snapshot: identity check, bounded record, adoption probe
+  // hash set, and the lazy GC. Measured 331, +30 = 361, rounded to 400.
+  'lib/session-state.js': 400,
   'lib/convention-rotation.js': 300,
   // Measured 83 and 263 formatted lines; measured-plus-30 is 113 and 293, rounded
   // to 150 and 300. `panel-route` is larger than the plan's estimate because it
@@ -1065,7 +1112,11 @@ const BUDGETS = {
   // rounded up to 2800, and the entry is left at 2900 rather than 2800 because the
   // next reader this file grows should not need an accounting round to land. The
   // gap is headroom on a file that just lost 131 lines, not standing debt.
-  'lib/index-db.js': 2900,
+  // Raised to 3000 by the retrieval: frontmatter surface — schema v2, the
+  // retrieval column, the token-stream flattening and the sqlite fallback token
+  // set. Measured 2926 formatted lines; measured-plus-30 is 2956, rounded up to
+  // 3000 so the 600-code-point flattening rule keeps its breathing room.
+  'lib/index-db.js': 3000,
   // The extracted 概览 projections. Measured 207 formatted lines; measured-plus-30
   // is 237, rounded up to 250. It is a move, not new surface: the code left
   // `index-db` and arrived here, and the two backends now call it.
@@ -1179,7 +1230,15 @@ const BUDGETS = {
   // measured; measured-plus-30 is 2746, rounded up to 2750). The 47 lines replace
   // the checkbox branch with a real role=switch button (inline tokens only, so the
   // form still adds no stylesheet class) and record the reason.
-  'lib/client.js': 2750,
+  // Raised from 2750 by the owner's settings-readability round (2941 formatted lines
+  // measured; measured-plus-30 is 2971, rounded up to 3000). The 225 lines are the
+  // model-route vocabulary the local/cloud release added but the client never learned:
+  // eight Chinese labels for `distill.transport|egress|endpoint|apiStyle|apiKeyEnv` and
+  // `retrievalProvider.egress|apiStyle|apiKeyEnv`, seven translated enum options
+  // (host/http/loopback/remote/openai-chat/embed/openai), a one-line description for all
+  // 41 projected fields, and two group paragraphs that explain how transport/egress
+  // combine. No new control kinds, no stylesheet class, no second field list.
+  'lib/client.js': 3000,
   // The plugin-settings route, registered on the same web server as the panel
   // (750 formatted lines measured after the review fix waves; measured-plus-30 is 780,
   // rounded up to 800). What
@@ -1271,6 +1330,11 @@ const BUDGETS = {
   'lib/pointer.js': 300,
   'lib/receipts.js': 450,
   'lib/registry.js': 500,
+  // The remembered review route: one private JSON file, a locked read-modify-write
+  // and the bounded prune. Measured 223 formatted lines; measured-plus-30 is 253,
+  // rounded to 300. It is a small file on purpose — routing metadata only, never a
+  // prompt, a note or a credential.
+  'lib/route-state.js': 300,
   'lib/routing.js': 500,
   // Raised from 200 for the title-twin lookup: the duplicate rule needs the same
   // tokenizer and the same project-scoped search as `mem_search`, and putting it
@@ -1287,7 +1351,20 @@ const BUDGETS = {
   // tokenizer rather than copying it; the provider contract validates an explicitly
   // configured, disabled-by-default loopback service and imports only Node builtins.
   'lib/retrieval-rank.js': 350,
-  'lib/retrieval-provider.js': 650,
+  // Raised from 650 by the cloud/local provider work (2026-11-09): a remote egress
+  // mode, an OpenAI-compatible /embeddings mapping and a named-credential read all
+  // land here, because the contract that will read them is the one that must judge
+  // them. Measured 847 formatted lines; measured-plus-30 is 877, rounded to 900.
+  'lib/retrieval-provider.js': 900,
+  // The shared egress and credential rules (2026-11-09). Measured 202 formatted
+  // lines; measured-plus-30 rounds to 250. The rules are five small functions and
+  // their doc comments — there is no second copy anywhere, which is what the budget
+  // is protecting.
+  'lib/model-egress.js': 250,
+  // The OpenAI-compatible chat transport (2026-11-09). Measured 498 formatted lines;
+  // measured-plus-30 is 528, rounded to 550. The SSE reader, the chunk assembly and
+  // the three failure shapes are why it is not smaller.
+  'lib/model-transport.js': 550,
   // Raised from 150 for the decision object and the measured floor. The policy
   // now answers *why* it was silent (`RECALL_OUTCOMES`), which is what makes the
   // firing rate readable from `mem_admin(action="diagnostics")` instead of from
@@ -1301,7 +1378,13 @@ const BUDGETS = {
   // (334 formatted lines measured; 370 is measured plus 30). All of it is policy,
   // so it stays beside the floor it replaces rather than moving into a module
   // that would have to re-import the eligibility rules.
-  'lib/prompt-recall.js': 370,
+  // Raised from 370 by the rank-relative weak tier and the explicit abstention
+  // path: the shared note-eligibility helper, the dense-lead/margin selector, the
+  // one-line `[弱匹配·需核实]` renderer, and the branch that reports `near-miss`.
+  // The old fixed 0.88 threshold is deleted, so the raise buys a policy that can
+  // actually fire on the installed model's cosine scale. Measured 377 formatted
+  // lines; measured-plus-30 is 407, rounded to 450.
+  'lib/prompt-recall.js': 450,
   // Raised from 1950 when the diagnostics action's schema landed here. This file
   // is the one the split is for, so the raise is explicitly temporary: the next
   // structural change reduces it to a façade and lowers this number with it.

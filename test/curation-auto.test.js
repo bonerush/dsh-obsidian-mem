@@ -40,6 +40,7 @@ import {
   snapshotProposalSources,
 } from '../lib/curation-proposals.js'
 import { createDiagnostics } from '../lib/debug.js'
+import { rememberSessionRoute } from '../lib/route-state.js'
 import { resolveBinding } from '../lib/vault.js'
 import { makeCurationWorld } from './curation-world.js'
 
@@ -521,6 +522,80 @@ test('maxPerPass bounds one pass and takes the oldest candidates first', async (
   )
   // The default cap is 3: one pass never inspects more than the measured bound.
   assert.equal(AUTO_REVIEW_DEFAULTS.maxPerPass, 3)
+})
+
+test('a remembered session route lets the pass run without a configured pair', async (t) => {
+  const made = await world(t)
+  const { proposal } = await parkSupersede(made)
+  const llm = fakeLlm(textAndFinish(ANSWER('apply')))
+  const base = {
+    binding: made.binding,
+    dataRoot: made.dataRoot,
+    home: made.home,
+    llm,
+    now: NOW,
+  }
+  // Empty pair and no observation: no route, so no call and no decision.
+  const emptyConfig = {
+    ...made.config,
+    autoReview: true,
+    distill: { ...made.config.distill, provider: '', model: '' },
+  }
+  assert.deepEqual(
+    await autoReviewPendingProposals({ ...base, config: emptyConfig }),
+    nothingSummary('no-route'),
+  )
+
+  // The capture seam recorded this project's conversation route; the pass may use it
+  // exactly as if the operator had configured it.
+  assert.equal(
+    await rememberSessionRoute({
+      dataRoot: made.dataRoot,
+      projectId: made.binding.projectId,
+      route: ROUTE,
+      now: NOW,
+    }),
+    true,
+  )
+  const summary = await autoReviewPendingProposals({ ...base, config: emptyConfig })
+  assert.equal(summary.status, 'reviewed', JSON.stringify(summary))
+  assert.equal(summary.model, `${ROUTE.provider}/${ROUTE.model}`)
+  assert.deepEqual(summary.applied, [proposal.proposalId])
+  assert.equal(llm.calls.length, 1)
+  assert.equal(llm.calls[0].provider, ROUTE.provider)
+  assert.equal(llm.calls[0].model, ROUTE.model)
+
+  // An explicit pair still wins for a project that also has a remembered route.
+  const other = await world(t)
+  await parkSupersede(other)
+  const explicit = await autoReviewPendingProposals({
+    binding: other.binding,
+    dataRoot: other.dataRoot,
+    home: other.home,
+    config: {
+      ...other.config,
+      autoReview: true,
+      distill: { ...other.config.distill, provider: 'other-provider', model: 'other-model' },
+    },
+    llm: fakeLlm(textAndFinish(ANSWER('apply'))),
+    now: NOW,
+  })
+  assert.equal(explicit.model, 'other-provider/other-model')
+  // The remembered route is per project; `other` never observed one, and the
+  // explicit pair must not be polluted by this project's entry.
+  const rememberedOnly = await autoReviewPendingProposals({
+    binding: other.binding,
+    dataRoot: other.dataRoot,
+    home: other.home,
+    config: {
+      ...other.config,
+      autoReview: true,
+      distill: { ...other.config.distill, provider: '', model: '' },
+    },
+    llm: fakeLlm(textAndFinish(ANSWER('apply'))),
+    now: NOW,
+  })
+  assert.equal(rememberedOnly.model, null, 'another project does not inherit a route')
 })
 
 test('the judge input is bounded by maxInputChars and names the twin note', async (t) => {

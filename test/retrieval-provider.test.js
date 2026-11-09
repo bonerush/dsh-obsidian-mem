@@ -329,3 +329,314 @@ test('embed sends the optional kind field only when asked and refuses unknown ki
   )
   assert.equal(calls.length, 2, 'an invalid kind never reaches the transport')
 })
+
+// ---------------------------------------------------------------------------
+// Slice 2 (2026-11-09) — egress, apiStyle and apiKeyEnv.
+//
+// The provider used to be a loopback-only contract. An operator may now state
+// `egress: 'remote'` (an internal gateway or a commercial API), name the wire
+// protocol (`apiStyle: 'openai'` for /embeddings), and name the environment
+// variable the credential is read from. These cases pin the three of them: that
+// remote is only legal when written out, that the mapping reuses the same
+// response checks rather than a second copy, and that a credential is a header
+// value which never turns into text anybody can read back.
+// ---------------------------------------------------------------------------
+
+/** A distinctive fake credential; every string the module produces is scanned for it. */
+const FAKE_KEY = 'sk-test-0123456789abcdef'
+/** The variable NAME the tests set; a name is configuration, a value is not. */
+const KEY_ENV = 'DSH_TEST_PROVIDER_KEY'
+/** A remote gateway-shaped config. The injected transport means it is never contacted. */
+const REMOTE = Object.freeze({
+  enabled: true,
+  egress: 'remote',
+  endpoint: 'https://gateway.example.com/v1',
+  model: CONFIG.model,
+  dimensions: CONFIG.dimensions,
+  timeoutMs: CONFIG.timeoutMs,
+})
+
+/** Every readable string a produced failure carries, including its wrapped cause. */
+function producedStrings(error) {
+  const cause = error?.cause
+  return [
+    String(error),
+    error?.message ?? '',
+    error?.stack ?? '',
+    cause instanceof Error ? cause.message : String(cause ?? ''),
+    cause instanceof Error ? (cause.stack ?? '') : '',
+  ]
+}
+
+test('a remote endpoint is accepted only with an explicit remote egress', () => {
+  const normalised = validateProviderConfig(REMOTE)
+  assert.equal(normalised.egress, 'remote')
+  assert.equal(normalised.apiStyle, 'embed')
+  assert.equal(normalised.apiKeyEnv, '')
+  assert.equal(normalised.url, 'https://gateway.example.com/v1')
+
+  const remote = createRetrievalProvider(REMOTE, { transport: fakeTransport({}).transport })
+  assert.equal(remote.egress, 'remote')
+  assert.equal(remote.apiStyle, 'embed')
+
+  // The same endpoint under the default egress keeps the v0.4 refusal, code and
+  // sentence included: the README and test/config.test.js both name this code.
+  for (const endpoint of [
+    'http://example.com:8765',
+    'http://10.1.2.3:8765',
+    'http://localhost:8765',
+    'https://192.168.1.10:8765',
+  ]) {
+    assert.throws(
+      () =>
+        createRetrievalProvider(
+          { ...CONFIG, endpoint },
+          { transport: fakeTransport({}).transport },
+        ),
+      (error) => {
+        assert.equal(error.code, 'provider-non-loopback', endpoint)
+        assert.match(error.message, /literal loopback address/)
+        return true
+      },
+    )
+  }
+
+  // A literal loopback address stays legal under remote: the literal-address rule
+  // is a loopback-mode rule, not a blanket ban on the form.
+  assert.equal(
+    validateProviderConfig({ ...REMOTE, endpoint: 'http://127.0.0.1:8765' }).egress,
+    'remote',
+  )
+
+  // Unknown modes and every URL form this contract refuses are provider-config,
+  // and remote egress does not bypass any of them.
+  for (const config of [
+    { ...REMOTE, egress: 'anywhere' },
+    { ...REMOTE, egress: 'REMOTE' },
+    { ...REMOTE, endpoint: 'https://user:secret@gateway.example.com/v1' },
+    { ...REMOTE, endpoint: 'https://gateway.example.com/v1?key=1' },
+    { ...REMOTE, endpoint: 'https://gateway.example.com/v1#fragment' },
+    { ...REMOTE, endpoint: 'ftp://gateway.example.com/v1' },
+    { ...REMOTE, endpoint: '' },
+    { ...REMOTE, endpoint: 'not a url' },
+    { ...REMOTE, apiStyle: 'grpc' },
+    { ...REMOTE, apiKeyEnv: 'NOT A NAME' },
+    { ...REMOTE, apiKeyEnv: 7 },
+  ]) {
+    assert.throws(
+      () => createRetrievalProvider(config, { transport: fakeTransport({}).transport }),
+      failsWith('provider-config'),
+      JSON.stringify(config),
+    )
+  }
+
+  // Defaults: an unchanged fixture still normalises to loopback/embed/no credential.
+  const unchanged = validateProviderConfig({ ...CONFIG })
+  assert.equal(unchanged.egress, 'loopback')
+  assert.equal(unchanged.apiStyle, 'embed')
+  assert.equal(unchanged.apiKeyEnv, '')
+
+  // There is no /rerank in the OpenAI-compatible dialect, so an enabled rerank is
+  // refused when the route is built rather than failed later by a request.
+  assert.throws(
+    () => validateProviderConfig({ ...REMOTE, apiStyle: 'openai', rerank: true }),
+    failsWith('provider-config'),
+  )
+  assert.equal(validateProviderConfig({ ...REMOTE, rerank: true }).rerank, true)
+})
+
+test('apiStyle openai posts /embeddings and maps data[].embedding onto the contract', async (t) => {
+  const received = []
+  const server = createServer((request, response) => {
+    const chunks = []
+    request.on('data', (chunk) => chunks.push(chunk))
+    request.on('end', () => {
+      received.push({ url: request.url, body: Buffer.concat(chunks).toString('utf8') })
+      response.writeHead(200, { 'content-type': 'application/json' })
+      // Deliberately out of order: a real gateway is free to answer in any order,
+      // so the mapping restores request order instead of trusting row position.
+      response.end(
+        JSON.stringify({
+          object: 'list',
+          data: [
+            { object: 'embedding', index: 1, embedding: [3.5, -0.5] },
+            { object: 'embedding', index: 0, embedding: [1, 2] },
+          ],
+        }),
+      )
+    })
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => new Promise((resolve) => server.close(resolve)))
+  const { port } = server.address()
+
+  const provider = createRetrievalProvider({
+    ...CONFIG,
+    egress: 'remote',
+    apiStyle: 'openai',
+    endpoint: 'http://127.0.0.1:' + port + '/v1',
+  })
+  assert.equal(provider.apiStyle, 'openai')
+  const result = await provider.embed({ texts: ['第一条', 'second'], kind: 'query' })
+  assert.deepEqual(result, {
+    model: CONFIG.model,
+    dimensions: CONFIG.dimensions,
+    vectors: [
+      [1, 2],
+      [3.5, -0.5],
+    ],
+  })
+  assert.equal(received.length, 1)
+  assert.equal(received[0].url, '/v1/embeddings')
+  const body = JSON.parse(received[0].body)
+  assert.deepEqual(body, { model: CONFIG.model, input: ['第一条', 'second'] })
+  assert.equal('kind' in body, false, 'the OpenAI dialect has no query/passage field')
+})
+
+test('apiStyle openai refuses every reply it cannot map, with its own code for each', async () => {
+  const openai = { ...CONFIG, apiStyle: 'openai' }
+  const cases = [
+    // A width that disagrees with the configured dimensions.
+    [
+      jsonResponse({
+        data: [
+          { index: 0, embedding: [1] },
+          { index: 1, embedding: [1, 2] },
+        ],
+      }),
+      /exactly the configured dimensions/,
+    ],
+    // No data array at all.
+    [jsonResponse({ object: 'list' }), /data array/],
+    [jsonResponse({ data: 'nope' }), /data array/],
+    // Fewer vectors than requested texts.
+    [jsonResponse({ data: [] }), /one vector per requested text/],
+    // A non-finite component (JSON has no Infinity; it arrives as null).
+    [
+      jsonResponse({
+        data: [
+          { index: 0, embedding: [1, null] },
+          { index: 1, embedding: [1, 2] },
+        ],
+      }),
+      /finite number/,
+    ],
+    // Duplicate and out-of-range indices are refusals, never a silent reorder.
+    [
+      jsonResponse({
+        data: [
+          { index: 1, embedding: [1, 2] },
+          { index: 1, embedding: [3.5, -0.5] },
+        ],
+      }),
+      /distinct integer/,
+    ],
+    [
+      jsonResponse({
+        data: [
+          { index: 0, embedding: [1, 2] },
+          { index: 5, embedding: [3.5, -0.5] },
+        ],
+      }),
+      /distinct integer/,
+    ],
+    // A row with no embedding to map.
+    [jsonResponse({ data: [{ index: 0, embedding: [1, 2] }, { index: 1 }] }), /dimensions/],
+    // A non-200 answer keeps the same status refusal as the /embed contract.
+    [{ status: 401, headers: {}, body: 'unauthorised' }, /status 401/],
+  ]
+  for (const [response, message] of cases) {
+    const { calls, transport } = fakeTransport(response)
+    const provider = createRetrievalProvider(openai, { transport })
+    await assert.rejects(provider.embed({ texts: ['a', 'b'] }), (error) => {
+      failsWith('provider-response')(error)
+      assert.match(error.message, message)
+      return true
+    })
+    assert.equal(calls.length, 1, 'a reachable service is called exactly once')
+  }
+
+  // An unindexed reply is taken in the order it arrived, which is what a service
+  // that omits index means; the count still has to match.
+  const { transport } = fakeTransport(
+    jsonResponse({ data: [{ embedding: [1, 2] }, { embedding: [3.5, -0.5] }] }),
+  )
+  const provider = createRetrievalProvider(openai, { transport })
+  const result = await provider.embed({ texts: ['a', 'b'] })
+  assert.deepEqual(result.vectors, [
+    [1, 2],
+    [3.5, -0.5],
+  ])
+})
+
+test('a credential is resolved at request time and never appears in any message', async () => {
+  const config = { ...REMOTE, apiStyle: 'openai', apiKeyEnv: KEY_ENV }
+  const saved = process.env[KEY_ENV]
+
+  try {
+    // 1. A variable that is absent (and one that is blank) refuses before any socket:
+    //    the counting transport proves zero calls rather than assuming it.
+    for (const value of [undefined, '   ']) {
+      if (value === undefined) delete process.env[KEY_ENV]
+      else process.env[KEY_ENV] = value
+      const { calls, transport } = fakeTransport(jsonResponse({ data: [] }))
+      const provider = createRetrievalProvider(config, { transport })
+      await assert.rejects(provider.embed({ texts: ['x'] }), (error) => {
+        assert.equal(error.code, 'provider-credential')
+        assert.match(error.message, new RegExp(KEY_ENV), 'the message names the variable')
+        assert.equal(calls.length, 0, 'a missing credential opens no socket')
+        for (const text of producedStrings(error)) {
+          assert.equal(text.includes(FAKE_KEY), false, 'the value is never in a message')
+        }
+        return true
+      })
+    }
+
+    process.env[KEY_ENV] = FAKE_KEY
+
+    // 2. Success: the value rides as a bearer header and never enters the body.
+    const { calls, transport } = fakeTransport(
+      jsonResponse({ data: [{ index: 0, embedding: [1, 2] }] }),
+    )
+    const provider = createRetrievalProvider(config, { transport })
+    const result = await provider.embed({ texts: ['x'] })
+    assert.deepEqual(result.vectors, [[1, 2]])
+    assert.equal(calls[0].headers.authorization, 'Bearer ' + FAKE_KEY)
+    assert.equal(calls[0].body.includes(FAKE_KEY), false)
+    assert.equal(String(provider.endpoint).includes(FAKE_KEY), false)
+    assert.equal(String(provider.apiStyle).includes(FAKE_KEY), false)
+
+    // 3. An upstream that echoes the header cannot put the value in a diagnostic:
+    //    the wrapped cause is redacted along with the message.
+    const echoing = fakeTransport(async () => {
+      throw new Error('gateway rejected Bearer ' + FAKE_KEY)
+    })
+    const echoingProvider = createRetrievalProvider(config, { transport: echoing.transport })
+    await assert.rejects(echoingProvider.embed({ texts: ['x'] }), (error) => {
+      assert.equal(error.code, 'provider-transport')
+      for (const text of producedStrings(error)) {
+        assert.equal(text.includes(FAKE_KEY), false, 'the value is never in a message')
+      }
+      return true
+    })
+
+    // 4. A 401 body that repeats the key is not echoed either: the status is the
+    //    whole message.
+    const bodyEcho = fakeTransport({
+      status: 401,
+      headers: {},
+      body: JSON.stringify({ error: 'bad key ' + FAKE_KEY }),
+    })
+    const bodyEchoProvider = createRetrievalProvider(config, { transport: bodyEcho.transport })
+    await assert.rejects(bodyEchoProvider.embed({ texts: ['x'] }), (error) => {
+      assert.equal(error.code, 'provider-response')
+      for (const text of producedStrings(error)) {
+        assert.equal(text.includes(FAKE_KEY), false, 'the response body is never echoed')
+      }
+      return true
+    })
+  } finally {
+    if (saved === undefined) delete process.env[KEY_ENV]
+    else process.env[KEY_ENV] = saved
+  }
+})

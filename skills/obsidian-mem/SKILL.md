@@ -375,6 +375,14 @@ Working rules:
   do not substitute a hand edit for a maintenance action.
 - **Prefer `mem_search` → `mem_read` over guessing.** The vault is the source of
   truth for project decisions, conventions and gotchas; the conversation is not.
+  Search before answering a question about this project's history, earlier
+  decisions, pitfalls or conventions, and when the user refers back to earlier
+  work ("继续", "那个", "之前说的"). When the follow-up itself carries no
+  searchable words, pass `context` with the earlier request (dense retrieval reads
+  it; the lexical channel ignores it). If the search returns nothing, say memory
+  has no record of it instead of answering from a hunch. A one-line
+  `[弱匹配·需核实]` hit is a semantic lead only — open it with `mem_read` before
+  relying on it, and never present it as a verified fact.
 - When a plugin tool refuses a write (human-owned file, no ownership record, a
   file changed since the last plugin write), do **not** work around it with a
   direct file edit or a shell command. Write the finding to `Inbox/` instead and
