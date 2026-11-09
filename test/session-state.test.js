@@ -11,10 +11,12 @@
 // one.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+
+import { assertPrivateFile } from './platform-capabilities.js'
 
 import {
   SESSION_STATE_MAX_BYTES,
@@ -81,7 +83,7 @@ test('a saved record round-trips with its private path and identity', async (t) 
 
   const path = sessionStatePath({ dataRoot, sessionKey: SESSION_KEY })
   assert.equal(path, join(dataRoot, 'session-state', SESSION_HASH + '.json'))
-  assert.equal((await stat(path)).mode & 0o777, 0o600)
+  await assertPrivateFile(path, 0o600)
   const raw = JSON.parse(await readFile(path, 'utf8'))
   assert.equal(raw.schema, SESSION_STATE_SCHEMA)
   assert.equal(raw.identity.projectId, PROJECT_ID)
