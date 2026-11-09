@@ -11,6 +11,8 @@ release artifact. The versioning policy is in the README, under Development.
 
 ## Unreleased
 
+## 2.2.0 — 2026-11-10
+
 ### Added
 
 - **`distill.transport: http` 已接入插件入口。** `lib/index.js` 在 `transport: 'http'`
