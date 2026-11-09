@@ -13,6 +13,11 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Added
 
+- **`distill.transport: http` 已接入插件入口。** `lib/index.js` 在 `transport: 'http'`
+  时用 `lib/model-transport.js` 构建一次路由，交给队列 worker（经 `registerHooks` 的
+  `llm` 参数）与自动审阅（`autoReviewQueue` 的 `llm`），优先于宿主 `ctx.get('llm')`；
+  `transport: 'host'`（出厂默认）仍然什么都不构建。路由构建失败在激活时抛出，而不是
+  让每个 job 在调用时退避。新增对照用例：注入路由时宿主 service 的调用计数为 0。
 - **embedding 与蒸馏现在同时支持本地与云端模型。** 两条原来各自被钉死的部署路径
   放开成「一个契约、两种传输」：`retrievalProvider` 新增 `egress`（`loopback` |
   `remote`，默认 `loopback`）、`apiStyle`（`embed` | `openai`，默认 `embed`）与

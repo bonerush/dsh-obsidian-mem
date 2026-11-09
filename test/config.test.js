@@ -422,6 +422,42 @@ test('an unknown top-level key is refused instead of silently defaulting', () =>
   )
 })
 
+test('distill transport selects a transport, and its endpoint is part of that choice', () => {
+  // `host` is the DSH service (`ctx.get('llm')`), unchanged since 1.0.0; `http` is an
+  // OpenAI-compatible endpoint this plugin calls itself. The two halves of that
+  // decision — the transport and the endpoint — may never disagree: an endpoint next
+  // to `host` is config nothing reads, and `http` without one cannot make a call.
+  assert.equal(validateConfig({}).distill.transport, 'host')
+  assert.equal(validateConfig({}).distill.egress, 'loopback')
+  assert.equal(validateConfig({}).distill.endpoint, '')
+  assert.equal(validateConfig({}).distill.apiStyle, 'openai-chat')
+  assert.equal(validateConfig({}).distill.apiKeyEnv, '')
+  const http = {
+    distill: {
+      transport: 'http',
+      endpoint: 'http://127.0.0.1:11434/v1',
+      provider: 'ollama',
+      model: 'qwen3-embedding',
+    },
+  }
+  assert.deepEqual(validateConfig(http).distill.endpoint, 'http://127.0.0.1:11434/v1')
+  // A remote endpoint needs the explicit egress statement, same rule as the provider.
+  const remote = {
+    distill: { ...http.distill, egress: 'remote', endpoint: 'https://gateway.example.com/v1' },
+  }
+  assert.equal(validateConfig(remote).distill.egress, 'remote')
+  assert.throws(() => validateConfig({ distill: { transport: 'http' } }), /distill\.endpoint/)
+  assert.throws(
+    () => validateConfig({ distill: { transport: 'host', endpoint: 'http://127.0.0.1:1/v1' } }),
+    /distill\.endpoint/,
+  )
+  assert.throws(
+    () => validateConfig({ distill: { ...http.distill, transport: 'socket' } }),
+    /transport/,
+  )
+  assert.throws(() => validateConfig({ distill: { transport: 'host', typo: 1 } }), /distill\.typo/)
+})
+
 test('an unknown distill key is refused, named with its path', () => {
   assertRejected(/distill\.mode/, { distill: { mode: 'manual' } })
   assertRejected(/distill\.maxCostPerSession/, { distill: { maxCostPerSession: 5 } })
