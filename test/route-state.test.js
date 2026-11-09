@@ -8,10 +8,12 @@
 // stale/corrupt/foreign-shaped file reads as absent, malformed routes are refused,
 // and every failure fails open to "no remembered route" instead of throwing.
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+
+import { assertPrivateFile } from './platform-capabilities.js'
 
 import { writePrivateJson } from '../lib/delivery-state.js'
 import {
@@ -59,8 +61,7 @@ test('a remembered route round-trips through a private bounded file', async (t) 
     model: 'deepseek-chat',
     updatedAt: new Date(NOW).toISOString(),
   })
-  const info = await stat(path)
-  assert.equal(info.mode & 0o777, 0o600, 'the route file is private')
+  const info = await assertPrivateFile(path, 0o600)
   assert.ok(info.size <= REVIEW_ROUTE_MAX_BYTES)
 })
 
