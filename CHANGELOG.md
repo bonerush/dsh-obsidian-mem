@@ -13,6 +13,17 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Added
 
+- **后台自动审阅（`autoReview`）不再要求手工配置路由，云端模型可用。** 路由优先用
+  配置的 `distill.provider` + `distill.model`；两者都留空时回退到捕获时记下的
+  「本项目最近一次会话实际使用的 provider/model」（`<dataRoot>/review-route.json`，
+  0600、锁定原子写、30 天 TTL、按项目上限裁剪、任何失败 fail-open）。DSH 的云端
+  provider 通过同一个 `ctx.llm` 提供，所以这条回退让默认配置下的自动审阅在本项目
+  正常对话一轮之后即可运行，而不是永久 `no-route`。触发器和面板状态读取同一个
+  `resolveReviewRoute`，三者不会再对「有没有路由」给出互相矛盾的说法。
+- **设置页开关在深色主题下可见。** 深色主题里 `--dsw-alias-brand-primary` 是近白色
+  （#f9fafb），而开关圆点写死 `#ffffff`，开启态因此成为一颗无特征的白色胶囊；圆点
+  改用 `--dsw-alias-bg-base`（浅色主题为白、深色主题为近黑 #151517），在两种主题下
+  都与轨道形成对比。
 - **自动召回新增「弱匹配」档。** 强档判定不变（标题/短语/≥6 token-hits，以及保留给
   e5 标尺 operator 的 `semantic-score ≥ 0.92` 分支）；当且仅当没有任何强命中被接受、
   且没有已展示的强命中时，向量通道可以在「第一名 + 对第二名的领先 ≥ 0.02 + 余弦
@@ -77,6 +88,10 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Changed
 
+- 设置页的「模型蒸馏」分组增加一段说明：`distill.provider` 是 DSH「设置 → 模型」里
+  已添加的路由 ID，`distill.model` 是该路由下的模型 ID；第三方 API 的 Base URL、API Key
+  在 DSH 模型设置里配置，不写进插件配置；两项都留空时自动使用最近一次对话的模型。
+  此前这两项没有任何说明，容易被误读为插件缺少 endpoint/key 字段。
 - 六个 `mem_*` 工具的 description 改为携带调用策略：何时必须先搜、空结果必须明说、
   摘要与弱提示只是指针、`mem_write` 只在用户陈述持久知识时使用。常驻 system prompt
   同步增加一句「回答项目历史/既有决策前先 `mem_search`；没有记录就明说，不要猜」。
