@@ -13,6 +13,30 @@ release artifact. The versioning policy is in the README, under Development.
 
 ### Added
 
+- **embedding 与蒸馏现在同时支持本地与云端模型。** 两条原来各自被钉死的部署路径
+  放开成「一个契约、两种传输」：`retrievalProvider` 新增 `egress`（`loopback` |
+  `remote`，默认 `loopback`）、`apiStyle`（`embed` | `openai`，默认 `embed`）与
+  `apiKeyEnv`（环境变量**名**，不是密钥）；`distill` 新增 `transport`（`host` |
+  `http`，默认 `host`）、`egress`、`endpoint`、`apiStyle`、`apiKeyEnv`。
+  `egress: remote` 必须由运维显式写出，非回环地址不再被无差别拒绝；`apiStyle:
+  openai` 直接把 OpenAI 兼容的 `/embeddings` 映射回插件自己的 `/embed` 契约，
+  内部网关或云端 API 因此不需要中间 shim。`distill.transport: http` 用
+  `lib/model-transport.js` 把 `/chat/completions` 的 SSE 流适配成宿主 `llm.stream()`
+  的 chunk 契约，没有宿主路由的 host（Codex 适配器、未配置 provider 的 TUI、CLI）
+  也能蒸馏，且可以指向本地 Ollama/LM Studio 或云端。两条路径的提示词、严格 JSON
+  契约与全部校验规则完全不变——新增的是传输，不是策略。
+  - 安全边界：`apiKeyEnv` 只存变量名，密钥在请求发出前才读取；缺失时报
+    `provider-credential` 且不打开任何 socket；密钥值从不出现在错误消息、诊断事件
+    或日志里（回显的上游文本会被 `redactSecret` 覆盖）。端点仍拒绝内嵌凭证、query、
+    fragment 与非 http(s) 协议，重定向从不跟随。
+- **`lib/model-egress.js`：egress 与凭证规则只有一份实现。** 回环判定、端点形态、
+  环境变量名校验与密钥读取集中在这个叶子模块（L0），`retrieval-provider`（L1）与
+  `model-transport`（L1）都向下引用它，而不是各自复制一份规则。
+- **`lib/model-transport.js`：OpenAI 兼容 `/chat/completions` 适配器。**
+  `stream()` 同步返回 async iterable（失败一律是最后一个 `finish` chunk，绝不是同步
+  抛错）；`block-end` 携带全文，`usage` 映射宿主字段，`finish_reason: length` 映射成
+  `max-tokens` 以免截断答案被当成完整答案；非 2xx 只报状态码，不回显上游 body。
+
 - **后台自动审阅（`autoReview`）不再要求手工配置路由，云端模型可用。** 路由优先用
   配置的 `distill.provider` + `distill.model`；两者都留空时回退到捕获时记下的
   「本项目最近一次会话实际使用的 provider/model」（`<dataRoot>/review-route.json`，

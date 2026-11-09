@@ -50,6 +50,19 @@ const LAYERS = {
   // codec holding a second copy. The alternative — the codec importing the emitters —
   // is the upward edge this table exists to refuse.
   'curation-codes': 0,
+  // The egress and credential rules both model-backed features obey: which endpoints
+  // are legal in which mode and where a secret is read from. It imports only
+  // node:net, and it sits at L0 so the retrieval provider (L0) and the distillation
+  // transport (L1) can both point down at it instead of each keeping a copy. A raised
+  // layer would make one of those two edges lateral, which is the shape this table
+  // exists to refuse.
+  'model-egress': 0,
+  // The HTTP transport for the one tool-free model call (2026-11-09). It speaks the
+  // host's chunk contract over an OpenAI-compatible /chat/completions endpoint, so a
+  // host with no routed provider can still distil. L1 because it imports
+  // model-egress (L0) and Node's http/https and nothing else: distill (L8) and
+  // index (L10) compose it above, and it must stay below both.
+  'model-transport': 1,
   'diagnostic-codec': 1,
   'diagnostic-journal': 2,
   // The standalone report probes the complete plugin through dynamic imports;
@@ -61,7 +74,11 @@ const LAYERS = {
   // the loopback/dimension rules, so config gains one downward edge to that leaf.
   // Every importer of config (lint L5, curation-scan L6, index L10) is above it, so
   // the raise moves the module to the first layer that can see the provider.
-  config: 1,
+  // Raised from 1 to 2 by the same 2026-11-09 provider work: the provider itself
+  // moved to L1 (it reads model-egress L0), so config must sit strictly above it
+  // or the edge would be lateral. Every config importer is at L5 or higher, so
+  // this second raise changes no other module.
+  config: 2,
   // Browser-only code and the bounded activity/HTTP helpers do not import
   // another repository module; the host entry composes them at L10.
   client: 1,
@@ -167,7 +184,12 @@ const LAYERS = {
   // without giving `search` (L3) a lateral edge; the provider contract imports
   // only Node builtins and stays a leaf.
   'retrieval-rank': 1,
-  'retrieval-provider': 0,
+  // Raised from 0 by the cloud/local provider work (2026-11-09): the contract now
+  // imports the shared egress and credential rules from model-egress (L0), so the
+  // edge to that leaf is what fixes this at L1 rather than making the two lateral
+  // neighbours. Everything that imports the provider is above it, so the raise
+  // moves nothing else.
+  'retrieval-provider': 1,
   'prompt-recall': 3,
   transaction: 3,
   vault: 4,
@@ -1321,7 +1343,20 @@ const BUDGETS = {
   // tokenizer rather than copying it; the provider contract validates an explicitly
   // configured, disabled-by-default loopback service and imports only Node builtins.
   'lib/retrieval-rank.js': 350,
-  'lib/retrieval-provider.js': 650,
+  // Raised from 650 by the cloud/local provider work (2026-11-09): a remote egress
+  // mode, an OpenAI-compatible /embeddings mapping and a named-credential read all
+  // land here, because the contract that will read them is the one that must judge
+  // them. Measured 833 formatted lines; measured-plus-30 is 863, rounded to 900.
+  'lib/retrieval-provider.js': 900,
+  // The shared egress and credential rules (2026-11-09). Measured 202 formatted
+  // lines; measured-plus-30 rounds to 250. The rules are five small functions and
+  // their doc comments — there is no second copy anywhere, which is what the budget
+  // is protecting.
+  'lib/model-egress.js': 250,
+  // The OpenAI-compatible chat transport (2026-11-09). Measured 498 formatted lines;
+  // measured-plus-30 is 528, rounded to 550. The SSE reader, the chunk assembly and
+  // the three failure shapes are why it is not smaller.
+  'lib/model-transport.js': 550,
   // Raised from 150 for the decision object and the measured floor. The policy
   // now answers *why* it was silent (`RECALL_OUTCOMES`), which is what makes the
   // firing rate readable from `mem_admin(action="diagnostics")` instead of from

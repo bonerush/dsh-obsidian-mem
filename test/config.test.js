@@ -51,6 +51,14 @@ const DEFAULTS = {
   distill: {
     provider: '',
     model: '',
+    // The transport ships as `host`: the DSH host service, unchanged since 1.0.0.
+    // `http` (an OpenAI-compatible endpoint this plugin calls itself) needs an
+    // endpoint, so the shipped row cannot carry one.
+    transport: 'host',
+    egress: 'loopback',
+    endpoint: '',
+    apiStyle: 'openai-chat',
+    apiKeyEnv: '',
     maxItems: 12,
     minConfidence: 0.75,
     maxInputChars: 24000,
@@ -72,7 +80,13 @@ const DEFAULTS = {
   // reads it; the values here are the shipped defaults, not a working provider.
   retrievalProvider: {
     enabled: false,
+    // Loopback + the plugin's own /embed contract are the shipped defaults: an
+    // unconfigured row makes no request, and a configured one stays local until
+    // an operator writes `egress: remote` or `apiStyle: openai` themselves.
+    egress: 'loopback',
     endpoint: '',
+    apiStyle: 'embed',
+    apiKeyEnv: '',
     model: '',
     dimensions: 0,
     timeoutMs: 500,
@@ -337,7 +351,10 @@ test('a hybrid engine without an enabled provider loads, and a bad provider is r
   // defaults leave an unconfigured row with no provider and no request path
   assert.deepEqual(validateConfig({}).retrievalProvider, {
     enabled: false,
+    egress: 'loopback',
     endpoint: '',
+    apiStyle: 'embed',
+    apiKeyEnv: '',
     model: '',
     dimensions: 0,
     timeoutMs: 500,
