@@ -1,1083 +1,437 @@
 # dsh-obsidian-mem
 
-<p align="center">
-  <b>DeepSeek Harness 的项目记忆与知识图谱 —— 纯 Markdown，存在一个 Obsidian 仓库里</b>
-</p>
+> 把每个项目的长期记忆写成 Obsidian 里的纯 Markdown：人可读、可 git、可被任何工具读取。AI 只是写入和维护它的一个适配器。
 
-<p align="center">
-  <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
-  <a href="https://github.com/bonerush/dsh-obsidian-mem/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/bonerush/dsh-obsidian-mem?style=flat&color=4d6bfe" /></a>
-  <img alt="Node 22.22.2 或更新" src="https://img.shields.io/badge/node-%3E%3D22.22.2-brightgreen.svg" />
-  <img alt="DSH plugin" src="https://img.shields.io/badge/DSH-plugin-blueviolet.svg" />
-</p>
-
-<p align="center">
-  <a href="./README.md">English</a> · <b>中文</b>
-</p>
-
-一个 **DeepSeek Harness 宿主端插件**：把项目的文档和长期记忆以纯 Markdown 存进一个
-专用的 [Obsidian](https://obsidian.md) 仓库(vault)，并在原生侧边栏里把它画出来——
-GitHub 形式的贡献日历、按天分组的活动时间线、带高亮片段的检索，以及一张力导向的知识图谱。
-
-一个代码仓库对应一个稳定的 `projectId`、一个提交进版本库的指针文件，以及仓库里一
-个固定目录。插件往那里写；Obsidian 只负责把结果展示给你。Obsidian 不需要处于运行
-状态，仓库的任何部分也不依赖 DSH。
-
-```
-repository                                vault (~/Documents/dsh-memory)
-├── .obsidian-mem   ───────────►          └── Projects/<slug>--<projectId 前8位>/
-│     projectId, slug,                    ├── index.md                hub / MOC
-│     displayName, schema: 1              ├── Docs/  Decisions/  Conventions/  Pitfalls/
-└── src/ …                                ├── Daily/YYYY-MM-DD.md
-                                          ├── Inbox/                  待分类
-                                          └── _meta/hot.md            热记忆
-```
-
-分成两层，这是刻意的：
-
-- **协议层**（仓库布局、`.obsidian-mem` 指针文件、笔记 frontmatter、蒸馏输出契
-  约）是纯 Markdown，与 DSH 无关。随包发布的技能 `skills/obsidian-mem/SKILL.md`
-  遵循 Agent Skills 格式，所以在别的 harness 里也能用——[`codex/`](./codex/README.md)
-  把这份协议**连同同样那六个操作**装进 Codex CLI，走的是一个复用 `lib/`（而不是复
-  制一份）的 MCP server，另加会话简报与每次新提问的相关笔记索引钩子。
-- **适配层**是 DSH 专属的：六个 `mem_*` 工具、一个放在仓库之外的 `node:sqlite`
-  搜索索引，以及对已完成回合的自动蒸馏。召回注入已经不在这一层：两个 harness 现在
-  用同一个 `buildBrief` 合成它，各自用自己 harness 的扩展点投递。
-
-> **在开启自动写入之前，先读[诚实边界](#honest-limits)。**
-> 本插件对自己拒绝什么很谨慎，但它还很年轻。下面写的是本版本愿意写下来的边界，不声
-> 称穷尽；`CHANGELOG.md` 里是"验证过什么、还没验证什么"的持续记录。
->
-> 出问题时，本包可以生成一份由你自己附到 Issue 上的报告：先生成，读一遍 JSON，再
-> 自行附上。见[用于 Issue 的诊断报告](#diagnostic-report-for-an-issue)。
-
-
-<a id="highlights"></a>
-## 亮点
-
-| | 它给你什么 |
-|---|---|
-| 🧠 **纯 Markdown 的项目记忆** | 一个项目对应一个稳定的 `projectId`、一个提交进版本库的指针文件、仓库里一个固定目录。Obsidian 只负责展示结果；仓库比 DSH 活得久，卸载插件后照样能读。 |
-| 🔌 **协议 + 适配器** | 仓库布局、指针和笔记 frontmatter 是一套协议：`skills/obsidian-mem/SKILL.md` 把它交给任何 Agent-Skills 宿主，`codex/` 则通过一个直接 import `lib/`（而不是复制）的 MCP server，把同样的六个操作装进 Codex CLI。 |
-| ✍️ **六个记忆工具** | `mem_search`、`mem_read`、`mem_write`、`mem_log`、`mem_brief`、`mem_admin`——事务化写入、可重建的 SQLite/FTS5 缓存，以及一份始终在固定字符预算内的会话简报。 |
-| 🔎 **默认带语义引擎的检索，本地与云端都行** | 基线是 FTS5/BM25；`hybrid` 引擎已是默认，只要把 `retrievalProvider` 指向一个 embedding 服务就多一条语义通道——回环服务（`egress: loopback`）或内部/云端网关（显式 `egress: remote`，`apiStyle: openai` 直接说 OpenAI 的 `/embeddings`），不配 provider 就是原样的 lexical 路径；另有本地 TF-IDF/余弦重排（`sparse`）、同日创建/更新的互斥口径、每轮相关笔记召回，以及一份是导航而不是正文倾倒的简报。 |
-| 🗂️ **蒸馏与整理，宿主或直连都行** | 完成的回合在后台蒸馏成带类型的笔记；模型调用默认走 DSH 宿主的 `llm`（`transport: host`），也可以直连一个 OpenAI 兼容端点（`transport: http`，本地 Ollama/LM Studio 或云端），所以没有宿主路由的 host 也能蒸馏。近似重复和危险的改写只停成提案，只能由人在终端里用 `dsh-obsidian-mem-review` 批准。 |
-| 📊 **实时记忆面板** | GitHub 形式的 53 周贡献日历（固定 10 px 方格、月份与星期标签、悬停 tooltip、窄侧栏里图内横向滚动）；新建/更新分流柱、标签树状图、类型→状态的构成桑基图、KPI 迷你折线、按天分组的活动时间线，以及一个把三个维护操作结果就地写在按钮所属卡片里的 **健康** 仪表盘。后台轮询静默重扫索引，别的进程写下的记忆无需重启 DSH 就能出现。 |
-| 🕸️ **知识图谱** | 作用域内的**每个节点**都画出来（没有 top-N 截断），力模型、alpha 衰减与播种/拖拽协议是 Obsidian D3 回退模拟器的 1:1 移植；筛选、颜色组、外观与力度按浏览器来源持久化；读/写/检索/注入召回会点亮这一轮真正碰到的节点。 |
-| 🔒 **默认安全** | 面板默认只读；恰好三个维护操作可以写，每一个都是「预览 → 确认」，背后是一次性 60 秒令牌。即使经过桌面壳的 `dsh-app://` 代理，Web 路由的 loopback 与同源栅栏仍然生效。 |
-| ✅ **先证据、后结论** | 变更记录写明在什么宿主上测了什么、还有什么没测；每次 push 都在 CI 里跑全套测试与打包契约。 |
-
-<a id="screenshots"></a>
-## 截图
-
-用随包发布的视图模块与宿主自己的主题 token 渲染的真实截图（DSH 侧栏外壳内）。
-
-| 概览 —— 活动日历与图表 | 最近变化 —— 按天分组的活动轨 |
-|---|---|
-| ![概览](assets/panel-overview.png) | ![最近变化](assets/panel-timeline.png) |
-
-| 健康 —— 仪表盘与就地结果行 | 图谱 —— 知识图谱 |
-|---|---|
-| ![健康](assets/panel-health.png) | ![图谱](assets/panel-graph.png) |
-
-| 检索 —— 高亮片段与筛选 | |
-|---|---|
-| ![检索](assets/panel-search.png) | |
+`2.2.0` · MIT · Node `>=22.22.2` · DSH `>=0.1.5-rc.2` · 两个运行时依赖（`@deepseek-ai/schemastery`、`yaml`）· Obsidian 可选
 
 ---
+
+## 它是什么
+
+大多数 "AI 记忆" 是一个你打不开、搬不走、也审不了的存储：上下文被截断、摘要被覆盖、检索结果只有一个分数。这个项目反着做：**记忆的载体是一份普通 Markdown 仓库**。
+
+每个项目在仓库根提交一个 `.obsidian-mem` 指针（只有稳定的 `projectId` 与显示名，不含本机路径）。插件把该项目的决定、约定、踩坑、文档、日志与热层写成 vault 里的笔记；DSH 会话自动注入一份带预算的导航简报和少量相关片段，把"记了什么、为什么这样记"放在模型和用户都能读到的地方。关掉插件，vault 仍然可读、可 git、可搜索；换一个 harness，记忆仍然在。
+
+三条链路构成全部行为：
+
+| 链路 | 时机 | 输出 |
+|---|---|---|
+| 读 | 会话开始与每一轮 | 简报（上限 6,000 码点）+ 每轮召回（≤3 条 / 900 码点）+ 六个显式工具 |
+| 写 | 回合结束或工具调用 | 一次无工具调用的蒸馏 → 严格 JSON 校验 → 事务写入 vault → 刷新索引 |
+| 审计 | 随时 | 侧边栏面板（概览 / 图谱 / 健康）、诊断事件、可重放的回执 |
+
+它**不是**：一个向量数据库、一个 SaaS、或一个接管你个人知识库的工具。它是"记忆协议 + 两个适配器"（DSH 宿主插件、Codex CLI 的 MCP + hooks 适配器），两个入口复用同一套 `lib/` 实现。
+
+---
+
+## 和典型记忆方案的区别：六处机制
+
+| 典型做法 | 这个项目怎么做 | 为什么 |
+|---|---|---|
+| 记忆存在云端或某个黑盒库里 | **vault 是唯一权威**，索引只是 vault 之外的可重建缓存；指针提交进仓库 | 记忆能被人直接读、被 git 版本化、被 grep，也能在插件消失后继续存在 |
+| 新信息覆盖/重写旧记忆 | **生命周期**：`supersedes` 链、`contested` 双向挂证据、`assertion: stated/inferred/observed` + `confidence` + `review_after` | 记忆的价值在于可追溯：不删除历史、不悄悄选赢家 |
+| 把整个 vault 或摘要塞进上下文 | **导航 + 约束**的预算化注入：简报 6,000 码点、hot 层 9,000、每轮召回 900、摘要 ≤200 | 预算不是事后优化；装不下时给分页入口，让"省略"可审计 |
+| 绑定某个聊天工具/插件 API | **协议层 + 适配层**：vault 布局、frontmatter 词表、蒸馏契约跨 harness 稳定 | 换 harness 不丢记忆；DSH 与 Codex 之外还能长出第三个适配器 |
+| 直接 `fs.writeFile` 写 Markdown | **事务引擎**：整库锁 → 清单 → 暂存 + fsync → 发布 → 收据；旧版本先入 `_meta/.history` | 崩溃可恢复、并发可检测、人类编辑永不被覆盖 |
+| 接一个向量库就宣称"语义记忆" | **三档召回**（强匹配 / 弱匹配 / 弃权）+ 校准门 + 失败回退；融合前先量词法上限 | 弱匹配不静音、不编造；每个阈值都有冻结语料上的测量 |
+
+---
+
+## 这些优势是怎么造出来的
+
+这一节是项目的"做法记录"：每条优势都对应一次测量、一个被否的方案和一个留下的代价。
+
+### 1. 先承认"装不下"，再把注入改成可审计的导航
+
+真实 vault 快照（877 文件 / 1,009,768 B）上，旧版简报把 6,000 码点花到 **5,960**，却只发出 181 个导航单元中的 **37 个（20.4%）**，144 条被省略且无 id、无分页；把所有约定名字列全约 **23,800 码点，是预算的 4 倍**。
+
+改法不是"把预算调大"（12,000/24,000 的方案被否：缓存经济性与 lost-in-the-middle），而是：
+
+- 预算内只放**导航单元**（项目身份、约定预览、最近决策/踩坑、hot 层强约束/进行中）；
+- 索引提供 `statusesForPaths` 批量状态，2,000 条约定时 `buildBrief` 必须 <1 s，否则预览不发布；
+- 覆盖率记账 `{sections, considered, shown, omitted}` 必须满足恒等式，每页 ≤8,000 码点。
+
+实测结果：简报从 5,960 → **2,135 / 6,000** 码点；内联约定 37/176 → **5/176**（46 条 superseded、31 条 provisional 被排除）；最近 5 条决策/踩坑从 0/5 → **5/5**；分页 176/176 精确；warm 中位 **175.2 → 156.7 ms**。这些是单机描述性数字，不是跨机保证。
+
+### 2. 召回：先量词法天花板，再只加"可测增益"的通道
+
+冻结 200 查询语料（5 类 × 40，Cohen κ=0.893）上，词法基线 pooled P@3 **44.4%（71/160）**，in-gate 精度 20.1%，no-answer FPR 50.0%；失败模式是"候选集为空或错"。
+
+于是加入稠密通道，但融合前先立验收条件：P@3 ≥60%、exact 类不降、没有单类损失 >3pp、provider 关闭时与词法**逐字节一致**。加权 RRF（lexical 1.0 / dense 2.0 / k=60）+ 自适应词法守卫（top1 标题精确命中或 tokenHits ≥8 时保词法序）的结果：
+
+- pooled P@3 **44.4% → 61.25%（98/160）**；exact **96.9 保持**（去掉守卫会掉到 87.5，所以守卫是设计的一部分）；
+- paraphrase 53.1 → 84.4，concept 37.5 → 59.4，deictic 18.8 → 43.8，cross-lingual 15.6 → 21.9；
+- 生产模型 Qwen3-Embedding-0.6B 上 pooled P@3 **70.6%**，旧门只放行 23.3% → 召回门必须按数据重调，token 下限取 **6**（in-gate 39.8% / FPR 5.0%），弱匹配档落在 **cosine 0.55 + margin 0.02**（真实 promptRecall 重放覆盖率 **142/200 = 71%**）。
+
+被否决的方案也都留了记录：用稠密替换词法（exact P@1 0.531 vs 0.906）；无守卫 RRF；只看混合 rank 过门；线性混合（<53%）；sqlite-vec（1k 向量暴力 <1 ms）。后来还发现两个真实的工程问题：长提示被截断（86/200，P@3 70.6→61.9）→ 稠密查询改用完整文本并限 800 码点；词法查询计划全表扫 bm25（p50 202.5 ms）→ 一元 `+` 前缀 + 固定权重把词法 p50 打到 **22.3 ms**，混合 p50 降到 **121.2 ms**（残余约 99 ms 是一次 loopback embedding 往返）。
+
+明确没测的：线上触发率、900 码点注入预算的真实效果、cross-lingual/deictic 受候选召回限制的部分（gold 不在词法并集中的比例分别是 44% 与 37.5%）。
+
+### 3. 失败记忆：只从"同轮 3 次硬失败 + 后来的成功/解释"里生长
+
+失败也会被记成记忆，但来源被卡得很死：同一轮里同一工具 **3 次硬失败**才进入候选；归档必须同时引用硬失败、之后同工具的已验证成功、以及用户/最终解释；`assertion: inferred`、`status: provisional`，根因**永不**标 `observed`。不复制工具输出、命令、路径或凭证。
+
+实测：同轮 3 次硬失败后，第 39 个 seq 注入了 **230 码点**的失败召回（<900 上限），8 条验收断言通过；候选停在收件箱（没有用户解释），根因保持未知。工具成功只证明"重试成功"，不被当成根因。
+
+### 4. 习惯学习：把不可靠的信号测死，把"不学"也当成结论
+
+这是仓库里最反直觉的一次证伪。第一版设计从 137 份真实会话日志（40 个根会话、107 个可用轮、178 条用户消息、6 个项目、67.9 天）里提取"工具偏好"，重放后发现 **294 次工具选择中 291 次（99.0%）没有出现在该轮用户消息里**——测到的是 agent 的默认行为；且 205/341（60%）信号只出现在一个项目，是项目属性而非用户习惯。衰减也救不了：67.9 天只有 2.26 个半衰期，而 9 条 `习惯：` 笔记里 **0 条 `observed`**。
+
+修正后的口径：只采信**跨会话复现的用户原话**。12 词持久指令词表里 ≥3 会话的 6 个候选，覆盖了全部 3 条真实跨项目习惯。噪声压测显示一次性提及的误提升率达到 **67%**，而把阈值提到 9 能清零噪声却会丢掉真实的习惯——所以防御从"调阈值"改成**隔离**：候选是 provisional + observed、不进简报，错了只多一条待审阅；75% 误提升上界被写进测试。语义分类器在 24 个标注样本上两次运行检出 7/8、5/8、误报 0/16——只证明方差，不是生产准确率。
+
+### 5. 写安全：事务引擎，而不是直接写文件
+
+所有写路径（六个工具、自动蒸馏、整理提案）共用同一套事务：
+
+1. 按 vault realpath 取整库锁（锁文件在 data root，不在 vault 内），未完成事务清单可恢复；
+2. 先写清单，再暂存全部字节并 fsync；
+3. 新文件用排他 `link()` 发布，旧文件同目录 rename 替换；改旧文件前把旧字节复制进 `_meta/.history/<txId>/`；
+4. 收据记录 txId、session/seq、动作、路径、前后 hash；同一 txId 重放幂等。
+
+边界：人类文件（`trust: owner`、没有插件所有权记录、或上次写入后又被编辑过）**永不被改写**，建议只能进 `收件箱/`；失败回滚只在"当前 hash == 本事务写入的 hash"时允许；崩溃后启动先恢复未完成事务。SIGKILL 探针实测：重启后回执恰好 1 条、无重复笔记 id、dry-run 零 vault 变更；一次性生命周期窗口与"进程退出后 job 仍 pending"等残余边界写进了 CHANGELOG 而不是 README 的"已完成"里。
+
+### 6. 工程门禁：让"没做过"无法写成"已完成"
+
+- 第一次跑 ESLint 就抓到已发布缺陷：`lib/vault.js:504` 引用了一个只被 re-export、从未 import 的 `TransactionError`，短路逻辑让一条注册表事务失败路径抛 `ReferenceError`（自 8c988dd 起、无测试覆盖）。
+- `engines.node >=22.22.2` 是实测结论：22.13.0 的 SQLite 3.47.2 **没有 FTS5**；22.22.2 / 25.9.0 有；22.14–22.21 未测。
+- 架构与大小是测试：`test/architecture.test.js` 读取真实 import 图，检查无环、只向下、同层不互引，并用"实测行数 + 30 向上取整到 50"的预算挡住无声变胖。
+- dogfood 真的会证伪 README：12 项清单 10 PASS，其中 F1 证伪了"首次写入自动绑定"的断言 → 新增自动绑定路径与 15 个用例，全套 558/558。
+- 门禁规模从 574 tests / 33 文件演进到本分支的 **1,787 tests / 1,786 pass / 0 fail / 1 skipped**、tarball 98 条目 / 88 个 lib 模块；每个发布都带 `npm run check`（lint → format:check → types → prepack → 真实 tarball）。
+
+---
+
+## 可视化：后台写入的记忆需要一面可审计的镜子
+
+### 为什么需要
+
+记忆不是用户当场写的，而是插件在后台捕获、蒸馏、整理后写进 vault 的。只有 Markdown 可读还不够——用户需要知道**记了什么、整理到哪一步、检索为什么这样答、哪些操作会写**。面板解决的四个真实问题：
+
+- **召回质量不可见**：诊断日志故意是内容无关的；混合召回有实测收益（P@3 44.4→61.25%），但用户看不到一次召回为什么发生。
+- **整理只能在终端审批**：ADR-282 时队列里有 20 条待审、16 条被拒；大多数整理不需要人，但需要人看的那一小部分不该只能去终端。现在面板 / CLI / 有界自动复核三条路径都收敛到同一个写入口。
+- **后台维护状态不透明**：索引、队列、热层、今日摘要做成四个仪表。一个真实生产缺陷只有渲染后才暴露——路由请求 371 天活动，而 `MAX_ACTIVITY_DAYS` 仍是 365，`RangeError` 让 `activity: null`。
+- **记忆变了要立刻看见，而不是重启 DSH**：服务端最多每 5 秒增量重扫索引，客户端每 15 秒轮询；只有插件升级才需要重启。
+
+一句话：面板是后台写入的**审计面**，不是装饰。
+
+### 面板现在展示什么
+
+- **概览**：KPI 带（条目 / 关系 / 孤立 / 待处理 + sparkline）→ 固定 371 天 / 53 周的活动热图 → 新建与更新流图 → 类型 × 状态构成（拿不到联合计数就退化为堆叠条，不伪造流量）→ 标签频率树图 → 最近变化时间轴。整个概览有 20 KiB payload 预算，真实 371 天数据 13,910–14,138 B。
+- **图谱**：作用域内**不截断**，每个节点都画；力导向是 Obsidian 1.14.4 D3 fallback 的 1:1 移植（400 节点/592 边、300 tick 后与 Obsidian 最大偏差 **0.000**，旧 worker 偏差 530.1）。默认是五组莫兰迪配色；标签层有 60/200/240 三档护栏，保证密集图不卡。
+- **健康**：四个仪表 + 索引 / 待处理作业 / 热层 / 今日摘要 / 诊断记录分区，以及"待审阅"卡片。共 **五个写操作**（重新排队、整理热层、发布摘要、批准提案、拒绝提案），全部 preview → confirm，单次 60 秒 token 绑定会话/项目/操作/参数/预览指纹。
+- **检索**：从 tab 退休为全局搜索框；结果页是**词法 FTS5**（`index.search`）——它回答"匹配哪些字"，**不**走混合语义召回。不要把两者混为一谈。
+
+### 演化：每一轮都由测量驱动
+
+- 2026-10-27 第一版视觉 "vault ledger" 第二天就被废除：衬线字体强加、Chrome 式 tab、重复的 idle 文案、假时间、自相矛盾的计数；随后是 2026-10-28 的现代重设计（42px 标签条、roving tabIndex、单一状态机、Windows CI + `.gitattributes`）。
+- 图表轮次都有像素/字节证据：树图标签预测低估字宽 32–52% → 修复后 659px 下 24/24 个标签有名字（修前 16）；`rx:2` 在拉伸坐标里切出零线缺口；KPI 四格中心从贴左修到 x=93.63；热图固定 53×371 格后 371 天 payload 13,910 B；round5 的 53/53 栅栏检查与 14,138 B 预算余量。
+- 图谱先修碰撞：1,236 节点/1,417 边时最小邻居距离中位数 51.85 → 恢复碰撞后 112.07；当晚整体替换为 Obsidian 同款模拟（偏差 0.000），代价是放弃 wasm/SAB 快路径。
+
+### 一次被实测否掉的实验：语义地图
+
+2026-11-03 尝试把 embedding 点云做成 PCA 二维投影，让用户"直观看到混合检索为什么变好"。真实 1,400+ 笔记上的测量：首次 semantic 调用 **1,315 ms**（预算 300 ms）、payload **174,915 B**（预算 48 KB）、PCA `explained` **0.0913**、渲染进程 RSS **1.3 GB / ~50% CPU**。用户在真实桌面试用后要求回退："加入语义本身让记忆搜索的效果变好了，但是可视化我实验了一下没啥必要。"
+
+回退只删可视化（`lib/semantic-map.js`、`lib/recall-trace.js`、`lib/graph-semantic.js` 及对应动作/客户端），**保留**混合检索与同一个提交里的通用标签密度护栏。这是"我们试过、量过、否掉"的例子，不是"没做过的想法"。
+
+### 截图
+
+![概览：KPI、371 天热图、构成与最近变化](assets/panel-overview.png)
+![图谱：作用域内不截断的链接图](assets/panel-graph.png)
+![检索：词法结果页与过滤 chips](assets/panel-search.png)
+
+> 图来自 2026-10-31 的内容轮渲染。此后健康页改为四仪表 + 待审阅卡、图谱默认改为莫兰迪分组配色；重写此 README 时已知这些截图不是 2.2.0 的逐像素呈现。
+
+---
+
+## 架构：一个协议，两个适配器，一套事务引擎
+
+```mermaid
+flowchart TB
+  subgraph hosts["宿主：只负责接线"]
+    direction LR
+    dsh["DSH 宿主<br/>六个 mem_* 工具<br/>会话钩子：简报 / 召回<br/>插件页：面板、图谱、设置"]
+    codex["Codex CLI<br/>MCP server<br/>SessionStart / UserPromptSubmit<br/>复用同一套 lib/ 与 vault"]
+  end
+
+  subgraph libs["lib/：记忆协议的实现（依赖只能向下）"]
+    direction TB
+    entry["L8-L12 入口与装配<br/>lib/index.js apply：校验配置 -> 建服务 -> 注册工具 / 钩子 / 路由"]
+    orch["L5-L7 编排：读链、写链、整理<br/>brief · prompt-recall · capture · distill · curation · hot"]
+    domain["L2-L4 领域与策略（与宿主无关）<br/>memory · vault · transaction · pending · search · hybrid-recall · config · index-db"]
+    leaf["L0-L1 叶子与单域<br/>fs-atomic · pointer · frontmatter · paths · model-egress · model-transport"]
+  end
+
+  vault["Obsidian vault（唯一权威）<br/>Projects/&lt;项目目录&gt;/<br/>Decisions · Conventions · Pitfalls · Docs · Daily · Inbox<br/>_meta/hot.md · user.md<br/>纯 Markdown：人可读、可 git、可搜索"]
+  index["索引 / 运行态<br/>$DSH_HOME/data/obsidian-mem/<br/>index 数据库 · pending 队列 · locks · receipts<br/>可重建、可删除（pending 队列除外）"]
+  model["模型端点（默认关闭）<br/>distill.transport=http -> OpenAI 兼容 /chat/completions<br/>retrievalProvider + egress=remote<br/>凭据只配环境变量名；缺失不打开 socket；非 2xx 只报状态码"]
+
+  dsh --> entry
+  codex --> entry
+  entry --> orch
+  orch --> domain
+  domain --> leaf
+  orch -->|事务写| vault
+  domain -->|读缓存| index
+  vault -.->|重建| index
+  leaf -.->|只有显式配置才出网| model
+
+  classDef authority fill:#fff7ed,stroke:#f59e0b,stroke-width:1.5px
+  classDef off fill:#f8fafc,stroke:#cbd5e1,stroke-dasharray:6 5
+  classDef band fill:#eef2ff,stroke:#b8c4f0
+  class vault authority
+  class model off
+  class entry,orch,domain,leaf band
+```
+
+三句话：
+
+1. **产品是 vault**，不是这个插件：`lib/` 只是把会话、模型与时序翻译成 Markdown 的适配器；索引和缓存都能重建，vault 是唯一权威。
+2. **两条可靠链路**：读链在会话开始与每一轮注入预算化导航与少量片段；写链把提交回合放进持久队列，用一次无工具调用的模型调用抽取决策/踩坑/约定，再经事务引擎落盘。
+3. **一套实现服务两个入口**：DSH 宿主插件（工具 + 钩子 + 可选 web 路由）与 Codex（MCP server + 两个 hook），没有第二套记忆实现。
+
+### 一次会话里的三次读、一条写链
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as 用户
+  participant H as DSH 宿主
+  participant R as lib 读链
+  participant V as Obsidian vault
+  participant W as lib 写链
+  participant M as 模型端点（默认关闭）
+  participant T as 事务引擎
+
+  Note over U,M: 读：会话开始与每一轮
+  H->>R: agent/session-start、agent/pre-step
+  R->>R: buildBrief 等索引就绪，最多 5 秒
+  R->>V: 读 _meta/user.md、hot 层、hub、约定预览、最近 5 条
+  R-->>H: 简报 <= 6,000 码点，装不下给 mem_brief 分页
+  R->>V: 每轮提示召回，<= 3 条 / 900 码点
+  R-->>H: 引用数据 + 来源标记 + 简短片段
+  H-->>U: 回合继续（注入失败 fail-open）
+
+  Note over U,M: 写：回合结束之后
+  H->>W: session/event -> turn/end
+  W->>W: 白名单投影 + 凭证扫描 + 合并空闲窗口
+  W->>W: pending 队列：job 先落盘（0600）再推水位
+  W->>M: 一次无工具调用（蒸馏，严格 JSON + evidence seq）
+  M-->>W: 候选 -> 校验与分流
+  W->>T: accepted 需用户确认，否则 provisional
+  T->>T: 整库锁 -> 清单 -> 暂存 fsync -> 发布 -> 收据
+  T->>V: 写入 Markdown，改旧文件前先存 _meta/.history
+  W->>V: index.refresh，索引只是缓存
+  Note over W,M: 无路由 / 无绑定 -> deferred；失败 -> 终态保留原始输出
+```
+
+| 路径 | 何时 | 预算 / 约束 | 失败方式 |
+|---|---|---|---|
+| 会话简报 | 会话开始，hot 变化时最多一次 delta | 6,000 码点；装不下给 `mem_brief` 分页 | fail-open，不阻塞回合 |
+| 每轮提示召回 | 每次 `agent/pre-step`，查询取真实用户消息 | ≤3 条、900 码点、摘要 ≤200 | 无内容 → 每会话最多一条弃权提示 |
+| 六个工具 | 模型主动调用 | 封闭契约：`mem_search / mem_read / mem_write / mem_log / mem_brief / mem_admin` | 返回结构化错误，不抛给宿主 |
+| 自动蒸馏 | `turn/end` 后进入队列 | 一次无工具调用；strict JSON + evidence seq；maxItems 12 | 无路由 → deferred；失败 → 终态保留原始输出 |
+| 事务写入 | 候选通过校验后 | 整库锁、暂存 + fsync、发布、收据 | 冲突 → 保留现状并停止自动写 |
+
+### 硬不变量（节选）
+
+| 不变量 | 为什么 |
+|---|---|
+| vault 是唯一权威，索引可重建 | 插件消失、索引损坏都不损坏记忆 |
+| 所有 vault 写入走事务引擎 | 崩溃可恢复、并发可检测、不覆盖人类编辑 |
+| 人类文件零修改 | 插件只能写自己的机器域；建议进 `收件箱/` |
+| 只写机器域（决策/约定/踩坑/任务态/文档），不写"关于用户"的洞察 | `_meta/user.md` 归用户；外部材料只链接，不摘要进记忆 |
+| 注入是带预算、带来源标记的**引用数据** | 防止 vault 内容被当成指令；超预算给分页而不是截断 |
+| turn/end 先落盘再调模型；成功后收据先写再删 job | 至少一次投递；重启不重复调用模型 |
+| 网络默认关闭；`egress: remote` 是显式决定 | 端点可以是本机或远端；默认不出网，凭据只以环境变量名出现 |
+| 六个工具是模型唯一接口，契约封闭 | 换 harness 不失语义；Codex 从同一份 `TOOL_PARAMETERS` 派生 |
+| 诊断内容无关、永不抛错 | 可分享给 issue，且不泄露正文/路径/查询/密钥 |
+| 架构与文件大小是测试，不是口头约定 | 无环、只向下、同层不互引；变胖要显式决定 |
+
+### 分层
+
+`lib/` 有 88 个模块，按 L0–L12 分层，依赖只能向下：入口与装配（L8–L12）→ 编排与后台任务（L5–L7）→ 领域与策略（L2–L4：memory、vault、transaction、pending、search、hybrid-recall、config、index-db）→ 叶子与单域（L0–L1：fs-atomic、pointer、frontmatter、paths、model-egress、model-transport）。层号与行数预算都由测试读取真实 import 图强制。
+
+### 两个入口
+
+| | DSH 宿主插件 | Codex CLI 适配器 |
+|---|---|---|
+| 入口 | Cordis `apply`：工具、会话钩子、web 路由、客户端 bundle | MCP stdio server + `SessionStart` / `UserPromptSubmit` hooks |
+| 读 | 会话开始/每轮注入简报与召回 | 同一个 brief 走 hook 输出；提示召回镜像 |
+| 写 | turn/end 后自动蒸馏 | 无回合边界，靠工具显式写 |
+| 面板 | 概览 / 图谱 / 健康 / 设置页 | 无（行为差异，不是缺陷） |
+| 共享 | vault 协议、事务与锁、检索策略、六个工具 schema、数据根、skill、frontmatter 词表 | 同左 |
+
+### 存储位置
+
+| 位置 | 内容 | 是否权威 |
+|---|---|---|
+| 仓库根 `.obsidian-mem` | 四字段指针：`projectId` / `slug` / `displayName` / `schema` | 是（身份） |
+| vault（默认 `~/Documents/dsh-memory`） | `Projects/<slug>--<id8>/` 下的 Docs / Decisions / Conventions / Pitfalls / Daily / Inbox，`_meta/`、`Methods/` | **唯一权威** |
+| `$DSH_HOME/data/obsidian-mem/` | index、pending、locks、transactions、receipts、diagnostics、会话/路由状态 | 缓存与运行态，可删（pending 队列除外） |
+| DSH 会话持久状态 | 已注入/已展示路径、hot 版本 | 不存正文与 prompt |
+
+---
+
+## 快速开始
 
 <a id="requirements"></a>
-## 环境要求
 
-| | 版本 | 原因 |
+### 环境要求
+
+| 依赖 | 要求 | 依据 |
 |---|---|---|
-| Node | `>= 22.22.2` | 这个下限是一次*实测*。`node:sqlite` 在 Node 22.13.0 上能 import，但那个构建没有 FTS5；22.22.2 和 25.9.0 有。22.14–22.21 未测试，所以这个下限是实际被证明可用的最低版本。 |
-| DSH | `>= 0.1.5-rc.2` | `engines.dsh` 声明的下限。当前版本（`0.2.1-rc.5`）以及它与下限之间的每一个版本都受支持：每个中间版本都曾对照插件实际用到的行内 `config:` 与已有文档的 Cordis 接缝核查，没有发现不兼容。 |
-| Obsidian | 任何较新版本 | 可选。只在你想舒服地*阅读*仓库时才需要。 |
-| 操作系统 | Windows、macOS、Linux | 三者都支持。插件是可移植的 Node 代码，侧边栏面板是网页视图，也没有需要编译的原生模块。CI 在 Linux 和 Windows 上跑同一套 `npm run check` 闸门；macOS 没有单独的 CI 分支，但走的是同一份可移植代码。有一条具名限制属于支持范围本身：整理评审依赖 `O_NOFOLLOW`，所以在 Windows 上它仍是 macOS/Linux 的工作流——具体的拒绝码见下文**故障恢复**，读取、写入与扫描不受影响。 |
+| Node | `>=22.22.2` | 22.13.0 有 `node:sqlite` 但无 FTS5；22.22.2 与 25.9.0 实测通过；22.14–22.21 未测 |
+| DSH | `>=0.1.5-rc.2`（声明在 `engines.dsh`） | 本插件在 0.1.5-rc.2 ~ 0.2.1-rc.5 上验证；已安装的宿主不读该字段，它只是声明 |
+| Obsidian | 可选 | vault 是普通目录；不装 Obsidian 也能读写 |
+| 系统 | Windows / macOS / Linux | CI 覆盖 Ubuntu 与 Windows；macOS 走同一套便携路径。整理审批的 `O_NOFOLLOW` 保护仅 macOS/Linux，读写不受影响 |
 
-运行时依赖刻意做得极小：配置校验用 `@deepseek-ai/schemastery`，frontmatter 用
-`yaml`。`node:sqlite` 是 Node 内置的，所以没有需要编译的原生模块。
+### 五分钟安装
 
-DSH 下限声明在生态约定的位置上——`package.json` 里的 `engines.dsh`，
-`dsh.plugin.json` 里是同一个区间。实测：已安装的 harness 里没有任何代码读这个键
-（在所有已安装的 `@deepseek-ai/*` 包里搜 `engines.dsh` 没有任何命中），所以它是给
-注册表和市场工具看的声明，不是 DSH 会强制的门槛。
+1. **选一个专用 vault 目录**：本地磁盘（iCloud / 云盘路径会被拒绝），不要混入个人知识库。
+2. **先在一次性 profile 上验证**：
 
----
+   ```sh
+   export DSH_HOME=$(mktemp -d)
+   dsh plugin --profile memcheck add github:bonerush/dsh-obsidian-mem
+   dsh --profile memcheck --dump-config | grep -n obsidian-mem
+   ```
 
-## 五分钟安装
+   期望输出包含 `- id: obsidian-mem` 与 `name: dsh-obsidian-mem`。生产环境建议按 commit 锁定：`...add github:bonerush/dsh-obsidian-mem#<commit>`。
 
-### 1. 选择本地仓库目录
+3. **装进实际使用的 profile**：
 
-```sh
-vault="$HOME/Documents/dsh-memory"     # any path on local disk; the default
-mkdir -p "$vault"
-```
+   ```sh
+   dsh plugin --profile web add github:bonerush/dsh-obsidian-mem
+   ```
 
-把它放在**本地磁盘**上——见[仓库必须在本地磁盘](#the-vault-must-be-local)。不要把它指
-向你已经在维护的个人仓库；本插件会把项目目录写进仓库根目录，虽然它拒绝碰不属于自
-己的文件，但用一个专用仓库可以让两者永不相遇。
+   本地仓库用 `"link:$PWD"` 作为依赖。
 
-### 2. 先在一次性 profile 上验证
+4. **完全重启 DSH**（插件只在进程启动时加载），并新建一个会话。
+5. **在 Obsidian 中打开 vault 目录**为仓库。插件第一次写入时才创建项目目录；不会改已有笔记或类型注册表，只在自己刚创建的目录里 `git init`（从不提交）。
 
-下面是被实测过的确切步骤，而且不需要 checkout——`github:` 是生态里指代 GitHub 仓库
-的简写：
-
-```sh
-# A clean DSH home for the trial run: nothing here touches your real ~/.dsh.
-export DSH_HOME="$(mktemp -d)"
-
-dsh plugin --profile memcheck add github:bonerush/dsh-obsidian-mem
-
-dsh --profile memcheck --dump-config | grep -n obsidian-mem
-#   # == dsh-obsidian-mem
-#   - id: obsidian-mem
-#     name: dsh-obsidian-mem
-
-unset DSH_HOME
-```
-
-`dsh plugin --profile <name> add <spec>` 会在 profile 不存在时创建它，安装这个包，
-并叠加它的 `cordis.patch.yml`——正是它挂载了 `obsidian-mem` 这一行。如果
-`--dump-config` 里看不到这一行，就到此为止。
-
-上面的输出是实测结果，不是示意：在已发布的仓库上，这条命令解析成
-`dsh-obsidian-mem github:bonerush/dsh-obsidian-mem`，`--dump-config` 打印的就是那
-三行。
-
-想固定到某个版本就用 `github:bonerush/dsh-obsidian-mem#<commit>`。harness 自带的
-插件搜索打印的是同样的命令形状，给的建议也一样——第三方插件就是你要运行的代码，所以
-先读源码、再固定版本。
-
-### 3. 装进你实际使用的 profile
-
-```sh
-dsh plugin --profile web add github:bonerush/dsh-obsidian-mem
-dsh --profile web --dump-config | grep -n obsidian-mem
-```
-
-把 `web` 换成你的 profile 名。
-
-如果你是从本地 checkout 开发：上面每个 `github:…` 都换成在 checkout 目录里执行的
-`"link:$PWD"`——包是被链接而不是被复制，所以你的改动即时生效。本仓库自己就是这么开
-发的，smoke 和 dogfood 跑的也是这个形式。
-
-### 4. 重启 DSH 并新建会话
-
-插件代码每个进程只加载一次：**重启 `dsh web`**（或你的 harness），并开一个*新*会
-话，这样这一行才会被挂载，pre-step 注入才有会话可挂。已存在的会话仍然持有旧的插
-件实例。
-
-### 5. 在 Obsidian 中打开仓库
-
-1. Obsidian → **Open folder as vault** → 选择仓库目录。
-2. 就这些。不需要预先创建任何东西；插件会在第一次使用时引导生成项目目录——对 Git
-   仓库来说，就是第一次 `mem_write` 或 `mem_log`（见[项目绑定](#verify-it-works)
-   ）。
-3. 插件从不写 `.obsidian/types.json`，从不改你已有的笔记，也从不在仓库里跑 Git
-   命令，唯一例外是对它刚创建的目录执行 `git init`。
-
-插件第一次接触一个已有仓库时会跑一次**属性预检**：它读取候选笔记，如果它需要的某
-个属性名（`tags`、`created`、`status` 等）已经存在类型不兼容的值，就拒绝引导生
-成。拒绝信息会指出文件名和属性名。你要么在仓库里改掉它，要么把 `vaultPath` 指向
-一个空目录——插件不会“修复”你的笔记。预检只能看到在笔记字节里可见的值类型；见
-[属性注册表无法离线读取](#the-property-registry-is-not-readable-offline)。
-
-<a id="verify-it-works"></a>
 ### 验证是否生效
 
-在任意 Git 仓库里开一个会话然后问它，或者直接检查工具在不在：
-
-| 检查项 | 怎么做 |
+| 检查 | 期望 |
 |---|---|
-| 行已挂载 | `dsh --profile web --dump-config \| grep obsidian-mem` |
-| 项目已绑定 | `mem_admin(action="projects")` 会报告解析结果。一个**没有** `.obsidian-mem` 的 Git 仓库由它的**第一次写入**完成绑定：`mem_write` 或 `mem_log` 会生成 slug、以独占方式创建指针文件、引导生成骨架并注册项目，然后继续执行——而且这次绑定对同一会话里的下一次调用就可见。已存在的指针文件从不会被覆盖或修复；任何拒绝（指针文件损坏或 schema 未知、同级 worktree 不可读、注册表不可读、云托管仓库）都会连原因一起报告，而不是硬造一个绑定。读取永不触发绑定：在没有指针文件的仓库上，`mem_search` 和 `mem_read` 始终只读；一个**不在** Git 里的目录在 `mem_admin(action="bind", mode="local")` 之前也保持只读。 |
-| 召回注入一次 | 会话的第一次请求会带一条 `obsidian-mem` 召回消息（≤ `briefBudgetChars`） |
-| 截断的热层仍可达 | 热层条目带版本号并记入私有投递回执；简报装不下时它会打印一个有界的 `mem_brief(section="hot", cursor=…)` 续页（每份未变化的热层快照最多两次自动续页，每轮用户提问最多一次），统一分页能读到其余内容。 |
-| 约定预览会轮转 | `summary` 模式下，五行约定从持久锚点之后开始，并且只有上一次预览被确认后才前进；176 条约定的仓库会跨多次会话启动最终全部出现，而不是永远重复那五条。 |
-| 提示相关笔记 | 已绑定项目的新用户提问最多可收到三条匹配笔记，每条含标题和索引命中的摘录，受各自每轮上限约束（≤ `recallBudgetChars`）；用 `mem_read` 读取全文 |
-| 中文搜索可用 | 写一条笔记，然后用 `mem_search` 搜一个两字中文词 |
-| 仓库文件是真的 | `ls "$vault/Projects/"`——纯 Markdown，卸载插件后照样能读 |
-
-### 在 DSH 侧边栏查看记忆面板
-
-在 DSH `0.2.1-rc.5` 和 `dsh-better-sidebar` `0.28.1` 下，打开原生侧边栏，
-选择 **+ → 记忆**。这个页签就是一个项目的记忆。页签条本身就是最顶栏——一条
-Chrome 式的 **概览 / 图谱 / 健康**：页签 36px 高、彼此留 2px 间隙（不再用旧的
-文件夹式 8px 重叠），横向补白放宽到 14px，每个页签带一个 16px 图标（列非常窄时
-图标让位给文字），活动页签与下方内容面连成一片——最后读取时钟和图标式刷新按钮在
-它的右端；不再重复项目名，因为宿主侧边栏本来就有。页签条下面是一条常驻搜索框
-（取代原来的 检索 页签），每一页都在：整条 40px 圆角输入框只有一圈圆角焦点环，
-点框内任意位置都会把光标放进输入框。两者都保留标准的 tab 角色与方向键切换。
-字体全程使用宿主自带的现代无衬线字体栈（没有衬线标题字，也没有负字距），数据视图
-把数据呈现为分带，而不是一摞带边框的卡片。**图谱** 保持下文的关系图谱不变，包括它
-被记住的控件。
-
-#### 概览 — 五张图
-
-**概览** 一开场就是五张图：GitHub contribution graph 形式的近 53 周
-（371 天）贡献日历——固定 10×10 px 方格、2 px 间隙，列上方标月份，左侧 一/三/五
-星期槽位固定；读数写在分节标题里（`近 N 周（371 天）· 本周 N 天有更新 · 合计 M 条`，
-因为方格只是形状、不是读数）。面板比日历年窄时日历只在图内横向滚动，首次绘制钉在
-当前周，悬停格子显示 `2026-10-27 · 3 条` 的 tooltip；旧宿主仍回 84 天窗口时照实画。
-下面的新建与更新分流柱从第一周有数据的一周开始、共用同一条零线（读数
-`WW 周 · 新建 n · 更新 m`）、标签频率排行、按「类型 → 状态」真实联合计数画的
-构成桑基图（节点高度与连线带宽同用「一条笔记 = 一个纵向单位」的比例，两列旁写
-名称与条数；宽度随面板自适应、拖动侧栏即重测，字号与比例保持 1:1；宿主拿不到
-联合计数时退回原来的构成条 + 图例），以及一条 KPI 带：
-笔记/关系/孤立/待处理计数可跳转（待处理打开 **健康**，其余三个把光标放进搜索框），
-第一格里有新建笔记累计量的十二点迷你折线。**没有归档序列**：`superseded` 是当前状态快照，
-而 vault 不记录笔记是哪天变成该状态的，画成流向就是伪造一次转移。
-
-#### 最近变化 — 按天分组的活动时间线
-
-之后是 contribution-activity
-形式的最近变化竖线时间线（按 `updated` 日分成 今天 / 昨天 / YYYY-MM-DD 组，每天一个
-note 节点、每条变化一个圆点）。每天会印出当天总变化数，并最多列出**抽样**的 2 条笔记
-（附一行「仅显示最近 2 条」）；样本取自最近 500 条笔记里**最新 4 个不同日期**、每天最多 2 条，
-所以忙到一天写几十条时也不会把昨天挤掉——如果抽样 8 条仍然全是今天，还会从 activity 系列
-补最多两个更早日期，作为只有「共 N 条」的汇总组。再往下是被动的健康摘要带，只有一个
-**全部 →** 动作打开 **健康**。检索结果行
-展示路径和高亮片段，全程只有一条状态行——空闲时就是
-`输入关键词开始检索，结果来自本地记忆索引。`——结果总数在完整一页时写
-`共 N 条`，还有更多结果时写 `已显示 N 条`。**健康** 是索引、队列、热层与确定性
-摘要的摘要带，下面是 **诊断记录** 时间线（时间、事件、结果）。
-
-#### 健康与三个需要确认的维护操作
-
-面板默认只读，并在服务端声明能力时恰好提供三个需要确认的维护操作，以及待审阅队列的
-**批准…**/**拒绝…** 决定：
-**重新排队失败任务**（重排当前项目一个终态失败的 job）、**整理热层**
-（`mem_admin(action="hot", operation="compact")`）和 **发布项目摘要**
-（写入归插件所有的 `_meta/digest.md`）。三者都是「预览 → 确认」：预览展示标题、
-事实、影响和任何警告，确认需要第二次点击，并携带一个一次性、60 秒有效的令牌，绑定
-会话、项目、操作、参数和预览状态的指纹。预览过期会返回 `preview-stale` 并刷新
-视图；重复提交会拿到原结果而不是写两次。读接口的返回值里没有
-`capabilities.mutations` 时（旧版服务，或路由未注册），这些控件会隐藏，所有视图
-仍可完整只读使用。六个工具仍是另一条写入路径。**整理热层** 是热层超过触发线后的恢复
-操作：热层仍在线内时预览会直说，确认后不会搬出任何条目（只有旧的逐条指针行可能被折叠）；
-每个确认操作的结果就地印在拥有该按钮的卡片里，所以「什么都没搬」「摘要内容未变」这类
-结果都会写明，而不是只在页面顶部闪一句。
-
-概览与健康两个实时视图在可见时每 15 秒轮询一次（窗口重新获得焦点也读一次），
-每次读取最多每 5 秒让项目索引重扫一次，因此**另一个进程**写下的记忆（另一个 DSH
-profile、Codex 适配器、Obsidian 本身）无需重启 DSH 就会出现；后台轮询是静默的，
-只有刷新按钮会发生一次播报。确认操作有一个传输层细节：桌面版用 `dsh-app://`
-协议装载面板，主进程代理在转发到 loopback 之前会删掉 `Origin`，所以变更请求带
-面板自己的 `x-obsidian-mem-panel: 1` 头作为同源凭证。网页无法在没有预检的情况下
-发送这个头（或 `application/json` 正文），而这条路由从不应答预检；
-loopback / Host / `sec-fetch-site` 这几道栅栏仍然生效。
-
-#### 图谱 — 知识图谱
-
-**图谱** 页把项目记忆画在一张 canvas 上。作用域内的**每个节点**都会画出来——旧的 top-N
-截断已经删除，被藏起来的节点不会再拖着它的连线一起消失；成本压在渲染层：视口之外的节点、
-连线与标签逐帧剔除，底部读数给出真实数量「N 个节点 · M 条连接」。**范围** 可在全部记忆 /
-当前项目之间切换；全部记忆是初始视图，包含历史笔记、未创建的目标，以及连接各项目的管理
-Markdown 链接。管理笔记仍排除在记忆检索之外，图谱只显示其标签与关系。**仅显示已创建的
-笔记** 隐藏未创建目标；附件不在这个 Markdown 视图里，对应控件仍禁用。
-
-连线按 Obsidian 的文件名与相对路径规则解析双链、Markdown 链接、嵌入及 YAML 双链。
-滚轮缩放、拖动画布平移，也可拖动节点；悬停显示标签并突出相关分支。颜色组支持
-`[type:decision]` 这类类型查询；配色按 Obsidian 的方式解析——从宿主主题读取十一个
-`.graph-view.color-*` 槽位，所以图谱完全跟随 DSH 的浅色/深色主题。默认按记忆类型预置
-五组莫兰迪色——决策 `[type:decision]` `#7b8ea6`、约定 `[type:convention]` `#8ba084`、
-踩坑 `[type:gotcha]` `#ab817c`、文档 `[type:doc]` `#b39b6f`、术语表 `[type:glossary]`
-`#9a8aa0`；管理笔记、未分类笔记与未创建目标保持中性色，悬停和记忆调用仍用强调色高亮。
-这五组就是普通的颜色组，改色、改查询或删除都照常生效，**恢复默认设置** 会把它们放回来。
-标签按 Obsidian
-`14 + 节点大小 / 4` 的 85% 栅格化，因为它位于窄侧栏；**标题文字大小** 在 0.4–1.6 之间
-调这个系数，位置、`√缩放` 缩放和悬停节点的固定字号保持不变。
-
-**物理模型是对 Obsidian 1.14.4 自带图谱模拟器的 1:1 移植**：同样的力、alpha 衰减、积分
-与拖拽协议，以及增量更新时同样的播种规则。同一张 400 节点 / 592 条边的子图、同一初始
-位置实测：移植后的 worker 与 Obsidian 自己的 D3 回退**逐点一致**（最大/平均偏差 0.000），
-而更早一版本地调参的实现偏差达 530.1/144.5；在真实的 1,236 节点仓库上，布局移动过程中
-不再合并节点，静止后最小邻距中位数约 112。代价是超过约 2,000 节点时 quadtree 碰撞的
-成本。在 Windows 11 上实测（2026-11-01，Node 24.20.0，用测试同一套 vm harness 跑发布
-的 `lib/graph-worker.js`）：真实的 1,236 节点仓库**每 tick 中位 12.8 ms（p95 16.2 ms）**，
-正好在 60 fps 预算边缘；2,500 节点 28.8 ms、4,000 节点 50.7 ms、6,000 节点 99.9 ms——
-超过约 2,000 节点后布局是"慢动画"，而不是不可用的图。未验证清单现在只留本轮没测的部分
-（该规模下拖拽重新升温）。
-
-设置按钮打开与 Obsidian 关系图谱相同的四个区块：筛选、颜色组、外观、力度。**设置会被记住**，动效则不会：范围、筛选、颜色组、外观与力度保存在本浏览器
-`localStorage` 的 `dsh-obsidian-mem:graph-settings` 键下，刷新页面和重启宿主后依然
-生效。它们属于浏览器 profile 与来源（origin）——`127.0.0.1:3080` 与 `localhost:3080`
-是两个各自独立的面板——且不会离开浏览器。**恢复默认设置** 把内置值写回。记录带版本号：
-旧版本留下的记录（那时的默认色组为空）会被整条忽略一次，让新的按类型预置生效。别的版本写的
-记录、或手工改过的记录不会被直接信任：每个字段都校验，不合格就回落到默认值——一个
-`NaN` 力度会让图谱直接空白，而不只是看起来不对。
-
-这个 DSH 进程碰到记忆时，对应节点与相邻连线短暂发光、文件名在任何缩放下可见：**读**用
-强调色（`mem_read`，或宿主 `read`/`grep` 打开 vault 里的笔记）；**检索**返回的笔记用
-同色更轻；**写**用标签色（`mem_write`/`mem_log`，或宿主 `edit`/`write`）。注入相关
-笔记索引时那些笔记同样会亮。动效按会话区分、只存在进程内，宿主重启即清空；提示只改
-颜色与不透明度，不改字号，所以同一秒被碰到两篇笔记不会一大一小。
-
-图谱接口**只读**，只接受本机 DSH 页面同源请求。未安装 Better Sidebar 时，六个记忆工具
-照常使用。浏览器资产每次请求重新读取，改完 `lib/` 刷新页面即生效；唯一例外是**新增**
-资产——路由表在插件挂载时注册，新加文件需要重新挂载一次。
-
-Canvas 绘制、力模型与播种/拖拽协议都提取自本机 Obsidian 图谱源码：节点大小、标签淡入与
-缩放规则是 Obsidian 自己的，worker 就是上面说的那个 D3 回退模拟器的 1:1 移植。包内附带
-精确固定的上游 D3 代码与完整 ISC 声明，不请求 CDN，也不增加运行时依赖；不包含 Obsidian
-应用程序代码。
+| 插件已挂载 | 插件列表有 `obsidian-mem` 行 |
+| 项目已绑定 | 第一次 `mem_write` / `mem_log` 会绑定一个无指针的 Git 仓库；读永远不会自动绑定；非 Git 目录在显式 `mem_admin` 绑定前只读 |
+| 简报已注入 | 每会话一次，≤`briefBudgetChars` |
+| 热层续页 | ≤2 次自动续页，不改变会话生成 |
+| 约定预览 | 按持久锚点轮换；176 条约定的 vault 能在多次会话里看全 |
+| 召回 | 每轮最多 3 条匹配笔记，≤900 码点 |
+| 中文检索 | 单字与多字 CJK 查询都能命中 |
+| vault 文件 | 是真实可打开的 Markdown，不是数据库导出 |
 
 ---
 
 ## 配置
 
-**在插件页配置。** 打开 DSH 的插件页，进入 dsh-obsidian-mem 这个 bundle：它的
-**配置** 区按 基础 / 采集与整理 / 上下文预算 / 模型蒸馏 / 检索 / 其他 分组列出下文
-每一个字段，带当前值、schema 默认值和就地校验。保存由宿主的配置编辑器（config
-editor）写进**这个 profile 的** patch 层
-（`$DSH_HOME/profiles/<profile>/cordis.patch.yml`），插件随之重新加载（约 1–2 秒）；
-`enabled` 归页面自己的开关管，不在表单里。schema 拒绝的取值会在保存时被拒绝并显示宿主
-自己的报错：落不了盘的保存照实报错，绝不假装成功。这个区需要 DSH 的配置编辑器（桌面版
-和 web profile 都有）；没有它，或者插件行不是经 Loader 安装的，这个区就是只读的并写明
-原因。已存储的配置若无法被 schema 读取，同样保持只读并显示宿主的报错，直到修好文件。
+### 在插件页修改
 
-**首次迁移：页面写 profile 层，不写 home 层。** 页面从不编辑
-`$DSH_HOME/cordis.patch.yml`——那是优先级更高的用户层，那里的一行会整体取代 profile
-层的一行，所以只要它还在，页面就无法作准。如果 `- id: obsidian-mem` 这一行（或它的
-`config:`）还在那个 home 层文件里——也就是下面示例的写法——**配置** 区会以只读方式打开
-并写明原因，同时显示插件实际正在使用的取值。要换到页面来配置：先记下你自定义过的值，
-从 `$DSH_HOME/cordis.patch.yml` 删掉那一行的 `config:`（或整行），**重启 DSH**（宿主
-不监视 patch 文件，刷新页面不够），再打开 **配置** 区——它现在可编辑，保存会写进
-profile patch。下面直接编辑 patch 文件的路线仍然可用，表单没暴露的取值以它为准。
+DSH 插件详情页的"配置"区可以编辑全部字段（基础 / 采集与整理 / 上下文预算 / 模型蒸馏 / 检索 / 其他）。保存写入 `$DSH_HOME/profiles/<profile>/cordis.patch.yml`，约 1–2 秒重载；页面开关是 `enabled`，不在表单里。
 
-配置写在插件行里，而行内的 `config:` 会**整体替换整个对象**——DSH 的 patch 层不做
-深合并。所以要覆盖就必须列出每一个字段，包括 `distill`。把它写进 home 级 patch
-层 `$DSH_HOME/cordis.patch.yml`，和文件里已有的内容放在一起：
+- 由 home 层 `$DSH_HOME/cordis.patch.yml` 提供的行会覆盖 profile 行，此时页面只读。
+- 补丁层**不深合并**：内联 `config:` 必须写全对象（包括 `distill`）。
+- 未知键是加载错误，不是 no-op。
 
-```yaml
-# $DSH_HOME/cordis.patch.yml
-- id: obsidian-mem
-  config:
-    enabled: true
-    vaultPath: "~/Documents/dsh-memory"
-    initGitOnCreate: true
-    injectBrief: true
-    bindHint: true
-    briefBudgetChars: 6000
-    recallBudgetChars: 900
-    retrievalEngine: hybrid
-    retrievalProvider:
-      enabled: false
-      # loopback | remote。remote 必须显式写出：非回环地址只在它之下才合法。
-      egress: loopback
-      endpoint: ""
-      # embed（插件自己的 /embed 契约）| openai（OpenAI 兼容的 /embeddings）
-      apiStyle: embed
-      # 凭证所在**环境变量名**，不是密钥本身
-      apiKeyEnv: ""
-      model: ""
-      dimensions: 0
-      timeoutMs: 500
-      rerank: false
-    hotCapacityChars: 9000
-    hotArchiveRatio: 0.67
-    autoCapture: true
-    autoCurate: true
-    autoReview: true
-    captureIdleMs: 90000
-    distill:
-      provider: ""
-      model: ""
-      # host（DSH 宿主的 llm service）| http（本插件自己调 OpenAI 兼容端点）
-      transport: host
-      egress: loopback
-      endpoint: ""
-      apiStyle: openai-chat
-      apiKeyEnv: ""
-      maxItems: 12
-      minConfidence: 0.75
-      maxInputChars: 24000
-      maxOutputTokens: 4000
-      timeoutMs: 60000
-      maxRetries: 3
-      dryRun: false
-    indexBackend: auto
-    ignoreGlobs: []
-```
+### 关键字段
 
-完全省略 `config:` 块，得到的就是这些默认值。`enabled: false` 什么都不注册——没有
-工具、没有 hook、没有 data root、没有锁。
-
-**未知的键是错误，不是静默忽略。** 下面的表就是完整字段集：表里没列出的键（无论
-在最外层还是在 `distill` 里）都会让这一行加载失败，错误信息会点出这个键。这一点
-很重要，否则一个拼写错误会让本该生效的字段保持默认值——写成 `vaultpath: "/tmp/x"`
-的行会悄悄使用 `~/Documents/dsh-memory` 并在那里引导生成。错误信息还会列出设计文
-档里被刻意砍掉的字段（`projectsDir`、`methodsDir`、`metaDir`、
-`reservedPrefixes`、`docMirror`、`distill.mode`、`distill.maxCostPerSession`），
-这样从设计文档抄来的配置会带着解释失败，而不是什么都不做。
-
-| 字段 | 默认值 | 接受值 | 作用 |
-|---|---|---|---|
-| `enabled` | `true` | boolean | `false` 什么都不挂载。 |
-| `vaultPath` | `~/Documents/dsh-memory` | 非空路径；`~` 会被展开 | 仓库根目录。必须是本地磁盘。 |
-| `initGitOnCreate` | `true` | boolean | **只**对本插件刚创建的仓库目录执行 `git init`，且仅在 `git` 可用时。从不 commit，从不设置 remote。 |
-| `injectBrief` | `true` | boolean | 是否注入会话简报和逐轮相关笔记索引。 |
-| `bindHint` | `true` | boolean | 当会话所在目录解析不出可用项目时，是否一次性告知该会话。这条通知既是「要不要为这个项目建记忆」的提问入口，也是「会话记录的目录已被移动或删除」的报错入口——否则记忆只会静默失效。`false` 只去掉这一条注入，别的都不变；Codex 侧同一个开关是 `OBSIDIAN_MEM_BIND_HINT`。 |
-| `briefBudgetChars` | `6000` | 整数 256–20000 | 会话简报与每周提醒的硬上限，单位是 Unicode 码点。 |
-| `briefConventionMode` | `summary` | `summary` 或 `flat` | 长约定索引的渲染方式。`summary` 只显示 5 行 MOC，其余通过 `mem_brief(section="conventions", offset=5)` 逐页取回；`flat` 是 0.3 之前的列表，完全由预算决定显示多少。只影响渲染：分页始终能读到全部条目。`summary` 模式下这五行会跨已确认的会话轮转，所以长 MOC 不会永远是同五条。 |
-| `retrievalEngine` | `hybrid` | `lexical`、`sparse` 或 `hybrid` | 检索引擎。`lexical` 是原样的 FTS 路径。`sparse` 用本地 TF-IDF/余弦对至多 24 条源码已验证的 lexical 候选重排，再以 RRF k=60 融合；不需要模型、网络或依赖。`hybrid`（2.0.0 起的默认）从 `retrievalProvider` 里配置的 embedding 服务（本地或云端）取一份语义候选，再与 lexical 列表按加权 RRF（k=60，语义权重 2）融合。provider 本身仍然默认关闭，所以没有任何 provider 的默认配置走的是原样的 lexical 路径，并在 search 诊断里记 `provider-disabled`；不会静默降级。 |
-| `retrievalProvider` | `{enabled: false, egress: "loopback", endpoint: "", apiStyle: "embed", apiKeyEnv: "", model: "", dimensions: 0, timeoutMs: 500, rerank: false}` | 对象；未知键会被拒绝 | `hybrid` 使用的 embedding 服务，本地与云端都支持。`egress: loopback` 时 endpoint 必须是字面回环地址；`egress: remote` 是运维显式的出网决定，任何 http(s) 主机都合法。`enabled` 为 false 时不会构造 provider，其余字段全部无效，`hybrid` 等价于 `lexical`。 |
-| `retrievalProvider.enabled` | `false` | boolean | 打开 provider。即使 `retrievalEngine: hybrid`（现在的默认）它也是可选的：没有它，引擎解析成 lexical 路径，search 诊断里写明 `provider-disabled`。 |
-| `retrievalProvider.egress` | `loopback` | `loopback` 或 `remote` | 允许的端点形态。`loopback` 只接受 `127.0.0.1` 与 `::1`。`remote` 接受任意 http(s) 主机，是显式的出网决定：没有任何默认值会替你打开它，取值本身也会写进 search 诊断。 |
-| `retrievalProvider.endpoint` | `""` | http(s) URL | 服务基址。`apiStyle: embed` 时请求 `<endpoint>/embed`，`openai` 时请求 `<endpoint>/embeddings`。任何形态都不接受 URL 内嵌凭证、query 或 fragment，也不跟随重定向。 |
-| `retrievalProvider.apiStyle` | `embed` | `embed` 或 `openai` | 线上协议。`embed` 是插件自己的 `/embed` 契约（请求体逐字节不变）；`openai` 是 OpenAI 兼容的 `/embeddings`，把 `data[].embedding` 按 `index` 还原后映射回同一份契约，所以内部网关或云端 API 不需要中间 shim。`openai` 与 `rerank: true` 互斥（该协议没有 `/rerank`）。 |
-| `retrievalProvider.apiKeyEnv` | `""` | 环境变量名 | 凭证所在的**环境变量名**，不是密钥。请求发出前才读取；缺失时以 `provider-credential` 拒绝且不打开任何 socket。值不会出现在错误消息、诊断或日志里。 |
-| `retrievalProvider.model` | `""` | 启用时非空字符串 | 请求体里的模型名；它也是向量文件名字的一部分，改了会触发本地整份重建。 |
-| `retrievalProvider.dimensions` | `0` | 启用时正整数 | 期望的向量维度。provider 返回其它维度会让已存向量失效并强制重建。 |
-| `retrievalProvider.timeoutMs` | `500` | 整数 50–5000 | embedding 调用的单请求超时。超时的那次搜索回退到 lexical。 |
-| `retrievalProvider.rerank` | `false` | boolean | 预留 provider 的 `/rerank` 契约。hybrid 引擎目前不用它：设为 true 不会改变融合顺序。 |
-| `recallBudgetChars` | `900` | 整数 256–20000 | 逐轮相关笔记索引的上限，单位是 Unicode 码点。它与 `briefBudgetChars` 刻意分开：若按简报剩余额度计费，首轮命中率只有 0.6%，而后续轮次是 22.1%。 |
-| `failureRecall` | `true` | boolean | 原生 DSH 工具重复失败时检索相关记忆。与提示词回忆共用每步的 `recallBudgetChars` 上限；不控制留档。 |
-| `hotCapacityChars` | `9000` | 整数 1024–50000 | `_meta/hot.md` 的容量。是存储容量，*不是*注入预算。 |
-| `hotArchiveRatio` | `0.67` | 开区间 (0,1) | 填充率高于此值时，插件在写入前先归档已完成条目。已经超出上限、且没有可归档条目的文件，用 `mem_admin(action="hot", operation="compact")` 修复，绝不手工修改。 |
-| `autoCapture` | `true` | boolean | 捕获已完成的回合。`false` 停止新的捕获，但仍会排空已入队的 job。 |
-| `autoCurate` | `true` | boolean | 自动整理（curation）回合。`false` 只关掉自动触发：`mem_admin(action="curation", operation="scan")` 和评审命令照常可用，而且两种取值都不会改动任何源笔记。 |
-| `autoReview` | `true` | boolean | DSH 宿主的每次自动整理回合后自动评审停放中的可执行提案。路由优先用配置的 `distill.provider` + `distill.model`；两者都留空时，回退到捕获时记录的本项目最近一次会话实际使用的 provider/model，所以正常对话一轮后即可启用；两者都没有时没有路由，它不会调用模型，队列等你自己决定。`false` 只关掉自动审阅器——面板与评审命令照常可用，`autoCurate` 不变。 |
-| `captureIdleMs` | `90000` | 整数 1000–3600000 | 被捕获的回合进入蒸馏前的空闲去抖时间。 |
-| `distill.provider` | `""` | string | 模型路由。必须和 `model` 一起设置，或者两个都留空（留空 = 复用会话最近记录的路由）。从别的 harness 导入的会话没有这条路由，所以导入的历史会一直停在 `deferred`，直到设了这一项。 |
-| `distill.model` | `""` | string | 见上。 |
-| `distill.transport` | `host` | `host` 或 `http` | 模型调用的传输方式。`host` 是 DSH 宿主的 `llm` service，1.0.0 起的行为，`endpoint` 必须留空。`http` 是本插件自己调一个 OpenAI 兼容的 `/chat/completions` 端点（`lib/model-transport.js`）：没有宿主路由的 host（Codex 适配器、未配置 provider 的 TUI、CLI）也能蒸馏，也可以指向本地 Ollama/LM Studio 或云端。提示词、严格 JSON 契约与全部校验规则两条路径一致。 |
-| `distill.egress` | `loopback` | `loopback` 或 `remote` | 与 `retrievalProvider.egress` 同一套规则：非回环端点只在显式 `remote` 下合法。 |
-| `distill.endpoint` | `""` | `transport: http` 时必填，`host` 时必须为空 | `/chat/completions` 的基址。两种取值与 `transport` 不一致都是配置错误，而不是等到第一个 job 才失败。 |
-| `distill.apiStyle` | `openai-chat` | `openai-chat` | 目前只有一种线上协议。这个键存在是为了让未来的方言有地方落，而不是让表单猜。 |
-| `distill.apiKeyEnv` | `""` | 环境变量名 | 与 `retrievalProvider.apiKeyEnv` 同一条凭证规则。 |
-| `distill.maxItems` | `12` | 整数 1–50 | 一次蒸馏最多接受多少个候选，包括失败留档的兜底候选。同一个数字会写进 system prompt，模型因此知道超过多少条会被拒绝；超限是整批拒绝，绝不裁剪。 |
-| `distill.minConfidence` | `0.75` | number 0–1 | 低于此值的候选进入 `Inbox/`，而不是成为记忆笔记。 |
-| `distill.maxInputChars` | `24000` | 整数 256–100000 | 那次模型调用的输入上限。 |
-| `distill.maxOutputTokens` | `4000` | 整数 128–32000 | 那次调用的输出上限。 |
-| `distill.timeoutMs` | `60000` | 整数 1000–300000 | 单次调用超时。 |
-| `distill.maxRetries` | `3` | 整数 0–10 | **总尝试次数**，不是额外重试次数：`3` = 一次尝试加两次指数退避重试，之后 job 变成终态 `failed` 并保留原始输出。 |
-| `distill.dryRun` | `false` | boolean | 只写回执：不写记忆笔记、不更新 MOC、不更新热记忆。**从这里开始。** |
-| `indexBackend` | `auto` | `auto` \| `sqlite` \| `scan` | FTS5 不可用时，`auto` 回退到 scan 后端并报告此事；`sqlite` 则直接大声失败。 |
-| `ignoreGlobs` | `[]` | 仓库/代码库相对路径的 glob 列表 | 只支持 `*`、`**`、`?` 和普通路径字符。花括号、字符类、取反和转义在启动时就被**拒绝**，而不是静默匹配错。绝对路径和 `..` 被拒绝。被安全策略排除的路径无法再被包含回来。 |
-
-有一种过期文档要忽略：设计文档的 §12 列出了本插件**没有**的字段（`projectsDir`、
-`methodsDir`、`metaDir`、`reservedPrefixes`、`docMirror`、`distill.mode`、
-`distill.maxCostPerSession`）。代码实现的是计划里的字段集——也就是上面的表。目录
-名和指针文件名是协议常量，不可配置。那七个字段是被**拒绝**的，不是被忽略：带了其
-中任何一个的行都会加载失败，错误说明该字段按设计已砍掉。
-
----
-
-## 使用
-
-### 项目里没有指针时
-
-读取永远不会创建绑定：指针不该出现在一个你只是看了一眼的仓库里。取而代之的是每个会话一次、一条很短的通知（`bindHint: false` 可以关掉它）：这个目录解析不出可用项目、原因是什么、以及这个决定属于你：
-
-- **没有指针**（`no-pointer`）——去问用户。`mem_admin(action="bind", mode="local")` 会创建四字段指针并初始化仓库骨架。隐式首次写入也会做同样的事、但不问，这正是这条通知存在的理由：从不写入的用户否则永远不知道有这个选项。
-- **不在 git 仓库里**（`no-git-root`）——同样是显式 `local` 绑定，它是唯一也能绑定普通目录的模式。
-- **记录的目录已不存在**（`cwd-missing`）——会话的 `header.cwd` 已经没了。导入的对话会带上它当初被**记录**时的目录：可能是另一台机器的路径，也可能只是后来改了名。这种会话里记忆完全不可能工作，而在这个拒绝理由出现之前，插件是静默丢掉它的——一个被每步重试的 `ENOENT`。现在通知会说出来，而且不会为了补偿而创建任何东西。
-- **指针读不出来**（`pointer-corrupt`、`pointer-unsupported-schema`、`pointer-not-a-file`、`pointer-oversize`、`pointer-unreadable`）——报告，绝不修复：插件拒绝猜一个身份，你也应该拒绝。
-
-同一个理由也会传到工具层：`mem_brief` 返回 `status: "unbound"` 并带上机器可读的 `reason`，其他工具的拒绝信息里也会点名它。落在仓库内部的目录、一次输掉的 `pointer-race`、注册表冲突都保持沉默——它们都不是用户能做的决定。
-
-### 六个工具
-
-| 工具 | 参数 | 作用 |
+| 字段 | 默认 | 说明 |
 |---|---|---|
-| `mem_search` | `query`（必填）、`scope`（`project`\|`global`\|`all`，默认 `project`）、`type`、`projectId`、`includeHistory`、`limit`（默认 8） | 搜索标题、正文和 frontmatter。`project` 只搜已绑定的项目，遇到不同的 `projectId` 会直接拒绝，而不是悄悄跨项目；`global` 覆盖 `Methods/` 和只读的 `_meta/user.md`；跨项目必须显式用 `all`。 |
-| `mem_read` | `path`（必填，仓库相对路径）、`section` | 重新校验文件后返回正文、解析出的 frontmatter 和内容哈希。拒绝 `_meta/.history/` 这类内部目录。 |
-| `mem_write` | `type`、`title`、`body`（必填）；`tags`、`status`、`confidence`、`assertion`、`supersedes`、`id`、`idempotencyKey` | 写项目文档和记忆的权威途径。不带 `id` 时**创建**一条带新 id 的笔记；带已存在的 `id` 时更新。取代会校验旧 id，并把链接的两端都写上。 |
-| `mem_log` | `text`（必填）；`session`、`section`、`idempotencyKey` | 往今天的日志追加一条幂等条目；`section: "hot"` 则改为写热记忆文件的进行中区域。 |
-| `mem_brief` | 可选 `section`、`offset`、`limit` | 不带参数时返回会话注入过的那份召回简报，方便你重读或审计预算。带 `section` 时返回该区块的一页（`hot`、`hot-constraints`、`hot-active`、`hub`、`conventions`、`preferences`、`view`、`recent`），1–50 行、最多 8,000 码点；简报计为省略的每一条都能这样取回。 |
-| `mem_admin` | `action`（必填）：`lint`、`index`、`bind`、`projects`、`promote`、`jobs`、`curation`、`hot`、`appraise`、`digest`、`diagnostics`；外加 `report`、`prune`（仅 lint）、`rebuild`（index）、`mode`（bind：`show`\|`local`\|`fork`\|`retain`）、`path`（promote）、`jobId`/`retry`（jobs）、`operation`（curation：`status`\|`scan`；hot：`status`\|`compact`；digest：`read`\|`refresh`）、`days`（digest） | 低频维护。`lint` 默认只读，除非你传 `report: true`（写一条带日期的报告笔记）和/或 `prune: true`（删除过期快照）——这两者刻意保持独立。`curation` 读取或运行下文那条有界的整理回合；它永远不会应用某条待评审提案。`hot` 维护热层：`status` 按 `hotCapacityChars` 报告它的填充率，并逐区报告一次搬出还能移走多少条完整条目；`compact` 把「已完成」区的指针行折叠成一行摘要，并在同一个事务里归档最旧的、可搬出的条目——这是 `hot-over-capacity` 拒绝信息指名的唯一恢复路径，手工改文件不是替代方案：那会让事务以 `hash-mismatch` 失败。`diagnostics` 是唯一什么都不读的动作：它返回**本进程**自己的决策环——最多 200 条事件，取值来自封闭集合 `capture`、`distill`、`index`、`bind`、`job`、`transaction`、`brief`、`skill`、`recall`、`curation`（十类现在都会写入），每条带一个结局与机器标识，永不包含笔记正文、标题或提示词。因此一个窗口能回答那些否则必须靠复现才能回答的问题：一个已结束的回合为什么没被捕获（`capture` 事件给出原因）、蒸馏是真的没产出还是根本没跑（`distill`、`job`）、索引有没有跟上一次写入（`index`）、一次写入是提交了还是带着错误码被拒绝（`transaction`）。它不需要绑定、不读仓库，所以在其他所有动作都拒绝时它仍能回答；进程退出后它即清空——上文所述的独立本地日志会为用户自行生成的报告保留缩减后的事件。`appraise` 读取最近 50 条笔记，返回确定性鉴定结果（过期复核、未验证、重名、断链、有争议），不调用模型、不写入。`digest` 读取一个有限的 UTC 回溯窗口（`days` 1–30，默认 1）：新建/更新/已取代计数、类型分布、当前热层与队列快照、最多八条最近引用，以及同一套确定性鉴定；最多检查 200 条来源、500 ms 截止，如实报告 `truncated`/`incomplete`，不虚构缺失记录。默认 `operation="read"` 不写入；`operation="refresh"` 创建或更新项目自己的 `_meta/digest.md`（最多 8,000 码点，字节未变则空操作，人类拥有的目标会被拒绝）。设 `DSH_OBSIDIAN_MEM_DEBUG=1` 可额外把每条事件以 `info` 级写进宿主日志；宿主是否显示这一行由宿主决定，不由本插件决定。 |
+| `vaultPath` | `~/Documents/dsh-memory` | 必须是本地磁盘 |
+| `initGitOnCreate` | `true` | 只在本插件刚创建的 vault 目录 `git init`，从不提交 |
+| `injectBrief` / `bindHint` | `true` | 简报注入；未绑定会话的一次性提示（`bindHint`） |
+| `briefBudgetChars` / `recallBudgetChars` | `6000` / `900` | 两个独立预算；每轮召回不占简报额度 |
+| `briefConventionMode` | `summary` | `summary` 给可寻址预览；`flat` 列全部名字（更贵） |
+| `hotCapacityChars` / `hotArchiveRatio` | `9000` / `0.67` | hot 层存储上限；超限折叠 `已完成` 为指针行 |
+| `autoCapture` / `autoCurate` / `autoReview` | `true` | `autoCurate` 只控制自动整理触发；面板/CLI 仍可用 |
+| `captureIdleMs` | `90000` | 空闲窗口内合并连续回合为一个 distill job |
+| `retrievalEngine` | `hybrid` | `lexical` / `sparse` / `hybrid`；`hybrid` 在 provider 未配置时自动退回词法并记录原因 |
+| `retrievalProvider` | `enabled:false`、`egress:loopback` | `enabled` 后按 `egress`（loopback / remote）、`apiStyle`（embed / openai）、`endpoint`、`model`、`dimensions`、`timeoutMs`、`rerank` 配置 |
+| `retrievalProvider.apiKeyEnv` | `""` | **环境变量名**，不是密钥；请求前才读取，缺失 → `provider-credential` 且不打开 socket |
+| `distill.transport` | `host` | `host` 用宿主 llm（endpoint 必须为空）；`http` 由插件直接调 OpenAI 兼容 `/chat/completions`（Codex / TUI / CLI 也能蒸馏） |
+| `distill.egress` / `endpoint` / `apiStyle` / `apiKeyEnv` | `loopback` / `""` / `openai-chat` / `""` | 与检索同一套 egress 规则；`http` 必须给 endpoint，`host` 禁止给 |
+| `distill.maxItems` / `minConfidence` | `12` / `0.75` | 超过上限整批拒绝；低于置信度进 Inbox |
+| `distill.maxInputChars` / `maxOutputTokens` / `timeoutMs` / `maxRetries` | `24000` / `4000` / `60000` / `3` | 失败是终态并保留原始输出，可显式重试 |
+| `distill.dryRun` | `false` | 只写 run 回执，不写 vault；第一次接远端建议先用它 |
+| `indexBackend` | `auto` | `auto` 在 FTS5 不可用时退回 scan 并报告；`sqlite` 会显式失败 |
+| `ignoreGlobs` | `[]` | 只支持 `*` / `**` / `?` 与路径字符；绝对路径、`..`、否定、花括号/字符类会被拒绝 |
 
-`mem_write` 的 type 这样路由：
-
-| `type` | 落在 | 说明 |
-|---|---|---|
-| `doc` | `Docs/<title>.md` + 更新 MOC | 设计文档、报告、指南。 |
-| `decision` | `Decisions/ADR-<n>-<slug>.md` | Context / Decision / Alternatives / Consequences。编号在仓库锁内分配，是给人看的；`id` 才是身份。 |
-| `gotcha` | `Pitfalls/<slug>.md` | 症状 / 原因 / 修复 / 证据。 |
-| `convention`（别名 `invariant`） | `Conventions/<slug>.md` | 一个文件一件事。 |
-| `session-log` | `Daily/YYYY-MM-DD.md` | 只追加，按 session id 幂等。 |
-| `hub`、`glossary` | `index.md`、`Docs/glossary.md` | MOC 和术语。 |
-| 低置信度 / 未分类 | `Inbox/<slug>.md` | 等人来分类。 |
-
-取代从不覆盖：旧笔记留在原位，标上 `status: superseded` 和 `superseded_by`，新笔
-记反向链接它。两条无法排序的结论会变成 `status: contested`——不允许有隐形的赢家。
-`assertion` 记录结论*有多强*（`stated`、`inferred`、`observed`），而 `observed`
-需要可复查的证据，不是模型说一句“已验证”。
-
-### 用户习惯
-
-`_meta/user.md` 是你的文件——引导时按模板创建一次，之后插件永不改写。模板会问那些每次都会改变答案的事：技术与框架偏好、常用技能与工具、惯用方法（按问题类型）、产出与沟通偏好、禁忌。模板里的例子都是 HTML 注释，所以一份没动过的文件不会给会话增加任何内容。
-
-你写进去的内容会以「用户习惯」小节注入，并按你自己的标题分组，优先级**高于**最近决策列表。写下来的习惯是长期规则（`前端一律 React`、`改动前先跑测试`），而最近列表只是通往项目已经写下的内容的导航。旧顺序会最先丢掉用户的习惯——而那恰恰是记忆层最不该丢的东西。
-
-自动生成的习惯先是候选，插件不会把它们写进那个文件。关于你如何工作的持久偏好写成项目里的 `Conventions/习惯：….md`，一条习惯一个文件；当它比仓库活得更久时再提升到 `Methods/`。
-
-习惯在记忆蒸馏和整理中生成。默认开启的 `distill.learnHabits: true` 让现有的不带工具的模型调用，结合当前对话与有界的项目习惯记忆识别个人工作偏好，不再依赖固定词表或重复次数。明确声明的长期偏好用 `assertion: stated`，引用用户自己的消息；可能的偏好用 `assertion: observed`、`status: provisional`，正文保留用户消息的一段精确短引文。项目要求、单次任务和 agent 的工具选择都不是个人偏好。
-
-整理也会把最多十二条活跃、明确声明的项目约定交给同一持久队列再次蒸馏。落地前复核原文哈希，习惯笔记不会被再次用作新证据，防止候选自我强化。已有习惯只作匹配上下文，不构成新的确认。匹配不会替换已确认规则；证据变化时走现有的重复条目审阅流程。
-
-候选可搜索，在你确认前不会进入简报。把 `status` 改成 `active` 即确认，改成 `archived` 即丢弃；原文从不删除。复核与退役使用现有的整理生命周期，不再设置单独的词表、会话计数、半衰期或按时间自动归档。`_meta/user.md` 仍由你维护。关闭 `distill.learnHabits` 会停止生成推断候选，用户明确声明的规则仍按普通蒸馏处理。
-
-模型仍可能把项目请求误判成偏好，或遗漏偏好；精确引文和隔离限制其影响，不保证判定准确率。旧计数方案的测量保留在 `docs/habit-learning-results.md`，当前验证记录见 `docs/habit-semantic-validation.md`。DSH 提供自动执行的 worker；Codex 没有回合结束边界或后台蒸馏器，因此它的 skill 通过显式记忆工具使用相同方法，不宣称具有同样的自动触发能力。
-
-### 自动蒸馏
-
-开启 `autoCapture: true` 时，一个已完成的根回合会：(1) 在提交后被捕获；(2) 过滤
-后以 `0600` 权限存成 job，放在 `$DSH_HOME/data/obsidian-mem/pending/` 下；(3) 空
-闲窗口之后，由**一次**不带工具的模型调用蒸馏；(4) 用它所引用的证据序号做校验；
-(5) 以 `decision` / `gotcha` / `convention` 笔记幂等地落地。被中止和报错的回合只
-被记录，永不成为结论；`doc` 和 `glossary` 笔记只能通过 `mem_write` 创建。
-
-原生 DSH 的重复硬失败也进入这条证据链。同一捕获回合内，同一工具失败三次后，
-可以生成 `gotcha`：模型遗漏时补低置信度的 `Inbox/` 候选；模型候选只有引用了该工具
-后续的已验证成功，以及文字说明，才可进入 Pitfalls。候选仍保持 `inferred`、
-`provisional`，不自动取代旧笔记；重试成功不能证明根因。成功结果中的软错误文本
-只提示回忆，也不能作为恢复证据。留档遵守 `autoCapture`、`distill.dryRun`、模型路由
-和 `distill.maxItems`；模型输出失败仍留在现有重试队列。同名候选等待评审。
-Codex 共用库和写作规则，但其 MCP 适配器收不到原生 DSH 工具事件；Codex skill 说明
-显式回忆和留档的方法。
-
-语言检查对句长（60 个 CJK 字符或 25 个英文词）、笔记长度（五句）、模糊措辞与悬空
-指代给出提示，排除行内代码和 wikilink。只有标题与正文语言不一致才把蒸馏候选转入
-Inbox。这些是参考 ASD-STE100 的项目规则，不表示标准认证或召回质量已提高。
-
-一个普通候选——既不取代任何笔记、也不与任何已有笔记同名——会像其他任何一次写入
-一样，走同一套事务引擎落地。有两种形态不走，因为它们是插件不该自行做出的判断：
-
-- 标题与已绑定项目中某条笔记相同的候选会被**停放**，而不是跳过，所以新事实绝不会
-  被悄悄丢弃。判定用的是与 `mem_search` 相同的项目范围、相同的分词器，并收窄到候选
-  自己的类型。批准后的孪生笔记会作为**单独一条**笔记发布在已有笔记旁边。
-- 提出要取代某条笔记的候选同样会被**停放**。批准后的取代会写入新笔记、把前身标为
-  `status: superseded`，并把两条互相链接——与显式 `mem_write` 取代完全一致。
-
-两者在由你决定之前都只是待评审记录，具体说明与批准方式见下文《自动整理》。
-
-先这样开始：
-
-```yaml
-    distill:
-      dryRun: true
-```
-
-然后观察几个回合。`mem_admin(action="jobs")` 会列出队列；`failed` 的 job 会保留
-失败原因，可以用 `mem_admin(action="jobs", jobId="…", retry=true)` 复活。把
-`dryRun: false` 设上再重启，就正式启用。
-
-### 自动整理
-
-`autoCurate: true`（默认值）时，插件还会检查仓库里已有的笔记，并维护一份当前项目的
-紧凑导航视图。检查本身只读 Markdown、**不调用模型**，也从不合并、归档、取代、提升或
-删除任何笔记。一个 finding 要么成为视图条目，要么被停放下来等一个决定；决定有三条
-路径——健康面板、评审命令、以及（开启时的）自动审阅，见下文。只有应用一条可执行提案
-才会改动笔记，而它走的是所有其它写入共用的那套带评审的事务。
-
-#### 日常流程
-
-什么都不做也是正常用法：自动回合会维持视图，被停放的提案就那样等着。要看它发现了
-什么、或者定一条提案时，有三条路径——它们走的是同一条评审路径（claim、应用前的来源
-哈希复核，以及应用时的带评审事务）：
-
-1. **面板：健康 → 待审阅。** 从 DSH 侧边栏打开记忆面板（**+ → 记忆 (Memory)**），
-   切到 **健康**。**待审阅** 卡片就是待决定的评审队列：每行写着种类、原因、来源和
-   等待时长。点开一行，抽屉会把候选的 Markdown 渲染出来——取代类候选还会显示将被
-   取代的笔记和这次写入会改动的状态。**批准…** 应用的就是这一条提案；**拒绝…**
-   不改动任何笔记。只读 finding 只有 **忽略…**（一次拒绝）：它记录决定，不改动
-   任何笔记。
-2. **评审命令：未改动。** 在已绑定项目的目录下，用与宿主相同的 `DSH_HOME` 运行：
-
-   ```sh
-   dsh-obsidian-mem-review --vault /绝对路径/vault <提案 id>
-   ```
-
-   从本仓库的检出运行时，`node /绝对路径/repo/lib/curation-cli.js --vault … <提案 id>`
-   是同一条命令——若已绑定项目是另一个仓库，就用绝对脚本路径。它会打印提案的确切操作
-   与来源，并且只接受逐字节输入的 `apply <id>` 或 `reject <id>`，一次一条提案：没有
-   `--all`，也没有默认答案。`reject` 不改动任何源笔记；命令要求 stdin **和** stdout
-   都是终端。
-3. **自动审阅：`autoReview: true`（默认）、能解析出一条模型路由（配置的
-   `distill.provider` + `distill.model`，或本项目最近一次被捕获的会话实际使用的
-   路由）、且 DSH 宿主跑完一次自动整理回合时。** 插件用这条路由让模型
-   判断最多 3 条待决定的可执行提案。判断前先重新核对每个来源的哈希；只有
-   `confidence ≥ 0.8` 的 `apply` 或 `reject` 生效，其它情况（`defer`、低置信度、回答
-   不合契约、没有路由）一律保持 pending，留给路径 1 和 2。证据已经变化的提案不会
-   应用，而是被 retire——它已经不可能被任何决定使用，下一次蒸馏会产出新候选。
-   自动决定记录 `decidedBy: "auto"` 和模型 id，健康卡片的最近列表显示最近的决定与退场，
-   你可以据此审计插件替你决定了什么。手动 `operation="scan"` 和 Codex 适配器的回合
-   都不会启动它；`autoCurate: false` 时自动回合不跑，所以也不会有自动审阅（面板与
-   命令照常可用）。`autoReview: false` 只关掉这条路径。
-
-**没有任何工具，也没有任何 `mem_admin` 动作、参数或枚举值能批准或拒绝提案**——所以
-会话模型无法替你决定一条提案。面板和评审命令是人的两条路径；内置审阅器是插件内部的、
-有界的（每趟最多 3 条），并且每条决定都留痕。
-
-只想看状态或立刻跑检查时：`mem_admin(action="curation", operation="status")` 读取已
-存储的游标、已提交的视图和有界的提案队列，不检查任何笔记——它的 `examined`、
-`counts.findings` 与 `counts.unexamined` 按设计是 `0`。`operation="scan"` 立刻跑一趟
-有界整理并报告这一趟做了什么；项目大于一趟时重复扫描直到 `complete: true`（见下文
-《一趟没跑完的时候》）。`autoCurate: false` 时这两个操作仍然可用，停掉的只有自动触发。
-队列本身最多返回 200 条待评审记录，最新在前，每行恰好有 `proposalId`、`kind`、
-`reason`、`reviewOnly` 四个键；区分两种形态要看 `reviewOnly`，不要看 `kind`
-（`near-duplicate` 两种都可能）；`proposals.truncated: true` 说明待评审的比返回的多。
-
-**哪些是自动的，哪些必须由人来。** 整理检查本身和导航视图是自动的，且不调用模型。
-review-only finding 的确定性退场也是自动的：一趟完整整理会 retire 它检查过、且不再
-复现的 finding，所以修好的笔记不会在队列里留下永不消失的行。一条可执行候选的语义决定，
-只有上面第 3 条那种满足置信度门槛时才自动；`autoReview: false`、没有路由、或模型回答
-不确定时，它都由人决定。review-only finding 从不交给模型决定——它们是证据，插件对它们
-唯一的自动动作是退场；应用一条 finding 是不可能的，驳回则只能是人的动作。
-
-决定之后：健康卡片会在下一次轮询后把该行移出队列；`status` 里那条已决定的记录不再
-出现；下一次简报或扫描会反映批准后的改动。
-
-#### 哪些能批准，哪些只能自己修
-
-只有带操作的提案才提供 `apply`——也就是列表里 `reviewOnly: false` 的那些。它们有两
-种，都是上文《自动蒸馏》里被停放的候选：
-
-| 被停放的候选 | `apply` 做什么 |
-|---|---|
-| 与已有笔记孪生的候选 | 作为**单独一条**笔记发布在已有笔记旁边。 |
-| 提出取代某条笔记的候选 | 写入新笔记，把前身标为 `status: superseded`，并把两条互相链接。 |
-
-`reviewOnly: true` 那行是 finding，不是计划：`review_after` 过期、wikilink 指向不存在
-的笔记、插件自有笔记缺少来源、或扫描器自己发现的疑似重复。`apply` 修不了它，评审命令
-也不会为它提供操作。请按 finding 指出的问题改源笔记——编辑笔记、修正链接、刷新或退场
-——然后再跑一次 `operation="scan"`；一趟完整整理检查过这条笔记、问题不再出现后，就会
-把这一行退场（retire）。不同意的 finding 直接拒绝即可（面板上点 **忽略…**，或者用
-命令），它会记录这个决定且不改动任何笔记。
-
-命令宁可拒绝也不猜，每个拒绝都是一个可以据以行动的代码。`source-changed` 表示某处来源
-在扫描与批准之间被改动了：提案保持 `pending`，再评审一次即可。**健康**的并发评审——两个人
-同时决定同一条提案——得到的是 `proposal-not-current`；`review-lock-unavailable` 是另一
-种答案，表示私有的 claim guard 根本没拿到：另一个评审正处在它那段很短的 claim 临界区里，
-或者 guard 存储不可用。`review-recovery-required` 表示这条提案已经有一部分或已提交的
-应用：某个进程在发布笔记与记录决定之间死掉了。用 `apply` 批准会把这次尝试结清——没提交
-就回滚、已提交就向前推进——然后发布这条候选；reject 会被拒绝，因为那会留下一条已发布的
-笔记配一条 `rejected` 记录。
-
-#### 一趟没跑完的时候
-
-一趟最多检查 256 条笔记，并在整理工作累计 500 ms 之后停止**开始**新的检查。撞上任一
-上限的一趟会如实说明并保住自己的位置：已经检查完的留在记录里，没轮到的等下一趟。有两
-个数刻意不作为承诺：一次慢的文件系统调用可能越过 500 ms，而清单遍历本身根本不受它约束。
-
-项目大于一趟时，重复 `operation="scan"`，直到 `complete: true`。自动触发比这更弱：撞上
-上限的完整扫描会在扫描过程中写下新的到期标记，所以之后一次提示队列为空的会话开始只会得到
-`skipped`，回填就此等待。项目再次到期只有三条路径——一次提交的写入排队了一条**变更路径
-提示**（它只看那条队列，不看到期标记）、你主动 `operation="scan"`、或 24 小时到期标记
-过期。所以比一趟更大的仓库，其**自动**回填在每个项目上最多每 24 小时前进一批，直到某次
-写入为它排入一条提示；而你主动 `operation="scan"` 不受这条约束——这正是上面让你重复扫描
-的原因。
-
-#### 自动回合按宿主不同
-
-DSH 侧，一次提交的写入会把笔记入队，会话活动时检查项目是否到期；整理在模型请求之外运行，
-失败永远不会让你的回合失败。Codex 侧，整理运行在已安装且**被信任**的 `SessionStart`
-钩子里——未受信任的钩子会被 Codex 静默跳过；只装 MCP（没有钩子）的安装方式只有显式的
-`mem_admin` 扫描，**完全没有自动回合**。`autoCurate: false` 时
-`operation="status"` 与 `operation="scan"` 都仍然可用，停掉的只有自动触发。
-
-#### 视图是缓存，永远不是第二事实来源
-
-游标、逐路径扫描记录、变更路径队列和视图都在
-`$DSH_HOME/data/obsidian-mem/curation/` 下。每个视图条目都带着它据以构建的字节的
-sha256；简报使用某条之前会重新哈希它代表的**每一个**路径——包括被折叠的完全重复组里的
-每一个成员——只要源缺失、被编辑、不可读或过大，简报就回退到视图出现之前那套按源导航的
-路径。完全重复组只会显示成一条列出所有路径的条目；**没有任何笔记被删除或合并**。只有被
-标为 `complete` 的视图才会被注入：撞上任一上限的完整扫描发布 `complete: false`，而变更
-路径的扫描只允许合并进一个已经完整的视图（否则就是 `backfill-incomplete`），所以不完整
-的回填永远不会被当作项目的导航发布出去。
-
-删掉那四份可重建的文档——游标、逐路径扫描记录、变更路径队列和视图——代价只是一次扫描，
-别无其他。同一目录里有两样**不可弃置**：`proposals/` 保存着每一条被停放的候选及其决定
-记录，扫描无法再造，删掉就丢掉了评审工作（源笔记不受影响）；正在跑的评审还会在记录旁边
-保留一个私有的 claim 文件，让两个评审不可能同时决定一条提案——评审在跑时，两者都不要删。
-
-在一台机器上、一个 600 条笔记的临时仓库里实测（探针与原始输出见 `CHANGELOG.md`）：
-一趟完整整理检查 256 条笔记，15 轮的中位数 136 ms、最差 171 ms；一次真实的
-`SessionStart` 钩子运行比同一进程跳过整理的那次多付中位数 172 ms、最差 179 ms。
-在这个规模上 500 ms 截止时间从未被触及——先撞上的是笔记数上限——所以这些数字说明
-上限在这里不是约束，而**不**说明 256/500 就是最优；大到让截止时间真正生效的项目，
-本仓库没有跑过。未验证清单在 `CHANGELOG.md`，这里不重复。
-
-### 插件自己的数据放在哪里
-
-仓库之外的一切都在 data root 下，而 data root 只在一个地方从 `DSH_HOME` 推导出来
-（`$DSH_HOME`，未设置时是 `~/.dsh`）：
-
-```
-$DSH_HOME/data/obsidian-mem/
-├── index/          rebuildable SQLite search index (never authoritative)
-├── locks/          whole-vault write lock
-├── transactions/   journal for crash recovery
-├── receipts/       per-write and per-job receipts
-├── pending/        queued distillation jobs (0700/0600)
-├── curation/       可重建的整理状态：游标、逐路径扫描记录、
-│                   变更路径队列与紧凑视图 (0700/0600)
-│   └── proposals/  持久保存、不可重建：每一个停放中的候选及其决策记录 (0700/0600)
-├── diagnostics/    不含正文的限量决策日志 (0700/0600)
-└── processed/      per-session processed floor (0700/0600)
-```
-
-把 `DSH_HOME` 指向一个隔离目录，插件就永远写不进你真正的 `~/.dsh`——测试套件就是
-这么跑的，你试任何新东西时也该这么做。
-
----
-
-<a id="diagnostic-report-for-an-issue"></a>
-## 用于 Issue 的诊断报告
-
-如果安装方式把本包的 npm 命令加入了可执行路径，可自行生成报告：
-
-```sh
-dsh-obsidian-mem-diagnose --output ./obsidian-mem-diagnostics.json
-```
-
-在源码目录下，`node lib/diagnose-cli.js --output ./obsidian-mem-diagnostics.json`
-运行的是同一命令。即使宿主插件加载失败，命令仍可执行基础检查。它不会上传文件、修改
-DSH 配置或读取真实 vault；必须明确指定输出路径，且拒绝覆盖已有文件。生成的 JSON 权
-限为 `0600`，大小不超过 256 KiB。请先用文本编辑器打开检查，再自行附到 Issue。
-**[公开 GitHub 仓库的附件](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files)任何人都能查看**，包括未登录 GitHub 的人；事件时间可能透露
-你使用插件的时段。
-
-报告包含插件和 Node 版本、操作系统类型与架构、有日志时可取得的非身份性配置开关、
-固定格式的自检状态，以及近期决策事件。事件只保留时间、类别、获准的结果或粗粒度错
-误码、计数，以及 `p1`、`j1` 这样的每次运行内别名。命令只数 pending 目录中的 job
-文件项，不打开文件；它检查 Node、内存 FTS5、随包文件、诊断日志状态，并在一次性
-home 和 vault 中检查 `mem_admin` 的诊断结果结构。它**无法**证明真实 vault、模型路
-由、宿主会话钩子或队列任务内容正常。证据缺失、不完整或损坏时标为 `unavailable` 或
-`partial`；没有日志不代表先前的调用成功。
-如果没有安装可选的 DSH 宿主包，隔离插件自检可能标为 `unavailable`，基础报告仍能生成。
-
-启用的 DSH 插件和 Codex 适配器默认把缩减后的事件流写到本机
-`$DSH_HOME/data/obsidian-mem/diagnostics/`，目录和文件权限分别为 `0700`、
-`0600`。每个进程最多保留 200 条事件、128 KiB。下次插件启动时清除最后写入已超过
-七天的运行文件；导出会忽略过期文件，插件停止期间没有后台清理。进程内的
-`mem_admin(action="diagnostics")` 决策环仍独立存在。日志写入失败不改变原调用的结果。
-
-日志和报告**不会包含对话文本、提示词、模型输出、笔记正文或标题、工具参数、宿主原
-始日志、pending job 正文、配置文件、凭据、环境变量值、路径、原始项目/job/事务
-ID、主机名或仓库 remote**。命令不会发起网络请求。这些边界约束的是新增的诊断通
-路；自动蒸馏的模型调用边界见下文。
+整理提案的批准路径：面板"健康 → 待审阅"、终端 `dsh-obsidian-mem-review --vault <path> <id>`、或有界自动复核。自动整理**不得**静默合并/归档/supersede/删除源笔记。
 
 ---
 
 ## 隐私边界
 
-自动蒸馏会把文本发给模型。下面写清楚到底有什么越过了这条线。
-
-**本地暂存了什么。** 已完成的回合会在任何模型调用*之前*以 `0700`/`0600` 权限写入
-`$DSH_HOME/data/obsidian-mem/pending/`，这样重启后可以继续而不必再次调用模型。原
-始会话记录从不写入仓库。
-
-**发送了什么。** 一句已提交回合的白名单投影：真实的用户消息、最终的助手文本、带
-成功/失败标记的工具名，以及带上限的文件路径与行号。插件注入、推理块、原始工具输
-出、工具参数、子代理会话记录、凭据存储、凭据文件和环境变量从不被读入其中。
-
-**清洗掉了什么。** 一次确定性扫描会跳过任何匹配常见凭据形态的消息（常见 API key
-前缀、PEM 块之类）。一旦命中就跳过**整条消息**，回执里会记下这次跳过。
-
-**什么没有保证。** 那个扫描不是穷尽的密钥扫描器。如果你用无法识别的格式把密钥粘
-进会话，这条消息的文本就是回合的正常组成部分，可能到达模型路由。请像对待任何与模
-型供应商的对话一样对待这个会话。
-
-**发到哪里。** 只发给你配置的 LLM 路由；当 `distill.provider`/`model` 为空时，发
-给会话最近记录的路由。解析不到路由是一种 `deferred` 状态，而不是用默认设置发起调
-用。没有遥测，也没有别的网络出口。
-
-**磁盘上有什么。** 仓库和 pending 队列都是普通本地文件，所以任何备份或同步它们的
-东西——Git、Time Machine、Obsidian Sync、云盘目录——都会看到它们。如果某条用户消息
-对此敏感，就别让它被捕获。
-
----
-
-## 备份与迁移
-
-**仓库才是事实来源。** SQLite 索引只是一个*可重建的缓存*：删掉
-`$DSH_HOME/data/obsidian-mem/index/`，它会被扫描重建；或者调用
-`mem_admin(action="index", rebuild=true)`。任何时候都不会*从*索引里恢复任何东
-西。
-
-**Git 初始化不是备份。** `initGitOnCreate` 只是让新建的仓库具备做版本管理的前
-提。插件从不 commit、从不配置 remote，也从不把 Git 当回滚机制。想要 commit 和
-remote 就自己配。
-
-**快照也不是备份。** 在修改自己拥有的文件之前，插件会把先前的字节复制到
-`_meta/.history/<txId>/`。这些副本是失败事务的恢复材料，它们不被索引，
-`mem_admin(action="lint", prune=true)` 会在仓库锁内删除过期的那些。仓库之外的索
-引、或者同一块磁盘上的 history 目录，都不算备份。
-
-**把代码库搬到另一台机器。** 正常 clone 即可。`.obsidian-mem` 里没有任何绝对路径
-——只有 `projectId`、`slug`、`displayName` 和 `schema`——所以把 `vaultPath` 设成
-*那台*机器的仓库，项目身份就保持不变。如果仓库也一起搬过去，项目目录原样复用。
-
-**改名。** 改代码库名或显示名不会移动项目目录；目录名在第一次绑定时就固定了。
-`mem_admin(action="bind", mode="show")` 报告绑定情况而不做改动。
-
-**同一个代码库有多份副本。** 同一代码库的多个 worktree 共享一个 `projectId`，因
-此也共享一个仓库目录。真正的另一个代码库（`fork`）通过
-`mem_admin(action="bind", mode="fork")` 拿到新 id，而 `mode="retain"` 用于确认换
-了 remote 的仍是同一个项目。两者都不是自动的：remote URL 不匹配会暂停自动写入并
-来问你。
-
-**保留策略。** `mem_admin(action="lint")` 会检查孤儿行、死链、重名文件、
-frontmatter 缺失、过期笔记、文件↔索引不一致和队列积压。`prune` 只在没有任何清单
-或失败记录仍引用它们时删除过期的 `.history/` 快照目录，并且在仓库锁内执行。
-
----
-
-## 外部 Markdown 只被审计，不被管控
-
-`mem_write(type="doc")` 是项目文档的权威途径，也是插件唯一能保证的途径。*你*用编
-辑器、一行 `sed`、代码生成器或别的工具创建的 Markdown 对它来说是不可见的——没有插
-件能拦截一次 shell 写入。
-
-`mem_admin(action="lint")` 会报告没有被任何仓库笔记引用的代码库 Markdown，于是这
-个缺口是*可见的*。它只报告，从不移动、改写或收编你的文件。把这份报告当作待办清
-单，而不是强制手段。
-
-`README.md`、许可证和构建配置属于代码库，就留在那里；仓库收的是给人读的长文档。
+- **发送前先落盘**：whitelist 投影（真实用户消息、最终回复、工具名 + 成败、有界文件路径）先在 `$DSH_HOME/data/obsidian-mem/pending/` 以 0700/0600 落盘，再调用模型；原始会话记录不进 vault。
+- **不发送**：插件注入、推理块、原始工具输出、工具参数、子 agent 转录、凭证文件、环境变量。
+- **凭证擦洗**：确定性扫描会**整条跳过**看起来像凭证的消息并记录；不是穷举，未识别的秘密仍可能到达模型。
+- **目的地**：只有配置的模型路由或会话上一次记录的路由；没有路由就 deferred，不默认调用；无遥测。
+- **出网**：`egress: loopback` 只接受字面 `127.0.0.1` / `::1`；`remote` 是显式决定，会在检索诊断里记录。端点拒绝内嵌凭证、query、fragment；从不跟随重定向；非 2xx 只报状态码，不回显上游正文；密钥经 `redactSecret` 从错误/诊断/日志中清除。
+- **面板**：只读基线；只有五个 preview → confirm 写操作能写；loopback / same-origin 栅栏（含 `dsh-app://` 代理）。
 
 ---
 
 <a id="honest-limits"></a>
+
 ## 诚实边界
 
-这里每一条都是本版本真实的边界，大多数是刻意做出的拒绝。它是写下来的部分，不声称穷
-尽：`CHANGELOG.md` 里持续记录着哪些被验证过、哪些还没有。
+以下边界都是设计的一部分，写出来是为了让启用写入前能判断：
 
-### 索引只是缓存，从不是事实来源
-
-搜索结果、简报和 `mem_admin(action="index")` 全都从仓库里的 Markdown 推导而来。
-索引损坏或过期是可以恢复的，插件宁可重新扫描，也不把已删除的内容端给你。仓库和索
-引一旦不一致，以仓库为准。
-
-<a id="the-vault-must-be-local"></a>
-### 仓库必须在本地磁盘
-
-自动写入要求仓库在**本地磁盘**上。三个原因，按咬人的频率排序：
-
-- **按需文件。** iCloud Drive 和 `~/Library/CloudStorage/` 挂载（Dropbox、
-  OneDrive、Google Drive）能把文件内容换成占位符，之后再下载。在后台进程里读这种
-  文件可能阻塞，或以 `EDEADLK` 失败。因此位于 `~/Library/Mobile Documents/` 或
-  `~/Library/CloudStorage/` 下的仓库会被拒绝，**读和写都拒绝**
-  （`vault-cloud-managed`），因为没有数据的读和没有数据的写一样不安全。
-- **同步客户端可能误读占位符。** Obsidian Sync——以及一般的同步客户端——可能把被卸
-  载的占位符当成一次删除。在同一个目录里同时用 Obsidian Sync 和按需下载，是最容
-  易丢工作的组合。二选一，或者让仓库保持纯本地、用带版本的副本做备份。
-- **未知的供应商无法靠路径识别。** 只认这两个有文档的 macOS 根目录。对别的供应
-  商，插件的防线是在文件级读取失败时暂停并报告，而不是从目录名去猜。
-  `~/Documents` 被刻意*不*假定为受供应商托管。
-
-被卸载或暂时读不了的文件会让它自己的更新暂停并被报告。它绝不会被当成空文件覆盖
-掉。
-
-<a id="the-property-registry-is-not-readable-offline"></a>
-### 属性注册表无法离线读取
-
-Obsidian 把某个属性的*类型*登记在仓库级的 `.obsidian/types.json` 里，那个文件是
-GUI 侧的产物，本插件离线时无法信任它（也不写它）。因此属性预检只能看到
-**在它读到的笔记字节里可见**的值类型：如果某个属性的类型已在 Obsidian UI 里确
-定，而当前没有任何笔记携带它的值，那就检测不到。对这类属性的第一次写入仍可能在
-Obsidian 里冲突。要补上这个缺口，要么在仓库侧读 `types.json`，要么做实时 DOM 探
-测；两者都不在这个版本里。
-
-预检最多读取一条笔记的前 64 KiB 来找 frontmatter 的结尾（这样满是大型附件的仓库
-不会触发大规模下载），并且在文件数达到上限后停止，并报告这个上限。
-
-### 文件时间戳从不是日期来源
-
-`created`、`updated` 和 `review_after` 是日期，日期来自日历和会话——绝不来自
-`mtime`、`ctime` 或 `birthtime`。被复制、恢复或 checkout 出来的文件，其时间戳与
-事实成立的时间毫无关系。索引*确实*会用 `mtime`/大小作为廉价的新旧提示，但那是另
-一回事：它决定要不要对一个文件做哈希，而不是决定笔记写了什么。
-
-### 硬链接与 bind mount 不可见
-
-路径 jail 会解析符号链接并在每一层拒绝它，也会拒绝 `..`、绝对路径和设备路径。它
-看不出普通文件与指向别处的**硬链接**或 **bind mount** 之间的区别。一个与插件同用
-户、且能写仓库内部的进程，可以用其中之一让写入落到别的地方。
-
-相关的、且无法避免的一点：在校验路径的 `lstat` 和使用它的 `open` 之间存在一个
-**TOCTOU 窗口**。事务引擎会缩小危害（独占创建、每次替换前校验哈希、改动前先快
-照、拒绝覆盖并发编辑的回滚），但文件系统没有提供原子操作的地方，它无法把这个窗口
-关上。
-
-威胁模型是单用户的本地仓库。这不是多租户沙箱。
-
-### 其他值得知道的边界
-
-- **语义检索默认在引擎上开启、在你配 provider 之前不产生任何效果，代价也已经量过。**
-  `retrievalEngine: "sparse"` 仍是词法的：它只用 TF-IDF/余弦对至多 24 条源码已验证候选
-  重排，找不到索引从未匹配过的同义词。`hybrid`（2.0.0 起的默认引擎）通过
-  `retrievalProvider` 里配置的 embedding provider（回环服务或显式 `egress: remote` 的
-  网关）增加一条真正的语义候选通道。provider 本身仍然默认关闭，所以没有任何 provider
-  的配置读的是逐字节相同的 lexical 路径，并在 search 诊断里记 `provider-disabled`：默认值
-  只是「要了这条通道」，你不把它指向一个服务之前它不花任何代价。选择 remote 就是选择
-  让笔记与查询文本离开本机——这是运维显式写出的决定，插件不会替你打开，也不会从已有的
-  宿主凭证里推断端点。在冻结的 200 条语料上，它把 pooled P@3 从 44.4% 提到
-  61.25%，五类无一回退，随后的校准闸门（token 命中，或前三名 dense 槽位 cosine ≥ 0.92）
-  再把 in-gate precision 从 27.9% 提到 41.8%、no-answer 假阳性从 32.5% 降到 5.0%。
-  真正打开它的代价是每次查询多一次 embedding 往返（查询计划修复后语料 p50 为 121.2ms，
-  lexical 为 22.3ms；350ms 绝对上限满足，但「不超过 lexical 1.5 倍」的相对说法不成立），
-  而且 900 字符注入路径还没有在真实会话里量过。见
-  `docs/validation/retrieval-hybrid-2026-11-02.md` 与
-  `docs/validation/retrieval-latency-and-semantic-gate-2026-11-03.md`。
-- **投递回执是观测，不是「模型已经注意」的证明。** DSH 确认的是承载最终消息的、
-  生产者所有的已提交事件；Codex 的 stdout 只是待定回执，要等之后某个可信 hook 拿它
-  自己的 transcript 对账（上限 8 MiB），读不到或超限的证据会让该条目保持未确认、
-  因此可能重复投递。插件只声明宿主发出过某个条目，从不声明模型读过或记住了它；
-  也不声明热层文件容量与模型上下文窗口等价。
-- **面板变更只有预览确认，不是两阶段提交。** 60 秒一次性令牌绑定会话/项目/操作/
-  参数/指纹，预览不写任何东西，每个服务在自己的事务里重新推导前置条件。指纹读取
-  与变更之间仍有残余 TOCTOU 窗口；丢失的确认只能在 60 秒内重放；并发确认只做过
-  串行与桩并发验证。
-- **写锁只约束本插件。** 它是以 `realpath(vaultPath)` 为键的整仓锁，所以两个项目
-  无法交错写注册表或回执。Obsidian 和任何别的编辑器都无视它，这也是每次替换前都
-  要先重新校验文件哈希的原因。
-- **`withVaultLock` 不可重入。** 同一进程里嵌套获取会死锁，所以任何代码路径都不
-  得嵌套获取。
-- **既没有绑定也没有路由的 job 会无限重新排队。** 它永远不会被标记为终态失败；它
-  在每个空闲窗口重试（每个窗口至少写一次队列文件），直到出现绑定或路由。有上限，
-  但不是零成本。
-- **拒绝审计有上限。** 一个 job 的拒绝审计最多保留 32 条，所以当被丢弃的候选更多
-  时，回执上可能只写 32。
-- **人工编辑会中止写入。** 生成块携带它声明的正文哈希。如果哈希不再匹配，说明有
-  人编辑过那个块，插件会报告冲突而不是重写它。这是设计使然，也意味着手工改过的
-  MOC 或注册表需要人来调停。
-- **`dsh.plugin.json` 是惰性的。** DSH 核心里没有任何东西读它。它是一个注册表约
-  定，正因如此，当它与 `package.json` 不一致时 `prepack` 会失败。
-- **会话日志属于 DSH，不属于本插件。** DSH 自己写
-  `$DSH_HOME/sessions/…/session.v3.jsonl.zstd`（0.1.7 线及以后是
-  `session.v4.jsonl.zstd`）。本插件从不编辑它们。
+- 索引只是缓存，vault 才是事实来源；索引可删、可重建，但 data root 里的 pending 队列不能随便删。
+- vault 必须在本地磁盘：iCloud / CloudStorage 会被拒绝（无数据占位符读取不安全，同步客户端可能把占位符误读成删除）；已知边界只声明 macOS 的两个根，未知 provider 会暂停并报告。
+- Obsidian 的 `.obsidian/types.json` 属性注册表**无法离线读取**：预检只能看到笔记字节里的类型，最多读前 64 KiB，并报告上限。
+- 日期永远不来自 mtime/ctime/birthtime；索引只用 mtime+size 作为过期提示。
+- 硬链接/bind mount 不可见，`lstat` 与 `open` 之间存在 TOCTOU 窗口；事务用排他创建、替换前校验 hash、修改前快照、冲突时停止来自动兜底。威胁模型是单用户本地，不是多租户沙箱。
+- 语义检索受候选召回限制：cross-lingual 与 deictic 类别的 gold 不一定在词法并集里；`sparse` 找不到索引从未匹配到的同义词；900 码点注入路径尚未在真实会话中测量。混合召回的线上触发率、near-miss 频率、弱匹配阈值在其他模型上的适用性都未验证。
+- 回执是"已投递"的观察，不等同于"模型已注意"；面板写操作是 preview-confirmed，不是两阶段提交（60 秒内重放可用）；跨进程锁是全仓库最少测试的部分。
+- 未验证清单的唯一权威位置是 `CHANGELOG.md`（1.0.0 的 *Known limitations and remaining risks* + 每个 Unreleased 条目）。README 不重复、也不穷尽它们。
 
 ---
 
 ## 故障恢复
 
-| 症状 | 意味着什么 | 怎么做 |
-|---|---|---|
-| `vault-cloud-managed` | 仓库根目录位于已知的 macOS 云根目录下，或项目是从那里解析出来的。读和写都会被拒绝。 | 把仓库移到本地磁盘，并更新 `vaultPath`。 |
-| 笔记停止更新；回执指出一次读取错误 | 文件被卸载或暂时不可读。插件暂停这次更新，而不是覆盖它。 | 下载该文件（打开它），或把仓库移出同步根目录。 |
-| bootstrap 时 `property-type-conflict` | 一条已有笔记用了插件的某个属性名，但值类型不兼容（`tags: foo` 而不是列表、被加了引号的日期等）。 | 改掉那条笔记，或用一个空仓库。插件不会重写你的 frontmatter。 |
-| 一个生成块报告冲突 | 有人编辑过那个块，所以它声明的哈希不再匹配。 | 手工调停：恢复生成的内容，或者认定人工版本是权威并保留它——在声明的哈希重新与正文匹配之前，插件会一直报告同一个冲突。 |
-| 搜索没有结果，或提示 not-ready | 索引缺失、不可读，或者仍在扫描。 | `mem_admin(action="index")` 查看状态，`mem_admin(action="index", rebuild=true)` 重建。仓库不受影响。 |
-| 一个蒸馏 job 是 `failed` | 模型调用或校验失败达到 `maxRetries` 次。job 会保留原因。 | `mem_admin(action="jobs")` 查看，然后 `mem_admin(action="jobs", jobId="…", retry=true)`。 |
-| 一个 job 停在 `deferred` | 没有可用的模型路由、代码库未绑定，或者模型输出被校验拒绝（`truncated`、`too-many-items`）而 job 正在退避。它在每个空闲窗口重试。 | 设置 `distill.provider` + `distill.model`、绑定项目，或者针对这两个拒绝码调大 `distill.maxOutputTokens` / `distill.maxItems`。 |
-| 一个 job 因 `too-many-items` 进入终态 `failed` | 模型返回的条数超过上限，整批被拒（不是裁剪）。原始输出仍在（`outputState: raw-durable`），所以把 `distill.maxItems` 抬到高于 `lastError` 里报的条数后，**不需要重新调用模型**：重试会重新校验那份已存的文本。 | 先调大 `distill.maxItems`，再 `mem_admin(action="jobs", jobId="…", retry=true)`。不调大就重试，等于用同一份字节对同一个上限再校验一次，必然再失败。 |
-| DSH 在写入中途崩溃 | 未完成的事务被记在 `$DSH_HOME/data/obsidian-mem/transactions/` 下。 | 重启会话：恢复会在新的写入之前运行。如果崩溃期间文件被外部编辑过，两个版本都会被保留并报告——没有任何内容被覆盖。 |
-| `lock-corrupt` | 仓库的写锁文件（`$DSH_HOME/data/obsidian-mem/locks/vault-<hash>.lock`）存在但不可读——通常是零长度或被截断，因为进程在创建它和写入记录之间被杀掉。插件从不把不可读的锁当作“没人持有”，也从不抢占它，所以每次写入都会等完超时，然后以这个错误码拒绝。 | 读出错误里给出的路径，手工（`rm`）删掉**那一个文件**，然后重试。不需要清理别的：锁会在下一次写入时重建，仓库内容也不依赖它。 |
-| `lock-timeout` | 另一个活着的进程持有仓库的写锁，或者某个进程死了但它持有的锁记录仍可读、其 pid 尚未被观察到消失。 | 等其他会话结束再重试。如果你确定持有者已死，一旦记录的 pid 消失，锁会被自动打破——在可能还有 `dsh` 进程在跑时，不要手工删除一个可读的锁。 |
-| `mem_log(section="hot")` 以 `hot-over-capacity` 拒绝 | 热文件超出了 `hotCapacityChars`，而自动归档腾不出这次写入需要的空间：它只搬「已完成」区的完整条目，而该区可能只剩指针行（指针永远不会被归档——它没有归档笔记里没有的正文），甚至一条都没有。拒绝信息会列出每个区的字符数、条目数、指针数与可搬出条数。 | 先用 `mem_admin(action="hot", operation="status")`看同样的数字（不写入），再用 `mem_admin(action="hot", operation="compact")` 在同一个事务里折叠指针行、归档「已完成」与「进行中」里最旧的可搬出条目。如果这样仍到不了归档触发线，剩下的文本要么比它自己的指针行还短，要么不是插件写的：把 `hotCapacityChars` 调大，或者自己搬走那段文本，并接受下一次事务看不到这次改动。 |
-| 一个代码库拒绝写入 | remote URL 不匹配、同一个目录对应了不同的 `projectId`、同级 worktree 元数据冲突，或者同级不可读。拒绝信息会说明原因，并让指针文件保持原样——它从不修复或替换指针文件。 | `mem_admin(action="bind", mode="show")` 报告现状；`mode="retain"` 或 `mode="fork"` 是显式的修正手段。过期的 worktree 需要 `git worktree prune`。 |
-| 一个普通目录保持只读 | 它不在 Git 仓库里，所以插件不会自行把它纳入长期记忆——隐式的第一次写入只绑定 Git 仓库。 | 用 `mem_admin(action="bind", mode="local")` 显式绑定它；绑定在同一会话里立即生效。 |
-| 某个会话的记忆悄悄缺席 | 任何非 `bound` 的解析结果都意味着“这个会话没有记忆”——这是设计使然，它从不抛错，也从不猜。读取永不绑定代码库；没有指针文件的 Git 仓库由它的第一次写入完成绑定；指针文件或注册表不被插件信任的代码库会保持未绑定，直到问题解决。 | 检查 `mem_admin(action="projects")` 和指针文件，然后写一次（Git 仓库）或跑 `mem_admin(action="bind", mode="local")`（任何目录）——两者都在同一会话内生效。 |
-| 有一条整理提案停在 `pending`，但没有笔记被改动 | 这就是设计：疑似近似重复、或模型提出的取代，会被停放等待评审，绝不自动应用。 | 用 `mem_admin(action="curation", operation="status")` 查看队列（每行带一个 id）；用 `dsh-obsidian-mem-review --vault <绝对路径> <提案 id>` 批准或拒绝其中一条。拒绝不改动任何源笔记。 |
-| 评审报 `review-recovery-required` | 这条提案已经有一部分或已提交的应用：某个进程在发布笔记与记录决定之间死掉了，此时拒绝会留下一条已发布的笔记配一条 `rejected` 记录。 | 再跑一次评审并用 `apply <id>` 批准：它会把这次尝试结清（没提交就回滚、已提交就向前推进）并发布这条候选。在这份证据被解决之前，拒绝会一直被拒。 |
-| 评审报 `review-lock-unavailable` | 私有的 claim guard 根本没拿到：另一个评审正处在它那段很短的 claim 临界区里，或者 guard 文件不可读、所在存储不支持。健康的并发评审得到的是 `proposal-not-current`。 | 稍等片刻后重试；若确认没有评审在跑却仍然如此，再去检查数据根。在可能有评审存活时不要删除 guard。 |
-| 在没有 `O_NOFOLLOW` 的平台上，任何提案的评审都报 `review-lock-unavailable` | claim guard 拒绝打开一个它无法证明是普通单链接文件的路径，而部分平台（Windows 上的 Node）不提供 `O_NOFOLLOW`。这个拒绝是有意的：guard 保护的正是批准途径。 | 在更安全的回退方案落地之前，请在 macOS 或 Linux 上评审整理提案。读取、写入与扫描不受影响。 |
-| 评审报 `source-changed` | 某处来源笔记在扫描与批准之间被编辑了。提案保持 `pending`，不会自行 rebase 到没人评审过的字节上。 | 看清新状态后重新决定。 |
-| 简报不再显示紧凑导航，或某个声称的重复组消失了 | 已存视图只是缓存：它的某个源被改动、消失或变得不可读，于是简报回退到按源导航的路径，而不是注入一条过时的行。 | 无需修复。下一次完整整理会重建它；`mem_admin(action="curation", operation="scan")` 可以立刻跑一趟，并报告 `complete` 与任何截断原因。 |
-
-如果症状不在上表，或者按上表的做法仍未解决，请生成诊断报告并把 JSON 附到 Issue
-上——见[用于 Issue 的诊断报告](#diagnostic-report-for-an-issue)。命令不会自动上传：
-文件由你自己检查、自行附上。
+| 症状 | 先看 / 处理 |
+|---|---|
+| `vault-cloud-managed` | vault 在云盘路径；换到本地磁盘 |
+| 文件被系统 offload | 该文件的更新暂停，不会被写成空；恢复到本地后重试 |
+| bootstrap 时报属性类型冲突 | 插件不会改笔记 frontmatter；按提示修属性或换目录 |
+| 写入冲突 / generated block hash 冲突 | 保留现状、停止自动写；手工合并后重试 |
+| 检索 not-ready | `mem_admin` 的 index status / rebuild；vault 不动 |
+| job failed | `mem_admin` jobs + retry；`too-many-items` 是终态但保留原始输出，提高 `maxItems` 后重试不会重新调模型 |
+| job deferred | 无路由 / 无绑定 / 校验拒绝；每个空闲窗口重试 |
+| 崩溃后 | 启动时先恢复未完成事务；锁文件损坏可手删单个锁；死锁持有者按 pid 自动回收 |
+| hot-over-capacity | `mem_admin` hot status → hot compact；仍满则提高 `hotCapacityChars` |
+| 仓库拒绝写入 | remote 不匹配 / projectId 冲突 / worktree 兄弟目录：`mem_admin` bind show / retain / fork；插件从不自动改指针 |
+| 普通目录只读 | `mem_admin` bind local |
+| 记忆静默缺失 | 未绑定时读路径永远不构建记忆；检查 `mem_admin` projects。读不会绑定，第一次写才会 |
+| 整理提案一直待审 | 设计如此；`dsh-obsidian-mem-review --vault <path> <id>` 或面板"健康 → 待审阅" |
+| 简报像是旧的 | 客户端缓存；下一次完整扫描重建 |
 
 ---
 
-## 开发
+## 开发与发布
 
 ```sh
-npm ci                                   # exact lockfile
-npm test                                 # whole suite
-npm run prepack                          # npm test + scripts/verify-pack.mjs
-npm pack --dry-run --ignore-scripts      # manifest only
+npm ci                  # 按 lockfile 安装
+npm test                # 临时 DSH_HOME + node --test test/*.test.js
+npm run check           # lint → format:check → types → prepack（套件 + pack 契约）→ pack:check（真实 tarball）
+npm run prepack         # 只读：套件 + 包契约，不构建、不启动 Obsidian
 ```
 
-`npm test` 就是 `node scripts/run-tests.mjs`：它创建一个一次性目录，把
-`DSH_HOME` 指向它，运行 `node --test test/*.test.js`，结束后删掉这个目录。这就是
-测试套件写不进你真正的 `~/.dsh` 的原因。
-
-`npm run prepack` 是发布闸门，它**只做校验**：先跑测试套件，然后静态检查
-`package.json` 和 `dsh.plugin.json` 在版本、插件身份和入口上是否一致，`files` 白
-名单是否覆盖 tarball 必须携带的资产（包括 `skills/obsidian-mem/SKILL.md`），白名
-单里有没有任何东西会打包进 `scratch/`、`research/`、`docs/`、`test/`、
-`node_modules/`、探针记录或 pending 队列数据，`lib/tool-registry.js` 是否仍为六
-个工具各自保留一处 `name: 'mem_x'` 注册点——而且没有第七个，因为这个面是刻意封顶
-的——以及 `lib/tools.js` 是否仍转出两个入口都要的四个名字（`TOOL_NAMES`、
-`TOOL_PARAMETERS`、`registerTools`、`createMemoryServices`）。两项检查分开是
-因为它们会分别失败：六个工具可以注册得完全正确，却因为门面不再转出而全部不可见。
-它从不编辑配置文件，也从不启动 Obsidian。
-
-`npm pack` 自身会跑 `prepack`，所以一条简单的 `npm pack --dry-run` 会先跑完整套
-测试再打印清单——只想要文件列表就加 `--ignore-scripts`，想要那道闸门就显式跑
-`npm run prepack`。
-
-改 `README.md` 就要在同一次改动里改 `README.zh.md`：两侧权威对等，
-`README.i18n.yaml` 记录两侧在上一次确认一致时的 git blob 哈希。用
-`git hash-object README.md README.zh.md` 重新记录，并在提交前把每个值和你手上的文件
-对一遍。这个约定的官方校验器（`verify-translation-pairing`）随 harness 的
-monorepo 发布、不随本插件发布，所以在这里那一条命令*就是*校验。
-
-### 发布
-
-本仓库不发布 npm 包。一次发布 = **一个 git tag 加一个 GitHub Release**，
-`.github/workflows/release.yml` 负责把两者都造出来。
-
-| 递增 | 时机 | 由谁 |
-|---|---|---|
-| `0.0.1` | 每次 push 进 `main` | workflow 自动 |
-| `0.1` | 一次值得标注的功能 | 人，在 push 之前 |
-| `1` | 破坏性变更，或第一个稳定版本 | 人，在 push 之前 |
-
-只有补丁号是自动的：没有任何东西能从 diff 里推断出「值得标注的功能」或「破坏性变更」，
-所以次版本号和主版本号是手工编辑 `package.json`，并为它写好 changelog 段落。
-
-**`1.0.0`（2026-10-31）是第一个稳定版本。** 从它开始，工具面（六个 `mem_*` 名字与参数）、
-vault 协议（指针文件、笔记 frontmatter 与随包技能）以及配置键都被当作 SemVer 下的兼容
-承诺——其中任何一项的破坏性变更都需要主版本号。行为修正、面板与图谱的改进仍然落在次
-版本与补丁版本。"稳定"承诺的是这些接口，不是宣称所有边界都已穷尽；未验证清单继续写在
-changelog 里。
-
-每个 Release 还会带上打包好的 `dsh-obsidian-mem-<version>.tgz`，于是安装可以跳过源码
-构建那条路——那条路需要在 pnpm 的 `allowBuilds` 里批准 `prepare` 脚本——直接取预构建
-归档。本插件的商城条目按 tag 钉住这个资产：`releases/latest/download/<file>` 这种写法
-只在请求时解析 `latest`，文件名却是照字面取的，所以资产名里带版本号会在下一次发版时
-把这个链接变成死链。
-
-workflow 依次做这些事：
-
-1. `npm run check`——在即将发布的那个提交上跑完整闸门。
-2. 向远端询问 `package.json` 里的版本是否已经有 tag，据此给这次 push 分类。
-   `actions/checkout` 不抓取 tag，所以这个问题在本地无法回答。
-3. 若没有：给该版本打 tag、原样发布、结束。这是引导分支，手工准备好的 `0.1` 或 `1`
-   就是靠它发布的，而不会被反手降成下一个补丁号。
-4. 若有：跳过 `chore(release):` 提交；当 `lib/` 有改动而 `## Unreleased` 里没有真实
-   条目时拒绝这次 push；然后把 `## Unreleased` 的内容移到
-   `## <version> — <date>` 下，递增补丁号，同步 `dsh.plugin.json` 与 Codex server 的
-   身份串，以 `chore(release): <version>` 提交、打 tag，并用那段 changelog 发布 Release。
-
-发布之后 `## Unreleased` 是空的，这是有意的；随手把条目写上，否则下一次 push 会被拒绝。
-
-这个 workflow 已经在真实的 GitHub runner 上跑过。直到 `0.1.15` 为止的每一个版本都出自
-递增分支；`0.2.0` 是第一个由人工准备好的版本，而真去跑引导分支又发现了第三个缺陷：
-`git tag -a` 需要 committer，而全新的 runner 没有 git 身份，过去只有递增分支配置过它——
-于是打 tag 那一步以 `fatal: empty ident name` 失败，什么都还没推出去，tag 和 Release
-都没有产生。三个缺陷都是**跑出来**而不是读出来的，各自记在暴露它的那次发布所在的
-`CHANGELOG.md` 段落里：`actions/checkout` 不会抓取 tag，判定必须去问远端（`0.1.3`）；
-「给未发布的版本打 tag」那条分支不能同时成为已发布版本唯一能走的分支，否则补丁号再也
-不会递增（`0.1.3`）；以及引导分支需要递增分支本来就在设的那个身份（`0.2.0`）。
-
-贡献规则、代码风格和不可谈判的约束在本机的 `AGENTS.md`，实测的宿主事实在本机的
-宿主事实笔记里。两者都放在检出目录旁边而不是版本库里——本仓库忽略它们
-（见 `.gitignore`，理由记在 `CHANGELOG.md`）——所以 `lib/` 注释里引用的是本机文件，
-不是仓库文件。随包发布的、以及启用写入前需要知道的内容，就是这份 README 与变更记录。
+- `npm run types` 是**逐文件棘轮**：只有 `tsconfig.json` 登记且带 `// @ts-check` 的文件被检查，`test/repo-hygiene.test.js` 保证两个列表一致。
+- 架构规则在 `test/architecture.test.js`：真实 import 图、L0–L12 层号、只向下、无环、同层不互引、行数预算（实测 + 30 向上取整到 50）。
+- 发布不是 `npm publish`：release 是 git tag + GitHub Release。`release.yml` 先跑 `npm run check`，问远端"这个版本是否已有 tag"；没有就 bootstrap 打 tag、发 Release（tarball `dsh-obsidian-mem-<version>.tgz`）；有则拒绝没有真实 Unreleased 条目的 lib/ 变更，自动 bump 补丁并移动 CHANGELOG。自 1.0.0 起，六个工具名/参数、vault 协议与配置键是 SemVer 兼容承诺。
+- README 双语对等：`README.md` 与 `README.zh.md` 同一次改动一起改，然后 `git hash-object README.md README.zh.md` 回填 `README.i18n.yaml`。
 
 ---
 
 ## 许可证
 
-MIT——见 [`LICENSE`](./LICENSE)。
+MIT。图谱 worker 内打包的 D3 模块（`d3-force` / `d3-quadtree` / `d3-dispatch` / `d3-timer`）为 ISC，许可声明收集在 `lib/graph-worker.LICENSE`；力导向参数移植自 Obsidian 1.14.4 的 D3 fallback，出处与测量见 `docs/obsidian-graph-source.md`。
+
+## 更多文档
+
+- [`docs/guide/`](docs/guide/README.md)：一小时项目指南（概念、架构、会话、存储、可靠性、排障、Codex）
+- [`docs/p0-compatibility.md`](docs/p0-compatibility.md)：宿主事实测量（会话、事件、`ctx.llm`、注入时序）
+- [`CHANGELOG.md`](CHANGELOG.md)：每个版本的能力与未验证清单
+- [`docs/dogfood-results.md`](docs/dogfood-results.md)、[`docs/smoke-results.md`](docs/smoke-results.md)：端到端运行记录
