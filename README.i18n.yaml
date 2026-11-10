@@ -16,6 +16,5 @@
 # Both anchors that exist are spelled with the English slug, so one anchor resolves
 # from either language.
 
-
-README.md: ebe620c8745ef802f226d0393164108d1368dd48
-README.zh.md: bd1b29cfec0b7de6fff30fd093ee334adc12aa78
+README.md: e0af7395e1bd65e6fa8455a6a8b875bcaf3a3fda
+README.zh.md: 0047470ef31e0b01edcc5b9f17768b38d3c6f9c8

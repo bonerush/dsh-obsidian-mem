@@ -1,1337 +1,433 @@
 # dsh-obsidian-mem
 
-<p align="center">
-  <b>Project memory and a knowledge graph for DeepSeek Harness — plain Markdown in an Obsidian vault</b>
-</p>
+> Long-term project memory as plain Markdown in an Obsidian vault: readable by people, diffable by git, readable by any tool. The AI is only one adapter that writes and maintains it.
 
-<p align="center">
-  <a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
-  <a href="https://github.com/bonerush/dsh-obsidian-mem/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/bonerush/dsh-obsidian-mem?style=flat&color=4d6bfe" /></a>
-  <img alt="Node 22.22.2 or newer" src="https://img.shields.io/badge/node-%3E%3D22.22.2-brightgreen.svg" />
-  <img alt="DSH plugin" src="https://img.shields.io/badge/DSH-plugin-blueviolet.svg" />
-</p>
-
-<p align="center">
-  <b>English</b> · <a href="./README.zh.md">中文</a>
-</p>
-
-A **DeepSeek Harness host plugin** that keeps a project's documents and long-term
-memory as plain Markdown in a dedicated [Obsidian](https://obsidian.md) vault, and
-draws that memory in the native sidebar: a GitHub-style contribution calendar, a
-day-grouped activity timeline, searchable notes with highlighted snippets, and a
-force-directed knowledge graph.
-
-One repository gets one stable `projectId`, one committed pointer file and one
-fixed directory in the vault. The plugin writes there; Obsidian just shows you
-the result. Obsidian does not need to be running, and no part of the vault
-depends on DSH.
-
-```
-repository                                vault (~/Documents/dsh-memory)
-├── .obsidian-mem   ───────────►          └── Projects/<slug>--<projectId 前8位>/
-│     projectId, slug,                    ├── index.md                hub / MOC
-│     displayName, schema: 1              ├── Docs/  Decisions/  Conventions/  Pitfalls/
-└── src/ …                                ├── Daily/YYYY-MM-DD.md
-                                          ├── Inbox/                  待分类
-                                          └── _meta/hot.md            热记忆
-```
-
-Two layers, on purpose:
-
-- **Protocol** (vault layout, the `.obsidian-mem` pointer, note frontmatter, the
-  distillation output contract) is plain Markdown and is not DSH-specific. The
-  shipped skill `skills/obsidian-mem/SKILL.md` follows the Agent Skills format,
-  so it works in another harness too — [`codex/`](./codex/README.md) installs that
-  protocol *and* the same six operations into Codex CLI, through an MCP server that
-  reuses `lib/` rather than copying it, plus hooks for the session brief and a
-  small relevant-note map on each new user prompt.
-- **Adapter** is DSH-specific: six `mem_*` tools, a `node:sqlite` search index kept
-  outside the vault, and automatic distillation of completed turns. The recall
-  injection left that list: both harnesses compose it from the same `buildBrief`,
-  and each delivers it through its own extension point.
-
-> **Read [Honest limits](#honest-limits) before you enable automatic writes.**
-> This plugin is careful about what it refuses, but it is young. What follows is
-> what this release writes down, not a claim to be exhaustive; `CHANGELOG.md`
-> keeps the running record of what has been verified and what has not.
->
-> When something misbehaves, the package can produce a report you attach to an
-> Issue yourself: generate it, read the JSON, then attach it. See
-> [Diagnostic report for an Issue](#diagnostic-report-for-an-issue).
-
----
-<a id="highlights"></a>
-## Highlights
-
-| | What it gives you |
-|---|---|
-| 🧠 **Plain-Markdown memory** | One project gets one stable `projectId`, one committed pointer file and one directory in the vault. Obsidian only displays the result; the vault outlives DSH and stays readable with the plugin uninstalled. |
-| 🔌 **Protocol plus adapters** | Vault layout, pointer and note frontmatter are a protocol: `skills/obsidian-mem/SKILL.md` ships it for any Agent-Skills harness, and `codex/` installs the same six operations into Codex CLI through an MCP server that imports `lib/` instead of copying it. |
-| ✍️ **Six memory tools** | `mem_search`, `mem_read`, `mem_write`, `mem_log`, `mem_brief`, `mem_admin` — transactional writes, a rebuildable SQLite/FTS5 cache, and a session brief that stays inside a fixed character budget. |
-| 🔎 **Retrieval with a default semantic engine, local or cloud** | FTS5/BM25 baseline; the `hybrid` engine is the default and adds a semantic channel once you point `retrievalProvider` at an embedding service — a loopback one (`egress: loopback`) or an internal/cloud gateway (`egress: remote` stated explicitly, `apiStyle: openai` speaking OpenAI `/embeddings` directly); no provider configured means the lexical path, unchanged. Plus a local TF-IDF/cosine reranker (`sparse`), same-day create/update accounting, per-turn relevant-note recall, and a brief that is navigation rather than a content dump. |
-| 🗂️ **Distillation and curation** | Completed turns distill into typed notes in the background, through the DSH host `llm` by default (`transport: host`) or straight to an OpenAI-compatible endpoint (`transport: http`: a local Ollama/LM Studio server or a cloud gateway), so a host with no routed provider can still distil; near-duplicates and risky rewrites are parked as proposals that only a person can approve — with `dsh-obsidian-mem-review`, in a terminal. |
-| 📊 **Live memory panel** | A GitHub-style 53-week activity calendar with fixed 10 px cells, month and weekday labels, a hover tooltip and in-figure horizontal scrolling; new-versus-updated flow bars, a tag treemap, a type→status composition Sankey, a KPI sparkline, a day-grouped activity timeline, and a 健康 dashboard whose three maintenance actions report their outcome in the card that owns the button. Background polls re-scan the index silently, so memory written by another process appears without a DSH restart. |
-| 🕸️ **Knowledge graph** | Every node in scope is drawn — no top-N truncation — with a 1:1 port of Obsidian's D3 fallback forces, alpha schedule and seeding/drag protocol. Filters, colour groups, display and forces persist per browser origin; read/write/search/reinjection cues light up the nodes a turn touched. |
-| 🔒 **Safe by default** | The panel is read-only; exactly three maintenance operations can write, each preview → confirm behind a single-use 60-second token. The web route keeps its loopback/same-origin fences even through the desktop shell's `dsh-app://` proxy. |
-| ✅ **Evidence before claims** | The changelog names what was measured, on which host, and what is still untested; the suite and the pack contract run in CI on every push. |
-
-<a id="screenshots"></a>
-## Screenshots
-
-Real renders of the shipped view module with the host's own theme tokens, inside
-the DSH sidebar shell.
-
-| Overview — activity calendar and charts | Recent changes — day-grouped activity rail |
-|---|---|
-| ![Overview](assets/panel-overview.png) | ![Recent changes](assets/panel-timeline.png) |
-
-| 健康 — dashboard with inline result lines | 图谱 — the knowledge graph |
-|---|---|
-| ![Health](assets/panel-health.png) | ![Graph](assets/panel-graph.png) |
-
-| 检索 — highlighted snippets and filters | |
-|---|---|
-| ![Search](assets/panel-search.png) | |
-
+`2.2.0` · MIT · Node `>=22.22.2` · DSH `>=0.1.5-rc.2` · two runtime dependencies (`@deepseek-ai/schemastery`, `yaml`) · Obsidian optional
 
 ---
 
-## Requirements
+## What it is
 
-| | Version | Why |
+Most "AI memory" is a store you cannot open, cannot move, and cannot audit: context gets truncated, summaries get overwritten, and a retrieval result is just a score. This project does the opposite: **the memory medium is an ordinary Markdown repository**.
+
+Each project commits a `.obsidian-mem` pointer at the repo root (only a stable `projectId` and a display name — no local path). The plugin writes that project's decisions, conventions, pitfalls, documents, daily log and hot layer as notes in the vault; DSH sessions receive a budgeted navigation brief plus a few relevant snippets, so "what was remembered, and why it was recorded that way" stays readable by both the model and the user. Turn the plugin off and the vault still reads, diffs, greps and clones. Change the harness and the memory is still there.
+
+Three chains make up the whole system:
+
+| Chain | When it runs | What it produces |
 |---|---|---|
-| Node | `>= 22.22.2` | The floor is a *measurement*. `node:sqlite` imports on Node 22.13.0, but that build has no FTS5; 22.22.2 and 25.9.0 do. Versions 22.14–22.21 were not tested, so the floor is the lowest version actually proven to work. |
-| DSH | `>= 0.1.5-rc.2` | The floor declared as `engines.dsh`. Supported on the current release (`0.2.1-rc.5`) and on every version between it and the floor: each intermediate release has been surveyed against the row `config:` and the documented Cordis seams this plugin actually uses, and none was found incompatible. |
-| Obsidian | any recent version | Optional. Only needed to *read* the vault comfortably. |
-| OS | Windows, macOS, Linux | All three are supported. The plugin is portable Node code, the sidebar panel is a web view, and there is no native module to compile. CI runs the same `npm run check` gate on Linux and Windows; macOS has no separate CI leg, but it takes the same portable path. One named constraint is part of the support level: curation review relies on `O_NOFOLLOW`, so it remains a macOS/Linux workflow on Windows — the exact refusal is under **Failure recovery** below, and reads, writes and scans are unaffected. |
+| Read | session start and every turn | brief (≤6,000 code points) + per-turn recall (≤3 notes / 900 code points) + six explicit tools |
+| Write | turn end or a tool call | one tool-free distillation call → strict JSON validation → transactional write into the vault → index refresh |
+| Audit | any time | sidebar panel (overview / graph / health), diagnostic events, replayable receipts |
 
-Runtime dependencies are deliberately tiny: `@deepseek-ai/schemastery` for config
-validation and `yaml` for frontmatter. `node:sqlite` is built into Node, so there
-is no native module to compile.
-
-The DSH floor is declared where the ecosystem declares it — `engines.dsh` in
-`package.json`, with the same range in `dsh.plugin.json`. Measured: nothing in an
-installed harness reads that key (a search for `engines.dsh` across every installed
-`@deepseek-ai/*` package returns nothing), so it is a declaration for registry and
-market tooling, not a gate DSH enforces.
+It is **not** a vector database, a SaaS, or a tool that takes over your personal knowledge base. It is a memory protocol plus two adapters (the DSH host plugin and a Codex CLI MCP + hooks adapter) sharing a single `lib/` implementation.
 
 ---
 
-## Install in five minutes
+## How it differs from typical memory systems: six mechanisms
 
-### 1. Choose a local vault directory
+| Typical approach | What this project does | Why |
+|---|---|---|
+| Memory lives in the cloud or in an opaque store | **The vault is the only authority**; the index is a rebuildable cache outside the vault; the pointer is committed to the repo | Memory can be read by a person, versioned by git, grepped, and survives the plugin's disappearance |
+| New information overwrites old memory | **Lifecycle**: `supersedes` chains, `contested` notes with evidence on both sides, `assertion: stated/inferred/observed` + `confidence` + `review_after` | Memory is valuable because it is traceable: no history deletion, no silent winner |
+| Dump the whole vault or a summary into context | **Navigational, budgeted injection**: brief 6,000 code points, hot layer 9,000, per-turn recall 900, snippet ≤200 | The budget is a design constraint, not an afterthought; when content does not fit, paging entries make the omission auditable |
+| Bind memory to one chat tool or plugin API | **Protocol layer + adapter layer**: vault layout, frontmatter vocabulary and distillation contract are harness-independent | Switching harnesses does not lose memory; a third adapter can be built on the same protocol |
+| `fs.writeFile` straight into Markdown | **Transaction engine**: whole-vault lock → manifest → staged bytes + fsync → publish → receipt; old bytes first go to `_meta/.history` | Crash-recoverable, concurrency-detectable, and human edits are never overwritten |
+| Wire up a vector store and call it "semantic memory" | **Three-tier recall** (strong / weak / abstain) + calibrated gates + fallback; measure the lexical ceiling before fusing | Weak matches are neither silenced nor invented; every threshold has an artifact on a frozen corpus |
 
-```sh
-vault="$HOME/Documents/dsh-memory"     # any path on local disk; the default
-mkdir -p "$vault"
+---
+
+## How these advantages were built
+
+This section is the project's "how we worked" record: each advantage maps to a measurement, a rejected design and a cost we kept.
+
+### 1. Accept that it does not fit, then turn injection into auditable navigation
+
+On a real vault snapshot (877 files / 1,009,768 B), the old brief spent **5,960 of its 6,000** code points but emitted only **37 of 181 navigation units (20.4%)**; 144 were omitted with no id and no paging. Listing every convention name would take about **23,800 code points — four times the budget**.
+
+The fix was not "raise the budget" (the 12,000/24,000 proposals were rejected for cache economics and lost-in-the-middle risk):
+
+- inside the budget, put only **navigation units** (project identity, convention preview, recent decisions/pitfalls, hot-layer constraints and in-progress items);
+- the index provides bulk `statusesForPaths`, and `buildBrief` must stay under 1 s at 2,000 conventions or the preview is not published;
+- coverage accounting `{sections, considered, shown, omitted}` must satisfy an identity, and every page is ≤8,000 code points.
+
+Measured outcome: the brief went from 5,960 → **2,135 / 6,000** code points; inline conventions 37/176 → **5/176** (46 superseded and 31 provisional entries excluded); recent 5 decisions/pitfalls 0/5 → **5/5**; paging 176/176 exact; warm median **175.2 → 156.7 ms**. These are single-machine descriptive numbers, not cross-machine guarantees.
+
+### 2. Recall: measure the lexical ceiling, then add only channels with measurable gain
+
+On a frozen 200-query corpus (5 classes × 40, Cohen κ = 0.893), the lexical baseline scored pooled P@3 **44.4% (71/160)**, in-gate precision 20.1% and no-answer FPR 50.0%; its failure mode was "the candidate set is empty or wrong".
+
+The dense channel was added only after acceptance criteria were fixed: P@3 ≥60%, the exact class must not regress, no single-class loss >3pp, and byte-identical results to lexical when the provider is off. Weighted RRF (lexical 1.0 / dense 2.0 / k=60) with an adaptive lexical guard (keep lexical order when top-1 is a title-exact hit or tokenHits ≥8) produced:
+
+- pooled P@3 **44.4% → 61.25% (98/160)**; exact **held at 96.9** (removing the guard drops it to 87.5, so the guard is part of the design);
+- paraphrase 53.1 → 84.4, concept 37.5 → 59.4, deictic 18.8 → 43.8, cross-lingual 15.6 → 21.9;
+- with the production Qwen3-Embedding-0.6B model, pooled P@3 **70.6%**; the old gate admitted only 23.3%, so the gate had to be recalibrated — token floor **6** (in-gate 39.8% / FPR 5.0%), weak tier at **cosine 0.55 + margin 0.02** (real promptRecall replay coverage **142/200 = 71%**).
+
+Rejected designs are recorded too: dense replaces lexical (exact P@1 0.531 vs 0.906); unguarded RRF; hybrid-rank-only gate; linear blending (<53%); sqlite-vec (brute force over 1k vectors <1 ms). Two real engineering problems surfaced later: long prompts were truncated (86/200, P@3 70.6→61.9) → dense queries now use the full text capped at 800 code points; the lexical query plan scanned the whole FTS table (p50 202.5 ms) → unary `+` prefixes plus pinned bm25 weights cut lexical p50 to **22.3 ms** and hybrid p50 to **121.2 ms** (the remaining ~99 ms is one loopback embedding round trip).
+
+Explicitly unmeasured: live trigger rate, the real effect of the 900-code-point injection budget, and the parts of cross-lingual/deictic that are bounded by candidate recall (the gold note is absent from the lexical union 44% and 37.5% of the time respectively).
+
+### 3. Failure memory: only grows from "three hard failures in one turn plus a later success or explanation"
+
+Failures become memory, but the source is tightly controlled: only **three hard failures of the same tool in one turn** create a candidate; filing it requires the hard failures, a later verified success of the same tool, and an explanation from the user or the final answer. The note is `assertion: inferred`, `status: provisional`, and the root cause is **never** marked `observed`. Tool output, commands, paths and credentials are never copied.
+
+Measured: after three hard failures in one turn, the 39th sequence injected **230 code points** of failure recall (under the 900 cap) and all eight acceptance assertions passed; the candidate stayed in the Inbox (no user explanation), with the root cause left unknown. A successful tool call only proves "the retry worked", not the cause.
+
+### 4. Habit learning: measure the unreliable signal to death, and count "do not learn" as a result
+
+This is the most counter-intuitive falsification in the repository. The first design extracted "tool preferences" from 137 real session logs (40 root sessions, 107 usable turns, 178 user messages, 6 projects, 67.9 days). Replay showed that **291 of 294 tool choices (99.0%) never appeared in that turn's user message** — it was measuring the agent's default behaviour; and 205/341 (60%) of signals appeared in only one project, so they are project properties, not user habits. Decay could not save it either: 67.9 days is only 2.26 half-lives, and **0 of 9** `习惯：` notes were ever `observed`.
+
+The corrected contract: only **the user's own words repeated across sessions** count. The 6 candidates from a 12-word durable-instruction vocabulary seen in ≥3 sessions covered all 3 real cross-project preferences. A noise stress measured **67%** false promotion of one-off mentions; raising the threshold to 9 cleared the noise but lost real preferences — so the defence moved from "tune the threshold" to **isolation**: candidates are provisional + observed and stay out of the brief, so a wrong one merely adds a pending review item; the 75% false-promotion upper bound is pinned in a test. A semantic classifier detected 7/8 and 5/8 across two runs with 0/16 false positives on 24 labelled samples — evidence of variance, not production accuracy.
+
+### 5. Write safety: a transaction engine, not direct file writes
+
+Every write path (six tools, automatic distillation, curation proposals) shares one transaction:
+
+1. take a whole-vault lock keyed by the vault realpath (the lock file lives in the data root, not the vault); an unfinished-transaction list makes recovery possible;
+2. write the manifest, then stage all bytes and fsync;
+3. publish new files with exclusive `link()`, replace old files with a same-directory rename; copy old bytes into `_meta/.history/<txId>/` before modifying;
+4. a receipt records txId, session/seq, actions, paths, before/after hashes; replaying the same txId is idempotent.
+
+Boundaries: human files (`trust: owner`, no plugin ownership record, or edited since the last write) are **never rewritten** — suggestions only go to `收件箱/`; rollback is allowed only while the current hash equals what this transaction wrote; after a crash, unfinished transactions are recovered before any new work. A SIGKILL probe produced exactly one receipt after restart, no duplicate note id, and zero vault changes in dry-run; residual boundaries (one-shot lifecycle window, "job still pending after process exit") live in CHANGELOG rather than in a README claim of completion.
+
+### 6. Engineering gates: make "not done" impossible to write as "done"
+
+- The first ESLint run caught a published defect: `lib/vault.js:504` referenced a `TransactionError` that was re-exported but never imported, so a short-circuit left a `ReferenceError` path on registry-transaction failure (present since 8c988dd, untested).
+- `engines.node >=22.22.2` is a measurement: SQLite 3.47.2 in Node 22.13.0 has **no FTS5**; 22.22.2 and 25.9.0 do; 22.14–22.21 are untested.
+- Architecture and size are tests: `test/architecture.test.js` reads the real import graph, requires no cycles, downward-only edges and no same-layer imports, and enforces a budget of "measured lines + 30, rounded up to 50" so no module grows silently.
+- Dogfooding really does falsify the README: the 12-item checklist passed 10, and item F1 falsified the "binding happens on first write" claim → an automatic binding path and 15 real-seam cases were added, 558/558.
+- The gate grew from 574 tests / 33 files to **1,787 tests / 1,786 pass / 0 fail / 1 skipped** on this branch, with a tarball of 98 entries / 88 lib modules; every release runs `npm run check` (lint → format:check → types → prepack → real tarball).
+
+---
+
+## Visualization: background-written memory needs an audit surface
+
+### Why it is needed
+
+Memory is not written by the user in the moment: the plugin captures, distils and curates it in the background and writes it into the vault. Readable Markdown is not enough — the user needs to see **what was recorded, how far curation got, why retrieval answered the way it did, and which actions can write**. The panel addresses four real problems:
+
+- **Recall quality is not visible**: diagnostics are deliberately content-blind; hybrid recall has a measured gain (P@3 44.4→61.25%) but the user cannot see why a recall happened.
+- **Curation approval was terminal-only**: at ADR-282 the queue held 20 pending and 16 rejected items. Most curation needs no human, but the small part that does should not require a terminal. Now the panel, the CLI, and bounded automatic review all funnel into the same write entry point.
+- **Background maintenance is opaque**: index, queue, hot layer and today's digest are four gauges. One real production defect only appeared once rendered — the route asked for 371 days of activity while `MAX_ACTIVITY_DAYS` was still 365, so a `RangeError` turned `activity` into `null`.
+- **Memory changes must be visible without restarting DSH**: the server rescans the index at most every 5 seconds and the client polls every 15 seconds; only a plugin upgrade needs a restart.
+
+In one sentence: the panel is the **audit surface** for background-written memory, not decoration.
+
+### What the panel shows today
+
+- **Overview**: KPI band (notes / links / orphans / pending + sparkline) → a fixed 371-day / 53-week activity heatmap → new-vs-updated flow bars → type × status composition (falls back to a stacked bar when real joint counts are unavailable — it does not fake flows) → tag-frequency treemap → recent-changes timeline. The overview has a 20 KiB payload budget; real 371-day answers measure 13,910–14,138 B.
+- **Graph**: **no truncation** within scope — every node is drawn. The force layout is a 1:1 port of Obsidian 1.14.4's D3 fallback (after 300 ticks on a 400-node/592-edge graph the max deviation from Obsidian is **0.000**, versus 530.1 for the earlier worker). Default colours are five Morandi groups; the label layer has 60/200/240 guards so dense graphs stay responsive.
+- **Health**: four gauges plus index / pending jobs / hot layer / today's digest / diagnostics sections and a "pending review" card. There are **five write actions** (retry job, compact hot, publish digest, approve proposal, reject proposal), all preview → confirm with a single-use 60-second token bound to session / project / operation / arguments / preview fingerprint.
+- **Search**: retired from a tab to the shell search box; its results page is **lexical FTS5** (`index.search`) — it answers "which text matches", it does **not** run hybrid semantic recall. Do not equate the two.
+
+### Evolution: every round driven by measurement
+
+- The first "vault ledger" visual from 2026-10-27 was retired the next day: an imposed serif, Chrome-style tabs, duplicated idle copy, fake times and self-contradicting counts. The 2026-10-28 modern redesign replaced it (42px tab bar, roving tabIndex, a single state machine, Windows CI + `.gitattributes`).
+- Chart rounds all have pixel/byte evidence: the treemap label predictor underestimated text width by 32–52% → after the fix all 24/24 labels had names at 659px (16 before); `rx:2` cut a notch into the zero line at stretched coordinates; the four KPI cells were recentred from left-aligned to x=93.63; the fixed 53×371 heatmap brought the 371-day payload to 13,910 B; round 5 measured 53/53 fence checks and a 14,138 B budget margin.
+- The graph first fixed collision loss: with 1,236 nodes / 1,417 edges the median minimum neighbour distance went 51.85 → 112.07 after collision was restored; the same night it was replaced by the Obsidian-identical simulation (deviation 0.000), at the cost of giving up Obsidian's wasm/SAB fast path.
+
+### An experiment we measured and reverted: the semantic map
+
+On 2026-11-03 we tried a PCA 2-D projection of the embedding cloud so users could "see why hybrid retrieval got better". On a real 1,400+ note vault the first semantic call measured **1,315 ms** against a 300 ms budget, a **174,915 B** payload against a 48 KB budget, PCA `explained` **0.0913**, and a renderer at **1.3 GB RSS / ~50% CPU**. After the user tried it on a real desktop, they asked for a revert: the semantic channel improved memory search, but the visualization was not necessary.
+
+The revert removed only the visualization (`lib/semantic-map.js`, `lib/recall-trace.js`, `lib/graph-semantic.js` and their actions/client code) and **kept** hybrid retrieval plus the generic label-density guard added in the same commit. This is a "we tried it, measured it, and said no" example, not an unbuilt idea.
+
+### Screenshots
+
+![Overview: KPIs, 371-day heatmap, composition and recent changes](assets/panel-overview.png)
+![Graph: an untruncated link graph within scope](assets/panel-graph.png)
+![Search: lexical results page with filter chips](assets/panel-search.png)
+
+> These screenshots were captured in the 2026-10-31 content round. Since then the health page gained four gauges and a review card, and the graph defaults to Morandi group colours; when this README was rewritten these images were known not to be pixel-accurate for 2.2.0.
+
+---
+
+## Architecture: one protocol, two adapters, one transaction engine
+
+```mermaid
+flowchart TB
+  subgraph hosts["Hosts: wiring only"]
+    direction LR
+    dsh["DSH host<br/>six mem_* tools<br/>session hooks: brief / recall<br/>plugin page: panel, graph, settings"]
+    codex["Codex CLI<br/>MCP server<br/>SessionStart / UserPromptSubmit<br/>shares lib/ and the vault"]
+  end
+
+  subgraph libs["lib/: the memory protocol (imports only downward)"]
+    direction TB
+    entry["L8-L12 entry and assembly<br/>lib/index.js apply: validate config -> build services -> register tools / hooks / routes"]
+    orch["L5-L7 orchestration: read chain, write chain, curation<br/>brief · prompt-recall · capture · distill · curation · hot"]
+    domain["L2-L4 domain and policy (harness-independent)<br/>memory · vault · transaction · pending · search · hybrid-recall · config · index-db"]
+    leaf["L0-L1 leaves and single-domain parts<br/>fs-atomic · pointer · frontmatter · paths · model-egress · model-transport"]
+  end
+
+  vault["Obsidian vault (the only authority)<br/>Projects/&lt;project&gt;/<br/>Decisions · Conventions · Pitfalls · Docs · Daily · Inbox<br/>_meta/hot.md · user.md<br/>plain Markdown: readable, git-able, searchable"]
+  index["Index / runtime state<br/>$DSH_HOME/data/obsidian-mem/<br/>index db · pending queue · locks · receipts<br/>rebuildable, deletable (except the pending queue)"]
+  model["Model endpoints (off by default)<br/>distill.transport=http -> OpenAI-compatible /chat/completions<br/>retrievalProvider + egress=remote<br/>credential is an env-var NAME only; missing -> no socket; non-2xx -> status only"]
+
+  dsh --> entry
+  codex --> entry
+  entry --> orch
+  orch --> domain
+  domain --> leaf
+  orch -->|transactional write| vault
+  domain -->|read cache| index
+  vault -.->|rebuild| index
+  leaf -.->|only an explicit config goes online| model
+
+  classDef authority fill:#fff7ed,stroke:#f59e0b,stroke-width:1.5px
+  classDef off fill:#f8fafc,stroke:#cbd5e1,stroke-dasharray:6 5
+  classDef band fill:#eef2ff,stroke:#b8c4f0
+  class vault authority
+  class model off
+  class entry,orch,domain,leaf band
 ```
 
-Keep it on **local disk** — see [the vault must be local](#the-vault-must-be-local).
-Do not point it at a personal vault you already maintain; this plugin writes
-project directories into the vault root, and while it refuses to touch files it
-does not own, a dedicated vault keeps the two from ever meeting.
+In three sentences:
 
-### 2. Verify on a throwaway profile first
+1. **The product is the vault**, not the plugin: `lib/` only translates sessions, models and timing into Markdown; the index and caches are rebuildable, and the vault is the only authority.
+2. **Two reliable chains**: the read chain injects budgeted navigation and a few snippets at session start and on every turn; the write chain stages a committed turn in a durable queue, makes one tool-free model call to extract decisions/pitfalls/conventions, and applies them through the transaction engine.
+3. **One implementation serves two entry points**: the DSH host plugin (tools + hooks + optional web routes) and Codex (an MCP server + two hooks); there is no second memory implementation.
 
-This is the exact sequence that was tested, and it needs no checkout — `github:` is
-the ecosystem's shorthand for a GitHub repository:
+### Three reads and one write chain per session
 
-```sh
-# A clean DSH home for the trial run: nothing here touches your real ~/.dsh.
-export DSH_HOME="$(mktemp -d)"
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as User
+  participant H as DSH host
+  participant R as lib read chain
+  participant V as Obsidian vault
+  participant W as lib write chain
+  participant M as Model endpoint, off by default
+  participant T as Transaction engine
 
-dsh plugin --profile memcheck add github:bonerush/dsh-obsidian-mem
+  Note over U,M: Read: session start and every turn
+  H->>R: agent/session-start, agent/pre-step
+  R->>R: buildBrief waits for the index, at most 5 s
+  R->>V: read _meta/user.md, hot layer, hub, convention preview, recent 5
+  R-->>H: brief <= 6,000 code points, paging via mem_brief when it does not fit
+  R->>V: per-turn prompt recall, <= 3 notes / 900 code points
+  R-->>H: quoted data + source tag + short snippet
+  H-->>U: the turn continues (injection failure is fail-open)
 
-dsh --profile memcheck --dump-config | grep -n obsidian-mem
-#   # == dsh-obsidian-mem
-#   - id: obsidian-mem
-#     name: dsh-obsidian-mem
-
-unset DSH_HOME
+  Note over U,M: Write: after a committed turn
+  H->>W: session/event -> turn/end
+  W->>W: whitelist projection + credential scan + idle-window merge
+  W->>W: pending queue: job persisted (0600) before the floor advances
+  W->>M: one tool-free call (distillation, strict JSON + evidence seqs)
+  M-->>W: candidates -> validation and routing
+  W->>T: accepted needs user confirmation, otherwise provisional
+  T->>T: whole-vault lock -> manifest -> staged fsync -> publish -> receipt
+  T->>V: write Markdown, old bytes go to _meta/.history first
+  W->>V: index.refresh (the index is only a cache)
+  Note over W,M: no route or binding -> deferred, failure -> terminal, raw output kept
 ```
 
-`dsh plugin --profile <name> add <spec>` creates the profile if it does not exist,
-installs the package and layers its `cordis.patch.yml`, which is what mounts the
-`obsidian-mem` row. If `--dump-config` shows no such row, stop here.
+| Path | When | Budget / constraints | Failure mode |
+|---|---|---|---|
+| Session brief | session start; at most one delta when hot changes | 6,000 code points; paging via `mem_brief` when it does not fit | fail-open, never blocks a turn |
+| Per-turn prompt recall | every `agent/pre-step`, query from the real user message | ≤3 notes, 900 code points, snippet ≤200 | no useful content → at most one abstain notice per session |
+| Six tools | model-initiated | closed contract: `mem_search / mem_read / mem_write / mem_log / mem_brief / mem_admin` | structured errors returned, never thrown at the host |
+| Automatic distillation | after `turn/end`, through the queue | one tool-free call; strict JSON + evidence seqs; maxItems 12 | no route → deferred; failure → terminal, raw output retained |
+| Transactional write | after a candidate validates | whole-vault lock, staged + fsync, publish, receipt | conflict → keep current bytes and stop automatic writes |
 
-The output above is measured, not illustrative: against the published repository
-the command resolves to `dsh-obsidian-mem github:bonerush/dsh-obsidian-mem` and
-`--dump-config` prints the three lines shown.
+### Hard invariants (excerpt)
 
-Pin a revision when you want a fixed one: `github:bonerush/dsh-obsidian-mem#<commit>`.
-The harness's own plugin search prints the same command shape and gives the same
-advice — a third-party plugin is code you run, so review it and pin it.
+| Invariant | Why |
+|---|---|
+| The vault is the only authority; the index is rebuildable | The plugin or the index can disappear without damaging memory |
+| Every vault write goes through the transaction engine | Crash recovery, concurrency detection, no overwriting human edits |
+| Zero modification of human files | The plugin only writes its own machine-owned domains; suggestions go to `收件箱/` |
+| Only machine-owned domains (decisions/conventions/pitfalls/task state/docs), never "insights about the user" | `_meta/user.md` belongs to the user; external material is linked, never summarized into memory |
+| Injection is budgeted, source-tagged **quoted data** | Vault content must not become instructions; over-budget content is paged, not truncated |
+| `turn/end` persists before any model call; the receipt is written before the job is deleted | At-least-once delivery; a restart never re-calls the model for the same work |
+| Network is off by default; `egress: remote` is an explicit decision | Endpoints may be local or remote; credentials appear only as environment-variable names |
+| The six tools are the model's only interface, with a closed contract | Changing harness does not lose semantics; Codex derives from the same `TOOL_PARAMETERS` |
+| Diagnostics are content-blind and never throw | They can be attached to an issue without leaking bodies, paths, queries or keys |
+| Architecture and file size are tests, not conventions | No cycles, downward-only, no same-layer imports; growth requires an explicit decision |
 
-### 3. Install into the profile you actually use
+### Layers
 
-```sh
-dsh plugin --profile web add github:bonerush/dsh-obsidian-mem
-dsh --profile web --dump-config | grep -n obsidian-mem
-```
+`lib/` has 88 modules in L0–L12, and imports may only go downward: entry and assembly (L8–L12) → orchestration and background work (L5–L7) → domain and policy (L2–L4: memory, vault, transaction, pending, search, hybrid-recall, config, index-db) → leaves and single-domain parts (L0–L1: fs-atomic, pointer, frontmatter, paths, model-egress, model-transport). Layer numbers and line budgets are enforced by a test that reads the real import graph.
 
-Replace `web` with your profile name.
+### Two entry points
 
-Working from a local checkout instead? Every `github:…` above becomes `"link:$PWD"`
-run from the checkout: the package is linked rather than copied, so your edits are
-live. That is how this repository is developed, and it is the form the smoke and
-dogfood runs used.
+| | DSH host plugin | Codex CLI adapter |
+|---|---|---|
+| Entry | Cordis `apply`: tools, session hooks, web routes, client bundle | MCP stdio server + `SessionStart` / `UserPromptSubmit` hooks |
+| Read | brief and recall injected at session start / each turn | the same brief through hook output; prompt recall mirrored |
+| Write | automatic distillation after `turn/end` | no turn boundary; notes via explicit tool calls |
+| Panel | overview / graph / health / settings page | none (a behavioural difference, not a defect) |
+| Shared | vault protocol, transaction and locks, retrieval policy, six-tool schema, data root, skill, frontmatter vocabulary | same |
 
-### 4. Restart DSH and open a new session
+### Where data lives
 
-Plugin code is loaded once per process: **restart `dsh web`** (or your harness)
-and start a *new* session so the row is mounted and the pre-step injection has a
-session to attach to. An existing session keeps the old plugin instance.
+| Location | Contents | Authoritative? |
+|---|---|---|
+| repo root `.obsidian-mem` | four-field pointer: `projectId` / `slug` / `displayName` / `schema` | yes (identity) |
+| vault (default `~/Documents/dsh-memory`) | `Projects/<slug>--<id8>/` with Docs / Decisions / Conventions / Pitfalls / Daily / Inbox, `_meta/`, `Methods/` | **the only authority** |
+| `$DSH_HOME/data/obsidian-mem/` | index, pending, locks, transactions, receipts, diagnostics, session/route state | cache and runtime state; deletable except the pending queue |
+| DSH persisted session state | injected/displayed paths, hot version | no bodies or prompts |
 
-### 5. Open the vault in Obsidian
+---
 
-1. Obsidian → **Open folder as vault** → select the vault directory.
-2. That is all. Nothing needs to be pre-created; the plugin bootstraps the project
-   directory on first use — for a Git repository, the first `mem_write` or
-   `mem_log` (see [Project bound](#verify-it-works)).
-3. The plugin never writes `.obsidian/types.json`, never edits your existing
-   notes, and never runs a Git command in the vault except `git init` on a
-   directory it just created.
+## Quick start
 
-The first time the plugin touches an existing vault it runs a **property
-preflight**: it reads candidate notes and refuses to bootstrap if a property name
-it needs (`tags`, `created`, `status`, …) already holds an incompatible value
-type. A refusal names the file and the property. Fix it in the vault, or point
-`vaultPath` at an empty directory — the plugin will not "repair" your notes. The
-preflight can only see value types visible in note bytes; see
-[the property registry is not readable offline](#the-property-registry-is-not-readable-offline).
+### Requirements
+
+| Dependency | Requirement | Basis |
+|---|---|---|
+| Node | `>=22.22.2` | 22.13.0 has `node:sqlite` but no FTS5; 22.22.2 and 25.9.0 are tested; 22.14–22.21 are untested |
+| DSH | `>=0.1.5-rc.2` (declared in `engines.dsh`) | verified on 0.1.5-rc.2 through 0.2.1-rc.5; installed hosts do not read this field, it is a declaration |
+| Obsidian | optional | the vault is a plain directory; read/write works without Obsidian |
+| OS | Windows / macOS / Linux | CI covers Ubuntu and Windows; macOS uses the same portable path. The curation-review `O_NOFOLLOW` protection is macOS/Linux-only; reads and writes are unaffected |
+
+### Five-minute install
+
+1. **Choose a dedicated vault directory** on a local disk (iCloud / cloud-storage paths are refused), not inside your personal knowledge base.
+2. **Verify on a throwaway profile first**:
+
+   ```sh
+   export DSH_HOME=$(mktemp -d)
+   dsh plugin --profile memcheck add github:bonerush/dsh-obsidian-mem
+   dsh --profile memcheck --dump-config | grep -n obsidian-mem
+   ```
+
+   Expected: `- id: obsidian-mem` and `name: dsh-obsidian-mem`. Pin production to a commit: `...add github:bonerush/dsh-obsidian-mem#<commit>`.
+
+3. **Install into the profile you actually use**:
+
+   ```sh
+   dsh plugin --profile web add github:bonerush/dsh-obsidian-mem
+   ```
+
+   For a local checkout use `"link:$PWD"` as the dependency.
+
+4. **Fully restart DSH** (plugins load once per process), then open a new session.
+5. **Open the vault directory in Obsidian** as a vault. The plugin creates the project directory on the first write; it never edits existing notes or the type registry, and only runs `git init` on a directory it just created (and never commits).
 
 ### Verify it works
 
-Start a session in any Git repository and ask, or just check the tools are there:
-
-| Check | How |
+| Check | Expected |
 |---|---|
-| Row mounted | `dsh --profile web --dump-config \| grep obsidian-mem` |
-| Project bound | `mem_admin(action="projects")` reports the resolution. A Git repository with **no** `.obsidian-mem` is bound by its **first write**: `mem_write` or `mem_log` generates the slug, creates the pointer exclusively, bootstraps the skeleton and registers the project, then proceeds — and the binding is visible to the next call in the same session. An existing pointer is never overwritten or repaired, and a refusal (a corrupt or unknown-schema pointer, an unreadable sibling worktree, an unreadable registry, a cloud-managed vault) is reported with its reason instead of minting. Reads never bind: `mem_search` and `mem_read` stay read-only on a pointerless repository, and a directory that is **not** in Git stays read-only until `mem_admin(action="bind", mode="local")`. |
-| Recall injected once | the first request of a session carries one `obsidian-mem` recall message (≤ `briefBudgetChars`) |
-| A cut hot layer stays addressable | hot units are versioned and recorded in a private delivery receipt; when the brief cannot fit them all it prints a bounded `mem_brief(section="hot", cursor=…)` continuation (at most two automatic continuations per unchanged hot generation, at most one per user turn), and the unified page reads the rest. |
-| Convention preview rotates | in `summary` mode the five convention lines start after a persisted anchor and advance only after the previous preview was acknowledged, so a 176-convention vault eventually shows all of them across starts instead of repeating five. |
-| Relevant notes offered | a bound project's new user turn may receive up to three matching notes, each with its title and the excerpt the index matched, inside a per-turn ceiling of its own (≤ `recallBudgetChars`); read the full note with `mem_read` |
-| CJK search works | write a note, then `mem_search` a two-character Chinese word |
-| Vault files are real | `ls "$vault/Projects/"` — plain Markdown, readable with the plugin uninstalled |
-
-### Memory panel in the DSH sidebar
-
-On DSH `0.2.1-rc.5` with `dsh-better-sidebar` `0.28.1`, open the native
-sidebar and choose **+ → 记忆 (Memory)**. The tab is one project's memory. The tab
-strip is the top bar — a Chrome-style row of **概览 / 图谱 / 健康**: 36px-tall leaves
-with a 2px gap between them (the old folded-folder 8px overlap is gone), roomier
-14px side padding, one 16px icon per leaf (the icon yields to the label at a very
-narrow width), the active leaf merging into the content surface — with the last-read
-clock and an icon refresh at its tail; the project name is not repeated because the
-host's own sidebar already shows it. A persistent search box sits under the strip on
-every page instead of a 检索 tab: a 40px rounded field that shows one rounded focus
-ring and puts the caret in the input when you click anywhere in it. Both keep the
-standard tab roles and arrow-key navigation. The panel uses the host's own modern
-sans type throughout (no serif display face, no negative tracking), and the data views
-lay their data out in bands rather than stacked bordered cards. **图谱** keeps the
-graph below, unchanged, including its remembered controls.
-
-#### 概览 — five charts
-
-**概览** opens on five charts: a GitHub-style contribution calendar of the trailing 53
-weeks (371 days; fixed 10×10 px cells on a 2 px gap, month labels above the columns and
-a sticky 一/三/五 weekday gutter) whose numbers live in the section head
-(`近 N 周（371 天）· 本周 N 天有更新 · 合计 M 条`) because a square is a shape and not a
-reading. The calendar scrolls horizontally inside its own box when the panel is narrower
-than the year, is pinned to the current week on first paint, and a hover tooltip names
-the day (`2026-10-27 · 3 条`); a host that still answers the old 84-day window is drawn
-as it arrives. The new-versus-updated flow bars below start at the first week with
-activity and share one zero line, each carrying the reading
-`WW 周 · 新建 n · 更新 m`; then the tag frequency ranking, the type→status composition
-Sankey (real joint counts: node heights and link bands share one unit-per-note scale,
-names and counts written beside both columns; the chart fills the panel and re-measures
-on resize while its type and scale stay 1:1; when the host serves no joint flow it
-falls back to the old composition bar and legend), and a KPI band whose
-note/link/orphan/pending counts jump (待处理 opens **健康**,
-the others put the caret in the search box) with a twelve-point sparkline of the running
-new-note total in the first cell.
-There is no archived series: `superseded` is a current status snapshot and the vault
-records no day a note reached it, so drawing it as a flow would invent a transition.
-#### Recent changes — a day-grouped activity rail
-
-Recent changes follow as a contribution-activity rail: one group per day
-(今天 / 昨天 / YYYY-MM-DD) with a note node on a continuous hairline and one dot per
-note. Each day prints its total change count and lists up to two sampled notes
-(仅显示最近 2 条); the sample is drawn from up to 500 recent notes across the newest
-four days, so a busy day cannot hide yesterday — and when every sampled row is still
-today, two older days are shown from the activity series as aggregate-only groups
-(共 N 条). Then a passive health summary whose only action, **全部 →**, opens
-**健康**. Search results show the path and a highlighted snippet, keeping exactly one
-status line — idle shows `输入关键词开始检索，结果来自本地记忆索引。` — and their
-total says `共 N 条` only for a complete page and `已显示 N 条` while more results
-exist. **健康** is a summary band over the index, queue, hot layer and the
-deterministic digest, followed by a **诊断记录** timeline (time, event, outcome).
-
-#### 健康 and the three confirmed actions
-
-The panel is read-only by default and adds three confirmed maintenance
-operations plus the review queue's 批准…/拒绝… decisions when the service
-advertises them: **重新排队失败任务** (retry one
-terminally failed job of the displayed project), **整理热层** (`mem_admin(action="hot",
-operation="compact")`) and **发布项目摘要** (write the owned `_meta/digest.md`).
-Each is preview → confirm: the preview shows a title, facts, effects and any
-warning, and the confirmation needs a second click backed by a single-use
-60-second token bound to the session, project, operation, arguments and a
-fingerprint of the previewed state. A stale preview answers `preview-stale` and
-refreshes the view; a replayed confirmation returns the original result instead
-of writing twice. When a read payload carries no `capabilities.mutations` — an
-older service, or a route that is not registered — those controls are hidden and
-every view stays fully usable read-only. The six tools remain the other write
-path. **整理热层** is the recovery path for an over-trigger hot layer: while the file
-is still inside its trigger line the preview says so and the confirmed run archives
-nothing (only legacy per-entry pointer lines may be folded); a confirmed action's
-outcome is printed in the card that owns its button, so a no-op, a move, and a digest
-that stayed unchanged all report what happened instead of only flashing a line at the
-top of the page.
-
-The two live views poll every 15 s while visible (a returning window reads once) and
-each read refreshes the project index at most once every 5 s, so a memory written by
-another process — another DSH profile, the Codex adapter, Obsidian itself — appears
-without restarting DSH. Those background polls are silent: only the refresh button
-announces a refresh. One transport detail matters for the confirmed operations: the
-desktop app loads this panel through its `dsh-app://` scheme, whose main-process
-proxy strips `Origin` before forwarding to loopback, so a mutation carries the
-panel's own `x-obsidian-mem-panel: 1` header as its same-origin proof. A web page
-cannot send that header (or an `application/json` body) without a CORS preflight the
-route never answers, and the loopback/Host/`sec-fetch-site` fence still applies.
-
-#### 图谱 — the knowledge graph
-
-The **图谱** tab draws one canvas over the project's memory notes. It draws
-**every node in scope** — the old top-N cut is gone, so a hidden node can no longer
-take its edges with it — and keeps the cost bounded at the render layer: nodes,
-edges and labels outside the viewport are culled per frame, and the bottom line
-reports the real count as `N 个节点 · M 条连接`. **Scope** switches all-memory and
-current-project; all-memory is the initial view and includes historical notes,
-unresolved targets and the administrative Markdown links that connect projects.
-Administrative notes stay excluded from retrieval; the graph shows only their
-labels and relationships. **Existing files only** hides unresolved targets, and
-attachments (outside this Markdown view) remain disabled.
-
-Links resolve wikilinks, Markdown links, embeds and YAML wikilinks with Obsidian's
-filename and relative-path rules. Scroll to zoom, drag the canvas or a node, and
-hover to reveal a label and its connected branch. Colour groups accept note-type
-queries such as `[type:decision]`; colours are resolved the way Obsidian resolves
-them — the eleven `.graph-view.color-*` slots are read from the host theme, so the
-graph follows the DSH light/dark theme exactly. The defaults colour each memory type
-with a Morandi tone — decision `[type:decision]` `#7b8ea6`, convention
-`[type:convention]` `#8ba084`, gotcha `[type:gotcha]` `#ab817c`, doc `[type:doc]`
-`#b39b6f`, glossary `[type:glossary]` `#9a8aa0` — while administrative notes,
-untyped notes and unresolved targets keep the neutral node colour, and hover and
-memory access still use the accent highlight. Those five are ordinary colour groups:
-recolouring, retargeting or deleting one works as usual, and **恢复默认设置** puts
-them back. Labels are rasterized at 85% of Obsidian's `14 + node size / 4` because this
-graph lives in a narrow sidebar; **标题文字大小** moves that factor between 0.4 and
-1.6, while position, `sqrt(scale)` scaling and the pinned size of a hovered node
-stay unchanged.
-
-The **physics is a 1:1 port** of the graph simulator installed with Obsidian 1.14.4:
-the same forces, alpha schedule, integration and drag protocol, and the same
-seeding rule for an incremental update. Measured on the same 400-node / 592-edge
-subgraph from the same initial positions, the ported worker lands
-**position-identical** to Obsidian's own D3 fallback (max/mean delta 0.000), where
-an earlier locally tuned version deviated by 530.1/144.5 units; on the real
-1,236-node vault the layout no longer merges nodes while it moves and settles at a
-median minimum neighbour distance of about 112 units. The price of parity is the
-quadtree collision cost above roughly 2,000 nodes. Measured on Windows 11
-(2026-11-01, Node 24.20.0, the shipped worker in the same vm harness the tests
-use): the real 1,236-node vault costs **12.8 ms median per tick (p95 16.2 ms)**,
-at the edge of a 60 fps budget, while 2,500 nodes cost 28.8 ms, 4,000 nodes
-50.7 ms and 6,000 nodes 99.9 ms — above roughly 2,000 nodes the layout is a slow
-animation rather than an unusable graph. The untested list now keeps only what
-this round did not measure (drag reheating at that size).
-
-The settings button opens the same four sections as Obsidian's graph: filters,
-colour groups, display and forces. The **settings** are remembered, unlike the cues: scope, filters, colour groups,
-display and forces live in `localStorage` under
-`dsh-obsidian-mem:graph-settings` and survive a page reload and a host restart. They
-belong to the browser profile and origin — `127.0.0.1:3080` and `localhost:3080` are
-two separate panels — and nothing about them leaves the browser. **恢复默认设置**
-writes the built-in values back. Records are versioned: one left by the previous
-version (whose default groups were empty) is dropped whole once so the new
-per-type defaults appear. A record written by another version, or edited by
-hand, is never trusted as it stands: every field is checked and falls back to its
-default, because a `NaN` force blanks the graph instead of merely looking wrong.
-
-When this DSH process touches memory, the matching node and adjacent links pulse
-briefly and that node's file name stays visible at any zoom: a **read** in the accent
-colour (`mem_read`, or a host `read`/`grep` that opens a note in the vault), the notes
-a **search** returned in the same colour lighter, and a **write** in the tag colour
-(`mem_write`/`mem_log`, or a host `edit`/`write`). Injecting a relevant-note map into
-a turn lights its notes too. These cues are per session and in memory only; reloading
-the host clears them. A cue moves a label's colour and opacity but never its size, so
-two notes touched in the same second cannot disagree.
-
-The graph endpoint is **read-only** and accepts same-origin requests from the local
-DSH web UI. Without Better Sidebar, the six memory tools continue to work. The
-browser assets are re-read on every request, so a change under `lib/` reaches the
-page on reload instead of waiting for a host restart; a **new** asset is the one
-exception, because the route list is registered when the plugin mounts.
-
-The canvas drawing, the force model and the seeding/drag protocol were extracted
-from the installed Obsidian graph source: node-size, label-fade and zoom rules are
-Obsidian's own, and the worker is the 1:1 port of its D3 fallback simulator
-described above. The package bundles pinned upstream D3 code and its ISC notices,
-with no CDN request and no additional runtime dependency; no Obsidian application
-code is included.
+| Plugin mounted | an `obsidian-mem` row in the plugin list |
+| Project bound | the first `mem_write` / `mem_log` binds a pointerless Git repo; reads never auto-bind; a non-Git directory stays read-only until an explicit `mem_admin` bind |
+| Brief injected | once per session, ≤`briefBudgetChars` |
+| Hot continuation | ≤2 automatic continuations, without changing the session generation |
+| Convention preview | rotates from a persisted anchor; a 176-convention vault is fully visible across session starts |
+| Recall | at most 3 matching notes per turn, ≤900 code points |
+| CJK search | single-character and multi-character CJK queries both hit |
+| Vault files | real Markdown you can open, not a database export |
 
 ---
 
 ## Configuration
 
-**Configuring from the plugin page.** Open DSH's Plugins page and the
-dsh-obsidian-mem bundle; its **配置** section lists every field below in groups —
-基础 / 采集与整理 / 上下文预算 / 模型蒸馏 / 检索 / 其他 — with the current value, the
-schema default and inline validation. Saving goes through the host's config editor
-into **this profile's** patch layer
-(`$DSH_HOME/profiles/<profile>/cordis.patch.yml`) and the plugin reloads in about
-one to two seconds; `enabled` is owned by the page's own switch and is not in the
-form. A value the schema refuses is rejected on save and the host's own message is
-shown: a save that cannot land is reported, never faked. The section needs DSH's
-config editor, which the desktop and web profiles have; when it is unavailable, or
-the plugin row was not installed through the loader, the section is read-only and
-says why. A stored configuration the schema cannot read also stays read-only, with
-the host's error, until the file is fixed.
+### Edit from the plugin page
 
-**First-time migration: the page writes the profile layer, not the home layer.** The
-page never edits `$DSH_HOME/cordis.patch.yml` — that home-level file is a
-higher-priority user layer, and a row there replaces the profile layer's row, so
-the page cannot be authoritative while it exists. If the `- id: obsidian-mem` row
-(or its `config:`) is still in that home-level file — the setup the example below
-uses — the **配置** section opens read-only and says so, showing the values the
-plugin is actually running with. To switch to the page: note whichever values you
-customised, delete that row's `config:` (or the whole row) from
-`$DSH_HOME/cordis.patch.yml`, restart DSH (the host does not watch patch files, so
-reloading the page is not enough), then open the **配置** section again — it is
-editable, and a save lands in the profile patch. The patch-file route below still
-works and remains authoritative for anything the form does not expose.
+The DSH plugin detail page's configuration section edits every field (Basic / Capture and curation / Context budget / Model distillation / Retrieval / Other). Saves go to `$DSH_HOME/profiles/<profile>/cordis.patch.yml` and reload in about 1–2 seconds; the page switch is `enabled`, which is not part of the form.
 
-Configuration lives in the plugin row, and a row's inline `config:` **replaces the
-whole object** — DSH patch layers do not deep-merge. So an override must list
-every field, `distill` included. Put it in the home-level patch layer,
-`$DSH_HOME/cordis.patch.yml`, alongside whatever is already there:
+- A row supplied by the home layer `$DSH_HOME/cordis.patch.yml` overrides the profile row, and the page is read-only in that case.
+- Patch layers do **not** deep-merge: an inline `config:` must list the whole object (including `distill`).
+- Unknown keys are load errors, not no-ops.
 
-```yaml
-# $DSH_HOME/cordis.patch.yml
-- id: obsidian-mem
-  config:
-    enabled: true
-    vaultPath: "~/Documents/dsh-memory"
-    initGitOnCreate: true
-    injectBrief: true
-    bindHint: true
-    briefBudgetChars: 6000
-    recallBudgetChars: 900
-    retrievalEngine: hybrid
-    retrievalProvider:
-      enabled: false
-      # loopback | remote. `remote` is an explicit egress decision: a non-loopback
-      # address is legal under it and nowhere else.
-      egress: loopback
-      endpoint: ""
-      # embed (this plugin's own /embed contract) | openai (OpenAI-compatible /embeddings)
-      apiStyle: embed
-      # The NAME of the environment variable holding the credential, never the key.
-      apiKeyEnv: ""
-      model: ""
-      dimensions: 0
-      timeoutMs: 500
-      rerank: false
-    hotCapacityChars: 9000
-    hotArchiveRatio: 0.67
-    autoCapture: true
-    autoCurate: true
-    autoReview: true
-    captureIdleMs: 90000
-    distill:
-      provider: ""
-      model: ""
-      # host (the DSH host `llm` service) | http (an OpenAI-compatible endpoint this
-      # plugin calls itself)
-      transport: host
-      egress: loopback
-      endpoint: ""
-      apiStyle: openai-chat
-      apiKeyEnv: ""
-      maxItems: 12
-      minConfidence: 0.75
-      maxInputChars: 24000
-      maxOutputTokens: 4000
-      timeoutMs: 60000
-      maxRetries: 3
-      dryRun: false
-    indexBackend: auto
-    ignoreGlobs: []
-```
+### Key fields
 
-Omitting the `config:` block entirely gives you exactly those defaults.
-`enabled: false` registers nothing at all — no tools, no hooks, no data root, no
-lock.
-
-**An unknown key is an error, not a no-op.** The table below is the complete field
-set: a key it does not list (at the top level or inside `distill`) makes the row
-fail to load and the error names the key. This matters because a typo would
-otherwise keep the intended field's default — a row that says `vaultpath: "/tmp/x"`
-would silently use `~/Documents/dsh-memory` and bootstrap it. The error also lists
-the design document's deliberately-dropped fields (`projectsDir`, `methodsDir`,
-`metaDir`, `reservedPrefixes`, `docMirror`, `distill.mode`,
-`distill.maxCostPerSession`) so a config copied from there fails with an
-explanation instead of doing nothing.
-
-| Field | Default | Accepted | What it does |
-|---|---|---|---|
-| `enabled` | `true` | boolean | `false` mounts nothing. |
-| `vaultPath` | `~/Documents/dsh-memory` | non-blank path; `~` is expanded | The vault root. Must be local disk. |
-| `initGitOnCreate` | `true` | boolean | `git init` **only** on a vault directory this plugin just created, and only if `git` is available. Never commits, never sets a remote. |
-| `injectBrief` | `true` | boolean | Whether the session brief and per-turn relevant-note map are injected. |
-| `bindHint` | `true` | boolean | Whether a session whose directory resolves to no usable project is told so, once. That notice is how the user is asked whether to bind the project, and how a session whose recorded directory has moved or been deleted says so instead of losing memory in silence. `false` removes that injection and nothing else. The Codex adapter has the same switch as `OBSIDIAN_MEM_BIND_HINT`. |
-| `briefBudgetChars` | `6000` | integer 256–20000 | Hard ceiling for the session brief and the weekly hint, in Unicode code points. |
-| `briefConventionMode` | `summary` | `summary` or `flat` | How a long conventions index is rendered. `summary` shows five MOC lines and leaves the rest addressable through `mem_brief(section="conventions", offset=5)`; `flat` is the pre-0.3 list where the budget alone decides. Rendering only: paging always sees every entry. In summary mode the five lines rotate across acknowledged sessions, so a long MOC is not the same five forever. |
-| `retrievalEngine` | `hybrid` | `lexical`, `sparse` or `hybrid` | Retrieval engine. `lexical` is the FTS path unchanged. `sparse` re-ranks at most 24 source-verified lexical candidates with local TF-IDF/cosine and fuses them by RRF k=60; no model, network or dependency. `hybrid` — the default since 2.0.0 — adds a semantic candidate list from the embedding provider configured under `retrievalProvider` (a loopback service or a remote gateway) and fuses it with the lexical list by weighted RRF (k=60, dense weight 2). The provider still ships disabled, so the default row with no provider reads through the lexical path unchanged and records `provider-disabled` on the search diagnostic; nothing falls back silently. |
-| `retrievalProvider` | `{enabled: false, egress: "loopback", endpoint: "", apiStyle: "embed", apiKeyEnv: "", model: "", dimensions: 0, timeoutMs: 500, rerank: false}` | object; unknown keys are refused | Embedding service for `hybrid`, local or cloud. Under `egress: loopback` the endpoint must be a literal loopback address; `egress: remote` is the operator's explicit egress decision and admits any http(s) host. When `enabled` is false the provider is never constructed, every other field is inert and `hybrid` behaves like `lexical`. |
-| `retrievalProvider.enabled` | `false` | boolean | Turns the provider on. Optional even with `retrievalEngine: hybrid`, which is the default: without it the engine resolves to the lexical path and the search diagnostic states `provider-disabled`. |
-| `retrievalProvider.egress` | `loopback` | `loopback` or `remote` | Which endpoint forms are legal. `loopback` accepts `127.0.0.1` and `::1` only. `remote` accepts any http(s) host and is an explicit egress decision: no default opens it, and the value is stated on the search diagnostic. |
-| `retrievalProvider.endpoint` | `""` | http(s) URL | Service base URL. `apiStyle: embed` requests `<endpoint>/embed`; `openai` requests `<endpoint>/embeddings`. No form accepts credentials, a query or a fragment inside the URL, and redirects are never followed. |
-| `retrievalProvider.apiStyle` | `embed` | `embed` or `openai` | Wire protocol. `embed` is this plugin's own `/embed` contract (request body unchanged byte for byte); `openai` is OpenAI-compatible `/embeddings`, mapping `data[].embedding` back by `index` onto the same contract, so an internal gateway or a cloud API needs no intermediate shim. `openai` and `rerank: true` are mutually exclusive: that protocol has no `/rerank`. |
-| `retrievalProvider.apiKeyEnv` | `""` | environment variable name | The NAME of the environment variable holding the credential, never the secret. It is read immediately before a request; a missing variable is `provider-credential` and opens no socket. The value never appears in an error message, a diagnostic or a log line. |
-| `retrievalProvider.model` | `""` | non-blank string when enabled | Model name sent in the request body; also part of the vector-store filename, so changing it triggers a full local rebuild. |
-| `retrievalProvider.dimensions` | `0` | positive integer when enabled | Expected vector size. A provider response of another size invalidates the stored vectors and forces a rebuild. |
-| `retrievalProvider.timeoutMs` | `500` | integer 50–5000 | Per-request timeout for embedding calls. A timeout falls back to lexical for that search. |
-| `retrievalProvider.rerank` | `false` | boolean | Reserves the provider's `/rerank` contract. The hybrid engine does not use it yet: setting it true does not change the fused order. |
-| `recallBudgetChars` | `900` | integer 256–20000 | Per-turn ceiling for the relevant-note map, in Unicode code points. Deliberately separate from `briefBudgetChars`: charged against the brief's leftovers, the map fired on 0.6% of first turns against 22.1% of later ones. |
-| `failureRecall` | `true` | boolean | Recall related memory on repeated native DSH tool failures. Shares the per-step `recallBudgetChars` ceiling with prompt recall; does not control recording. |
-| `hotCapacityChars` | `9000` | integer 1024–50000 | Capacity of `_meta/hot.md`. Storage capacity, *not* injection budget. |
-| `hotArchiveRatio` | `0.67` | open interval (0,1) | Above this fill level the plugin archives 已完成 entries before writing. A file already over its cap that has nothing archivable left is repaired with `mem_admin(action="hot", operation="compact")`, never by hand. |
-| `autoCapture` | `true` | boolean | Capture completed turns. `false` stops new capture but still drains jobs already queued. |
-| `autoCurate` | `true` | boolean | Automatic curation passes. `false` disables the automatic triggers only: `mem_admin(action="curation", operation="scan")` and the review command keep working, and no source note is changed either way. |
-| `autoReview` | `true` | boolean | Automatic review of parked executable proposals after the DSH host's automatic curation pass. The route is the configured `distill.provider` + `distill.model` pair, or — when that pair is empty — the provider/model the capture seam last observed for this project, so one normal conversation is enough to enable it; only when neither exists is there no route, and then it makes no model call and the queue waits for you. `false` disables only the automatic reviewer — the panel and the review command still work, and `autoCurate` is unchanged. |
-| `captureIdleMs` | `90000` | integer 1000–3600000 | Idle debounce before a captured turn is distilled. |
-| `distill.provider` | `""` | string | Model route. Must be set together with `model`, or both left empty (empty = reuse the session's last recorded route). A session imported from another harness has no recorded route, so imported history stays `deferred` until this is set. |
-| `distill.model` | `""` | string | See above. |
-| `distill.transport` | `host` | `host` or `http` | How the one tool-free model call reaches a model. `host` is the DSH host `llm` service (the behaviour since 1.0.0) and requires an empty `endpoint`. `http` is an OpenAI-compatible `/chat/completions` endpoint this plugin calls itself (`lib/model-transport.js`), so a host with no routed provider (the Codex adapter, a TUI without one, a CLI run) can still distil, and it may target a local Ollama/LM Studio server or a cloud gateway. The prompt, the strict JSON contract and every validation rule are identical on both paths. |
-| `distill.egress` | `loopback` | `loopback` or `remote` | The same rule as `retrievalProvider.egress`: a non-loopback endpoint is legal only under an explicit `remote`. |
-| `distill.endpoint` | `""` | required for `transport: http`, forbidden for `host` | Base URL of `/chat/completions`. Either mismatch with `transport` is a config error at load, not a failure on the first job. |
-| `distill.apiStyle` | `openai-chat` | `openai-chat` | The only wire protocol offered today. The key exists so a future dialect has a place to land, rather than a form left guessing. |
-| `distill.apiKeyEnv` | `""` | environment variable name | The same credential rule as `retrievalProvider.apiKeyEnv`. |
-| `distill.maxItems` | `12` | integer 1–50 | Maximum candidates, including failure fallbacks, accepted from one distillation. The same number is written into the system prompt, so the model is told the ceiling it would be refused for exceeding; a batch over it is refused whole, never trimmed. |
-| `distill.minConfidence` | `0.75` | number 0–1 | Below this, a candidate goes to `Inbox/` instead of a memory note. |
-| `distill.maxInputChars` | `24000` | integer 256–100000 | Input ceiling for the single model call. |
-| `distill.maxOutputTokens` | `4000` | integer 128–32000 | Output ceiling for that call. |
-| `distill.timeoutMs` | `60000` | integer 1000–300000 | Per-call timeout. |
-| `distill.maxRetries` | `3` | integer 0–10 | **Total attempts**, not extra retries: `3` means one attempt plus two retries with exponential backoff, after which the job becomes terminally `failed` and keeps its raw output. |
-| `distill.dryRun` | `false` | boolean | Writes receipts only: no memory note, no MOC, no hot update. **Start here.** |
-| `indexBackend` | `auto` | `auto` \| `sqlite` \| `scan` | `auto` falls back to the scan backend and reports it when FTS5 is unavailable; `sqlite` fails loudly instead. |
-| `ignoreGlobs` | `[]` | list of vault/repository-relative globs | Only `*`, `**`, `?` and ordinary path characters. Braces, character classes, negation and escapes are **refused** at startup rather than silently mis-matching. Absolute paths and `..` are refused. Safety-excluded paths cannot be re-included. |
-
-One shape of stale documentation to ignore: the design document's §12 lists
-fields this plugin does **not** have (`projectsDir`, `methodsDir`, `metaDir`,
-`reservedPrefixes`, `docMirror`, `distill.mode`, `distill.maxCostPerSession`). The
-plan's field set — the table above — is the one the code implements. Directory
-names and the pointer filename are protocol constants and are not configurable.
-Those seven fields are **refused**, not ignored: a row carrying one fails to load
-with an error that says the field was dropped by design.
-
----
-
-## Using it
-
-### A project with no pointer
-
-Reading a project never creates a binding: a pointer must not appear in a
-repository you only looked at. What such a session gets instead is one short
-notice, once per session (`bindHint: false` removes it) — this directory resolves
-to no usable project, here is why, and here is the decision that belongs to you:
-
-- **No pointer** (`no-pointer`) — ask the user. `mem_admin(action="bind", mode="local")`
-  creates the four-field pointer and the vault skeleton. The implicit first write
-  does the same thing without asking, which is exactly why the notice exists: a
-  user who never writes otherwise never learns the option is there.
-- **Not a git repository** (`no-git-root`) — the same explicit `local` bind, which
-  is the one mode that also binds a plain directory.
-- **The recorded directory is gone** (`cwd-missing`) — the session's `header.cwd`
-  no longer exists. An imported conversation carries the directory it was
-  *recorded* in: another machine's path, or one renamed since. Memory cannot work
-  in that session at all, and before this refusal existed the plugin lost it in
-  silence — a thrown `ENOENT` that every step retried. The notice says so, and
-  nothing is created to compensate.
-- **The pointer cannot be read** (`pointer-corrupt`, `pointer-unsupported-schema`,
-  `pointer-not-a-file`, `pointer-oversize`, `pointer-unreadable`) — report, never
-  repair: the plugin refuses to guess an identity, and so should you.
-
-The same reason travels to the tools: `mem_brief` answers `status: "unbound"` with
-a machine-readable `reason`, and every other tool's refusal names it. A directory
-inside the vault, a lost `pointer-race` and a registry conflict stay silent, because
-none of them is a decision the user can make.
-
-### The six tools
-
-| Tool | Arguments | What it does |
+| Field | Default | Meaning |
 |---|---|---|
-| `mem_search` | `query` (required), `scope` (`project`\|`global`\|`all`, default `project`), `type`, `projectId`, `includeHistory`, `limit` (default 8) | Searches titles, bodies and frontmatter. `project` is the bound project only and refuses a different `projectId` rather than quietly going cross-project; `global` covers `Methods/` and the read-only `_meta/user.md`; `all` is required for cross-project. |
-| `mem_read` | `path` (required, vault-relative), `section` | Returns body, parsed frontmatter and a content hash after re-verifying the file. Refuses internal directories such as `_meta/.history/`. |
-| `mem_write` | `type`, `title`, `body` (required); `tags`, `status`, `confidence`, `assertion`, `supersedes`, `id`, `idempotencyKey` | The authoritative way to write project documents and memories. Without `id` it **creates** a note with a fresh id; with an existing `id` it updates. Superseding verifies the old id and writes both sides of the link. |
-| `mem_log` | `text` (required); `session`, `section`, `idempotencyKey` | Appends one idempotent entry to today's log; `section: "hot"` targets the hot file's 进行中 zone instead. |
-| `mem_brief` | optional `section`, `offset`, `limit` | With no arguments, returns the same recall brief the session injected, so you can re-read or audit the budget. With `section`, returns one page of that section (`hot`, `hot-constraints`, `hot-active`, `hub`, `conventions`, `preferences`, `view`, `recent`), 1–50 lines and at most 8,000 code points; every unit the brief counted as omitted is reachable this way. |
-| `mem_admin` | `action` (required): `lint`, `index`, `bind`, `projects`, `promote`, `jobs`, `curation`, `hot`, `appraise`, `digest`, `diagnostics`; plus `report`, `prune` (lint only), `rebuild` (index), `mode` (bind: `show`\|`local`\|`fork`\|`retain`), `path` (promote), `jobId`/`retry` (jobs), `operation` (curation: `status`\|`scan`; hot: `status`\|`compact`; digest: `read`\|`refresh`), `days` (digest) | Low-frequency maintenance. `lint` is read-only unless you pass `report: true` (writes a dated report note) and/or `prune: true` (deletes aged snapshots) — the two are independent on purpose. `curation` reads or runs the bounded curation pass described below; it never applies a review proposal. `hot` maintains the injected layer: `status` reports its fill level against `hotCapacityChars` and, per zone, how many complete entries a drain could still move; `compact` folds the 已完成 zone pointer lines into one summary line and archives the oldest movable entries in a single transaction — the recovery path a `hot-over-capacity` refusal names, and the only one, since a hand edit fails the transaction with `hash-mismatch`. `diagnostics` is the one action that reads nothing: it returns this process's own ring of decisions — at most 200 events, drawn from the closed set `capture`, `distill`, `index`, `bind`, `job`, `transaction`, `brief`, `skill`, `recall`, `curation` (all ten emit today), each with an outcome and machine identifiers and never a note body, a title or a prompt. A window therefore answers the questions that otherwise need a reproduction: why a finished turn was not captured (the `capture` event names the reason), whether distillation produced nothing or was never attempted (`distill`, `job`), whether the index followed a write (`index`), and whether a write was committed or refused with a code (`transaction`). It needs no binding and no vault, so it still answers when every other action refuses, and it empties when the process exits — the separate local journal above preserves reduced events for the user-run report. `appraise` reads at most the 50 most recent notes and returns deterministic findings (review-overdue, unverified, duplicate-title, dead-link, contested) without a model call or a write. `digest` reads a bounded trailing UTC window (`days` 1–30, default 1): created/updated/superseded counts, type breakdown, current hot and queue snapshots, up to eight recent references and the same deterministic findings. It inspects at most 200 sources under a 500 ms deadline and discloses `truncated`/`incomplete` rather than fabricating missing records. The default `operation="read"` writes nothing; `operation="refresh"` creates or updates the project's owned `_meta/digest.md` (at most 8,000 code points, unchanged bytes are a no-op, and a human-owned target is refused). Set `DSH_OBSIDIAN_MEM_DEBUG=1` to additionally emit each event through the host logger at `info` level; whether the host shows that line is the host's decision, not this plugin's. |
+| `vaultPath` | `~/Documents/dsh-memory` | must be on a local disk |
+| `initGitOnCreate` | `true` | `git init` only in a vault directory this plugin just created; never commits |
+| `injectBrief` / `bindHint` | `true` | brief injection; the one-time unbound-session hint (`bindHint`) |
+| `briefBudgetChars` / `recallBudgetChars` | `6000` / `900` | two independent budgets; per-turn recall does not consume the brief |
+| `briefConventionMode` | `summary` | `summary` gives an addressable preview; `flat` lists every name (more expensive) |
+| `hotCapacityChars` / `hotArchiveRatio` | `9000` / `0.67` | hot-layer storage cap; over-capacity folds `已完成` items into pointer lines |
+| `autoCapture` / `autoCurate` / `autoReview` | `true` | `autoCurate` only controls automatic curation triggers; the panel and CLI keep working |
+| `captureIdleMs` | `90000` | consecutive turns within the idle window merge into one distill job |
+| `retrievalEngine` | `hybrid` | `lexical` / `sparse` / `hybrid`; with no provider configured, hybrid falls back to lexical and records why |
+| `retrievalProvider` | `enabled:false`, `egress:loopback` | once enabled: `egress` (loopback / remote), `apiStyle` (embed / openai), `endpoint`, `model`, `dimensions`, `timeoutMs`, `rerank` |
+| `retrievalProvider.apiKeyEnv` | `""` | the **environment-variable name**, not the secret; read immediately before the request; missing → `provider-credential` with no socket opened |
+| `distill.transport` | `host` | `host` uses the host llm (endpoint must be empty); `http` calls an OpenAI-compatible `/chat/completions` directly, so Codex / TUI / CLI can distil too |
+| `distill.egress` / `endpoint` / `apiStyle` / `apiKeyEnv` | `loopback` / `""` / `openai-chat` / `""` | same egress rules as retrieval; `http` requires an endpoint, `host` forbids one |
+| `distill.maxItems` / `minConfidence` | `12` / `0.75` | over-limit batches are refused whole; below min confidence goes to the Inbox |
+| `distill.maxInputChars` / `maxOutputTokens` / `timeoutMs` / `maxRetries` | `24000` / `4000` / `60000` / `3` | failure is terminal and keeps the raw output; retry is explicit |
+| `distill.dryRun` | `false` | writes run receipts only, no vault changes; use it first when wiring a remote route |
+| `indexBackend` | `auto` | `auto` falls back to scan and reports when FTS5 is unavailable; `sqlite` fails loudly |
+| `ignoreGlobs` | `[]` | only `*` / `**` / `?` and path characters; absolute paths, `..`, negation, braces and character classes are refused |
 
-`mem_write` types route like this:
-
-| `type` | Lands in | Notes |
-|---|---|---|
-| `doc` | `Docs/<title>.md` + MOC update | Design docs, reports, guides. |
-| `decision` | `Decisions/ADR-<n>-<slug>.md` | Context / Decision / Alternatives / Consequences. The number is allocated inside the vault lock and is for humans; the `id` is the identity. |
-| `gotcha` | `Pitfalls/<slug>.md` | Symptom / cause / fix / evidence. |
-| `convention` (alias `invariant`) | `Conventions/<slug>.md` | One fact per file. |
-| `session-log` | `Daily/YYYY-MM-DD.md` | Append-only, idempotent per session id. |
-| `hub`, `glossary` | `index.md`, `Docs/glossary.md` | MOCs and terminology. |
-| low confidence / unclassified | `Inbox/<slug>.md` | Waiting for a human to sort it. |
-
-Supersede never overwrites: the old note stays where it is, marked
-`status: superseded` with `superseded_by`, and the new note links back. Two claims
-that cannot be ranked become `status: contested` — no silent winner. `assertion`
-records *how strong* a claim is (`stated`, `inferred`, `observed`), and `observed`
-requires re-checkable evidence, not a model saying "verified".
-
-### User habits
-
-`_meta/user.md` is yours — bootstrap creates it once from a template and the plugin
-never writes it afterwards. The template asks for the facts that change every
-answer: 技术与框架偏好, 常用技能与工具, 惯用方法（按问题类型）, 产出与沟通偏好 and 禁忌.
-Its examples are HTML comments, so an untouched file contributes nothing to a
-session.
-
-What you write there is injected as the 用户习惯 section, under your own headings,
-and it ranks **above** the recent-decisions list. A declared habit is a standing
-rule (`前端一律 React`, `改动前先跑测试`); the recent list is navigation to facts the
-project already wrote down. The earlier order dropped the user's habits first,
-which is the one thing a memory layer should not throw away.
-
-Automatically generated habits are candidates and never go in that file. A
-durable preference about how you work is written as `Conventions/习惯：….md` in the
-project, one habit per file, and promoted to `Methods/` when it outlives the
-repository.
-
-Habits are generated inside memory distillation and curation. With
-`distill.learnHabits: true` (the default), the existing no-tool model call combines
-the current dialogue with a bounded selection of existing project habits. It can
-recognize personal working preferences without a fixed vocabulary or repetition
-counter. Explicit standing preferences use `assertion: stated` and cite your own
-message. Possible preferences use `assertion: observed`, `status: provisional`, and
-one exact short quote from your message. Project requirements, one-off requests and
-the agent's tool choices are not personal preferences.
-
-Curation can also re-distill up to twelve active, stated project conventions through
-the same durable queue. It checks source hashes before applying output and excludes
-habit notes as new evidence, preventing a candidate from teaching itself. Existing
-habits are matching context, never fresh confirmation. Matching never replaces a
-confirmed rule; changed evidence follows the existing duplicate-review path.
-
-Candidates are searchable and excluded from the brief until you confirm them. Set
-`status: active` to confirm or `status: archived` to dismiss; source notes are never
-deleted. Review and retirement use the existing curation lifecycle. There is no
-separate vocabulary, session counter, half-life or automatic time-based archive.
-`_meta/user.md` stays yours. Turning `distill.learnHabits` off stops generating
-observed candidates; explicit user declarations still follow normal distillation.
-
-The model may misclassify a project request or miss a preference; source quoting and
-quarantine bound the effect, not its accuracy. Historical counter measurements remain
-in `docs/habit-learning-results.md`; current validation is recorded in
-`docs/habit-semantic-validation.md`. DSH supplies the automatic worker. Codex has no
-completed-turn boundary or background distiller, so its skill applies this same
-methodology through explicit memory tools rather than claiming automatic parity.
-
-### Automatic distillation
-
-With `autoCapture: true`, a completed root turn is (1) captured after commit,
-(2) filtered and stored as a `0600` job under
-`$DSH_HOME/data/obsidian-mem/pending/`, (3) after an idle window, distilled by
-**one** no-tool model call, (4) validated against its cited evidence sequence
-numbers, and (5) applied idempotently as `decision` / `gotcha` / `convention`
-notes. Aborted and errored turns are recorded but never become conclusions;
-`doc` and `glossary` notes are only ever created through `mem_write`.
-
-Repeated native DSH hard failures also enter this evidence path. Three failures
-of the same tool within a captured turn can produce a `gotcha`: an omitted run
-gets a low-confidence `Inbox/` candidate, and a model candidate stays in Inbox
-unless it cites a later verified success of that tool and a written explanation.
-The candidate remains `inferred` and `provisional`, with no automatic supersede;
-a successful retry does not prove its root cause. Soft error-text matches only
-suggest recall and cannot supply recovery evidence. Recording respects
-`autoCapture`, `distill.dryRun`, the model route and `distill.maxItems`; failed
-model output stays in the existing retry queue. Title twins wait for review.
-Codex shares the library and writing rules, but its MCP adapter does not receive
-native DSH tool events; its skill describes explicit failure recall and recording.
-
-Language checks report sentence length (60 CJK characters or 25 English words),
-note length (five sentences), hedges and dangling references as advisory findings.
-Inline code and wikilinks are excluded. Only title/body language disagreement
-routes a distilled note to Inbox. These are project rules informed by ASD-STE100,
-not a claim of conformance or improved retrieval quality.
-
-An ordinary candidate — one that supersedes nothing and twins no existing note —
-applies through the same transaction engine as every other write. Two shapes do
-not, because each is a judgment the plugin may not make on its own:
-
-- A candidate whose title twins a note already in the bound project is **parked**,
-  not skipped, so the new fact is never silently discarded. The lookup is the same
-  project scope and the same tokenizer as `mem_search`, narrowed to the
-  candidate's own type. An approved twin is published as a **separate** note beside
-  the existing one.
-- A candidate that proposes to supersede a note is **parked** as well. An approved
-  supersede writes the new note, marks the predecessor `status: superseded`, and
-  links the two — exactly what an explicit `mem_write` supersede does.
-
-Both are review-only until you decide them, and both are described under
-*Automatic curation* below, together with how to approve one.
-
-Start with:
-
-```yaml
-    distill:
-      dryRun: true
-```
-
-and watch a few turns. `mem_admin(action="jobs")` lists the queue; a `failed` job
-keeps its reason and can be revived with `mem_admin(action="jobs", jobId="…", retry=true)`.
-Turn it live by setting `dryRun: false` and restarting.
-
-### Automatic curation
-
-With `autoCurate: true` (the default) the plugin also inspects the notes already
-in the vault and keeps a compact navigation view of the current project. The
-inspection itself reads Markdown, **makes no model call**, and never merges,
-archives, supersedes, promotes or deletes a note. A finding either becomes a view
-entry or is parked for a decision; a decision has three routes — the 健康 panel,
-the review command and, when enabled, the automatic reviewer — described below.
-Only an apply changes a note, and it runs the same reviewed-memory transaction as
-every other write.
-
-#### The everyday loop
-
-Doing nothing is a valid way to use this. The automatic pass keeps the view fresh
-and parked proposals simply wait. When you want to see what it found, or decide a
-proposal, there are three routes — and all of them decide through the same review
-path: claim, a source-hash re-verify before an apply, and the reviewed-memory
-transaction an apply uses.
-
-1. **Panel — 健康 → 待审阅.** Open the memory panel from the DSH sidebar
-   (**+ → 记忆 (Memory)**) and switch to **健康**. The **待审阅** card is the
-   pending review queue: each row names its kind, reason, sources and age. Open a
-   row and the sheet renders the candidate as Markdown — a supersede candidate
-   also shows the note it would replace and the status the write would move.
-   **批准…** applies exactly that proposal; **拒绝…** changes no note. A
-   review-only finding offers only **忽略…**, a rejection: it records the
-   decision and changes no note.
-2. **Review command — unchanged.** Run it from the bound project's directory with
-   the same `DSH_HOME` your host uses:
-
-   ```sh
-   dsh-obsidian-mem-review --vault /absolute/path/to/vault <proposal-id>
-   ```
-
-   From a checkout of this repository,
-   `node /absolute/path/to/repo/lib/curation-cli.js --vault … <proposal-id>` runs
-   the same command — use the absolute script path when the bound project is a
-   different repository. It prints the proposal's exact operation and sources, and
-   accepts only `apply <id>` or `reject <id>` typed byte-for-byte, one proposal per
-   run: there is no `--all` and no default answer. `reject` changes no source note,
-   and the command needs a terminal on stdin *and* stdout.
-3. **Automatic reviewer — when `autoReview: true` (the default), a model route
-   resolves (the configured `distill.provider` + `distill.model` pair, or the route
-   the last captured conversation in this project actually ran on), and the DSH
-   host runs an automatic curation pass.** The plugin asks the model, over that route, to
-   judge up to three pending executable proposals. It re-reads every source hash
-   first; only a `confidence ≥ 0.8` `apply` or `reject` acts, and everything else —
-   `defer`, low confidence, an answer outside the contract, or no route — leaves
-   the row pending for routes 1 and 2. A proposal whose evidence changed is
-   retired, not applied: no decision could use it any more, and the next
-   distillation produces a fresh candidate. An automatic decision records
-   `decidedBy: "auto"` and the model id, and the 健康 card's recent list shows the
-   most recent decisions and retirements so you can audit what the plugin decided
-   for you. An explicit `operation="scan"` and the Codex adapter's pass do not
-   start the reviewer; with `autoCurate: false` no automatic pass runs, so no
-   automatic review happens (the panel and the command keep working).
-   `autoReview: false` disables only this route.
-
-**No tool and no `mem_admin` action, parameter or enum value approves or rejects a
-proposal** — so the session model cannot decide one on your behalf. The panel and
-the review command are the human routes; the built-in reviewer is plugin-internal,
-bounded (at most three proposals per pass) and every decision is recorded.
-
-To only read the state or run the check now:
-`mem_admin(action="curation", operation="status")` reads the stored cursor, the
-committed view and the bounded proposal queue without inspecting a note — its
-`examined`, `counts.findings` and `counts.unexamined` are `0` by design.
-`operation="scan"` runs one bounded pass now and reports what it did; a project
-larger than one pass needs repeated scans until `complete: true` (see *When a pass
-is incomplete* below). Both still work with `autoCurate: false`: only the automatic
-triggers stop. The queue itself returns up to 200 pending rows, newest first, each
-with exactly `proposalId`, `kind`, `reason` and `reviewOnly`; tell the two forms
-apart by `reviewOnly`, not by `kind` (a `near-duplicate` can be either), and
-`proposals.truncated: true` means more pending rows exist than were returned.
-
-**What stays automatic, and what stays manual.** The inspection itself and the
-navigation view are automatic and make no model call. The deterministic retirement
-of review-only findings is automatic too: a completed pass retires a finding it
-examined and no longer reproduces, so a fixed note cannot leave a row in the queue
-forever. A semantic decision about a parked executable candidate is automatic only
-through the confidence-gated reviewer in route 3; with `autoReview: false`, without
-a route, or on any uncertain answer, a human decides it. A review-only finding is
-never decided by a model — it is evidence, so the only automatic change to it is
-retirement; applying one is impossible and dismissing one is a human action.
-
-After a decision the health card drops the row on its next poll; `status` no
-longer lists the decided record, and the next brief or scan reflects an approved
-change.
-
-#### What you can approve, and what you can only fix
-
-`apply` is offered only for a proposal that carries an operation —
-`reviewOnly: false` in the listing. There are two, and both are the parked
-distillation candidates described under *Automatic distillation* above:
-
-| Parked candidate | What `apply` does |
-|---|---|
-| A candidate that twins an existing note | Publishes it as a **separate** note beside the existing one. |
-| A candidate that proposes to supersede a note | Writes the new note, marks the predecessor `status: superseded`, and links the two. |
-
-A `reviewOnly: true` row is a finding, not a plan: an expired `review_after`, a
-wikilink that resolves to nothing, a plugin-owned note with no provenance, or the
-scanner's own near-duplicate observation. `apply` cannot repair one, and the review
-command offers no operation to run. Fix the source issue the finding names — edit
-the note, correct the link, refresh or retire it — and run `operation="scan"` again;
-a completed pass examines the note and, once the problem is gone, retires the row.
-A finding you disagree with can simply be rejected (on the panel with **忽略…**, or
-by the command), which records the decision and changes no note.
-
-The command refuses rather than guessing, and each refusal is a code you can act
-on. `source-changed` means a source moved between the scan and the approval: the
-proposal stays `pending`, so review it again. A *healthy* competing review — two
-people deciding the same proposal at once — is answered `proposal-not-current`;
-`review-lock-unavailable` is the different answer that the private claim guard could
-not be taken at all, which means another review is inside its short claim guard or
-the guard storage is unusable. `review-recovery-required` means this proposal has a
-partial or committed application already: a process died between publishing the note
-and recording the decision. Approving with `apply` resolves that attempt — rolling
-it back if it never committed, forward if it did — and then publishes the approved
-candidate; rejecting is refused, because it would leave a published note behind a
-`rejected` record.
-
-#### When a pass is incomplete
-
-A pass examines at most 256 notes and stops *starting* new inspections once 500 ms
-of curation work has elapsed. A pass that hits either bound says so and keeps its
-position: the notes it finished stay recorded and the ones it never reached wait for
-a later pass. Two numbers are deliberately not promises: one slow filesystem call
-can overrun the 500 ms mark, and the manifest walk is not bounded by it at all.
-
-For a project larger than one pass, repeat `operation="scan"` until
-`complete: true`. The automatic triggers are weaker than that: a truncated full
-pass records a fresh due marker as it scans, so a later session start with an empty
-hint queue answers `skipped` and the backfill waits. A project becomes due again in
-exactly three ways — a committed write queueing a changed-path hint (weighed against
-that queue, not the marker), your own `operation="scan"`, or the 24-hour marker
-expiring. So the automatic backfill of a vault larger than one pass advances at most
-once per 24 hours per project until a write queues a hint for it; an explicit
-`operation="scan"` is not subject to that bound, which is why the loop above tells
-you to repeat it.
-
-#### Automatic passes are host-specific
-
-In DSH, a committed write queues its note and session activity checks a due project;
-the pass runs outside the model request, and a failure never fails your turn. In
-Codex the pass runs in the installed, **trusted** `SessionStart` hook — Codex skips
-an untrusted hook in silence, and an MCP-only install (no hooks) gets the explicit
-`mem_admin` scan and **no automatic pass at all**. Both `operation="status"` and
-`operation="scan"` remain available when `autoCurate: false`; only the automatic
-triggers stop.
-
-#### The view is a cache, never a second source of truth
-
-The cursor, the per-path scan records, the changed-path queue and the view live
-under `$DSH_HOME/data/obsidian-mem/curation/`. Every view entry carries the sha256
-of the bytes it was built from; before a brief uses one it re-hashes every path it
-stands for — including every member of a collapsed exact-duplicate group — and a
-missing, edited, unreadable or oversized source makes the brief fall back to the
-source-navigation path it used before the view existed. An exact-duplicate group is
-displayed as one entry naming every path; **no note is deleted or merged**. A view
-is injected only when it is marked `complete`: a full pass that stopped at either
-bound publishes `complete: false`, and a changed-path pass may merge only into a
-view that is already complete (`backfill-incomplete` otherwise), so a partial
-backfill can never be published as the project's navigation.
-
-Deleting those four rebuildable documents — the cursor, the per-path records, the
-changed-path queue and the view — costs one scan and nothing else. Two things in
-that directory are **not** disposable. `proposals/` holds every parked candidate
-and its decision record, which no scan can recreate: deleting it loses review work
-and leaves the source notes untouched. And a running review keeps a private claim
-file beside the records so that two reviewers cannot both decide one proposal;
-never delete either while a review is running.
-
-Measured on one 600-note temporary vault on this machine (the probe and its raw
-output are in `CHANGELOG.md`): a full pass inspected 256 notes with a median of
-136 ms and a worst case of 171 ms over 15 rounds, and a real `SessionStart` hook
-run paid a median of 172 ms and a worst case of 179 ms more than the identical
-run that skipped the pass. The 500-ms deadline was never reached at that size —
-the note bound binds first — so these numbers confirm the ceiling is not the
-binding constraint here; they do not claim that 256/500 is optimal, and a project
-large enough to make the deadline bind is not a case this repository has run.
-The untested list is in `CHANGELOG.md`; it is not repeated here.
-
-### Where the plugin keeps its own data
-
-Everything outside the vault lives under the data root, which is derived from
-`DSH_HOME` in exactly one place (`$DSH_HOME`, or `~/.dsh` when unset):
-
-```
-$DSH_HOME/data/obsidian-mem/
-├── index/          rebuildable SQLite search index (never authoritative)
-├── locks/          whole-vault write lock
-├── transactions/   journal for crash recovery
-├── receipts/       per-write and per-job receipts
-├── pending/        queued distillation jobs (0700/0600)
-├── curation/       rebuildable curation state: cursor, per-path scan records,
-│                   changed-path queue and compact view (0700/0600)
-│   └── proposals/  durable, not rebuildable: every parked candidate and its
-│                   decision record (0700/0600)
-├── diagnostics/    bounded content-free decision journal (0700/0600)
-└── processed/      per-session processed floor (0700/0600)
-```
-
-Set `DSH_HOME` to an isolated directory and the plugin can never write into your
-real `~/.dsh` — that is how the test suite runs, and how you should try anything
-new.
+Curation proposals can be approved from the panel (Health → pending review), from the terminal via `dsh-obsidian-mem-review --vault <path> <id>`, or by bounded automatic review. Automatic curation must **never** silently merge, archive, supersede or delete a source note.
 
 ---
 
-## Diagnostic report for an Issue
+## Privacy and security boundaries
 
-When the installed package exposes its npm binary, generate a report yourself:
-
-```sh
-dsh-obsidian-mem-diagnose --output ./obsidian-mem-diagnostics.json
-```
-
-From a checkout, `node lib/diagnose-cli.js --output ./obsidian-mem-diagnostics.json`
-runs the same command. It works even if the host plugin fails to load. The command
-never uploads the file, edits DSH configuration or reads a real vault. It requires
-an explicit output path and refuses to overwrite an existing file. The completed
-JSON has mode `0600` and a 256 KiB limit. Open it in a text editor and review it
-before attaching it to an Issue. **[Attachments to a public GitHub repository](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files) can
-be viewed by anyone**, including people without a GitHub account; event times
-may reveal when you used the plugin.
-
-The report contains the plugin and Node versions, OS type and architecture,
-non-identifying configuration switches when a journal is available, fixed self-check
-statuses, and recent decision events. Events have times, categories, approved
-outcomes or coarse error codes, counts and per-run aliases such as `p1` or `j1`.
-The command counts pending job files by directory entry without opening them. It
-checks Node and in-memory FTS5, package files, local journal health, and the
-`mem_admin` diagnostics contract in a disposable home and vault. It does **not**
-check your real vault, model route, host session hooks or the contents of queued
-jobs. Unavailable, incomplete or damaged evidence is marked `unavailable` or
-`partial`; a missing journal is not proof that earlier calls succeeded.
-Without the optional DSH host packages, the isolated plugin check can be
-`unavailable` while the basic report still succeeds.
-
-The enabled DSH plugin and Codex adapter record this reduced event stream locally
-by default under `$DSH_HOME/data/obsidian-mem/diagnostics/`, with mode
-`0700`/`0600`. Each process keeps at most 200 events and 128 KiB. On the next
-plugin start, run files idle for over seven days are removed; export ignores
-expired files, and no background cleanup runs while the plugin is stopped. The
-in-process `mem_admin(action="diagnostics")` ring remains separate. A journal
-failure does not change a plugin call's outcome.
-
-The journal and report **never include conversation text, prompts, model output,
-note bodies or titles, tool arguments, raw host logs, pending job bodies,
-configuration files, credentials, environment variable values, paths, original
-project/job/transaction IDs, hostnames or repository remotes**. The command makes
-no network request. These exclusions apply to the diagnostic route; automatic
-distillation follows the model-call boundary below.
-
----
-
-## Privacy boundary
-
-Automatic distillation sends text to a model. Here is exactly what crosses that
-line.
-
-**What is staged locally.** Completed turns are written to
-`$DSH_HOME/data/obsidian-mem/pending/` at mode `0700`/`0600` *before* any model
-call, so a restart can resume without calling the model again. Raw transcripts are
-never written into the vault.
-
-**What is sent.** A whitelist projection of a committed turn: real user messages,
-final assistant text, tool names with a success/failure flag, and bounded file
-paths with line numbers. Plugin injections, reasoning blocks, raw tool output,
-tool arguments, subagent transcripts, the credential store, credential files and
-environment variables are never read into it.
-
-**What is scrubbed.** A deterministic scan skips any message matching a common
-credential shape (common API-key prefixes, PEM blocks, and similar). A hit skips
-the **whole message**, and the receipt records that it did.
-
-**What is not guaranteed.** That scan is not an exhaustive secret scanner. If you
-paste a secret into a session in an unrecognised format, the text of that message
-is a normal part of the turn and may reach the model route. Treat the session as
-you would any conversation with a model provider.
-
-**Where it goes.** Only to the LLM route you configure, or to the session's last
-recorded route when `distill.provider`/`model` are empty. Resolving no route is a
-`deferred` state, not a call with default settings. There is no telemetry and no
-other network egress.
-
-**What is on disk.** The vault and the pending queue are plain local files, so
-whatever backs them up or syncs them — Git, Time Machine, Obsidian Sync, a cloud
-folder — will see them. If that matters for a user message, do not let it be
-captured.
-
----
-
-## Backup and migration
-
-**The vault is the source of truth.** The SQLite index is a *rebuildable cache*:
-delete `$DSH_HOME/data/obsidian-mem/index/` and it is rebuilt by scanning, or ask
-for `mem_admin(action="index", rebuild=true)`. Nothing is recovered *from* the
-index, ever.
-
-**Git initialization is not backup.** `initGitOnCreate` only prepares a
-newly-created vault for versioning. The plugin never commits, never configures a
-remote and never treats Git as a rollback mechanism. Configure commits and remotes
-yourself if you want them.
-
-**Snapshots are not backup either.** Before modifying a file it owns, the plugin
-copies the previous bytes to `_meta/.history/<txId>/`. Those copies are recovery
-material for a failed transaction, they are not indexed, and `mem_admin(action="lint", prune=true)`
-deletes aged ones under the vault lock. An out-of-repo index or a history
-directory on the same disk is not a backup.
-
-**Moving a repository to another machine.** Clone normally. `.obsidian-mem`
-contains no absolute path — only `projectId`, `slug`, `displayName` and
-`schema` — so set `vaultPath` to *that* machine's vault and the project keeps its
-identity. If the vault comes along too, the project directory is reused as is.
-
-**Renaming.** Renaming the repository or the display name does not move the
-project directory; the directory name is fixed at first bind. `mem_admin(action="bind", mode="show")`
-reports the binding without changing it.
-
-**More than one copy of the repository.** Worktrees of the same repository share
-one `projectId` and therefore one vault directory. A `fork` (a genuinely different
-repository) gets a new id via `mem_admin(action="bind", mode="fork")`, and
-`mode="retain"` confirms that a changed remote is still the same project. Neither
-is automatic: a remote-URL mismatch pauses automatic writes and asks you.
-
-**Retention.** `mem_admin(action="lint")` checks orphan rows, dead links,
-duplicate basenames, frontmatter gaps, expired notes, file↔index mismatches and
-queue backlog. `prune` removes aged `.history/` snapshot directories only when no
-manifest or failure record still refers to them, and does so under the vault lock.
-
----
-
-## External Markdown is audited, not controlled
-
-`mem_write(type="doc")` is the authoritative path for project documentation, and
-it is the only path the plugin can guarantee. Markdown that *you* create with an
-editor, a `sed` one-liner, a code generator or another tool is invisible to it —
-no plugin can intercept a shell write.
-
-`mem_admin(action="lint")` reports repository Markdown that no vault note
-references, so the gap is *visible*. It reports and never moves, rewrites or
-adopts your files. Treat the report as a worklist, not as enforcement.
-
-`README.md`, licenses and build configuration belong in the repository and stay
-there; the vault holds the long-form documents people read.
+- **Persist before send**: a whitelisted projection (real user messages, final assistant reply, tool names + success/failure, bounded file paths) is written under `$DSH_HOME/data/obsidian-mem/pending/` with 0700/0600 before any model call; raw session transcripts never enter the vault.
+- **Never sent**: plugin injections, reasoning blocks, raw tool output, tool arguments, subagent transcripts, credential files, environment variables.
+- **Credential scrub**: a deterministic scan **skips the whole message** when it looks like a credential and records it; it is not exhaustive, so unrecognised secrets may still reach the model.
+- **Destination**: only the configured model route or the session's last recorded route; without a route the job is deferred, never defaulted; no telemetry.
+- **Egress**: `egress: loopback` accepts the literal `127.0.0.1` / `::1` only; `remote` is an explicit decision recorded on the search diagnostic. Endpoints reject embedded credentials, query strings and fragments; redirects are never followed; non-2xx responses report the status only and never echo the upstream body; secrets are removed from errors/diagnostics/logs via `redactSecret`.
+- **Panel**: read-only baseline; only the five preview → confirm actions can write; loopback / same-origin fences (including the `dsh-app://` proxy).
 
 ---
 
 ## Honest limits
 
-Each item here is a real boundary of this release. Most are deliberate refusals.
-This is what is written down, not a claim to be exhaustive: `CHANGELOG.md` carries
-the running record of what has been verified and what has not.
+These are design boundaries, written down so you can judge the tool before enabling writes:
 
-### The index is a cache, never the source of truth
-
-Search results, briefs and `mem_admin(action="index")` are all derived from the
-Markdown in the vault. A corrupt or stale index is recoverable, and the plugin
-prefers re-scanning to serving you deleted content. If the vault and the index
-ever disagree, the vault wins.
-
-### The vault must be local
-
-Automatic writes require a vault on **local disk**. Three reasons, in order of how
-often they bite:
-
-- **On-demand files.** iCloud Drive and `~/Library/CloudStorage/` mounts
-  (Dropbox, OneDrive, Google Drive) can replace file contents with a placeholder
-  and download them later. Reading such a file can block or fail with `EDEADLK`
-  in a background process. A vault under `~/Library/Mobile Documents/` or
-  `~/Library/CloudStorage/` is therefore refused for **reads as well as writes**
-  (`vault-cloud-managed`), because a dataless read is as unsafe as a dataless
-  write.
-- **Sync clients can misread placeholders.** Obsidian Sync — and sync clients
-  generally — may interpret an offloaded placeholder as a deletion. Combining
-  Obsidian Sync with on-demand download in the same folder is the pattern most
-  likely to lose work. Pick one, or keep the vault purely local and back it up
-  with versioned copies.
-- **Unknown providers cannot be recognised by path.** Only the two documented
-  macOS roots are claimed. For any other provider, the plugin's defence is to
-  pause on a file-level read failure and report it, rather than to guess from a
-  directory name. `~/Documents` is deliberately *not* assumed to be
-  provider-managed.
-
-An offloaded or temporarily unreadable file pauses that file's update and is
-reported. It is never overwritten as if it were empty.
-
-### The property registry is not readable offline
-
-Obsidian registers a property's *type* vault-wide in
-`.obsidian/types.json`, and that file is a GUI-side artifact this plugin cannot
-trust offline (and does not write). The property preflight therefore only sees
-value types that are **visible in the note bytes it reads**: a property whose type
-was fixed in Obsidian's UI while no note currently carries a value for it cannot
-be detected. The first write to such a property may still conflict in Obsidian.
-Closing this needs either a vault-side `types.json` reader or a live DOM probe;
-neither is in this version.
-
-The preflight reads at most the first 64 KiB of a note looking for the end of
-frontmatter (so a vault full of large attachments does not trigger a mass
-download) and stops after a bounded number of files, reporting the bound.
-
-### File timestamps are never a date source
-
-`created`, `updated` and `review_after` are dates, and dates come from the
-calendar and the session — never from `mtime`, `ctime` or `birthtime`. A copied,
-restored or checked-out file has a timestamp that has nothing to do with when the
-fact was true. The index *does* use `mtime`/size as a cheap staleness hint, which
-is a different job: it decides whether to hash a file, not what a note says.
-
-### Hard links and bind mounts are invisible
-
-The path jail resolves symlinks and refuses them at every level, and rejects
-`..`, absolute paths and device paths. It cannot see the difference between an
-ordinary file and a **hard link** or a **bind mount** that points somewhere else.
-A same-user process that can write inside the vault could use one to make a write
-land elsewhere.
-
-Related, and unavoidable: there is a **TOCTOU window** between the `lstat` that
-validates a path and the `open` that uses it. The transaction engine narrows the
-damage (exclusive create, hash verification before every replacement, snapshot
-before change, rollback that refuses to overwrite a concurrent edit), but it
-cannot close a window the filesystem does not offer an atomic operation for.
-
-The threat model is a single-user local vault. This is not a multi-tenant
-sandbox.
-
-### Other boundaries worth knowing
-
-- **Semantic retrieval is on by default in engine, off in effect until you supply a
-  provider, and its cost is measured.** `retrievalEngine: "sparse"` remains lexical:
-  it re-ranks at most 24 source-verified candidates with
-  TF-IDF/cosine and cannot find a synonym the index never matched. `hybrid` — the
-  default engine since 2.0.0 — adds a real semantic candidate channel through the
-  embedding provider configured under `retrievalProvider`: a loopback service, or a
-  gateway you open explicitly with `egress: remote`. That provider still ships
-  disabled, so an unconfigured row reads byte-for-byte the lexical path and says
-  `provider-disabled` on the search diagnostic: the default asks for the channel, it
-  does not spend anything until you point it at a service. Choosing `remote` is
-  choosing to let note and query text leave this machine — an operator's explicit
-  decision, never inferred from existing host credentials. On a frozen
-  200-query corpus it moved pooled P@3 from 44.4% to 61.25% with no class
-  regression, and the calibrated gate (token hits or a top-three dense slot at cosine
-  0.92) then took in-gate precision from 27.9% to 41.8% and no-answer false positives
-  from 32.5% to 5.0%. Turning it on costs one embedding round trip per query (corpus
-  p50 121.2 ms against 22.3 ms for lexical after the query-plan fix, so the absolute
-  350 ms ceiling holds while the 1.5x-lexical ratio does not), and its 900-character
-  injection path has not been measured in live sessions. See
-  `docs/validation/retrieval-hybrid-2026-11-02.md` and
-  `docs/validation/retrieval-latency-and-semantic-gate-2026-11-03.md`.
-- **Delivery receipts are observations, not proof of attention.** DSH acknowledges
-  the committed producer-owned event that carried the final message; Codex stdout is
-  only a pending receipt until a later trusted hook reconciles it against its own
-  transcript (8 MiB cap), and unreadable or over-cap evidence leaves the unit
-  unacknowledged so it may be repeated. The plugin claims the host emitted a unit, never
-  that the model read or retained it. No resident-context equality is claimed between
-  the hot file's capacity and the model's window.
-- **Panel mutations are preview-confirmed, not two-phase committed.** The 60-second
-  single-use token binds session/project/operation/arguments/fingerprint, preview writes
-  nothing, and each service re-derives its own precondition inside its transaction. A
-  residual TOCTOU window remains between the fingerprint read and the mutation, a lost
-  confirmation can only be replayed inside the 60 seconds, and concurrent confirmations
-  are not stress-tested beyond serial and stub races.
-- **The write lock only restrains this plugin.** It is a whole-vault lock keyed
-  by `realpath(vaultPath)`, so two projects cannot interleave a registry or
-  receipt write. Obsidian and any other editor ignore it, which is why every
-  replacement re-checks the file's hash first.
-- **`withVaultLock` is not re-entrant.** A nested acquisition in the same process
-  would deadlock, so no code path may nest one.
-- **A job with no binding or no route re-arms indefinitely.** It is never marked
-  terminally failed; it retries on each idle window (at least one queue-file write
-  per window) until a binding or a route appears. Bounded, but not free.
-- **Refusal audits are capped.** A job's refusal audit keeps at most 32 entries,
-  so a receipt can say 32 when more candidates were dropped.
-- **A human edit stops the write.** Generated blocks carry the hash of the body
-  they declare. If the hash no longer matches, a person edited that block, and the
-  plugin reports a conflict instead of rewriting it. This is by design and it
-  means a hand-edited MOC or registry needs a human to reconcile it.
-- **`dsh.plugin.json` is inert.** Nothing in DSH core reads it. It is a registry
-  convention, which is exactly why `prepack` fails when it disagrees with
-  `package.json`.
-- **Session logs are DSH's, not this plugin's.** DSH writes
-  `$DSH_HOME/sessions/…/session.v3.jsonl.zstd`, or `session.v4.jsonl.zstd` on
-  the 0.1.7 line and later, itself. This plugin never edits them.
+- The index is only a cache; the vault is the source of truth. The index can be deleted and rebuilt, but the pending queue under the data root must not be thrown away casually.
+- The vault must be on a local disk: iCloud / CloudStorage are refused (dataless placeholder reads are unsafe, and sync clients can misread placeholders as deletion); unknown providers pause and report. Only the two documented macOS roots are claimed.
+- Obsidian's `.obsidian/types.json` property registry **cannot be read offline**: preflight sees only types present in note bytes, reads at most the first 64 KiB, and reports the bound.
+- Dates never come from mtime / ctime / birthtime; the index uses mtime+size only as a staleness hint.
+- Hard links and bind mounts are invisible, and a TOCTOU window exists between `lstat` and `open`; the transaction narrows it with exclusive creation, hash verification before replacement, snapshots before modification and stopping on conflict. The threat model is single-user local, not a multi-tenant sandbox.
+- Semantic retrieval is bounded by candidate recall: cross-lingual and deictic gold notes are not guaranteed to be in the lexical union; `sparse` cannot find synonyms the index never matched; the 900-code-point injection path has not been measured in real sessions. Hybrid live trigger rate, near-miss frequency, and the weak-tier threshold's applicability to other models are unverified.
+- A receipt is an observation that something was delivered, not proof the model paid attention; panel writes are preview-confirmed, not two-phase-committed (replay works within 60 seconds); the cross-process lock is the least-tested part of the repository.
+- The authoritative list of unverified items is `CHANGELOG.md` (1.0.0's *Known limitations and remaining risks* plus every Unreleased entry). This README neither repeats nor exhausts it.
 
 ---
 
 ## Failure recovery
 
-| Symptom | What it means | What to do |
-|---|---|---|
-| `vault-cloud-managed` | The vault root is under a known macOS cloud root, or the project was resolved from one. Reads and writes both refuse. | Move the vault to local disk and update `vaultPath`. |
-| A note stops updating; the receipt names a read error | The file is offloaded or temporarily unreadable. The plugin pauses that update instead of overwriting. | Download the file (open it), or move the vault off the sync root. |
-| `property-type-conflict` on bootstrap | An existing note uses one of the plugin's property names with an incompatible value type (`tags: foo` instead of a list, a quoted date, …). | Fix the note, or use an empty vault. The plugin will not rewrite your frontmatter. |
-| A generated block reports a conflict | A human edited that block, so its declared hash no longer matches. | Reconcile by hand: restore the generated content, or decide the human version is authoritative and keep it — the plugin keeps reporting the same conflict until the declared hash matches the body again. |
-| Search returns nothing, or says not-ready | The index is missing, unreadable or still scanning. | `mem_admin(action="index")` for status, `mem_admin(action="index", rebuild=true)` to rebuild. The vault is untouched. |
-| A distillation job is `failed` | The model call or validation failed `maxRetries` times. The job keeps its reason. | `mem_admin(action="jobs")` to inspect, then `mem_admin(action="jobs", jobId="…", retry=true)`. |
-| A job sits in `deferred` | No usable model route, the repository is not bound, or the model's output was refused by validation (`truncated`, `too-many-items`) and the job is backing off. It retries on each idle window. | Set `distill.provider` + `distill.model`, bind the project, or raise `distill.maxOutputTokens` / `distill.maxItems` for those two refusal codes. |
-| A job is terminally `failed` on `too-many-items` | The model returned more items than the ceiling allowed, and the batch is refused whole rather than trimmed. The raw output is kept (`outputState: raw-durable`), so raising `distill.maxItems` above the item count the job reports in `lastError` needs **no new model call**: a retry re-validates that stored text. | Raise `distill.maxItems`, then `mem_admin(action="jobs", jobId="…", retry=true)`. A retry without the raise re-validates the same bytes against the same ceiling and fails again. |
-| DSH crashed mid-write | An unfinished transaction is journalled under `$DSH_HOME/data/obsidian-mem/transactions/`. | Restart the session: recovery runs before new writes. If a file was edited externally during the crash, both versions are kept and reported — nothing is overwritten. |
-| `lock-corrupt` | The vault's write lock file (`$DSH_HOME/data/obsidian-mem/locks/vault-<hash>.lock`) exists but is unreadable — typically zero-length or truncated, from a process killed between creating it and writing its record. The plugin never treats an unreadable lock as "nobody holds it" and never steals it, so every write waits out the timeout and then refuses with this code. | Read the path named in the error and delete that **one file** by hand (`rm`), then retry. Nothing else needs cleaning: the lock is re-created on the next write, and no vault content depends on it. |
-| `lock-timeout` | Another live process holds the vault's write lock, or a process died while holding a lock whose record is still readable and whose pid has not been observed as gone yet. | Wait for the other session to finish and retry. If you are sure the holder is dead, the lock is broken automatically once its recorded pid is gone — do not delete a readable lock by hand while a `dsh` process may still be running. |
-| `mem_log(section="hot")` refuses with `hot-over-capacity` | The hot file is over `hotCapacityChars` and automatic archival cannot free what the write needs: it moves only complete 已完成 entries, and that zone may hold nothing but pointer lines (which are never archived — a pointer carries no text the archive lacks) or nothing at all. The refusal names each zone's characters, entries, pointers and movable entries. | `mem_admin(action="hot", operation="status")` reports the same numbers without writing, then `mem_admin(action="hot", operation="compact")` folds the pointer lines and archives the oldest movable entries from 已完成 and 进行中 in one transaction. If that still cannot reach the trigger, what remains is shorter than its own pointer line or was not written by the plugin: raise `hotCapacityChars`, or move that text yourself and accept that the next transaction will not see the change. |
-| A repository refuses to write | A remote-URL mismatch, a different `projectId` for the same directory, a sibling worktree with conflicting metadata, or an unreadable sibling. The refusal names the reason and leaves the pointer exactly as it was — it never repairs or replaces one. | `mem_admin(action="bind", mode="show")` reports the situation; `mode="retain"` or `mode="fork"` is the explicit fix. A stale worktree needs `git worktree prune`. |
-| A plain directory stays read-only | It is not inside a Git repository, so the plugin will not add it to long-term memory on its own — an implicit first write binds Git repositories only. | `mem_admin(action="bind", mode="local")` to bind it explicitly; the binding is live for the same session. |
-| Memory is silently absent for a session | Any non-`bound` resolution means "no memory for this session" — by design, it never throws and never guesses. Reads never bind a repository, and a Git repository with no pointer is bound by its first write; a repository whose pointer or registry the plugin refuses to trust stays unbound until that is resolved. | Check `mem_admin(action="projects")` and the pointer file, then write once (a Git repository) or run `mem_admin(action="bind", mode="local")` (any directory) — both take effect in the same session. |
-| A curation proposal is `pending` and no note changed | That is the design: a suspected near duplicate or a model-proposed supersede is parked for review and never applied automatically. | `mem_admin(action="curation", operation="status")` lists the queue with an id per row; approve or reject one with `dsh-obsidian-mem-review --vault <absolute-path> <proposal-id>`. Rejecting touches no source note. |
-| A review says `review-recovery-required` | This proposal already has a partial or committed application: a process died between publishing the note and recording the decision, so rejecting it would leave a published note behind a `rejected` record. | Run the review again and approve with `apply <id>`, which resolves that attempt — rolling it back if it never committed, forward if it did — and publishes the candidate. Rejecting stays refused until the evidence is resolved. |
-| A review says `review-lock-unavailable` | The private claim guard could not be taken at all: another review is inside its short claim guard, or the guard file is unreadable or on storage that cannot hold it. A healthy competing review of one proposal is answered `proposal-not-current` instead. | Wait a moment and retry; if it persists with no review running, inspect the data root. Do not delete the guard while a review might be live. |
-| A review on a machine without `O_NOFOLLOW` refuses with `review-lock-unavailable` for every proposal | The claim guard refuses to open a path it cannot prove is a regular, single-link file, and some platforms (Node on Windows) do not expose `O_NOFOLLOW`. The refusal is deliberate: the guard protects the approval path. | Until a symlink-safe fallback ships, review curation proposals on macOS or Linux. Reads, writes and scans are unaffected. |
-| A review says `source-changed` | A source note was edited between the scan and the approval. The proposal stays `pending` rather than rebasing itself onto bytes nobody reviewed. | Review the new state and decide again. |
-| The brief no longer shows the compact navigation, or a claimed duplicate group disappeared | The stored view is a cache: one of its sources changed, vanished or became unreadable, so the brief fell back to the source-navigation path instead of injecting a stale line. | Nothing to repair. The next complete pass rebuilds it; `mem_admin(action="curation", operation="scan")` runs one now and reports `complete` and any truncation reason. |
-
-If a symptom is not in this table, or the fix above did not work, generate the
-diagnostic report and attach the JSON to an Issue — see
-[Diagnostic report for an Issue](#diagnostic-report-for-an-issue). The command
-never uploads anything: you inspect the file and attach it yourself.
+| Symptom | First look / action |
+|---|---|
+| `vault-cloud-managed` | the vault is on a cloud path; move it to local disk |
+| A file got offloaded | updates for that file pause and are never written as empty; retry after it returns to local |
+| Property-type conflict on bootstrap | the plugin never rewrites note frontmatter; fix the property or choose another directory |
+| Write / generated-block hash conflict | current bytes are kept and automatic writes stop; reconcile by hand |
+| Search not-ready | `mem_admin` index status / rebuild; the vault is untouched |
+| Job failed | `mem_admin` jobs + retry; `too-many-items` is terminal but keeps raw output, and raising `maxItems` then retrying re-validates stored text without a new model call |
+| Job deferred | no route / no binding / validation refusal; retried in each idle window |
+| After a crash | unfinished transactions recover on startup; a corrupt lock file can be deleted individually; a dead holder is reclaimed by pid |
+| hot-over-capacity | `mem_admin` hot status → hot compact; still full → raise `hotCapacityChars` |
+| The repository refuses writes | remote mismatch / projectId conflict / sibling worktree: `mem_admin` bind show / retain / fork; the plugin never edits the pointer automatically |
+| A plain directory stays read-only | `mem_admin` bind local |
+| Memory silently absent | unbound reads never build memory; check `mem_admin` projects. Reads never bind; the first write does |
+| A curation proposal stays pending | by design; `dsh-obsidian-mem-review --vault <path> <id>` or the panel's pending-review card |
+| The brief looks stale | client cache; the next complete scan rebuilds it |
 
 ---
 
-## Development
+## Development and releases
 
 ```sh
-npm ci                                   # exact lockfile
-npm test                                 # whole suite
-npm run prepack                          # npm test + scripts/verify-pack.mjs
-npm pack --dry-run --ignore-scripts      # manifest only
+npm ci                  # install exactly the lockfile
+npm test                # throwaway DSH_HOME + node --test test/*.test.js
+npm run check           # lint -> format:check -> types -> prepack (suite + pack contract) -> pack:check (real tarball)
+npm run prepack         # read-only: suite + package contract, never builds, never launches Obsidian
 ```
 
-`npm test` is `node scripts/run-tests.mjs`: it creates a throwaway directory, sets
-`DSH_HOME` to it, runs `node --test test/*.test.js`, and deletes the directory
-afterwards. That is why the suite cannot write into your real `~/.dsh`.
-
-`npm run prepack` is the release gate and it **only verifies**: the test suite,
-then a static check that `package.json` and `dsh.plugin.json` agree on version,
-plugin identity and entry point, that the `files` allowlist covers the assets the
-tarball must carry (including `skills/obsidian-mem/SKILL.md`), that nothing in the
-allowlist could pack `scratch/`, `research/`, `docs/`, `test/`, `node_modules/`,
-probe records or pending queue data, that `lib/tool-registry.js` still carries a
-`name: 'mem_x'` registration site for each of the six tools — and no seventh,
-because the surface is capped on purpose — and that `lib/tools.js` still
-re-exports all four names both entry points import (`TOOL_NAMES`,
-`TOOL_PARAMETERS`, `registerTools`, `createMemoryServices`). The two checks are
-separate because they fail separately: every tool can be registered correctly and
-still be invisible if the façade stops publishing it. It never edits a
-configuration file and never launches Obsidian.
-
-`npm pack` itself runs `prepack`, so a plain `npm pack --dry-run` runs the whole
-suite before printing the manifest — pass `--ignore-scripts` when you only want
-the file list, and run `npm run prepack` explicitly when you want the gate.
-
-Editing `README.md` means editing `README.zh.md` in the same change: the two sides
-carry equal authority, and `README.i18n.yaml` records the git blob hash of each as
-of the last confirmed-consistent state. Re-record both hashes with
-`git hash-object README.md README.zh.md` and compare each value against the file
-before you commit. The first-party verifier for this convention
-(`verify-translation-pairing`) ships with the harness monorepo, not with this
-plugin, so here that one command *is* the check.
-
-### Releases
-
-This repository publishes no npm package. A release is a **git tag plus a GitHub
-Release**, and `.github/workflows/release.yml` creates both.
-
-| Bump | When | Who |
-|---|---|---|
-| `0.0.1` | every push into `main` | the workflow, mechanically |
-| `0.1` | a notable feature | a person, before the push |
-| `1` | a breaking change, or the first stable release | a person, before the push |
-
-Only the patch bump is automated: nothing infers "a notable feature" or
-"breaking" from a diff, so a minor or major release is `package.json` edited by
-hand with the changelog section written for it.
-
-**`1.0.0` (2026-10-31) is the first stable release.** From it, the tool surface
-(the six `mem_*` names and their parameters), the vault protocol (the pointer file,
-note frontmatter and the shipped skill) and the configuration keys are treated as
-compatibility promises under SemVer — a breaking change to any of them needs a major
-bump. Behaviour fixes, panel and graph work still land in minor and patch releases.
-"Stable" is a promise about those interfaces, not a claim that every boundary is
-exhausted; the changelog keeps the untested list.
-
-Every Release also carries the packed plugin as `dsh-obsidian-mem-<version>.tgz`,
-so an install can skip the build-from-source path — which needs a `prepare`
-approval in pnpm's `allowBuilds` — and take the prebuilt archive instead. The
-marketplace entry for this plugin pins that asset by tag, because the
-`releases/latest/download/<file>` form resolves `latest` at request time while
-taking the filename literally, so a version in the asset name would rot the link
-on the next release.
-
-What the workflow does, in order:
-
-1. `npm run check` — the whole gate, on the commit about to be released.
-2. Classifies the push by asking the remote whether the version in
-   `package.json` already carries a tag. A checkout fetches no tags, so this
-   cannot be answered locally.
-3. If it does not: tags that version, releases it as it stands, and stops. This
-   is the bootstrap branch, and it is how a hand-prepared `0.1` or `1` becomes a
-   release instead of being bumped back down to a patch.
-4. If it does: skips a `chore(release):` commit, refuses a push that changed
-   `lib/` without a real `## Unreleased` entry, then bumps the patch, moves the
-   changelog section under `## <version> — <date>`, updates `dsh.plugin.json` and
-   the Codex server identity, commits as `chore(release): <version>`, tags, and
-   publishes the Release from that section.
-
-After a release `## Unreleased` is empty on purpose; add an entry as you work, or
-the next push is refused.
-
-The workflow has run on a real GitHub runner. Every release up to `0.1.15` came
-out of the bump branch; `0.2.0` was the first version prepared by hand, and
-exercising the bootstrap branch found a third defect: `git tag -a` needs a
-committer, a fresh runner has no git identity, and only the bump branch ever
-configured one — so the tag step died with `fatal: empty ident name` before
-anything was pushed, and neither the tag nor the Release was created. All three
-defects were found by running it rather than by reading it, and each is recorded
-in the `CHANGELOG.md` section of the release whose run exposed it: a checkout
-fetches no tags, so the classification has to ask the remote (`0.1.3`); the
-branch that tags an untagged version must not also be the only branch a tagged
-version can take, or nothing would ever bump again (`0.1.3`); and the bootstrap
-branch needs the identity the bump branch was setting (`0.2.0`).
-
-Contribution rules, house style and the non-negotiable constraints live in the
-maintainer's `AGENTS.md`, and the measured host facts in the maintainer's local
-host notes. Both are kept beside the checkout rather than in it — this repository
-ignores them (see `.gitignore`, and `CHANGELOG.md` for why) — so the citations of
-them under `lib/` name local files, not repository ones. What ships, and what a
-reader needs before enabling writes, is this README and the changelog.
+- `npm run types` is a **per-file ratchet**: only files listed in `tsconfig.json` and marked `// @ts-check` are checked, and `test/repo-hygiene.test.js` keeps the two lists equal.
+- Architecture rules live in `test/architecture.test.js`: real import graph, L0–L12 layers, downward-only, no cycles, no same-layer imports, and line budgets (measured + 30, rounded up to 50).
+- Releases are not `npm publish`: a release is a git tag plus a GitHub Release. `release.yml` runs `npm run check`, asks the remote whether this version already has a tag, and if not bootstraps: tags the commit, publishes the Release with `dsh-obsidian-mem-<version>.tgz`, and moves the marketplace entry. If the tag exists, a lib/ change without a real Unreleased entry is refused, the patch is bumped and the changelog section is moved. Since 1.0.0, the six tool names/parameters, the vault protocol and the config keys are SemVer compatibility promises.
+- The README pair is bilingual: `README.md` and `README.zh.md` change in the same commit, then `git hash-object README.md README.zh.md` is written back into `README.i18n.yaml`.
 
 ---
 
 ## License
 
-MIT — see [`LICENSE`](./LICENSE).
+MIT. The D3 modules bundled into the graph worker (`d3-force` / `d3-quadtree` / `d3-dispatch` / `d3-timer`) are ISC; their notices are collected in `lib/graph-worker.LICENSE`. The force-layout constants are ported from Obsidian 1.14.4's D3 fallback; provenance and measurements are in `docs/obsidian-graph-source.md`.
+
+## Further documentation
+
+- [`docs/guide/`](docs/guide/README.md): the one-hour project guide (concepts, architecture, sessions, storage, reliability, troubleshooting, Codex)
+- [`docs/p0-compatibility.md`](docs/p0-compatibility.md): measured host facts (sessions, events, `ctx.llm`, injection timing)
+- [`CHANGELOG.md`](CHANGELOG.md): capabilities and unverified items for every version
+- [`docs/dogfood-results.md`](docs/dogfood-results.md) and [`docs/smoke-results.md`](docs/smoke-results.md): end-to-end run records
